@@ -8,13 +8,13 @@ import mokume
 
 @testable import MokumeCLI
 
-/// 窓口の読みと実行の分け方 ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。
+/// MCP サーバの読みと実行の分け方 ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。
 ///
 /// **順序で見る。時間では見ない。** 道具を待たせたまま `ping` を流し、その答えが先に書かれることを
 /// 見る。待たせ方は「誰も応えない区画への `observe`」で、取り消されるか上限 (下では 10 秒) が来るまで
 /// 戻らない。流すタイミングは時計ではなく、区画に要求が置かれた (= 道具が待ちに入った) こと・答えが
 /// 書かれたことを見て決める。
-@Suite("窓口の読みと実行の分け方")
+@Suite("MCP サーバの読みと実行の分け方")
 struct MCPServeLoopTests {
     /// 読み取りの手が順に読む脚本。`wait` の段は条件が成り立つまで (上限つきで) 読むのを止める。
     nonisolated final class Script: @unchecked Sendable {
@@ -65,7 +65,7 @@ struct MCPServeLoopTests {
         }
     }
 
-    /// 脚本を読ませて、窓口が書いた行を返す。区画は誰も応えない (`observe` は取り消されるまで待つ)。
+    /// 脚本を読ませて、MCP サーバが書いた行を返す。区画は誰も応えない (`observe` は取り消されるまで待つ)。
     private func serve(
         _ steps: (_ requestPlaced: @escaping @Sendable () -> Bool, _ answered: @escaping @Sendable (Int) -> Bool)
             -> [Script.Step]

@@ -11,7 +11,7 @@ import mokume
 /// 固定の fps で動きを書き出す口 (`render`・[#1282])。
 ///
 /// **ビルドの前に止まるべきものは、ビルドの前に止まる。** 引数の誤りを数分のビルドの後で
-/// 知らせると、直して打ち直すたびにまたビルドを待つことになる。子が窓を開かずに書き出す
+/// 知らせると、直して打ち直すたびにまたビルドを待つことになる。子がウィンドウを開かずに書き出す
 /// ことは `SketchApplicationRenderTests` (MokumeCoreTests) が本物の GPU で見る。
 ///
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
@@ -460,7 +460,7 @@ struct RenderCommandTests {
             RenderRequest(frameRate: 30, frameCount: 90, destination: "/tmp/a:b/out.mov"))
         let carried = RunCommand.childEnvironment([:], rendering: request)
         #expect(RenderRequest(environmentValue: try #require(carried[key])) == request)
-        // 窓を持たないので、× を確かめる合図も速さの名乗りも載せない
+        // ウィンドウを持たないので、× を確かめる合図も速さの名乗りも載せない
         #expect(carried[StartupReads.closeConfirmation.key] == nil)
         #expect(carried[StartupReads.frameRateNotice.key] == nil)
     }
@@ -644,7 +644,7 @@ struct RenderCommandTests {
     }
 
     /// **シェルに残った値を子へ継がせない** (`viewportOwner` と同じ・#2481)。渡さない起動 (`run`・`watch`)
-    /// へ読めない値が継がれると、子が毎回起動を断る。読める値が継がれると、窓を開かずに書き出す。
+    /// へ読めない値が継がれると、子が毎回起動を断る。読める値が継がれると、ウィンドウを開かずに書き出す。
     @Test("書き出しの頼みを渡さない起動では、親の環境に残った合図を子へ継がせない")
     func aLeftoverRequestIsNotInherited() throws {
         let key = StartupReads.render.key

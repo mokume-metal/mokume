@@ -4,7 +4,7 @@
 import Foundation
 import mokume
 
-/// エージェントの窓口。
+/// エージェントの MCP サーバ。
 ///
 /// 標準入出力で行区切りの JSON-RPC をやりとりする。手続きは 4 つだけ —
 /// 繋ぎ始めの挨拶・生きているかの確かめ (`ping`)・道具立ての一覧・呼び出し。
@@ -24,7 +24,7 @@ import mokume
 ///
 /// **取り消しが切れるのは区画を待つ道具 (`observe`・`input`) の待ち。** 置いた要求は区画に残り、
 /// スケッチが後から応えうる (次の要求が置き換える)。**続けて撮る観測を取り消すと、スケッチは撮り終える
-/// まで区画を塞ぐ** (取り消しはスケッチへ届かない・#3030)。窓口はそれを覚え (``AbandonedRequests``)、
+/// まで区画を塞ぐ** (取り消しはスケッチへ届かない・#3030)。MCP サーバはそれを覚え (``AbandonedRequests``)、
 /// 次の呼び出しがその間に時間切れになったら「応えない」ではなく、前に取り消した要求をまだ撮っていると
 /// 案内する。公開 API の取得のように区画を待たない道具は、
 /// 走り終えるまで切れない — その間も `ping` には答える。
@@ -68,7 +68,7 @@ struct MCPServer {
             // 進む。黙ると、繋いでいる側は来ない答えを待ち続ける (#2317)
             writer.send(reply)
         case .response:
-            // 応答には答えない。窓口は要求を出さないので、待っている応答も無い
+            // 応答には答えない。MCP サーバは要求を出さないので、待っている応答も無い
             return
         }
     }
@@ -85,15 +85,15 @@ struct MCPServer {
         guard call.expectsResponse else { return nil }
         switch call.method {
         case "ping":
-            // 空の結果で速やかに答える (MCP 2024-11-05 の Ping・#2318)。窓口は挨拶の
+            // 空の結果で速やかに答える (MCP 2024-11-05 の Ping・#2318)。MCP サーバは挨拶の
             // 前後で状態を変えないので、挨拶の前でも同じ答えになる
             return JSONRPC.pingResponse(id: call.id)
         case "initialize":
             var result: [String: Any] = [
                 "protocolVersion": Self.protocolVersion,
                 "capabilities": ["tools": [:] as [String: Any]],
-                // **繋いだ側が古い窓口を判別できる唯一の手掛かり。** 接続は
-                // 張ったまま保たれるので、道具を更新しても繋がっている窓口は
+                // **繋いだ側が古い MCP サーバを判別できる唯一の手掛かり。** 接続は
+                // 張ったまま保たれるので、道具を更新しても繋がっている MCP サーバは
                 // 古いままである (#634)
                 "serverInfo": ["name": "mokume", "version": ToolVersion.describe()],
             ]
@@ -136,19 +136,19 @@ struct MCPServer {
     }
 }
 
-/// 窓口を立てる。
+/// MCP サーバを立てる。
 enum MCPCommand {
     /// 引数と環境から、2 つの基準を決める。
     ///
     /// **区画は環境変数がいちばん強い。** 区画はスケッチが書く場所で、スケッチは
-    /// `MOKUME_WORK_DIR` に従う ([ADR-0018] 決定 2)。窓口が引数を優先すると、書き先と
+    /// `MOKUME_WORK_DIR` に従う ([ADR-0018] 決定 2)。MCP サーバが引数を優先すると、書き先と
     /// 食い違って噛み合わない。
     ///
     /// **パッケージの場所は環境変数に動かされない。** `Package.swift` も `.build/` も
     /// そこにあり、動かすとビルドも面の仕様の解決も行き先を失う。
     ///
     /// **引数は共有の解き手で解く** (``Arguments``・#680・#814)。最初の引数をそのまま
-    /// 場所にしていた頃は、`mcp --help` が `--help` という場所の窓口として標準入力を待ち、
+    /// 場所にしていた頃は、`mcp --help` が `--help` という場所の MCP サーバとして標準入力を待ち、
     /// 余る引数も黙って受けていた ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
     ///
     /// **在らない場所は、繋ぐ前に断る。** 繋がってから道具が「答えが無い」と言うのでは、
@@ -185,8 +185,8 @@ enum MCPCommand {
         return (package, Invocation.facetBase(under: package, workDirectory: workDirectory))
     }
 
-    /// 古い写しの置き場を掃く場所を決める。**渡されなければ共有の一時の場所** — 窓口が立つ製品の呼び口
-    /// (`Command.dispatch`) は場所を渡さず、これを掃く (掃く場所を取り違えると、信号で終わった窓口の
+    /// 古い写しの置き場を掃く場所を決める。**渡されなければ共有の一時の場所** — MCP サーバが立つ製品の呼び口
+    /// (`Command.dispatch`) は場所を渡さず、これを掃く (掃く場所を取り違えると、信号で終わった MCP サーバの
     /// 置き場が誰にも掃かれずに積もる)。決め方だけを純粋な関数に切ってあり、`run` がその結果を掃く
     /// ことは、渡した場所を掃く実行の検査 (`MCPServerTests`) が見る。
     static func scratchToSweep(given: URL?) -> URL {
@@ -194,25 +194,25 @@ enum MCPCommand {
     }
 
     /// - Parameters:
-    ///   - scratch: 信号で終わった窓口の観測の写しの置き場を掃く、一時の場所。**検査から差し替える** —
+    ///   - scratch: 信号で終わった MCP サーバの観測の写しの置き場を掃く、一時の場所。**検査から差し替える** —
     ///     既定の共有の一時の場所は、他のプロセスや過去の実行が積んだ項目の全体を走査する
     ///     (数万になりうる) ので、引数や回す前の止まり方を見るだけの検査が、その件数に左右される
     ///     ([#3298](https://github.com/mokume-metal/mokume/issues/3298))。省略 (`nil`) は共有の一時の場所
     ///     (``scratchToSweep(given:)``)。製品の呼び口 (`Command`) は渡さず省略のまま呼ぶ。
-    ///   - serving: 窓口を回す手続き。**検査から差し替える** — 既定は標準入力が
+    ///   - serving: MCP サーバを回す手続き。**検査から差し替える** — 既定は標準入力が
     ///     閉じるまで読み続けるので、回す前に止まることを確かめる検査がここで固まらないように
     ///     する (`WatchCommand.run(_:watching:)` と同じ作法)。
     static func run(
         _ arguments: [String], scratch: URL? = nil,
         serving: (MCPServer) -> Void = { $0.serve() }
     ) throws(CommandFailure) {
-        // **窓口を立てる前に解く。** 立ててからでは、誤りを言う前に標準入力を待つ
+        // **MCP サーバを立てる前に解く。** 立ててからでは、誤りを言う前に標準入力を待つ
         let directories = try directories(arguments: arguments)
         // 基準を環境変数が決めたのかどうかは、応えないときの案内が名乗る (#380)
         let given = WorkDirectory.given != nil
-        // 窓口を立てた場所と、そこがスケッチかも同じく起動の時点で決め、案内が名乗る (#2487)
+        // MCP サーバを立てた場所と、そこがスケッチかも同じく起動の時点で決め、案内が名乗る (#2487)
         let place = InterfacePlace.at(directories.package)
-        // 信号で終わった窓口の観測の写しの置き場を、立てるときに 1 度だけ掃く (一時の場所の一覧は
+        // 信号で終わった MCP サーバの観測の写しの置き場を、立てるときに 1 度だけ掃く (一時の場所の一覧は
         // 重いので、道具の束を作るたびにはしない・#3131)
         ObservationCopies.sweepStale(in: scratchToSweep(given: scratch))
         let server = MCPServer(

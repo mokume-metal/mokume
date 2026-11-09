@@ -8,7 +8,7 @@ import mokume
 
 @testable import MokumeCLI
 
-/// 窓口がスケッチの応答を待つ上限 ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
+/// MCP サーバがスケッチの応答を待つ上限 ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
 ///
 /// **時計は偽物を差し込む。** 本物の時計で巨大な待ちを試すと、応答が来ないかぎり検査が
 /// 戻らない。偽の時計は `sleep` のたびに進み、決めた回数に達したら応答を置く — 上限で諦める
@@ -21,7 +21,7 @@ extension Facets.Exchange {
     }
 }
 
-@Suite("窓口の待ちの上限")
+@Suite("MCP サーバの待ちの上限")
 struct FacetsWaitTests {
     /// `sleep` が呼ばれるたびに 1 刻み進む時計。`answerAt` 回目に応答を置く。
     private final class FakeClock {
@@ -54,7 +54,7 @@ struct FacetsWaitTests {
         return (Facets(directory: directory, waitLimit: waitLimit), directory)
     }
 
-    /// **巨大な待ちが渡されても、窓口は有限の上限で諦める。** `count` / `every` は MCP から来る
+    /// **巨大な待ちが渡されても、MCP サーバは有限の上限で諦める。** `count` / `every` は MCP から来る
     /// 値で、`Tools` はスキーマの上限で切らずに待ちへ足す。上限が無いと、足す秒数は
     /// `DispatchTime` が表せる範囲を越え、「ほぼ永久に待つ」か、実装次第では落ちる。
     @Test("待ちが巨大・無限でも、上限で諦めて何も応えなかったと返す")

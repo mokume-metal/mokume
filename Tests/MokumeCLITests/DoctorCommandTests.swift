@@ -466,7 +466,7 @@ struct DoctorCommandTests {
     }
 
     /// **何も直さない** (ADR-0029 決定 2 の規律 1)。打ったら直ってしまうと、直った理由が
-    /// 残らない。窓口の側は要求を置くために区画を作るので、ここが同じことをしないのを固定する。
+    /// 残らない。MCP サーバの側は要求を置くために区画を作るので、ここが同じことをしないのを固定する。
     @Test("打っても、区画は作られない")
     func nothingIsCreated() throws {
         let place = try Self.emptyDirectory()

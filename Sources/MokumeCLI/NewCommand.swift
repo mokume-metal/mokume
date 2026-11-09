@@ -190,10 +190,10 @@ enum NewCommand {
             // Claude Code が自動で読むのは CLAUDE.md なので、案内を指す 1 行を置く。
             // **写しは持たない** — 本体もこの形を採っている
             ("CLAUDE.md", try Templates.render("CLAUDE.md.template", values)),
-            // 窓口の呼び方。**案内に書くだけでは届かない** — 窓口は呼ぶ側が起動する
+            // MCP サーバの呼び方。**案内に書くだけでは届かない** — MCP サーバは呼ぶ側が起動する
             // 前に登録されているものしか使えないので、作った後で打っても、そのとき
             // 動いているエージェントからは呼べない (#683)。置くのは呼び方だけで、
-            // 道具の性質は変わらない (窓口は走っているスケッチを起こさない)
+            // 道具の性質は変わらない (MCP サーバは走っているスケッチを起こさない)
             (".mcp.json", try Templates.render("mcp.json.template", values)),
         ]
             // 例が読む資材 (#3836)。置き場はひな形が宣言した `assets/` で、`watch` の下なら保存で差し替わる
@@ -323,7 +323,7 @@ enum NewCommand {
     /// ``caseFoldedModules`` で別にする。
     static let unusableModules: Set<String> = [
         // mokume の library product が辿るターゲット。`MokumeUI`・`MokumeHost` はひな形が引かない別の product
-        // (ADR-0048) だが、埋め込む・窓なしで走らせるときに依存へ足すと、同じ名前のターゲットが 2 つになる
+        // (ADR-0048) だが、埋め込む・ウィンドウなしで走らせるときに依存へ足すと、同じ名前のターゲットが 2 つになる
         "mokume", "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork",
         "MokumeGamepad", "MokumeMIDI", "MokumeGame", "MokumeVision", "MokumeUI", "MokumeHost", "MokumeDiagnostics",
         "MokumeMacros",

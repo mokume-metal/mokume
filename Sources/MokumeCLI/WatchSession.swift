@@ -56,7 +56,7 @@ final class WatchSession {
         ///
         /// **待つのは main actor の外である** (``rebuild`` と同じ)。世代は資材の中身から導くので、
         /// 大きな資材を置いた・書き換えている間は 1 回に数百 ms かかる — main actor で取ると、
-        /// そのあいだ道具の窓が止まる ([#2518](https://github.com/mokume-metal/mokume/issues/2518))。
+        /// そのあいだ道具のウィンドウが止まる ([#2518](https://github.com/mokume-metal/mokume/issues/2518))。
         /// `@Sendable` にしない理由も ``rebuild`` と同じで、外へ出すのは ``live(resolver:running:stamps:)``
         /// の内側だけに閉じる。
         var stamp: (URL) async -> String?
@@ -125,7 +125,7 @@ final class WatchSession {
                     let process = Process()
                     process.executableURL = executable
                     process.currentDirectoryURL = directory
-                    // **管を 1 本引く。** 道具の窓が拾った出来事はここを通って子へ渡る
+                    // **管を 1 本引く。** 道具のウィンドウが拾った出来事はここを通って子へ渡る
                     // ([ADR-0032] 決定 4)。継がずに親の標準入力を渡すと、書き込む先が
                     // 端末になってしまう
                     process.standardInput = Pipe()
@@ -133,9 +133,9 @@ final class WatchSession {
                     // 内容が反映されたか」を待ち時間ではなく判定できる。組み立ては
                     // RunCommand が持つ — 子へ渡す環境の作り方を 2 通りにしない
                     //
-                    // **窓の持ち主は自分だと伝える** (ADR-0032 決定 1)。子が共有面へ差し出し
+                    // **ウィンドウの持ち主は自分だと伝える** (ADR-0032 決定 1)。子が共有面へ差し出し
                     // 上の管を読むのは、これと区画 `viewport` が揃ったときだけである。区画は
-                    // 窓を出せたときだけ置くので、出せなかった回の子は自分の窓を開く (#2028)
+                    // ウィンドウを出せたときだけ置くので、出せなかった回の子は自分のウィンドウを開く (#2028)
                     process.environment = RunCommand.childEnvironment(
                         stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName,
                         // **置き場の断片は元から読ませる** (#2517)。写しを読むと、元を保存しても
@@ -260,7 +260,7 @@ final class WatchSession {
     /// 名乗るときの構成の名前。選ばれていなければ既定の名前。
     var configurationName: String { context.configurationName }
 
-    /// 子の窓を持つ道具としての名乗り (`StartupReads.viewportOwner` の値)。
+    /// 子のウィンドウを持つ道具としての名乗り (`StartupReads.viewportOwner` の値)。
     nonisolated static let viewportOwnerName = "\(Command.name) \(Command.Verb.watch.rawValue)"
     private var hooks: Hooks
 
@@ -292,18 +292,18 @@ final class WatchSession {
     /// ``child`` だけである。
     private(set) var outgoing: Process?
 
-    /// 世代を重ねるか。**窓を出せた見張りだけが重ねる。**
+    /// 世代を重ねるか。**ウィンドウを出せた見張りだけが重ねる。**
     ///
-    /// 入れ替わりの合図は道具の窓から来るので ([ADR-0032] 決定 1)、窓が出せなかった実行では
+    /// 入れ替わりの合図は道具のウィンドウから来るので ([ADR-0032] 決定 1)、ウィンドウが出せなかった実行では
     /// 誰も知らせてくれない — そこでは今までどおり、止めてから起こす。
     var overlapsGenerations = false
 
-    /// 道具の窓へ、「いま映している世代を手放した」と伝える口 ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
+    /// 道具のウィンドウへ、「いま映している世代を手放した」と伝える口 ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
     ///
     /// 台は、畳まれた世代・もう居ない世代のカーソルの頼み (捕まえる・隠す) を、読み直す契機が来ないまま
     /// 持ち続ける。受け取れない世代の知らせ (#2928) は台が自分で気付くが、次の 3 つは台を通らないので、
     /// ここから伝える — 倒れた子 (``retireAfterFallback()``)・子の離脱 (``departed()``)・乗り換えの合図が来ない
-    /// まま次の保存が来て映っている世代を畳んだ回 (``rebuild``)。窓を出せた見張りだけが繋ぐ
+    /// まま次の保存が来て映っている世代を畳んだ回 (``rebuild``)。ウィンドウを出せた見張りだけが繋ぐ
     /// (``WatchCommand``)。**頼みを下ろすだけで、最後の絵も入力の宛先も変えない。**
     ///
     /// **引数は、手放す世代の子の番号である** (#2982)。台は、いま映している世代の目録が名乗る番号と照合し、
@@ -312,13 +312,13 @@ final class WatchSession {
     /// 乗り換えて頼みを読まない)。
     var relinquishesDisplay: ([Int32]) -> Void = { _ in }
 
-    /// 道具の窓へ、「この世代へは乗り換えない」と伝える口 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 道具のウィンドウへ、「この世代へは乗り換えない」と伝える口 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
     /// 起動に失敗した新しい版を捨てて前の版を現役に戻した回(``departed()``)だけが呼ぶ。台は、失敗した子が
     /// 1 枚書いてから死ぬと、動いている前の版でなくその子の最後の絵へ乗り換える。引数は失敗した子の番号。
     var abandonsIncoming: ([Int32]) -> Void = { _ in }
 
-    /// 道具の窓へ、「新しい子を起こした」と伝える口 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 道具のウィンドウへ、「新しい子を起こした」と伝える口 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
     /// 引数は起こした子の番号。台は、乗り換えないと決めた世代 (``abandonsIncoming``) と手放した世代
     /// (``relinquishesDisplay``) の番号の覚えからこの番号を外す — 番号は使い回されるので、残すと同じ番号を得た
@@ -348,18 +348,18 @@ final class WatchSession {
 
     /// 試聴に入っているか ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// **入っている間、保存はプレビューだけを新しい版にする。** 作品の窓が映す本番の子 (``child`` と、乗り換えを
+    /// **入っている間、保存はプレビューだけを新しい版にする。** 作品のウィンドウが映す本番の子 (``child`` と、乗り換えを
     /// 待つ間の ``outgoing``) は止めず、新しい版は ``auditionChild`` に起こす。入るのも出るのも、区画 `watch` の
     /// 要求である (``answerRequests()``)。**入らない見張りは、この分岐を 1 度も通らない。**
     private(set) var isAuditioning = false
 
     /// 試聴の子 — 試聴中に起こした最後の版。プレビューが映す。居なければ `nil`。
     ///
-    /// **``child`` / ``outgoing`` の意味は変えない。** あれは作品の窓に映る本番の側の枠で、入れ替わりの合図・
+    /// **``child`` / ``outgoing`` の意味は変えない。** あれは作品のウィンドウに映る本番の側の枠で、入れ替わりの合図・
     /// 倒れた知らせ・子の離脱は本番だけを見る。試聴の子がこれらで終わっても本番を畳まないのは、そのためである。
     private(set) var auditionChild: Process?
 
-    /// 試聴の子として起こした子の番号。**死んだ子を含む。** 作品の窓が採らない目録を選ぶ (``windowAccepts(pid:)``)。
+    /// 試聴の子として起こした子の番号。**死んだ子を含む。** 作品のウィンドウが採らない目録を選ぶ (``windowAccepts(pid:)``)。
     /// 試聴を出た後、次の通常の差し替えで空にする。
     private(set) var auditionPIDs: Set<Int32> = []
 
@@ -376,7 +376,7 @@ final class WatchSession {
     private var launchStamps: [Int32: String] = [:]
 
     /// 本番の世代の目録を、プレビューの台に押し出させず覚えさせる口 (``returnsPreviewToGeneration`` の戻り先)。
-    /// 空で外す。窓を出せた見張りだけが繋ぐ (``WatchCommand``)。
+    /// 空で外す。ウィンドウを出せた見張りだけが繋ぐ (``WatchCommand``)。
     var holdsPreviewGeneration: ([Int32]) -> Void = { _ in }
 
     /// 試聴を出るとき、プレビューを本番の世代へ戻す口。引数は本番の子の番号で、戻れたかを返す。
@@ -387,8 +387,8 @@ final class WatchSession {
     /// 要求に答えている最中か。**要求は 1 本ずつ処理する** (``answerRequests()``)。
     private var isAnswering = false
 
-    /// 作品の窓が映している世代の、目録が名乗る子の番号。映していない・番号を名乗らない子 (古いライブラリ) は `nil`。
-    /// 窓を出せた見張りだけが繋ぐ (``WatchCommand``)。**入る要求が、本番の子が番号を名乗るかを確かめるのに使う**
+    /// 作品のウィンドウが映している世代の、目録が名乗る子の番号。映していない・番号を名乗らない子 (古いライブラリ) は `nil`。
+    /// ウィンドウを出せた見張りだけが繋ぐ (``WatchCommand``)。**入る要求が、本番の子が番号を名乗るかを確かめるのに使う**
     /// (``WatchReport/Reason/unidentifiedGeneration``)。
     var windowShowsPID: () -> Int32? = { nil }
 
@@ -423,15 +423,15 @@ final class WatchSession {
     /// 試聴に入っていない間に最後に書いた記録 — **本番の版の記録。** 試聴を出るとき、区画 `build` の記録をこれへ戻す。
     private var productionReport: BuildReport?
 
-    /// 1 枚目の絵を道具の窓に出した世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 1 枚目の絵を道具のウィンドウに出した世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
     /// **「絵を出す前に終わった」の根拠はこれである。** 乗り換えの合図 (``hasSeenPromotion``) は使えない —
     /// 出している世代が無い台は 1 枚目を待たずに乗り換えるので、最初の世代の合図は「目録が読めた」で、
     /// `setup()` の前に来る。起こした世代が生きている間だけ覚える (``generationShown(pid:)``・
     /// ``launchChild(_:)``)。
     private var shownPIDs: Set<Int32> = []
-    /// 道具の窓が知らせてくれない世代として扱った子の番号 ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
-    /// 自分の窓へ倒れたと知らされた子 (``retireAfterFallback()``) と、道具の窓が絵を受け取れないと知らされた子
+    /// 道具のウィンドウが知らせてくれない世代として扱った子の番号 ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
+    /// 自分のウィンドウへ倒れたと知らされた子 (``retireAfterFallback()``) と、道具のウィンドウが絵を受け取れないと知らされた子
     /// (``retireAfterUndeliverable(waiting:pid:)``) である。**この子は ``shownPIDs`` に入れない** — 台は何も言えない
     /// ので、1 枚目の前に終わったかは子の起動中の印で読む(``hasShownFirstFrame(_:)``)。倒れた目印
     /// (`.fell-back.<pid>`) は見た時に消すので、見たことをここへ控える。
@@ -481,7 +481,7 @@ final class WatchSession {
     private var noticedAt: Double?
 
     /// 速さを名乗らせるか。**既定は名乗らせない** — 人が見ている前でだけ足す付け足しで、
-    /// 機械が読む経路 (窓口) の出力は 1 バイトも変えない ([ADR-0029] 決定 5 の 2 番目)。
+    /// 機械が読む経路 (MCP サーバ) の出力は 1 バイトも変えない ([ADR-0029] 決定 5 の 2 番目)。
     let reportsRate: Bool
 
     /// 作り直しを**始めるとき**に呼ばれる。`initial` は最初の 1 回か。
@@ -525,7 +525,7 @@ final class WatchSession {
     /// 見張りを終える手続き (``WatchCommand/finish(_:)``) がどこまで進んだか。
     ///
     /// **終わりの経路は 2 つある** (巡回を抜けるとき・道具立ての終了)。どちらからも、止める待ちを
-    /// 窓を開いたまま (main actor を塞がずに) 済ませてから抜けるので、2 度目の呼び手は
+    /// ウィンドウを開いたまま (main actor を塞がずに) 済ませてから抜けるので、2 度目の呼び手は
     /// 済んだことを知る必要がある ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
     enum FinishStage { case idle, running, done }
     var finishStage = FinishStage.idle
@@ -601,11 +601,11 @@ final class WatchSession {
     /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
     ///
     /// 前の見張りが止まった後も記録は残る。新しい見張りは錠を持つので、最初の作り直し (cold build で数十秒) の間、
-    /// 窓口は錠を見て前の回の理由で「直して保存せよ」と答えてしまう。**消せば記録の無い状態になり**、窓口は
+    /// MCP サーバは錠を見て前の回の理由で「直して保存せよ」と答えてしまう。**消せば記録の無い状態になり**、MCP サーバは
     /// 元の案内に、`build_status` と `doctor` は「まだ作り直しが無い」に倒れる (どちらも記録の無い状態を扱える)。
     /// 作り直しが通らなかった記録 (`ok: false`)・起こした記録は、この誤答を起こさないので残す。
     ///
-    /// 同じ見張りの作り直しの最中に窓口が「直して保存せよ」と言う小さな窓 (子を起こせば `launched: true` に変わる)
+    /// 同じ見張りの作り直しの最中に MCP サーバが「直して保存せよ」と言う小さなウィンドウ (子を起こせば `launched: true` に変わる)
     /// は、扱わない。
     private func discardStaleNotStartedRecord() {
         let url = BuildReport.statusURL(under: facetBase)
@@ -634,7 +634,7 @@ final class WatchSession {
     /// 終われと言われたことを覚える。
     ///
     /// **合図を読むのは口の側で、ここは覚えるだけである。** 何を合図とするか (シグナル・
-    /// 窓の ×) を知っているのは ``WatchCommand`` で、このクラスは判断だけを持つ。
+    /// ウィンドウの ×) を知っているのは ``WatchCommand`` で、このクラスは判断だけを持つ。
     func noteStopRequested() { stopRequested = true }
 
     /// 走らせている子へ 1 行渡す。
@@ -647,7 +647,7 @@ final class WatchSession {
     /// 無視しないと、畳まれた管へ書いた**こちらが死ぬ**。
     ///
     /// **塞がない。** ここは NSView の出来事から main で同期に呼ばれるので、待つと
-    /// 窓・保存の検出・巡回がまとめて止まる。読まない子でも戻れるのは、迎えるときに
+    /// ウィンドウ・保存の検出・巡回がまとめて止まる。読まない子でも戻れるのは、迎えるときに
     /// 書き口へ印を立ててあるからである (``unblockWriting(to:)``)。
     ///
     /// ## 書き始めた 1 行は、書き切る
@@ -663,9 +663,9 @@ final class WatchSession {
     /// **子の上限 (``InputWire/lineLimit``) を越える 1 行は管へ流さず、捨てて名乗る** (``onOversizedInput``)。
     /// 流すと子は溜めたぶんを全部捨て、残りは行の頭を失った断片として届く。
     ///
-    /// ## 試聴の間は、窓ごとに宛先を引く ([#3565](https://github.com/mokume-metal/mokume/issues/3565))
+    /// ## 試聴の間は、ウィンドウごとに宛先を引く ([#3565](https://github.com/mokume-metal/mokume/issues/3565))
     ///
-    /// 2 つの窓が別の世代を映す。作品の窓で触った出来事は本番へ (引数を省く)、プレビューで触った出来事は
+    /// 2 つのウィンドウが別の世代を映す。作品のウィンドウで触った出来事は本番へ (引数を省く)、プレビューで触った出来事は
     /// **プレビューが映している世代**へ送る — 引数にその台の ``SharedFrameWindow/displayedPID`` を渡す。試聴の子が
     /// 起きるまでは、プレビューはまだ本番を映しているので本番へ届く。映している世代が消えていれば、どこへも
     /// 送らない (止まった絵に触っても、別の版に届けない)。試聴に入っていなければ、引数は読まない。
@@ -705,7 +705,7 @@ final class WatchSession {
     /// 子が管を読み始めれば行は書き切られる。子が畳んだ・役を失ったときは続きを捨てる。
     ///
     /// **続きは子ごとに持つ** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。試聴の間は宛先が 2 つ
-    /// 生きるので、枠が 1 つだと、片方の窓の途中の行が、もう片方への入力で捨てられて断片が残る (#3061 と同じ形)。
+    /// 生きるので、枠が 1 つだと、片方のウィンドウの途中の行が、もう片方への入力で捨てられて断片が残る (#3061 と同じ形)。
     func flushPendingInput() {
         let live = [outgoing, child, auditionChild].compactMap { $0 }
         for (key, pending) in unsent {
@@ -785,7 +785,7 @@ final class WatchSession {
     /// 子が、道具の知らないところで消えていたら 1 度だけ返す。
     ///
     /// **見張りは子の生死を見ていなかった。** 見ていたのは世代の刻印だけなので、走らせて
-    /// いるスケッチが自分で終わっても落ちても、道具は何も言わずに回り続ける — 窓は道具の
+    /// いるスケッチが自分で終わっても落ちても、道具は何も言わずに回り続ける — ウィンドウは道具の
     /// ものなので画面には残り、止まった絵のまま次の保存を待つ
     /// ([#1103](https://github.com/mokume-metal/mokume/issues/1103))。
     ///
@@ -799,7 +799,7 @@ final class WatchSession {
     ///
     /// **最初の絵を出す前に失敗で終わった子は、走っていた子が消えたのではなく、起こせなかった回である**
     /// ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。根拠は「その子が 1 枚目を出したか」
-    /// (``generationShown(pid:)``。窓の無い見張りと倒れた子は、子が区画に置く起動中の印・#3222) で、乗り換えの合図ではない。この回は前の版を現役に戻し
+    /// (``generationShown(pid:)``。ウィンドウの無い見張りと倒れた子は、子が区画に置く起動中の印・#3222) で、乗り換えの合図ではない。この回は前の版を現役に戻し
     /// (``Departure/keptPrevious``)、記録を起こせなかった回の形で書き直す。終了コード 0 の子は含めない。
     ///
     /// 名乗るのは口の側である — このクラスは判断だけを持ち、出力を持たない。
@@ -816,7 +816,7 @@ final class WatchSession {
         case .signalled(let signal): departure = Departure(status: signal, wasSignalled: true)
         }
         // **子が自分で置いた理由を読む** ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。置いた子は、
-        // 窓のある見張りでは起動できなかった回の確かな証拠になる (合図の推定より先に効く)
+        // ウィンドウのある見張りでは起動できなかった回の確かな証拠になる (合図の推定より先に効く)
         let note = takeStartFailureNote(of: gone)
         // **最初の絵を出す前に、失敗で終わった子は、起こせなかった回である** (#3172)。終了コード 0 は
         // 自分から終わったので、絵を出す前でも含めない。**終われと言われた合図 (Ctrl-C など) で落ちた子も
@@ -824,7 +824,7 @@ final class WatchSession {
         let failed =
             departure.wasSignalled
             ? !Self.endingSignals.contains(departure.status) : departure.status != 0
-        // 理由を置いた子は、窓の有る無しによらず確かに起動できなかった (#3222)
+        // 理由を置いた子は、ウィンドウの有る無しによらず確かに起動できなかった (#3222)
         // 起動中の印は、読んだら消す(理由と同じ)。死んだ pid の印を次の作り直しまで残さない
         let drewFirstFrame = hasShownFirstFrame(gone)
         try? FileManager.default.removeItem(
@@ -844,10 +844,10 @@ final class WatchSession {
 
     /// その子が、1 枚目の絵を出したか。
     ///
-    /// **窓のある見張りの、倒れていない子は、道具の窓の知らせで読む** (``generationShown(pid:)``・#3172)。
+    /// **ウィンドウのある見張りの、倒れていない子は、道具のウィンドウの知らせで読む** (``generationShown(pid:)``・#3172)。
     ///
-    /// **道具の窓が知らせてくれない子は、子が区画に置いた起動中の印で読む** ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
-    /// 窓の無い見張りの子と、自分の窓へ倒れた子 (``WorkDirectory/fellBackURL(forProcess:under:)``) である。
+    /// **道具のウィンドウが知らせてくれない子は、子が区画に置いた起動中の印で読む** ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
+    /// ウィンドウの無い見張りの子と、自分のウィンドウへ倒れた子 (``WorkDirectory/fellBackURL(forProcess:under:)``) である。
     /// 子は `Sketch.main()` の頭に印を置き (``WorkDirectory/startingURL(forProcess:under:)``)、1 枚目を出したら消す —
     /// **印が残っているのは、1 枚目の前に終わった子である。** 印を置かない子 (別の版のライブラリ・印を置く前に
     /// 終わった子) は、出したものとして扱い、今までどおり「自分で消えた」と読む。
@@ -871,9 +871,9 @@ final class WatchSession {
     /// 見張りを終わらせる合図。**この合図で落ちた子は、起動に失敗したのではない。**
     private static let endingSignals: Set<Int32> = [SIGINT, SIGTERM, SIGHUP]
 
-    /// 道具の窓が、世代の 1 枚目の絵を出した ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 道具のウィンドウが、世代の 1 枚目の絵を出した ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
-    /// 窓ごとに知らせが来る (作品の窓とプレビュー) ので、2 度呼ばれる。控えるだけで、冪等である。
+    /// ウィンドウごとに知らせが来る (作品のウィンドウとプレビュー) ので、2 度呼ばれる。控えるだけで、冪等である。
     ///
     /// - Parameter pid: 1 枚目を出した世代の目録が名乗った子の番号。名乗らない子 (古いライブラリ) は
     ///   `nil` で、最後に起こした子のものと読む (他の合図の推定と同じ)。
@@ -930,7 +930,7 @@ final class WatchSession {
         var reason = Self.failedStartReason(
             tool: launchedTool ?? context.product ?? "sketch", place: directory.path,
             departure: departure)
-        // **子の言葉の頭の行には、見分ける頭を付ける** — 窓口は、この行が有るときだけ「子自身の言葉」を案内する。
+        // **子の言葉の頭の行には、見分ける頭を付ける** — MCP サーバは、この行が有るときだけ「子自身の言葉」を案内する。
         // 理由が改行で始まる子の言葉でも、頭の 1 行は最初の空でない行である
         if let head = note?.split(whereSeparator: \.isNewline)
             .map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty })
@@ -1054,7 +1054,7 @@ final class WatchSession {
     /// ([#732](https://github.com/mokume-metal/mokume/issues/732))。
     ///
     /// **待つあいだ main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
-    /// 応えない子では最大 3.5 秒かかるので、main の上で眠って待つと、保存のたびに窓の描き直しも
+    /// 応えない子では最大 3.5 秒かかるので、main の上で眠って待つと、保存のたびにウィンドウの描き直しも
     /// × の問いも止まる。**戻るのは止め終えてからである** — 止めてから次の子を起こす順序は
     /// 呼ぶ側が持つ。
     ///
@@ -1066,7 +1066,7 @@ final class WatchSession {
     ///
     /// ``stop()`` との違いは待つ長さだけで、撮っていた動画を閉じ終えるまで待つ
     /// (``finishTimeout``・[#1219])。**差し替えは ``stop()`` を通る** ので、延ばすのはこちらに
-    /// 限る — 分けておかないと、窓を持たない見張りでは保存のたびに長く待つ。
+    /// 限る — 分けておかないと、ウィンドウを持たない見張りでは保存のたびに長く待つ。
     ///
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
     @discardableResult
@@ -1098,7 +1098,7 @@ final class WatchSession {
     /// 走っているものを、**待つあいだ main actor を塞いで**終わらせる。
     ///
     /// **プロセスが終わる直前の後始末だけが使う** (``WatchCommand/teardown(_:_:created:)``)。
-    /// 通常の終わり方 (巡回を抜けるとき・Dock やログアウトの終了) は ``end()`` を窓を開いた
+    /// 通常の終わり方 (巡回を抜けるとき・Dock やログアウトの終了) は ``end()`` をウィンドウを開いた
     /// まま済ませてから抜けるので、ここへは来ない。それでも置いていかないために、残って
     /// いるものがあれば止め方は同じ手順 (``Shutdown``) で止める。検査の後始末にも使う。
     ///
@@ -1182,12 +1182,12 @@ final class WatchSession {
 
     /// 退役待ちを止める。
     ///
-    /// **何度呼んでもよい。** 入れ替わりの合図は窓ごとに来る (作品の窓とプレビューは独立に
+    /// **何度呼んでもよい。** 入れ替わりの合図はウィンドウごとに来る (作品のウィンドウとプレビューは独立に
     /// 見ている) ので、同じ入れ替えで 2 度呼ばれる。止めている最中に来た 2 度目は、同じ子を
     /// 重ねて止めずに、止め終わるのを待って戻る (名乗りは最初の 1 度だけ)。
     ///
     /// **待つあいだ main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
-    /// 合図は窓の側から main に来るので、ここで眠ると窓の描き直しがその間止まる。
+    /// 合図はウィンドウの側から main に来るので、ここで眠るとウィンドウの描き直しがその間止まる。
     ///
     /// - Returns: 止めた結果。居なければ `nil` — **名乗るのは口の側**なので、期限に掛かった
     ///   ことを言うために返す (#732 の規律は差し替えの経路にも効く)。
@@ -1212,7 +1212,7 @@ final class WatchSession {
     /// 止めている最中の子。**子ごとに 1 つの止め方に畳む。**
     ///
     /// 待つあいだ main actor を手放すので、同じ子を止める口が重なる — 差し替えの途中に終わりが
-    /// 来る・入れ替わりの合図が窓ごとに 2 度来る。重ねて `SIGTERM` を撃つと、後始末の最中の子が
+    /// 来る・入れ替わりの合図がウィンドウごとに 2 度来る。重ねて `SIGTERM` を撃つと、後始末の最中の子が
     /// もう 1 度後始末に入る。後から来た口は、先の止め方の結果を待つ。
     private var shutdowns: [ObjectIdentifier: Task<StopOutcome, Never>] = [:]
 
@@ -1236,7 +1236,7 @@ final class WatchSession {
     ///
     /// **待つのは main actor の外である** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
     /// 頼む (合図を撃つ) のはここ、main actor の上で済ませ、期限を数えて待つ仕事は切り離して走らせる —
-    /// main の上で眠ると、応えない子では最大 3.5 秒、窓の描き直しも × の問いも止まる。切り離す
+    /// main の上で眠ると、応えない子では最大 3.5 秒、ウィンドウの描き直しも × の問いも止まる。切り離す
     /// 側で待つので、期限は main の込み具合に左右されない (``Hooks/rebuild`` が作り直しを
     /// main の外で待つのと同じ分担)。
     ///
@@ -1528,7 +1528,7 @@ final class WatchSession {
 
         // **試聴に入っている回は、本番の世代に触れない** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
         // 前の試聴の子を止めてから、新しい版を試聴の子として起こす (試聴の子は重ねない)。止めている間に試聴を
-        // 出た回は、通常の差し替えへ続ける — 出た後に着いた版は、普段どおり両方の窓に出る
+        // 出た回は、通常の差し替えへ続ける — 出た後に着いた版は、普段どおり両方のウィンドウに出る
         if overlapsGenerations, isAuditioning {
             let auditionStarted = hooks.now()
             let previousAudition = auditionChild
@@ -1543,7 +1543,7 @@ final class WatchSession {
             if isAuditioning {
                 // **本番が乗り換えを待っている間は、試聴の子を起こさない** (保留する)。前の本番 (``outgoing``) を
                 // 畳んで試聴の子を起こすと、乗り換えを待つ新しい本番が 1 枚目の前に落ちたとき、戻る先 (前の本番) が
-                // 無く、作品の窓が凍る (``restorePreviousGeneration(afterLosing:)``)。乗り換えが決着してから
+                // 無く、作品のウィンドウが凍る (``restorePreviousGeneration(afterLosing:)``)。乗り換えが決着してから
                 // (映った・落ちて前の版に戻った) 起こす (``resumePendingAudition()``)。生きている子は 2 つまで
                 if isProductionSettling {
                     pendingAudition = PendingAudition(
@@ -1627,12 +1627,12 @@ final class WatchSession {
         }
         noteLaunched(child, stamp: stamp)
         // **試聴に入っていない通常の差し替えは、試聴の覚えを捨てる** (#3565)。子の番号は使い回されるので、
-        // 残すと、同じ番号を得た本番の子の目録を作品の窓が採らない
+        // 残すと、同じ番号を得た本番の子の目録を作品のウィンドウが採らない
         // **試聴を出る要求が子を止めている最中に来た通常の保存でも、ここで止まりきらない試聴の子の番号を落とさない。**
         // 上の ``retireOutgoing()`` が止めている最中の子すべて (``settle()``) を待ってから戻るので、この行に来る
         // ときは試聴の子は止まり切っている (#3565)
         if !isAuditioning { auditionPIDs.removeAll() }
-        // **書き口を塞がない形にしてから渡す。** 入力が来るのは窓が出た後なので、ここで
+        // **書き口を塞がない形にしてから渡す。** 入力が来るのはウィンドウが出た後なので、ここで
         // 立てておけば「読まない子へ書いて固まる」回は作れない (#1296)
         unblockWriting(to: child)
         expectsGeneration(generationPIDs(of: child))
@@ -1773,7 +1773,7 @@ final class WatchSession {
             audition: generation(of: auditionChild))
     }
 
-    /// 走っている本番の子。乗り換えを待つ間は、まだ前の世代 (``outgoing``) が作品の窓に映っている。
+    /// 走っている本番の子。乗り換えを待つ間は、まだ前の世代 (``outgoing``) が作品のウィンドウに映っている。
     ///
     /// **走っているほうを返す。** 前の世代が乗り換えを待つ間に自分で消えても、その後ろの子 (``child``) は
     /// 走っている — `outgoing ?? child` と引くと、消えたほうを本番と読んで「本番が居ない」と言う。
@@ -1800,7 +1800,7 @@ final class WatchSession {
     ///
     /// **入っても、いま走っているものには何も触らない。** 以後の保存が、試聴の子を起こす。
     private func enterAudition(_ request: WatchRequest, into answered: inout Answered) -> WatchReport {
-        // 窓を出せなかった見張りは、子が自分の窓を開く。プレビューが無いので、試聴の相手が居ない
+        // ウィンドウを出せなかった見張りは、子が自分のウィンドウを開く。プレビューが無いので、試聴の相手が居ない
         guard overlapsGenerations else {
             return refusal(id: request.id, action: request.action, .noPreview)
         }
@@ -1811,9 +1811,9 @@ final class WatchSession {
         guard let production else {
             return refusal(id: request.id, action: request.action, .noProduction)
         }
-        // **作品の窓が、番号を名乗る本番を映していなければ入らない** (古いライブラリの子は番号を名乗らない)。
-        // 試聴の版と本番を番号で区別できないので、入ると試聴の版が作品の窓にも出て、窓の入力は本番へ届く
-        // (絵と宛先が食い違う)。まだ何も映していない窓でも断る — 映してから入り直せばよい
+        // **作品のウィンドウが、番号を名乗る本番を映していなければ入らない** (古いライブラリの子は番号を名乗らない)。
+        // 試聴の版と本番を番号で区別できないので、入ると試聴の版が作品のウィンドウにも出て、ウィンドウの入力は本番へ届く
+        // (絵と宛先が食い違う)。まだ何も映していないウィンドウでも断る — 映してから入り直せばよい
         guard windowShowsPID() != nil else {
             return refusal(id: request.id, action: request.action, .unidentifiedGeneration)
         }
@@ -1823,7 +1823,7 @@ final class WatchSession {
         // 出た時点のソースのままの控え (``unadoptedStamp``) は下ろさない。入っても何も起こさず、中身を変えた保存が試聴の子を起こす
         pendingAudition = nil
         hasNamedAuditionDeparture = false
-        // 試聴の子が何度入れ替わっても、出るときの戻り先 (作品の窓が映す本番。乗り換えを待つ間は 2 つ) を失わない
+        // 試聴の子が何度入れ替わっても、出るときの戻り先 (作品のウィンドウが映す本番。乗り換えを待つ間は 2 つ) を失わない
         holdsPreviewGeneration(
             [outgoing, child].compactMap { $0 }.filter(\.isRunning).map(\.processIdentifier))
         answered.lines = [Self.auditioningNotice]
@@ -1832,8 +1832,8 @@ final class WatchSession {
 
     /// 試聴を出る。試聴の子を止め、プレビューを本番の絵へ戻し、区画 `build` の記録を本番の版へ戻す。
     ///
-    /// **戻る先は、作品の窓が最終的に映す本番である。** 乗り換えを待っている間は、いまの窓は前の世代
-    /// (``outgoing``) を映すが、乗り換えれば前の世代は畳まれ、窓は新しい側 (``child``) を映す。前の世代へ戻すと、
+    /// **戻る先は、作品のウィンドウが最終的に映す本番である。** 乗り換えを待っている間は、いまのウィンドウは前の世代
+    /// (``outgoing``) を映すが、乗り換えれば前の世代は畳まれ、ウィンドウは新しい側 (``child``) を映す。前の世代へ戻すと、
     /// 畳まれた瞬間に最後の絵で凍り、入力は新しい側へ届く (絵と宛先が食い違う)。新しい側へ戻れなければ、前の世代へ。
     private func leaveAudition(
         _ request: WatchRequest, into answered: inout Answered
@@ -1907,7 +1907,7 @@ final class WatchSession {
         case kept
         /// 作り直しが進行中で、その版が本番になる。
         case building
-        /// プレビューを戻せなかった。出た時点のソースを作り直して、両方の窓に出す。
+        /// プレビューを戻せなかった。出た時点のソースを作り直して、両方のウィンドウに出す。
         case rebuilds
         /// 本番が居ない。出た時点のソースで本番を起こす。
         case starts
@@ -1933,12 +1933,12 @@ final class WatchSession {
         }
     }
 
-    /// 作品の窓が、この目録を採るか ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    /// 作品のウィンドウが、この目録を採るか ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// **試聴の子の目録は採らない。** 作品の窓が映すのは本番で、試聴中に試聴の版が宣言を変えても (大きさ・
-    /// 全画面の頼み)、作品の窓に当てない。**番号を名乗らない目録は、試聴の間は採らない** — 試聴に入れるのは番号を
+    /// **試聴の子の目録は採らない。** 作品のウィンドウが映すのは本番で、試聴中に試聴の版が宣言を変えても (大きさ・
+    /// 全画面の頼み)、作品のウィンドウに当てない。**番号を名乗らない目録は、試聴の間は採らない** — 試聴に入れるのは番号を
     /// 名乗る本番だけ (``WatchReport/Reason/unidentifiedGeneration``) なので、番号を名乗らない目録は試聴の子のもの
-    /// (古いライブラリ) で、作品の窓には出さない。試聴に入っていなければ、これまでどおり採る。
+    /// (古いライブラリ) で、作品のウィンドウには出さない。試聴に入っていなければ、これまでどおり採る。
     func windowAccepts(pid: Int32?) -> Bool {
         guard let pid else { return !isAuditioning }
         return !auditionPIDs.contains(pid)
@@ -1968,7 +1968,7 @@ final class WatchSession {
 
     /// 番号を名乗らない試聴の子を止めて、名乗るべきことを返す ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// 古いライブラリの試聴の子は、番号で本番と区別できない。作品の窓にも出さず、プレビューも映せないので、
+    /// 古いライブラリの試聴の子は、番号で本番と区別できない。作品のウィンドウにも出さず、プレビューも映せないので、
     /// 試聴の子を止める。**試聴は続く** (本番はそのまま・次の保存でまた試聴の子を起こす)。
     ///
     /// - Returns: 止めた結果 (期限に掛かったことを名乗る)。止める子が居なければ `nil`。
@@ -2006,7 +2006,7 @@ final class WatchSession {
     /// 試聴の子を起こす。**本番の世代 (``child``・``outgoing``) には触れない。**
     ///
     /// 呼ぶ前に、前の試聴の子を止め終えている (試聴の子は重ねない)。記録は通常の回と同じ形で書くが、
-    /// 新しい絵が出るまでは測らない (作品の窓に出る絵ではない)。
+    /// 新しい絵が出るまでは測らない (作品のウィンドウに出る絵ではない)。
     private func launchAudition(
         executable: URL, stamp: String?, buildOutput: String, detectMs: Double?, buildMs: Double,
         relaunchStarted: Double
@@ -2073,7 +2073,7 @@ final class WatchSession {
 
     /// 試聴の子が、道具の知らないところで消えていたら 1 度だけ返す ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// ``departed()`` の試聴の側である。**本番は畳まない** — 試聴の版が落ちても、作品の窓は本番の版のまま回り続ける。
+    /// ``departed()`` の試聴の側である。**本番は畳まない** — 試聴の版が落ちても、作品のウィンドウは本番の版のまま回り続ける。
     /// 試聴の子は外すだけで、プレビューは最後の絵のまま残る (面は子が消えても出せる)。最初の絵を出す前に
     /// 失敗で終わった子は、起こせなかった回として記録を書き直す。前の版 (本番) は走り続けているので、
     /// ``Departure/keptPrevious`` は本番が生きているかである。
@@ -2104,9 +2104,9 @@ final class WatchSession {
         return departure
     }
 
-    /// 試聴の子が共有面を作れず自分の窓を開いたと知らされていたら、目印を読んで消し、`true` を返す。
+    /// 試聴の子が共有面を作れず自分のウィンドウを開いたと知らされていたら、目印を読んで消し、`true` を返す。
     ///
-    /// **何も畳まない** — 本番は作品の窓に映ったままである。プレビューは目録を採れないので、最後の絵のまま残る。
+    /// **何も畳まない** — 本番は作品のウィンドウに映ったままである。プレビューは目録を採れないので、最後の絵のまま残る。
     /// 目印は見たら消す (``retireAfterFallback()`` と同じ)。
     func auditionFellBack() -> Bool {
         guard let started = auditionChild, started.isRunning else { return false }
@@ -2132,14 +2132,14 @@ final class WatchSession {
 
     /// 次の世代が画面へ乗り換わった。**新しい絵が出るまでを記録へ足し、退役待ちを畳む。**
     ///
-    /// 合図は窓ごとに来る (作品の窓とプレビューは独立に見ている) ので、同じ入れ替えで
+    /// 合図はウィンドウごとに来る (作品のウィンドウとプレビューは独立に見ている) ので、同じ入れ替えで
     /// 2 度呼ばれる。測るのは最初の 1 度だけで、退役は冪等である。
     ///
     /// **記録は書き直す。** 起こし終えた時点の記録は既に置いてあるので、同じ区画へ
     /// 丸ごと原子的に置き直す — 別のファイルへ書き足すと、読み手は形を 2 つ知ることになる。
     ///
     /// **測らない回** (``BuildReport/Timings/firstFrameMs`` が空になる):
-    /// - 窓を出せない実行 — そもそも合図が来ない
+    /// - ウィンドウを出せない実行 — そもそも合図が来ない
     /// - まだ 1 度も合図を受けていない間に起こした世代 (初回を含む) — 合図が絵を指さない
     ///   (``hasSeenPromotion``)
     /// - 前の世代が乗り換わらずに生きているうちに差し替えた回 — どちらの合図か分からない
@@ -2154,7 +2154,7 @@ final class WatchSession {
         // **合図が名乗った子が、待っている世代でなければ受けない** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
         // 保存を続けた回、前の世代 (C) が 1 枚焼いて乗り換えた合図は、待っている次の世代 (D) のものでは
         // ない。待ちを下ろして C を畳むと、D が倒れても受け取れなくても、見張りはもう待っていないので
-        // 何もせず、道具の窓には畳まれた C の絵が凍る。映る世代が変わっただけなので、待ちも前の世代も
+        // 何もせず、道具のウィンドウには畳まれた C の絵が凍る。映る世代が変わっただけなので、待ちも前の世代も
         // そのままにする。番号を名乗らない合図 (古いライブラリの子) は今までの推定
         if let pid, awaitingPromotion, let waiting = child, pid != waiting.processIdentifier {
             return nil
@@ -2178,22 +2178,22 @@ final class WatchSession {
         return await retireOutgoing()
     }
 
-    /// 起こした子が共有面を作れず自分の窓へ倒れたと知らされていたら、**乗り換えの合図を待たずに**
+    /// 起こした子が共有面を作れず自分のウィンドウへ倒れたと知らされていたら、**乗り換えの合図を待たずに**
     /// 前の世代を退役させる ([#2350](https://github.com/mokume-metal/mokume/issues/2350))。
     ///
-    /// 前の世代を畳むのは、道具の窓が新しい世代の目録を採った合図 (``generationPromoted()``) だけ
-    /// だった。倒れた子は目録を置かないので合図が来ず、前の世代 (道具の窓に映る) と倒れた子 (自分の
-    /// 窓) が次の保存か見張りの終わりまで並走し、道具の窓が拾った出来事は前の世代へ送られ続けた。
+    /// 前の世代を畳むのは、道具のウィンドウが新しい世代の目録を採った合図 (``generationPromoted()``) だけ
+    /// だった。倒れた子は目録を置かないので合図が来ず、前の世代 (道具のウィンドウに映る) と倒れた子 (自分の
+    /// ウィンドウ) が次の保存か見張りの終わりまで並走し、道具のウィンドウが拾った出来事は前の世代へ送られ続けた。
     /// 倒れた子は「乗り換えた」とみなす — 保存した版を走らせるのが見張りの目的で、重ねるのは 1 世代
-    /// だけという規律 (``outgoing``) とも合う。代償は、道具の窓には絵が出ず (最後の絵が残る)、絵と
-    /// 入力は子の窓に移ること。
+    /// だけという規律 (``outgoing``) とも合う。代償は、道具のウィンドウには絵が出ず (最後の絵が残る)、絵と
+    /// 入力は子のウィンドウに移ること。
     ///
     /// **知らせは子が区画へ置く目印である** (``WorkDirectory/fellBackURL(forProcess:under:)``)。**乗り換え
     /// を待っている世代の pid のものだけを見る** — 前の世代や、死んだ世代の目印を新しい世代のものと
     /// 取り違えない。見た目印は消す。
     ///
     /// ``generationPromoted()`` とは別の口である。あちらは「新しい絵が出た」ことを記録へ足し
-    /// (``hasSeenPromotion``)、こちらは絵が道具の窓に出ていないので、足さない。
+    /// (``hasSeenPromotion``)、こちらは絵が道具のウィンドウに出ていないので、足さない。
     ///
     /// - Returns: 知らされていなければ `nil`。知らされたなら、前の世代を畳んだかと、その結果
     ///   (**名乗るのは口の側**・``retireOutgoing()``)。
@@ -2205,24 +2205,24 @@ final class WatchSession {
         try? FileManager.default.removeItem(at: marker)
         // 倒れた子は目録を置かないので、台は前の世代 (畳まれる) を映したまま頼みを持ち続ける (#2983)。
         // **前の世代を止めた後に伝える** — 止める前に伝えると、止まるまでに書く 1 枚で台が読み直す
-        // 倒れた子 (自分の窓を開く) は目録を置かないので、台が採ることは無い。手放す世代に含めてよい
+        // 倒れた子 (自分のウィンドウを開く) は目録を置かないので、台が採ることは無い。手放す世代に含めてよい
         return await retireAsPromoted(letGo: [waiting.processIdentifier])
     }
 
-    /// 起こした子の絵を道具の窓が受け取れないと知らされていたら、**乗り換えの合図を待たずに**
+    /// 起こした子の絵を道具のウィンドウが受け取れないと知らされていたら、**乗り換えの合図を待たずに**
     /// 前の世代を退役させる ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
     ///
     /// 知らされる形は、目録が読めない・目録は読めたが番号の面を引けない (``UndeliverableGeneration``)
     /// の 2 つで、どちらも道具の側で決まる失敗である。同じ目録を読み直しても変わらない (目録の書き手は
     /// 原子的に置く) ので、時計は要らない。**1 枚も焼かない形はここへ来ない** — `setup()` が長いのと
     /// 固まったのとは時計なしに見分けられず、前の世代を畳むと絵が凍る (ADR-0032 決定 3)。
-    /// 倒れた子 (``retireAfterFallback()``) と同じく、**乗り換えたとみなす**。代償は、道具の窓には
-    /// 最後の絵が残り、窓の入力は絵の出ない新しい子へ届くこと。
+    /// 倒れた子 (``retireAfterFallback()``) と同じく、**乗り換えたとみなす**。代償は、道具のウィンドウには
+    /// 最後の絵が残り、ウィンドウの入力は絵の出ない新しい子へ届くこと。
     ///
     /// **乗り換えを待っている、生きている世代のぶんだけ受ける。** 知らせは世代の印を持たないので、
     /// 待っていない回 (前の世代・次の世代・重ねない見張り) は何もしない。子が既に居ない回は
-    /// 「子の離脱」の口 (``departed()``) が畳む — ここでも名乗ると二重になる。窓ごとに知らせが来るので
-    /// (作品の窓とプレビューは独立に目録を読む)、2 度目は待ちが下りていて何もしない。
+    /// 「子の離脱」の口 (``departed()``) が畳む — ここでも名乗ると二重になる。ウィンドウごとに知らせが来るので
+    /// (作品のウィンドウとプレビューは独立に目録を読む)、2 度目は待ちが下りていて何もしない。
     ///
     /// - Parameter pid: 知らせが読めた目録の子の番号。**あれば、待っている世代でなければ受けない** (#2982)。
     /// - Returns: 受けなかったなら `nil`。受けたなら、前の世代を畳んだかと、その結果
@@ -2248,11 +2248,11 @@ final class WatchSession {
 
     /// 乗り換えを待っている、最後に起こした世代。待っていなければ `nil`。
     ///
-    /// **窓の知らせを受けた時点で、同期に控える** — 捌くのは `Task` で遅れるので、その間に世代が
+    /// **ウィンドウの知らせを受けた時点で、同期に控える** — 捌くのは `Task` で遅れるので、その間に世代が
     /// 入れ替わっても、知らせが出た世代を ``retireAfterUndeliverable(waiting:)`` が見分けられる。
     var waitingGeneration: Process? { awaitingPromotion ? child : nil }
 
-    /// 乗り換えを待つ世代を、窓へ乗り換えたものとみなして、前の世代を畳む。
+    /// 乗り換えを待つ世代を、ウィンドウへ乗り換えたものとみなして、前の世代を畳む。
     ///
     /// ``retireAfterFallback()`` と ``retireAfterUndeliverable()`` の共通の尾。
     /// ``generationPromoted()`` とは違い、**新しい絵は出ていない**ので記録へは足さない
@@ -2261,11 +2261,11 @@ final class WatchSession {
         previous: FallbackPrevious, outcome: StopOutcome?
     ) {
         awaitingPromotion = false
-        // **乗り換えたとみなした子は、台が何も言えない子として控える** (#3172・#3222)。倒れた子は自分の窓に描き、
+        // **乗り換えたとみなした子は、台が何も言えない子として控える** (#3172・#3222)。倒れた子は自分のウィンドウに描き、
         // 受け取れない世代は描いていても台の合図が来ない。絵を出した扱いにはせず、後で終わったときは
         // 子の起動中の印で読む(印が残っていれば、1 枚目の前に終わった子)
         if let waiting = child { stageSilentPIDs.insert(waiting.processIdentifier) }
-        // **測らない。** 道具の窓に新しい絵は出ないので、待っていた数字の行き先は無い
+        // **測らない。** 道具のウィンドウに新しい絵は出ないので、待っていた数字の行き先は無い
         firstFrameSince = nil
         let hadOutgoing = outgoing != nil
         let retiredPIDs = generationPIDs(of: outgoing)
@@ -2338,9 +2338,9 @@ final class WatchSession {
     /// 直前に通った作り直しの子 (起動中を含む) か、退役待ちの子のどちらかが、まだ走っているか。
     /// **終われと言われた後は数えない。**
     ///
-    /// 起こせなかった回に端末で「前の版のまま待つ」と名乗るかを決める (#2521)。窓のある見張り
+    /// 起こせなかった回に端末で「前の版のまま待つ」と名乗るかを決める (#2521)。ウィンドウのある見張り
     /// (``overlapsGenerations``) は前の世代を退役待ちに残してから起こすので、起こせなくても
-    /// 前の版が走り続ける。窓の無い見張りは起こす前に止めるので、走っていない。在るのに
+    /// 前の版が走り続ける。ウィンドウの無い見張りは起こす前に止めるので、走っていない。在るのに
     /// 起こせない成果物の回は、差し替えに入らないので走り続ける。
     ///
     /// **どちらの枠に居るかでなく、生きているかで数える** (#3482)。退役待ちの世代が自分で終わった
@@ -2354,7 +2354,7 @@ final class WatchSession {
     ///
     /// **終了コードだけでは区別が付かない。** 作り直しが 0 で終わったのに実行ファイルが
     /// 無い回は、出力に `Build complete!` としか書かれていない — 読み手 (切り分けの口と
-    /// 窓口) がそれを見ても、何が起きたのか分からない。
+    /// MCP サーバ) がそれを見ても、何が起きたのか分からない。
     private func unbuiltNotice(_ rebuilt: RunCommand.Rebuilt) -> String? {
         guard rebuilt.status == 0, rebuilt.executable == nil else { return nil }
         // **この回が探した名前で名乗る。** 見張りは宣言が変わった回に導き直すので、

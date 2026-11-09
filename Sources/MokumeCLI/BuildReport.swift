@@ -7,7 +7,7 @@ import mokume
 /// 直近の作り直しの結果。
 ///
 /// 観測 ([ADR-0018]) と同じ流儀で `.mokume/build/` に書く — 別の置き場も別の形も
-/// 作らず、区画をもう 1 つ足すだけにする。窓口はこれを読むだけでよくなる。
+/// 作らず、区画をもう 1 つ足すだけにする。MCP サーバはこれを読むだけでよくなる。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 struct BuildReport: Encodable, Equatable {
@@ -100,7 +100,7 @@ struct BuildReport: Encodable, Equatable {
 
     /// 与えた基準の下の、記録の在処。
     ///
-    /// **綴りはここ 1 つ。** 書くのは見張り、読むのは切り分けの口と窓口の 3 者いるので、
+    /// **綴りはここ 1 つ。** 書くのは見張り、読むのは切り分けの口と MCP サーバの 3 者いるので、
     /// 別々に組むと基準を揃えても同じ形で割れる
     /// ([#730](https://github.com/mokume-metal/mokume/issues/730))。
     static func statusURL(under facetBase: URL) -> URL {
@@ -125,11 +125,11 @@ struct BuildReport: Encodable, Equatable {
         var buildMs: Double
         /// 差し替え (古いものを畳み、新しいものを起こし終えるまで)。失敗したときは省く。
         ///
-        /// **起こし終えた時点で止まる。** 窓が新しい絵を出すまでは ``firstFrameMs`` が持つ。
+        /// **起こし終えた時点で止まる。** ウィンドウが新しい絵を出すまでは ``firstFrameMs`` が持つ。
         var relaunchMs: Double?
         /// 差し替えを始めてから、次の世代の 1 枚目が道具の面へ乗り換わるまで。
         ///
-        /// **窓を出せた見張りだけが書く。** 乗り換えの合図は道具の窓から来るので、窓の無い
+        /// **ウィンドウを出せた見張りだけが書く。** 乗り換えの合図は道具のウィンドウから来るので、ウィンドウの無い
         /// 実行では誰も知らせてくれない。合図が絵の出た時点を指すと言えない回
         /// (``WatchSession/generationPromoted()`` が挙げる) も省く — 嘘の数字より空欄を取る。
         ///
@@ -167,8 +167,8 @@ struct BuildReport: Encodable, Equatable {
     var timings: Timings
     /// 試聴の版の作り直しか ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// **試聴に入っている間の記録だけが `true` を持つ。** 試聴の版は作品の窓に出ない — 記録の `launched` は
-    /// 「プレビューに起こした」で、「作品の窓が映す版」ではない。試聴を出ると記録は本番の版に戻り、この欄は無くなる。
+    /// **試聴に入っている間の記録だけが `true` を持つ。** 試聴の版は作品のウィンドウに出ない — 記録の `launched` は
+    /// 「プレビューに起こした」で、「作品のウィンドウが映す版」ではない。試聴を出ると記録は本番の版に戻り、この欄は無くなる。
     /// 試聴に入っていない記録は、欄ごと持たない。
     var audition: Bool?
 
@@ -212,7 +212,7 @@ struct BuildReport: Encodable, Equatable {
 
     /// プレビューの 1 行の長さの上限。
     ///
-    /// プレビューの印は 1 行の小さな字で、折り返しも省略もしない (窓の幅で切れる)。**肝心なのは
+    /// プレビューの印は 1 行の小さな字で、折り返しも省略もしない (ウィンドウの幅で切れる)。**肝心なのは
     /// 末尾 (`(Permission denied)`) なので、長いときは中を詰める。**
     static let noticeLimit = 80
 
@@ -223,7 +223,7 @@ struct BuildReport: Encodable, Equatable {
     /// を前に付けると、起きたこととは別のことを言う。
     ///
     /// **「could not start」を重ねない。** 起こせなかった理由はふつう `Could not start <tool> in
-    /// <place>: …` で始まるので、前置きを足すと同じ言葉が 2 回出て、窓幅のぶんを使い切る。
+    /// <place>: …` で始まるので、前置きを足すと同じ言葉が 2 回出て、ウィンドウ幅のぶんを使い切る。
     var notStartedNotice: String? {
         guard let head = notStartedHead else { return nil }
         if head.hasPrefix(Self.stopRequestedNotice) { return head }
@@ -257,7 +257,7 @@ struct BuildReport: Encodable, Equatable {
     ///   (`: error:` を持たず、`fatal error:` でもない) の形で出す (ヘッダが見つからない等・実測) ので、この形には
     ///   当たらない。Swift の失敗だけが対象で、C 系は今の行のまま (端末には出ている)
     ///
-    /// ファイルと行が付かない `error:` の行 (リンクの失敗など) は拾わない — 窓の行は、直す場所が分かる行だけを
+    /// ファイルと行が付かない `error:` の行 (リンクの失敗など) は拾わない — ウィンドウの行は、直す場所が分かる行だけを
     /// 出す。端末に出た行を言い換えず、色の制御列だけを落とす。長いときは、肝心な文が末尾にあるので**中を詰める**
     /// (プレビューの他の行と同じ規則・同じ上限 — ``abbreviated(_:to:)``・``noticeLimit``)。
     var firstErrorLine: String? {
@@ -313,9 +313,9 @@ struct BuildReport: Encodable, Equatable {
     /// 起動できなかった理由の 2 行目の頭。**子が自分で渡した理由の最初の行**が続く
     /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
     ///
-    /// 見張りが書き (``WatchSession``)、窓口が読む (``Facets/notStartedAnswer()``)。**この行が有るときだけ、
+    /// 見張りが書き (``WatchSession``)、MCP サーバが読む (``Facets/notStartedAnswer()``)。**この行が有るときだけ、
     /// 子の言葉が `output` の頭に続く。** 子が理由を置けなかった回 (落ちた・起こせなかった) の理由には無いので、
-    /// 窓口は無い言葉を約束しない。
+    /// MCP サーバは無い言葉を約束しない。
     static let sketchReportedPrefix = "The sketch reported: "
 
     /// 終われと言われた後に作り直しが通った回の、起こさなかった理由 (本文の頭に置く)。

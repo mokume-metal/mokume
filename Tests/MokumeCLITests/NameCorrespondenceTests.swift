@@ -98,14 +98,14 @@ struct NameCorrespondenceTests {
         #expect(listed == ["observe", "build_status", "input", "reference"])
     }
 
-    /// **窓口は面より狭くも広くもならない。**
+    /// **MCP サーバは面より狭くも広くもならない。**
     ///
     /// 範囲の端の数値は面の仕様 (`Schemas/observe-request.schema.json`)・型の定数
-    /// (`ObservationRequest`)・窓口の `inputSchema`・窓口の散文の 4 箇所に現れていて、
-    /// **対応を見る機械が居なかった**。窓口が型の定数から出すようにしたので、残る
-    /// 突き合わせは仕様との一致だけである — そこがずれると、窓口が通した要求を
-    /// スケッチが切り詰めることになり、頼んだ側は窓口の説明からその理由を知れない。
-    @Test("窓口が名乗る上限は、面の仕様と一致する")
+    /// (`ObservationRequest`)・MCP サーバの `inputSchema`・MCP サーバの散文の 4 箇所に現れていて、
+    /// **対応を見る機械が居なかった**。MCP サーバが型の定数から出すようにしたので、残る
+    /// 突き合わせは仕様との一致だけである — そこがずれると、MCP サーバが通した要求を
+    /// スケッチが切り詰めることになり、頼んだ側は MCP サーバの説明からその理由を知れない。
+    @Test("MCP サーバが名乗る上限は、面の仕様と一致する")
     func theWindowAnnouncesTheSameLimitsAsTheSchema() throws {
         let declared = try Self.declaredObserveProperties()
         let announced = try #require(
@@ -119,14 +119,14 @@ struct NameCorrespondenceTests {
         for name in ["scale", "count", "every", "time"] {
             let fromSchema = try #require(declared[name] as? [String: Any], "\(name)")
             let fromWindow = try #require(announced[name] as? [String: Any], "\(name)")
-            // **型も突き合わせる。** 面の仕様が型を広げても、窓口の `inputSchema` との差が見えなくなる
+            // **型も突き合わせる。** 面の仕様が型を広げても、MCP サーバの `inputSchema` との差が見えなくなる
             // のを防ぐ。`null` の差だけは許す — 面の仕様は省略できる欄の `null` を受けると書き、
-            // 窓口はそれを省略と読む (#2393) が、`inputSchema` には `null` を型として書かない。
+            // MCP サーバはそれを省略と読む (#2393) が、`inputSchema` には `null` を型として書かない。
             // `null` 以外の型の差は赤にする
             let schemaTypes = types(fromSchema["type"])
             #expect(
                 schemaTypes.subtracting(["null"]) == types(fromWindow["type"]).subtracting(["null"]),
-                "\(name) の type が食い違う: 面 \(schemaTypes.sorted()) と窓口 \(types(fromWindow["type"]).sorted())")
+                "\(name) の type が食い違う: 面 \(schemaTypes.sorted()) と MCP サーバ \(types(fromWindow["type"]).sorted())")
             guard name != "time" else { continue }
             for bound in ["minimum", "maximum", "exclusiveMinimum"] {
                 #expect(
@@ -136,9 +136,9 @@ struct NameCorrespondenceTests {
         }
     }
 
-    /// **数値は型の定数から出る。** 窓口の散文に手で書くと、範囲の端を動かした日に
+    /// **数値は型の定数から出る。** MCP サーバの散文に手で書くと、範囲の端を動かした日に
     /// 説明だけが古い数を言い続ける。下限も同じ (#1699)。
-    @Test("窓口の説明に出る範囲の両端も、型の定数から出ている")
+    @Test("MCP サーバの説明に出る範囲の両端も、型の定数から出ている")
     func theProseCarriesTheSameNumbers() throws {
         let announced = try #require(
             Tools.ToolName.observe.inputSchema["properties"] as? [String: Any])
@@ -157,7 +157,7 @@ struct NameCorrespondenceTests {
     /// — 説明が応答の `time` を指していないと、読み手は枚数のまま並べて**黙って速さの
     /// 狂った動きを作る** ([#1285])。
     ///
-    /// 同じ前提は面の仕様・窓口の散文・型の doc の 3 箇所に写されていて、**揃って
+    /// 同じ前提は面の仕様・MCP サーバの散文・型の doc の 3 箇所に写されていて、**揃って
     /// 古びていた**。ここが見るのは前の 2 つで、どちらも並べ直す先を名指しすること
     /// である (型の doc はコンパイラも機械も読まないので、書く人とレビューが担う)。
     ///
@@ -172,7 +172,7 @@ struct NameCorrespondenceTests {
         let surfaces: [(String, [String: Any])] = [
             ("面の仕様", try Self.declaredObserveProperties()),
             (
-                "窓口の散文",
+                "MCP サーバの散文",
                 try #require(Tools.ToolName.observe.inputSchema["properties"] as? [String: Any])
             ),
         ]

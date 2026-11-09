@@ -10,13 +10,13 @@ import mokume
 @testable import MokumeCLI
 @testable import MokumeCore
 
-/// 試聴の間、**作品の窓の台とプレビューの台が別の世代を映す**ことを、見張りと台を繋いで見る (#3565 の完了条件 1・5・8)。
+/// 試聴の間、**作品のウィンドウの台とプレビューの台が別の世代を映す**ことを、見張りと台を繋いで見る (#3565 の完了条件 1・5・8)。
 ///
 /// 子は本物のプロセス (`/bin/sh`) で、その番号を名乗る目録と面は検査が置く — 本番の子が書くのと同じ形
 /// (区画 `viewport` の目録は 1 枚で、最後に書いた子のもので上書きされる)。台と見張りの繋ぎは
-/// ``WatchCommand/connectAudition(_:window:preview:)`` を本番と同じに通す。窓は開かない (台の拍は検査が打つ)。
+/// ``WatchCommand/connectAudition(_:window:preview:)`` を本番と同じに通す。ウィンドウは開かない (台の拍は検査が打つ)。
 @Suite(
-    "試聴中は、プレビューの台だけが試聴の子を映し、作品の窓の台は本番を映し続ける",
+    "試聴中は、プレビューの台だけが試聴の子を映し、作品のウィンドウの台は本番を映し続ける",
     .signalStateKept,
     .enabled(
         if: RenderDevice.isAvailable,
@@ -104,7 +104,7 @@ struct WatchAuditionStageTests {
         }
     }
 
-    @Test("試聴に入って保存すると、プレビューの台は試聴の子の pid になり、作品の窓の台は本番の pid のまま")
+    @Test("試聴に入って保存すると、プレビューの台は試聴の子の pid になり、作品のウィンドウの台は本番の pid のまま")
     func savingWhileAuditioningMovesOnlyThePreview() async throws {
         let rig = try Rig()
         let production = try #require(await rig.harness.save())
@@ -128,7 +128,7 @@ struct WatchAuditionStageTests {
             "プレビューが試聴の子へ乗り換えない: \(String(describing: rig.preview.displayedPID))")
         #expect(
             rig.window.displayedPID == production.processIdentifier,
-            "作品の窓が保存の前から変わった: \(String(describing: rig.window.displayedPID))")
+            "作品のウィンドウが保存の前から変わった: \(String(describing: rig.window.displayedPID))")
         #expect(production.isRunning, "本番の子が止まった")
 
         // もう 1 度保存: 試聴の子だけが入れ替わる
@@ -139,7 +139,7 @@ struct WatchAuditionStageTests {
         #expect(rig.window.displayedPID == production.processIdentifier)
         #expect(!first.isRunning && production.isRunning)
 
-        // 本番が目録を書き直した (大きさなど)。作品の窓はそれを採り、プレビューには採らない
+        // 本番が目録を書き直した (大きさなど)。作品のウィンドウはそれを採り、プレビューには採らない
         let rewritten = try rig.writer(for: production, windowScale: 2)
         await rig.tick()
         #expect(rig.window.displayedPID == production.processIdentifier)
@@ -178,7 +178,7 @@ struct WatchAuditionStageTests {
         _ = (firstWriter, secondWriter)
     }
 
-    @Test("試聴の子が落ちても、作品の窓の台は本番を映し続け、プレビューの台は試聴の最後の絵を残す")
+    @Test("試聴の子が落ちても、作品のウィンドウの台は本番を映し続け、プレビューの台は試聴の最後の絵を残す")
     func theCrashedAuditionLeavesTheWindowsAlone() async throws {
         let rig = try Rig()
         let production = try #require(await rig.harness.save())

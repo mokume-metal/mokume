@@ -11,7 +11,7 @@ import mokume
 
 /// `mokume watch` の世代交代 (``WatchSession``) を、**生成した操作の列** で見る (#3218・#3207 の提案 3)。
 ///
-/// ``WatchSessionTests`` は並びを 1 本ずつ手で書く。ここは、保存・窓の合図・子の消え方の列を seed つきで
+/// ``WatchSessionTests`` は並びを 1 本ずつ手で書く。ここは、保存・ウィンドウの合図・子の消え方の列を seed つきで
 /// 生成し、各操作の後に **事後条件** が成り立つかを見る。破れたら、縮めた列と破れた事後条件の番号を名乗る。
 ///
 /// ## 約束 (事後条件)
@@ -25,14 +25,14 @@ import mokume
 /// 1. 生きている子は、**本番の側が 2 つまで** (2 つなら、一方は乗り換えを待っている・
 ///    ``WatchSession/waitingGeneration``・#2350)、**試聴の側が 1 つまで**。試聴に入っていなければ試聴の側は居ない。
 ///    乗り換えを待つ世代が無ければ、全体で「本番 + 試聴」の 2 つまで
-/// 2. 入力 (``WatchSession/send(_:shownBy:)``) の宛先は、**窓が映している世代が生きていれば、その世代である**。
-///    作品の窓 (引数なし) は映っている本番の世代、プレビュー (その台の `displayedPID`) は試聴中なら映している試聴の世代
+/// 2. 入力 (``WatchSession/send(_:shownBy:)``) の宛先は、**ウィンドウが映している世代が生きていれば、その世代である**。
+///    作品のウィンドウ (引数なし) は映っている本番の世代、プレビュー (その台の `displayedPID`) は試聴中なら映している試聴の世代
 /// 3. 台へ手放した世代 (``WatchSession/relinquishesDisplay``): **映っていて、そこから去った世代は、かならず伝える**
 ///    (去るのは自分で終わる・畳まれる・倒れた知らせで前の世代になる回。#2983)。生きて映っている世代は伝えない。
 ///    試聴の子も同じ — プレビューが映した試聴の子が去る (自分で終わる・次の保存で止める・出る) 回は伝える。
 ///    **伝える回数は数えない** — 子の離脱 (`departed`)・映っている前の世代の離脱・次の保存の退役が同じ世代を重ねて
 ///    伝えうるが、台は番号を集合で覚える (`SharedFrameStage.relinquishSource` が `formUnion`) ので、重ねても同じ
-/// 4. 窓の合図は、待っている世代のものだけが待ちを下ろす。**ほかの世代の合図では、待ちも前の世代も動かず、合図された
+/// 4. ウィンドウの合図は、待っている世代のものだけが待ちを下ろす。**ほかの世代の合図では、待ちも前の世代も動かず、合図された
 ///    世代は生きたまま** (#2982)。倒れた知らせ・受け取れない知らせは、生きて待っている世代のぶんだけ前の世代を畳み、
 ///    2 度目は何もしない (#2928・#2350)。**試聴の子の合図は、どの合図も本番の側の何も動かさない** (#3565)
 /// 5. ``WatchSession/keepsPreviousRunning`` は「生きた世代がある」と一致する。1 度も起こしていなければ偽 (#2875)。
@@ -45,10 +45,10 @@ import mokume
 ///
 /// ## どこまで見て、どこで止めるか
 ///
-/// **GPU も窓も使わない。** 台 (`SharedFrameStage`) は作らず、台の合図 (乗り換え・倒れた・受け取れない・1 枚目)
+/// **GPU もウィンドウも使わない。** 台 (`SharedFrameStage`) は作らず、台の合図 (乗り換え・倒れた・受け取れない・1 枚目)
 /// は検査が ``WatchSession`` の口を直に呼んで模す。子は `/bin/sh` の替え玉 (`read line`) で、本物の子を起こす
 /// (重なりは生きた子でしか見えない)。**台の側の約束 (頼みを下ろす・寸法) は範囲外**で、ここで見るのは
-/// 台へ伝えたかどうか (事後条件 3) までである。窓の無い見張り (`overlapsGenerations == false`) は範囲外
+/// 台へ伝えたかどうか (事後条件 3) までである。ウィンドウの無い見張り (`overlapsGenerations == false`) は範囲外
 /// (世代が重ならず、事後条件 1〜4 が空になる)。
 ///
 /// 生成する操作は ``Op``。子が消える操作は終了コード 0 と非 0 (最初の絵の前に失敗で終わる・#3172) の 2 通り。
@@ -87,7 +87,7 @@ struct WatchSessionModelTests {
         case promoteAnonymous
         /// 台が、待っていない世代 (前の世代など) へ乗り換えた合図。
         case promoteStale
-        /// 乗り換えを待つ世代が倒れた (自分の窓を開いた) 知らせ。
+        /// 乗り換えを待つ世代が倒れた (自分のウィンドウを開いた) 知らせ。
         case fellBack
         /// 待っていない世代が倒れた知らせ。
         case fellBackStale
@@ -134,7 +134,7 @@ struct WatchSessionModelTests {
     }
 
     /// 生成する値 (座標の値の範囲の目盛り) から操作への対応。**先頭が `none`** (縮める先)。出やすさは目盛りの数で
-    /// 変える — 保存が列の骨で、窓の合図と子の消え方がそれを割る。
+    /// 変える — 保存が列の骨で、ウィンドウの合図と子の消え方がそれを割る。
     nonisolated static let table: [Op] = [
         .none, .beat,
         .save, .save, .save, .save,
@@ -231,7 +231,7 @@ struct WatchSessionModelTests {
     }
 
     /// 本番を起こす口は保存だけではない (#3693)。**生成する検査の seed に頼らず、決定的に回す。** 試聴を出る要求が
-    /// 本番を起こし直す回 (本番が試聴中に落ちた) は、起こした本番が乗り換えを待ち、その世代への窓の知らせは受ける。
+    /// 本番を起こし直す回 (本番が試聴中に落ちた) は、起こした本番が乗り換えを待ち、その世代へのウィンドウの知らせは受ける。
     /// 保留していた試聴の子は、乗り換えが決着した後の最初の拍 (保存・入る要求の拍でも) で起きる。
     @Test(
         "本番を起こし直す口・保留していた試聴の子が起きる拍でも、事後条件を破らない (#3693)",
@@ -319,9 +319,9 @@ struct WatchSessionModelTests {
         private var shown: Int?
         /// 乗り換えを待っている世代 (台の役)。起こしてから、台が乗り換え・倒れ・受け取れないのどれかを決めるまで。
         private var waiting: Int?
-        /// 台が受け取れない・自分の窓へ倒れたと知らせた世代。**台は乗り換えない** (目録を置かない・読めない)。
+        /// 台が受け取れない・自分のウィンドウへ倒れたと知らせた世代。**台は乗り換えない** (目録を置かない・読めない)。
         private var silent: Set<Int> = []
-        /// 自分の窓へ倒れたと知らせた世代 (目印を置いた)。**自分の窓に描いている**ので、1 枚目を出した世代と読まれる
+        /// 自分のウィンドウへ倒れたと知らせた世代 (目印を置いた)。**自分のウィンドウに描いている**ので、1 枚目を出した世代と読まれる
         /// (台が受け取れない世代 (``silent``) も、台の知らせが無いので、起動中の印で読まれて同じになる)。
         private var marked: Set<Int> = []
         /// 台が 1 度でも映した世代。
@@ -377,7 +377,7 @@ struct WatchSessionModelTests {
             }
             // プレビューは本番へ戻れる役を演じる (戻れない回は `WatchAuditionRefutationTests` が見る)
             session.returnsPreviewToGeneration = { _ in true }
-            // 作品の窓は、いま走っている本番を映している (番号を名乗る子) 役を演じる
+            // 作品のウィンドウは、いま走っている本番を映している (番号を名乗る子) 役を演じる
             session.windowShowsPID = { [unowned self] in
                 (session.outgoing ?? session.child)?.processIdentifier
             }
@@ -679,7 +679,7 @@ struct WatchSessionModelTests {
                 if productionAlive() != [target] {
                     return Violation(number: 4, text: "待っている G\(target) の\(label)の後、生きている本番の側が \(name(productionAlive())) (前の世代を畳んでいない)")
                 }
-                // 2 度目は何もしない (窓ごとに知らせが来る)
+                // 2 度目は何もしない (ウィンドウごとに知らせが来る)
                 if try await notify(op, about: target) {
                     return Violation(number: 4, text: "待っている G\(target) の\(label)を 2 度受けた")
                 }
@@ -868,14 +868,14 @@ struct WatchSessionModelTests {
             launchFails = false
         }
 
-        /// 窓の知らせを 1 度送る。**受けたか** を返す。
+        /// ウィンドウの知らせを 1 度送る。**受けたか** を返す。
         private func notify(_ op: Op, about index: Int, stale: Bool = false) async throws -> Bool {
             switch op {
             case .fellBack, .fellBackStale:
                 try placeFellBackMarker(of: index)
                 return await session.retireAfterFallback() != nil
             default:
-                // 窓は知らせを受けた時点の「待っている世代」を控えて、その世代と目録が名乗った番号で渡す
+                // ウィンドウは知らせを受けた時点の「待っている世代」を控えて、その世代と目録が名乗った番号で渡す
                 return await session.retireAfterUndeliverable(waiting: session.waitingGeneration, pid: pid(index)) != nil
             }
         }
@@ -919,7 +919,7 @@ struct WatchSessionModelTests {
             if let shown, isAlive(shown), (relinquished[shown] ?? 0) > 0 {
                 return Violation(number: 3, text: "生きて映っている G\(shown) を、台へ手放したと伝えた")
             }
-            // 終わるとき (窓ごと閉じる) は、台へ伝える相手が居ない
+            // 終わるとき (ウィンドウごと閉じる) は、台へ伝える相手が居ない
             if !stopped, let shown, !isAlive(shown), !unseen.contains(shown),
                 (relinquished[shown] ?? 0) == 0
             {
@@ -953,9 +953,9 @@ struct WatchSessionModelTests {
             return nil
         }
 
-        /// 2. 入力の宛先は、窓が映している世代が生きていれば、その世代である。
+        /// 2. 入力の宛先は、ウィンドウが映している世代が生きていれば、その世代である。
         ///
-        /// 作品の窓は映っている本番の世代。プレビューは、試聴中なら映している試聴の世代 (その台の `displayedPID`)。
+        /// 作品のウィンドウは映っている本番の世代。プレビューは、試聴中なら映している試聴の世代 (その台の `displayedPID`)。
         private func checkSend() -> Violation? {
             guard !stopped else { return nil }
             // プレビュー: 試聴の子が生きていれば、その子へ。本番の側へは届かない
@@ -970,7 +970,7 @@ struct WatchSessionModelTests {
                     return Violation(number: 2, text: "プレビューで触った出来事が、試聴の G\(audition) のほかの世代にも届いた")
                 }
             }
-            // 作品の窓: 映っている本番の世代へ
+            // 作品のウィンドウ: 映っている本番の世代へ
             guard let target = shown, isAlive(target) else { return nil }
             let before = alive()
             session.send("probe\n")

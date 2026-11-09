@@ -14,7 +14,7 @@ import mokume
 nonisolated enum CommandFailure: Error, Equatable {
     case usage(String)
     /// `--help` / `-h` が打たれた。**誤りではない** — ``Command/dispatch(_:)`` がその口の使い方を標準出力に
-    /// 書いて 0 で終わる。口を走らせる前に投げて止める (ビルド・診断・窓口の待ち受け・ファイルの作成をしない・#3425)。
+    /// 書いて 0 で終わる。口を走らせる前に投げて止める (ビルド・診断・MCP サーバの待ち受け・ファイルの作成をしない・#3425)。
     case helpRequested
     case nameMissing
     case invalidName(String)
@@ -48,7 +48,7 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 渡された場所 (または作業ディレクトリ) が、ディレクトリとして在らない。
     ///
     /// **``packageNotFound(path:)`` と分ける。** そちらは `Package.swift` を求める口の失敗で、
-    /// 窓口 (`mcp`) は `Package.swift` の無い場所でも起こされうる
+    /// MCP サーバ (`mcp`) は `Package.swift` の無い場所でも起こされうる
     /// ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
     case directoryNotFound(path: String)
     /// 走らせた場所が読めない (作業ディレクトリが消えた) のに、それを基準に解く相対パス
@@ -140,7 +140,7 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 宣言を疑わせる形は、`env` の 127 で塞いだ #1157 と同じである。
     ///
     /// **理由は道具立てが標準エラーで名乗っている** (聞く側は愚痴を混ぜずに流す — #731)。
-    /// 「上を読め」とは言わない: 見張りはこの文面を記録 (`BuildReport.output`) に載せ、窓口の
+    /// 「上を読め」とは言わない: 見張りはこの文面を記録 (`BuildReport.output`) に載せ、MCP サーバの
     /// 読み手には端末の「上」が無い。打ったものを名乗るので、打ち直せば同じ理由が読める。
     case toolchainFailed(command: String, status: Int32)
     /// 道具立ては 0 で答えたが、答えが読める形をしていなかった。`command` は打ったもの。
@@ -193,7 +193,7 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 同じ場所 (`.mokume/`) を、別の見張りが既に見張っている ([#2093](https://github.com/mokume-metal/mokume/issues/2093))。
     ///
     /// **2 本目は断って終わる。** 見張りは場所の区画を自分 1 本のものとして作り直し・畳むので、2 本が
-    /// 並ぶと 1 本目の窓が 2 本目の子を映し、止めると 1 本目の次の世代が自分の窓を開く。
+    /// 並ぶと 1 本目のウィンドウが 2 本目の子を映し、止めると 1 本目の次の世代が自分のウィンドウを開く。
     ///
     /// `pid` は先客の見張りの pid (錠ファイルに書かれたもの)。**診断のためだけで、断る判定は錠だけである** — 読めなければ `nil`。
     case alreadyWatching(place: String, pid: Int32?)

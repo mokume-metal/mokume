@@ -57,14 +57,14 @@ struct WatchCommandTests {
 
     // MARK: - 起動より前に置く区画
 
-    /// 窓口が使う区画は、子を起こす前に在る。
+    /// MCP サーバが使う区画は、子を起こす前に在る。
     ///
-    /// 区画が在るかどうかを見るのは起動の瞬間だけなので、置き損ねると窓口の道具は初めて
+    /// 区画が在るかどうかを見るのは起動の瞬間だけなので、置き損ねると MCP サーバの道具は初めて
     /// 呼んだ回に必ず空振りし、道具ごとに 1 回ずつ起動し直させることになる ([#464])。
-    /// **窓も GPU も要さない** — 区画を置くのはただのファイル操作である。
+    /// **ウィンドウも GPU も要さない** — 区画を置くのはただのファイル操作である。
     ///
     /// [#464]: https://github.com/mokume-metal/mokume/issues/464
-    @Test("窓口が使う区画は、子を起こす前に置かれる")
+    @Test("MCP サーバが使う区画は、子を起こす前に置かれる")
     func facetsForTheAgentSurfaceArePlacedUpFront() throws {
         let base = try makeDirectory()
 
@@ -79,8 +79,8 @@ struct WatchCommandTests {
         }
     }
 
-    /// **絵を渡す区画は先回りしない。** 在ると窓を開かず共有面へ差し出す区画なので、
-    /// 窓が出せなかった回に置くと絵がどこにも出ない ([ADR-0032] 決定 1)。
+    /// **絵を渡す区画は先回りしない。** 在るとウィンドウを開かず共有面へ差し出す区画なので、
+    /// ウィンドウが出せなかった回に置くと絵がどこにも出ない ([ADR-0032] 決定 1)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     @Test("絵を渡す区画は、先回りしては置かない")
@@ -130,11 +130,11 @@ struct WatchCommandTests {
         }
     }
 
-    /// **窓を出してから、最初の作り直しに入る。**
+    /// **ウィンドウを出してから、最初の作り直しに入る。**
     ///
-    /// 直に呼ぶと、窓が画面に出るのは初回の作り直しが終わってからになる — いちばん長く
+    /// 直に呼ぶと、ウィンドウが画面に出るのは初回の作り直しが終わってからになる — いちばん長く
     /// 待つのが初回なのに、待っている間だけ状態がどこにも出ない。端末では #695 が直した
-    /// ことが、窓では直らない ([#705](https://github.com/mokume-metal/mokume/issues/705))。
+    /// ことが、ウィンドウでは直らない ([#705](https://github.com/mokume-metal/mokume/issues/705))。
     @Test("最初の作り直しは、巡回へ渡してから始まる")
     func firstBuildStartsInsideTheLoop() throws {
         let kept = SignalState.current()
@@ -165,7 +165,7 @@ struct WatchCommandTests {
 
     /// **見張っている間だけ、省電力の間引きを断る。**
     ///
-    /// 窓が覆われて前面から降りた道具は App Nap に入り、そこでは CPU の優先度の断りも
+    /// ウィンドウが覆われて前面から降りた道具は App Nap に入り、そこでは CPU の優先度の断りも
     /// 外れる — 機械が混んでいると入れ替わりも終わりの合図も数秒途切れる
     /// ([#1199](https://github.com/mokume-metal/mokume/issues/1199))。App Nap そのものは
     /// 検査で再現できないので、ここが見るのは**断りを立てる場所と返す場所**である。
@@ -190,7 +190,7 @@ struct WatchCommandTests {
     ///
     /// 後始末を済ませた印 (`WatchCommand.teardownDone`) はプロセスに 1 つで、一度立つと下りない
     /// (本番の見張りは 1 プロセスに 1 回)。前の検査が立てたまま残すと、後に走る検査の後始末が
-    /// 冒頭で抜ける。窓を閉じないので駆動源が実行ループに残り、間引きの断りも返さない。
+    /// 冒頭で抜ける。ウィンドウを閉じないので駆動源が実行ループに残り、間引きの断りも返さない。
     /// 検査の順序に依らないように、印は ``SignalState`` が控えて戻す。
     ///
     /// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
@@ -364,7 +364,7 @@ struct WatchCommandTests {
         }
     }
 
-    /// **1 枚目の待ちは、待ちを置いた後の 1 度だけ畳む** (#2875)。2 つの窓が独立に合図を出すので
+    /// **1 枚目の待ちは、待ちを置いた後の 1 度だけ畳む** (#2875)。2 つのウィンドウが独立に合図を出すので
     /// 2 度目では畳まない。作り直しが始まった後に遅れて来た合図でも畳まない — 畳むと、
     /// 作り直しの行が消える。
     @Test("1 枚目の待ちは、待っている間の最初の合図でだけ畳む")
@@ -375,7 +375,7 @@ struct WatchCommandTests {
         wait.promoted(.window)
         wait.promoted(.preview)
         #expect(wait.shown(.window))
-        #expect(!wait.shown(.preview), "もう片方の窓の合図でもう一度畳んだ")
+        #expect(!wait.shown(.preview), "もう片方のウィンドウの合図でもう一度畳んだ")
 
         wait.wait()
         wait.promoted(.window)
@@ -385,21 +385,21 @@ struct WatchCommandTests {
 
     /// **前の子の 1 枚目で、新しい子の待ちを畳まない** (#2875 の反証)。最初の世代は絵が来る前に
     /// 採用されるので、`setup()` の最中に保存すると、前の子の 1 枚目の合図が新しい子を待つ間に来る。
-    /// 畳むのは、待ちを置いた後にその窓が乗り換えた世代の 1 枚目だけである。
-    @Test("待ちを置いた後に乗り換えていない窓の 1 枚目では畳まない")
+    /// 畳むのは、待ちを置いた後にそのウィンドウが乗り換えた世代の 1 枚目だけである。
+    @Test("待ちを置いた後に乗り換えていないウィンドウの 1 枚目では畳まない")
     func aLateFirstFrameOfThePreviousChildDoesNotClose() {
         let wait = FirstFrameWait()
         wait.wait()
         #expect(!wait.shown(.window), "前の子の 1 枚目で畳んだ")
         #expect(!wait.shown(.preview), "前の子の 1 枚目で畳んだ")
-        // 新しい子へ乗り換えたのは作品の窓だけ。プレビューはまだ前の子を出している
+        // 新しい子へ乗り換えたのは作品のウィンドウだけ。プレビューはまだ前の子を出している
         wait.promoted(.window)
-        #expect(!wait.shown(.preview), "乗り換えていない窓の合図で畳んだ")
+        #expect(!wait.shown(.preview), "乗り換えていないウィンドウの合図で畳んだ")
         #expect(wait.shown(.window))
     }
 
     /// 作り直しは通ったが子を起こせなかった回 (`ok: true, launched: false`) を、成功と同じに
-    /// 畳まない ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。畳むと窓の側は
+    /// 畳まない ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。畳むとウィンドウの側は
     /// 「保存した → 絵が止まっている → 何も出ない」になる。
     @Test("起こせなかった回は、重ねる行に起こせなかったことと理由の頭 1 行を出す")
     func namesTheReasonWhenTheBuildPassedButNothingStarted() throws {
@@ -413,7 +413,7 @@ struct WatchCommandTests {
     }
 
     /// **「could not start」を重ねず、長くても要点 (末尾の原因) が切れない。** 印は 1 行の小さな字で、
-    /// 折り返しも省略もしないので、窓幅で切れると肝心の `(Permission denied)` が落ちる。実際の
+    /// 折り返しも省略もしないので、ウィンドウ幅で切れると肝心の `(Permission denied)` が落ちる。実際の
     /// `cannotLaunch` の文面 (スキーマの代表例) で見る。
     @Test("実際の起こせなかった理由は、前置きを重ねず、短くしても原因が残る")
     func aRealReasonIsNotRepeatedAndKeepsItsCause() throws {
@@ -560,7 +560,7 @@ struct WatchCommandTests {
     }
 
     /// **時間切れで畳む形も受ける。** 期限を付けて起こした見張り (`alarm` + `exec`) が既定の
-    /// 動作で消え、子が窓の無いまま 28 時間残った ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
+    /// 動作で消え、子がウィンドウの無いまま 28 時間残った ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
     @Test("時間切れの合図 (SIGALRM) でも、印が立つ")
     func raisesTheStopFlagOnAlarm() {
         let kept = SignalState.current()
@@ -619,10 +619,10 @@ struct WatchCommandTests {
         #expect(await session.stop() == .notRunning)
     }
 
-    /// **窓から頼まれても、印は 1 つのまま。** 合図の置き場が増えると「終われと言われたか」
+    /// **ウィンドウから頼まれても、印は 1 つのまま。** 合図の置き場が増えると「終われと言われたか」
     /// の判定が経路ごとに分かれ、片方だけ直る形になる
     /// ([#826](https://github.com/mokume-metal/mokume/issues/826))。
-    @Test("窓から終わりを頼まれると、シグナルと同じ印が立ち、巡回が抜ける")
+    @Test("ウィンドウから終わりを頼まれると、シグナルと同じ印が立ち、巡回が抜ける")
     func raisesTheStopFlagFromTheWindow() async throws {
         let kept = SignalState.current()
         defer { kept.restore() }
@@ -633,13 +633,13 @@ struct WatchCommandTests {
         #expect(await WatchCommand.step(session), "印が立つ前に抜けている")
         WatchCommand.requestStop()
         #expect(watchStopRequested != 0)
-        #expect(await !WatchCommand.step(session), "窓から頼まれた印で抜けていない")
+        #expect(await !WatchCommand.step(session), "ウィンドウから頼まれた印で抜けていない")
     }
 
-    /// **押しどころの言葉を、窓の側で決めない** (#695 が端末の行で定めた規律)。
+    /// **押しどころの言葉を、ウィンドウの側で決めない** (#695 が端末の行で定めた規律)。
     ///
     /// 見ているのは綴りではなく、**続ける側と終える側が別の言葉であること**である。
-    @Test("窓に出す問いは、口の側が持つ")
+    @Test("ウィンドウに出す問いは、口の側が持つ")
     func theQuestionComesFromTheCommand() {
         #expect(!WatchCommand.closeMessage.isEmpty)
         #expect(!WatchCommand.closeDetail.isEmpty)

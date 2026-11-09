@@ -132,7 +132,7 @@ struct WatchSessionTests {
         #expect(events == ["初回を始める", "作り直す", "変更で始める", "作り直す"])
     }
 
-    /// **名乗らないのが既定。** 窓口はスケッチを起こさないが、口の側が何も渡さなければ
+    /// **名乗らないのが既定。** MCP サーバはスケッチを起こさないが、口の側が何も渡さなければ
     /// 何も起きないことを、ここで固定しておく。
     @Test("名乗りを渡さなければ、何も起きない")
     func staysSilentWithoutAListener() async throws {
@@ -238,7 +238,7 @@ struct WatchSessionTests {
             report, holdingPrevious: session.keepsPreviousRunning)
         #expect(lines == [report.summary, reason], "\(lines)")
         #expect(report.summary.hasPrefix("Rebuilt, but could not start it: "))
-        // 窓の無い見張りは起こす前に止めるので、前の版は走っていない
+        // ウィンドウの無い見張りは起こす前に止めるので、前の版は走っていない
         #expect(!session.keepsPreviousRunning)
     }
 
@@ -263,8 +263,8 @@ struct WatchSessionTests {
         #expect(!lines.joined().contains("Compiling"), "作り直しの出力を端末へ流した")
     }
 
-    /// **窓のある見張りは、起こせなかった回も前の版を走らせ続ける** (#2521 の反証)。前の世代を
-    /// 退役待ちへ残してから起こすので、端末は「前の版のまま待つ」と名乗る。窓の無い見張りは
+    /// **ウィンドウのある見張りは、起こせなかった回も前の版を走らせ続ける** (#2521 の反証)。前の世代を
+    /// 退役待ちへ残してから起こすので、端末は「前の版のまま待つ」と名乗る。ウィンドウの無い見張りは
     /// 起こす前に止めるので名乗らない。
     @Test(
         "起こせなかった回は、前の版が走り続けているときだけ前の版のまま待つと名乗る",
@@ -293,7 +293,7 @@ struct WatchSessionTests {
         let report = try #require(await session.tick())
         #expect(!report.launched)
         #expect(session.keepsPreviousRunning == overlapping)
-        #expect(previous.isRunning == overlapping, "窓の有無で前の版の扱いが変わっていない")
+        #expect(previous.isRunning == overlapping, "ウィンドウの有無で前の版の扱いが変わっていない")
         let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
         #expect(lines.contains(WatchCommand.holdingLine) == overlapping, "\(lines)")
         await session.end()
@@ -437,7 +437,7 @@ struct WatchSessionTests {
         let report = await session.start()
         #expect(recorder.builds == 1)
         #expect(recorder.launches == 1)
-        // 名乗ると決めていない見張りは、子へ速さの名乗りを渡さない (窓口の側の既定)
+        // 名乗ると決めていない見張りは、子へ速さの名乗りを渡さない (MCP サーバの側の既定)
         #expect(recorder.ratesGivenToChildren == [nil])
         #expect(report.ok)
         // 最初の 1 回は「保存から気付くまで」が無い
@@ -776,7 +776,7 @@ struct WatchSessionTests {
     /// **起こせなかった回も、作り直しの失敗と同じ顔にして理由を載せる。**
     ///
     /// かつては顔だけ揃えて理由を捨てていた — `try?` が投げられた誤りを丸ごと落とすので、
-    /// 記録の `output` は空になり、読み手 (窓口) にも端末にも「失敗した」しか届かなかった
+    /// 記録の `output` は空になり、読み手 (MCP サーバ) にも端末にも「失敗した」しか届かなかった
     /// ([#1100](https://github.com/mokume-metal/mokume/issues/1100))。`swift` が見つからない
     /// 手元で実際にそうなる。
     @Test("作り直しを起こせなかった回は、理由を記録に載せる")
@@ -800,7 +800,7 @@ struct WatchSessionTests {
         #expect(recorder.launches == 1, "起こせなかったのに、走っている版を差し替えている")
         #expect(report.timings.relaunchMs == nil)
 
-        // 区画のファイルにも同じ本文が載る — 窓口が読むのはこちらである
+        // 区画のファイルにも同じ本文が載る — MCP サーバが読むのはこちらである
         let data = try Data(
             contentsOf: directory.appendingPathComponent(".mokume/build/status.json"))
         let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -1113,7 +1113,7 @@ struct WatchSessionTests {
         #expect(waits.first.map { abs($0 - 29.8) < 0.001 } == true)
     }
 
-    /// **差し替えは保存のたびに払う待ちなので、延ばさない** (#732・#1219)。窓を持たない
+    /// **差し替えは保存のたびに払う待ちなので、延ばさない** (#732・#1219)。ウィンドウを持たない
     /// 見張りの差し替えは ``WatchSession/stop()`` を通るので、終えるときの口と分かれている
     /// ことをここで見る。
     @Test("差し替えは、後始末に時間のかかる子を待たずに落とす")
@@ -1291,7 +1291,7 @@ struct WatchSessionTests {
             stamp: { _ in scripted.stamp })
     }
 
-    /// 窓のある見張り (世代を重ねる) を、起こすたびに別の中身を走らせる外側で組む。
+    /// ウィンドウのある見張り (世代を重ねる) を、起こすたびに別の中身を走らせる外側で組む。
     @MainActor
     private func windowed(
         _ scripted: Scripted, ready: Ready, directory: URL? = nil
@@ -1309,7 +1309,7 @@ struct WatchSessionTests {
         return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
-    /// 窓のある見張りで、前の版の後に新しい版を起こした形を作る (次の保存を 1 回通した後)。返り値の
+    /// ウィンドウのある見張りで、前の版の後に新しい版を起こした形を作る (次の保存を 1 回通した後)。返り値の
     /// `first` が映っていた前の世代 (`outgoing`)、`second` が最後に起こした世代 (`child`)。
     @MainActor
     private func previousAndNew(
@@ -1441,10 +1441,10 @@ struct WatchSessionTests {
             "\(String(describing: departure.report?.notStartedReason))")
     }
 
-    /// **窓の無い見張りは、道具の窓の知らせが来ない。** 子が起動中の印を置かなければ (別の版のライブラリ・
+    /// **ウィンドウの無い見張りは、道具のウィンドウの知らせが来ない。** 子が起動中の印を置かなければ (別の版のライブラリ・
     /// 印を置く前に終わった子)、絵を出す前に終わった回と読まず、今までどおり自分で消えたと読む (でないと、
     /// 走っていた子が消えるたびに起動できなかったと誤読する)。印を置く子の読み方は下の #3222 の検査。
-    @Test("窓の無い見張りでは、起動中の印を置かない子が失敗で終わっても、起動できなかったとは読まない")
+    @Test("ウィンドウの無い見張りでは、起動中の印を置かない子が失敗で終わっても、起動できなかったとは読まない")
     func aWindowlessSessionNeverReadsADepartureAsFailingToStart() async throws {
         let ready = Ready()
         let session = WatchSession(
@@ -1559,7 +1559,7 @@ struct WatchSessionTests {
         #expect(departure.report?.notStartedReason != nil)
     }
 
-    /// **倒れた子 (自分の窓を開いた) は、絵を出したものとして扱う。** 台からの合図は来ない。
+    /// **倒れた子 (自分のウィンドウを開いた) は、絵を出したものとして扱う。** 台からの合図は来ない。
     @Test("倒れた子は、台から 1 枚目の合図が来なくても、起動できなかったとは読まない")
     func aFallenChildIsNotReadAsFailingToStart() async throws {
         let ready = Ready()
@@ -1744,7 +1744,7 @@ struct WatchSessionTests {
     }
 
     /// **前の見張りが残した「起動できなかった」記録は、始めるときに消える** (反証 2 回目の指摘 1)。新しい見張りの
-    /// 最初の作り直しの間、前の回の理由で窓口が答えない。作り直しの失敗・起こした記録は残す。
+    /// 最初の作り直しの間、前の回の理由で MCP サーバが答えない。作り直しの失敗・起こした記録は残す。
     @Test("見張りの開始は、前の見張りが残した起動できなかった記録を、最初の作り直しの前に消す", arguments: [
         (true, false, true), (false, false, false), (true, true, false),
     ])
@@ -1775,7 +1775,7 @@ struct WatchSessionTests {
     }
 
     /// **子が理由を置いたなら、1 枚目を出した扱いの子でも起動できなかった回である** (合図の推定より先に効く)。
-    /// 乗り換えの合図が先に来た子も、倒れた目印を置いた子 (自分の窓に描く) も、理由が在れば確かな証拠になる。
+    /// 乗り換えの合図が先に来た子も、倒れた目印を置いた子 (自分のウィンドウに描く) も、理由が在れば確かな証拠になる。
     @Test("1 枚目を出した扱いの子や倒れた目印のある子でも、理由を置いて終わったなら起動できなかった回と読む", arguments: [false, true])
     func aReasonOutweighsTheShownGuess(fellBack: Bool) async throws {
         let ready = Ready()
@@ -1838,9 +1838,9 @@ struct WatchSessionTests {
             "読んだ理由を消していない")
     }
 
-    /// **窓の無い見張りでも、子が理由を置いて終わったなら起動できなかった回である** (#3222)。窓の有る無しは、
+    /// **ウィンドウの無い見張りでも、子が理由を置いて終わったなら起動できなかった回である** (#3222)。ウィンドウの有る無しは、
     /// 子が自分で渡した理由の確かさを変えない。置かれた理由は読んで消す。
-    @Test("窓の無い見張りでも、子が理由を置いて終わったなら起動できなかった回と読み、理由は消す")
+    @Test("ウィンドウの無い見張りでも、子が理由を置いて終わったなら起動できなかった回と読み、理由は消す")
     func aWindowlessSessionReadsAReasonTheChildHandedOver() async throws {
         let ready = Ready()
         let (directory, script) = try failingWithNote("assembly failed\\n")
@@ -1862,7 +1862,7 @@ struct WatchSessionTests {
                 atPath: WorkDirectory.startFailureURL(forProcess: child.processIdentifier, under: facet).path))
     }
 
-    // MARK: - 窓の無い見張りと倒れた子 (#3222)
+    // MARK: - ウィンドウの無い見張りと倒れた子 (#3222)
 
     /// 子が起動中の印 (`.starting.<pid>`) を置いてから `rest` を走らせる中身。**置き方は子の側
     /// (`WorkDirectory.markStarting`) と同じ綴り。** 区画 `build` は、見張りが子を起こす前に用意する。
@@ -1882,9 +1882,9 @@ struct WatchSessionTests {
             hooks: hooks(scripted: Scripted([script]), ready: ready))
     }
 
-    /// **窓の無い見張りでも、1 枚目の前に失敗で終わった子は、起動できなかった回である。** 言葉も記録の形も
-    /// 窓のある見張りの起動失敗 (#3172) と同じ。前の版は止め済みなので、何も走っていない。
-    @Test("窓の無い見張りでも、起動中の印を残したまま失敗で終わった子を、起動できなかった回と読む")
+    /// **ウィンドウの無い見張りでも、1 枚目の前に失敗で終わった子は、起動できなかった回である。** 言葉も記録の形も
+    /// ウィンドウのある見張りの起動失敗 (#3172) と同じ。前の版は止め済みなので、何も走っていない。
+    @Test("ウィンドウの無い見張りでも、起動中の印を残したまま失敗で終わった子を、起動できなかった回と読む")
     func aWindowlessChildThatEndedWhileStartingDidNotStart() async throws {
         let ready = Ready()
         let directory = try makeDirectory()
@@ -1912,7 +1912,7 @@ struct WatchSessionTests {
         #expect(session.departed() == nil, "同じ消え方を 2 度名乗った")
     }
 
-    @Test("窓の無い見張りでも、起動中の印を残したまま落ちた子は、落ちたと名乗って起動できなかった回にする")
+    @Test("ウィンドウの無い見張りでも、起動中の印を残したまま落ちた子は、落ちたと名乗って起動できなかった回にする")
     func aWindowlessChildThatCrashedWhileStartingDidNotStart() async throws {
         let ready = Ready()
         let directory = try makeDirectory()
@@ -1928,7 +1928,7 @@ struct WatchSessionTests {
     }
 
     /// **1 枚目を出せば印が消える。** 消えた後で失敗した子は、走っていた子が消えた回で、これまでどおり。
-    @Test("窓の無い見張りでは、1 枚目を出して印を消した後に失敗で終わった子は、自分で消えたと読む")
+    @Test("ウィンドウの無い見張りでは、1 枚目を出して印を消した後に失敗で終わった子は、自分で消えたと読む")
     func aWindowlessChildThatEndedAfterItsFirstFrameIsStillDeparted() async throws {
         let ready = Ready()
         let directory = try makeDirectory()
@@ -1944,7 +1944,7 @@ struct WatchSessionTests {
         #expect(try recordedStatus(of: session)["launched"] as? Bool == true)
     }
 
-    @Test("窓の無い見張りでは、起動中の印を残していても、終了コード 0 で終わった子は起動の失敗にしない")
+    @Test("ウィンドウの無い見張りでは、起動中の印を残していても、終了コード 0 で終わった子は起動の失敗にしない")
     func aWindowlessChildThatExitedZeroWhileStartingDidNotFailToStart() async throws {
         let ready = Ready()
         let directory = try makeDirectory()
@@ -1958,7 +1958,7 @@ struct WatchSessionTests {
         #expect(session.departed() == WatchSession.Departure(status: 0, wasSignalled: false))
     }
 
-    /// **倒れた子 (自分の窓に描く) も同じ合図で覆う。** 目印 (`.fell-back.<pid>`) を置いた子は、これまで出した
+    /// **倒れた子 (自分のウィンドウに描く) も同じ合図で覆う。** 目印 (`.fell-back.<pid>`) を置いた子は、これまで出した
     /// 扱いだった。`setup()` が投げて 1 枚も出さずに死んだ倒れた子は、起動できなかった回である。
     @Test("倒れた子が、起動中の印を残したまま失敗で終わったら、起動できなかった回と読む", arguments: [true, false])
     func aFallenChildThatEndedWhileStartingDidNotStart(drewFirstFrame: Bool) async throws {
@@ -1985,10 +1985,10 @@ struct WatchSessionTests {
         #expect(departure.failedToStart == !drewFirstFrame, "倒れた子の読みが違う: \(departure)")
     }
 
-    /// **窓のある・倒れていない子は、これまでどおり台の知らせだけで読む** (#3172 を変えない)。起動中の印が
+    /// **ウィンドウのある・倒れていない子は、これまでどおり台の知らせだけで読む** (#3172 を変えない)。起動中の印が
     /// 残っていても台が出したと知らせていれば出した扱いで、印が消えていても台の知らせが無ければ出していない扱い。
-    /// 2 つの合図が食い違っても、窓のある子は台の側が勝つ。
-    @Test("窓のある子の読み分けは、起動中の印ではなく台の知らせで決まる", arguments: [true, false])
+    /// 2 つの合図が食い違っても、ウィンドウのある子は台の側が勝つ。
+    @Test("ウィンドウのある子の読み分けは、起動中の印ではなく台の知らせで決まる", arguments: [true, false])
     func aWindowedChildIsStillReadByTheStageNotByTheStartingMark(shownByStage: Bool) async throws {
         let ready = Ready()
         let directory = try makeDirectory()
@@ -2008,7 +2008,7 @@ struct WatchSessionTests {
 
         let departure = try #require(session.departed())
         #expect(
-            departure.failedToStart == !shownByStage, "窓のある子の読みが、台の知らせに従わない: \(departure)")
+            departure.failedToStart == !shownByStage, "ウィンドウのある子の読みが、台の知らせに従わない: \(departure)")
     }
 
     /// **巡回が倒れた目印を先に見て消した後でも、起動中の印で読む** (#3222 の反証)。巡回は子の離脱の後に倒れた子の
@@ -2191,7 +2191,7 @@ struct WatchSessionTests {
         #expect(session.outgoing == nil)
     }
 
-    /// **合図が来ない回がある** (新しい世代が絵を出さずに消えた・窓がそもそも無い)。
+    /// **合図が来ない回がある** (新しい世代が絵を出さずに消えた・ウィンドウがそもそも無い)。
     /// 重ねるのは 1 世代だけなので、次の差し替えが来たらそこで必ず止める。
     @Test("合図が来ないまま次の保存が来たら、そこで前の子を止める")
     func theOutgoingChildIsStoppedAtTheNextSwap() async throws {
@@ -2215,7 +2215,7 @@ struct WatchSessionTests {
         #expect(session.outgoing === second, "控えるのは直前の 1 世代だけである")
     }
 
-    /// **窓が出せなかった実行では合図が来ない。** そこは今までどおり、止めてから起こす。
+    /// **ウィンドウが出せなかった実行では合図が来ない。** そこは今までどおり、止めてから起こす。
     @Test("重ねない見張りは、いままでどおり止めてから起こす")
     func withoutOverlapTheChildIsStoppedFirst() async throws {
         let ready = Ready()
@@ -2265,8 +2265,8 @@ struct WatchSessionTests {
         return marker
     }
 
-    /// **作り直した子が共有面を作れず自分の窓へ倒れた回は、乗り換えの合図が来ない。** 前の世代
-    /// (道具の窓に映る) を畳まないと、2 つの子が次の保存まで走り続け、入力は前の世代へ行く。
+    /// **作り直した子が共有面を作れず自分のウィンドウへ倒れた回は、乗り換えの合図が来ない。** 前の世代
+    /// (道具のウィンドウに映る) を畳まないと、2 つの子が次の保存まで走り続け、入力は前の世代へ行く。
     @Test("倒れた子の知らせが来たら、乗り換えの合図を待たずに前の世代を止め、入力の宛先は新しい子になる")
     func aChildThatFellBackRetiresTheOutgoingOne() async throws {
         let ready = Ready()
@@ -2419,7 +2419,7 @@ struct WatchSessionTests {
     }
 
     /// **前の世代 (C) の乗り換えの合図は、待っている次の世代 (D) のものではない。** 番号を見ずに待ちを下ろして
-    /// C を畳むと、D が倒れても見張りはもう待っていないので何もせず、道具の窓には畳まれた C の絵が凍る。
+    /// C を畳むと、D が倒れても見張りはもう待っていないので何もせず、道具のウィンドウには畳まれた C の絵が凍る。
     @Test("待っていない世代の乗り換えの合図は受けず、続けて D が倒れたら前の世代を畳める")
     func aPromotionOfTheOutgoingGenerationDoesNotEndTheWait() async throws {
         let ready = Ready()
@@ -2702,12 +2702,12 @@ struct WatchSessionTests {
         #expect(told == [[leaving.processIdentifier]], "\(told)")
     }
 
-    // MARK: - 道具の窓が受け取れない世代 (#2928)
+    // MARK: - 道具のウィンドウが受け取れない世代 (#2928)
 
-    /// **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る。
+    /// **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具のウィンドウだけが知る。
     /// 前の世代を残したまま、プレビューの「起こしている」が終わらない・端末は黙る、になっていた。
     @Test(
-        "道具の窓が絵を受け取れないと知らされたら、前の世代を畳み、入力は新しい子へ行き、プレビューと端末へ 1 度名乗る",
+        "道具のウィンドウが絵を受け取れないと知らされたら、前の世代を畳み、入力は新しい子へ行き、プレビューと端末へ 1 度名乗る",
         arguments: [UndeliverableGeneration.unreadableManifest, .unreadableFile, .noSurface, .unusableSurface])
     func anUndeliverableGenerationRetiresTheOutgoingOne(cause: UndeliverableGeneration) async throws {
         let ready = Ready()
@@ -2722,10 +2722,10 @@ struct WatchSessionTests {
         #expect(session.outgoing === leaving)
 
         var lines: [(String?, Bool)] = []
-        // 知らせを受けた時点で待っている世代を控える (窓の口と同じ)
+        // 知らせを受けた時点で待っている世代を控える (ウィンドウの口と同じ)
         let waiting = session.waitingGeneration
         #expect(waiting === arriving)
-        // 窓ごとに知らせが来る (作品の窓とプレビュー)。畳むのも名乗るのも 1 度
+        // ウィンドウごとに知らせが来る (作品のウィンドウとプレビュー)。畳むのも名乗るのも 1 度
         for _ in 0..<2 {
             await WatchCommand.retireUndeliverable(
                 cause, session: session, waiting: waiting, preview: { lines.append(($0, $1)) })
@@ -2778,7 +2778,7 @@ struct WatchSessionTests {
         #expect(session.outgoing === previous)
     }
 
-    /// 乗り換えを待たない見張り (窓が出せなかった実行) では、知らせの口が無いので何もしない。
+    /// 乗り換えを待たない見張り (ウィンドウが出せなかった実行) では、知らせの口が無いので何もしない。
     @Test("重ねない見張りは、受け取れない知らせを読まない")
     func withoutOverlapAnUndeliverableNoticeChangesNothing() async throws {
         let ready = Ready()
@@ -2887,7 +2887,7 @@ struct WatchSessionTests {
         #expect(!none.contains("previous"), "前の世代が居ないのに前の世代を言っている")
     }
 
-    /// 重ねない見張り (窓が出せなかった実行) には乗り換えを待つ世代が居ないので、目印があっても何もしない。
+    /// 重ねない見張り (ウィンドウが出せなかった実行) には乗り換えを待つ世代が居ないので、目印があっても何もしない。
     @Test("重ねない見張りは、倒れた子の知らせを読まない")
     func withoutOverlapAMarkerChangesNothing() async throws {
         let ready = Ready()
@@ -2942,7 +2942,7 @@ struct WatchSessionTests {
     ///
     /// 読み口に立てた `O_NONBLOCK` は親の書き口に効かない (管の両端は別の open file
     /// description) ので、親が立てないと管の容量 (64KB) が埋まった次の `write` で
-    /// **main が永久に塞がる** — 窓も保存の検出も合図の巡回も、まとめて止まる (#1296)。
+    /// **main が永久に塞がる** — ウィンドウも保存の検出も合図の巡回も、まとめて止まる (#1296)。
     @Test("読まない子へ管の容量を越えて送っても、送る側は戻る")
     func sendingToAChildThatNeverReadsReturns() async throws {
         let ready = Ready()
@@ -3129,7 +3129,7 @@ struct WatchSessionTests {
 
     // MARK: - 新しい絵が出るまで (#930)
 
-    /// 窓を出せた見張りを、替え玉の外側で組む。**最初の世代は乗り換わった後まで進めてある。**
+    /// ウィンドウを出せた見張りを、替え玉の外側で組む。**最初の世代は乗り換わった後まで進めてある。**
     ///
     /// 最初の合図は絵を指さないので測らない — その先の、測れる差し替えから始めたい検査のため。
     @MainActor
@@ -3152,9 +3152,9 @@ struct WatchSessionTests {
     }
 
     /// **作者の実感は「保存してから新しい絵が出るまで」である。** `relaunchMs` は子を
-    /// 起こし終えた時点で止まるので、窓が新しい絵を出すまでは誰も測っていなかった
+    /// 起こし終えた時点で止まるので、ウィンドウが新しい絵を出すまでは誰も測っていなかった
     /// ([#930](https://github.com/mokume-metal/mokume/issues/930))。
-    @Test("窓を出せた見張りは、乗り換えの合図で新しい絵が出るまでを記録へ足す")
+    @Test("ウィンドウを出せた見張りは、乗り換えの合図で新しい絵が出るまでを記録へ足す")
     @MainActor
     func recordsTheTimeUntilTheNewPictureShows() async throws {
         let recorder = Recorder()
@@ -3175,15 +3175,15 @@ struct WatchSessionTests {
         #expect(abs(firstFrame - (recorder.clock - started) * 1000) < 1e-6)
         // **同じ時刻から数えるので、起こすまでを丸ごと含む**
         #expect(firstFrame >= (try #require(report.timings.relaunchMs)))
-        // **後から読んでも入っている。** 足しただけで書き直さなければ、窓口は古い記録を読む
+        // **後から読んでも入っている。** 足しただけで書き直さなければ、MCP サーバは古い記録を読む
         let written = try #require(try writtenTimings(of: session))
         #expect(written["firstFrameMs"] as? Double == firstFrame)
         #expect(written["relaunchMs"] as? Double == report.timings.relaunchMs)
     }
 
-    /// **合図は窓ごとに来る** (作品の窓とプレビュー)。2 度目で数え直すと、遅いほうの窓の
+    /// **合図はウィンドウごとに来る** (作品のウィンドウとプレビュー)。2 度目で数え直すと、遅いほうのウィンドウの
     /// 時刻になる。
-    @Test("2 つ目の窓からの合図では、数え直さない")
+    @Test("2 つ目のウィンドウからの合図では、数え直さない")
     @MainActor
     func theSecondWindowsSignalDoesNotRecountIt() async throws {
         let recorder = Recorder()
@@ -3201,7 +3201,7 @@ struct WatchSessionTests {
     }
 
     /// **合図が来ない実行で、項目を作らない。** 既存の 3 本は従来どおり書く。
-    @Test("窓を出せない見張りでは省き、既存の 3 本はそのまま書く")
+    @Test("ウィンドウを出せない見張りでは省き、既存の 3 本はそのまま書く")
     @MainActor
     func aSessionWithoutAWindowLeavesItOut() async throws {
         let recorder = Recorder()
@@ -3214,7 +3214,7 @@ struct WatchSessionTests {
         recorder.stamp = "bbb"
         await session.tick()
         recorder.clock += 0.2
-        // 窓の無い実行に合図は来ないが、来ても測らない
+        // ウィンドウの無い実行に合図は来ないが、来ても測らない
         await session.generationPromoted()
 
         let report = try #require(session.lastReport)
@@ -3357,7 +3357,7 @@ struct SourceStampTests {
     /// **断片を保存しても作り直さない。**
     ///
     /// 断片は走らせたまま差し替わるので、作り直して起動し直すと差し替わる様子そのものが
-    /// 見られなくなる — 保存のたびに窓が開き直り、絵は最初から始まる。
+    /// 見られなくなる — 保存のたびにウィンドウが開き直り、絵は最初から始まる。
     ///
     /// **資材の置き場 (`assets/`) の下でも同じ** — 置き場の資材は数えるようになったが
     /// (#2312)、断片は例外のまま。
@@ -3568,10 +3568,10 @@ struct FrameRateHandoffTests {
         #expect(RunCommand.childEnvironment(["A": "1"])["A"] == "1", "親の環境は運ぶ")
     }
 
-    /// **窓の持ち主は、起こした道具にしか決められない** ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
+    /// **ウィンドウの持ち主は、起こした道具にしか決められない** ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
     /// 渡したときだけ載り、渡さなければ親の環境に在っても落とす — 見張りの子の環境から
-    /// 打った `run` や `render` が継ぐと、区画が在るだけで居合わせた実行が窓と管を奪う形に戻る。
-    @Test("窓の持ち主は渡したときだけ載り、親の環境からは継がない")
+    /// 打った `run` や `render` が継ぐと、区画が在るだけで居合わせた実行がウィンドウと管を奪う形に戻る。
+    @Test("ウィンドウの持ち主は渡したときだけ載り、親の環境からは継がない")
     func theViewportOwnerLandsOnlyWhenGiven() throws {
         let key = StartupReads.viewportOwner.key
         #expect(RunCommand.childEnvironment([:])[key] == nil)
@@ -3580,20 +3580,20 @@ struct FrameRateHandoffTests {
             RunCommand.childEnvironment(
                 [key: "mokume watch"], reportingRate: "debug", confirmingCloseFor: "mokume run")[key]
                 == nil,
-            "run が渡す組み合わせで窓の持ち主が載っている")
+            "run が渡す組み合わせでウィンドウの持ち主が載っている")
         let request = try #require(
             RenderRequest(frameRate: 30, frameCount: 3, destination: "/tmp/out.mov"))
         #expect(
             RunCommand.childEnvironment([key: "mokume watch"], rendering: request)[key] == nil,
-            "render が渡す組み合わせで窓の持ち主が載っている")
+            "render が渡す組み合わせでウィンドウの持ち主が載っている")
         #expect(
             RunCommand.childEnvironment([:], viewportOwner: "mokume watch")[key] == "mokume watch")
     }
 
-    /// **本物の起こす口が、窓の持ち主として名乗りを渡す。** 替え玉の起こす口は環境を
+    /// **本物の起こす口が、ウィンドウの持ち主として名乗りを渡す。** 替え玉の起こす口は環境を
     /// 組まないので、`live` の側で渡し忘れても上の検査は緑のままになる。環境を書き留める
     /// だけの子を起こして見る。
-    @Test("本物の起こす口は、窓の持ち主として自分の名乗りを子へ渡す")
+    @Test("本物の起こす口は、ウィンドウの持ち主として自分の名乗りを子へ渡す")
     func theLiveLaunchPassesItselfAsTheViewportOwner() throws {
         let directory = try TestScratch.directory("mokume-owner")
         defer { try? FileManager.default.removeItem(at: directory) }

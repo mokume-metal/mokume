@@ -88,7 +88,7 @@ struct WatchOffMainTests {
         }
         try await waitUntil { gate.isWaiting }
 
-        // 巡回・窓の描き直し・× の問いの代わり。**どれも main actor の仕事**なので、
+        // 巡回・ウィンドウの描き直し・× の問いの代わり。**どれも main actor の仕事**なので、
         // 塞がっていればここは作り直しが終わるまで走れない
         Task { @MainActor in log.append("別の仕事が進む") }
         try await waitUntil { log.entries.contains("別の仕事が進む") }
@@ -207,7 +207,7 @@ struct WatchOffMainTests {
     }
 
     /// **大きな資材の要約は数百 ms かかる** (512 MiB で約 263 ms)。巡回が main actor で
-    /// 待つと、そのあいだ道具の窓が止まる ([#2518](https://github.com/mokume-metal/mokume/issues/2518))。
+    /// 待つと、そのあいだ道具のウィンドウが止まる ([#2518](https://github.com/mokume-metal/mokume/issues/2518))。
     @Test("巡回が世代を待っている最中も、main actor は別の仕事を進められる")
     @MainActor
     func theMainActorIsFreeWhileTheTickTakesTheStamp() async throws {

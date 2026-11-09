@@ -8,12 +8,12 @@ import mokume
 
 @testable import MokumeCLI
 
-/// 窓口が返した絵の場所は、別の書き手の次の撮影で書き換わらないこと
+/// MCP サーバが返した絵の場所は、別の書き手の次の撮影で書き換わらないこと
 /// ([#2992](https://github.com/mokume-metal/mokume/issues/2992))。
 ///
-/// 観測の区画は応答 1 枚・要求 1 枚で、書き手を調停しない。窓口が区画の中の場所をそのまま返すと、
+/// 観測の区画は応答 1 枚・要求 1 枚で、書き手を調停しない。MCP サーバが区画の中の場所をそのまま返すと、
 /// 別の書き手の撮り始めが応答と絵を消して同じ名前で書き直した後に、呼び手は別の書き手の絵を自分の絵として
-/// 読みうる。窓口は絵を自分の置き場へ写し、**写し終えた後に応答がまだ自分の識別子を echo している**
+/// 読みうる。MCP サーバは絵を自分の置き場へ写し、**写し終えた後に応答がまだ自分の識別子を echo している**
 /// ことを確かめてから渡す。掃除は応答を先に消す (`FrameObserver.clearProducts()`) ので、確かめられれば
 /// 写している間に掃除は始まっていない。確かめられなければ #2857 の取り合いとして答える。
 ///
@@ -77,7 +77,7 @@ struct ObservationCopyTests {
         let place = makePlace()
         defer { try? FileManager.default.removeItem(at: place.directory) }
         let finished = DispatchSemaphore(value: 0)
-        // 窓口が待っている間に、子の代わりに絵と応答を置く
+        // MCP サーバが待っている間に、子の代わりに絵と応答を置く
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
             put("X", at: place.facet.appendingPathComponent("frame-000.png"))
             put(reportJSON(id: "H", names: ["frame-000.png"]), at: place.report)
@@ -251,7 +251,7 @@ struct ObservationCopyTests {
         }
         #expect(reason == "No space left on device", Comment(rawValue: reason))
 
-        // 窓口の応答では、前置きは外側の 1 つだけ (内側も持つと二重に出る)
+        // MCP サーバの応答では、前置きは外側の 1 つだけ (内側も持つと二重に出る)
         let answer = place.tools.call("observe", arguments: [:])
         #expect(
             answer.text.contains("The picture could not be copied (No space left on device)"),
@@ -345,7 +345,7 @@ struct ObservationCopyTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: place.copies.root.path) == ["H"])
     }
 
-    @Test("窓口が終われば、置き場ごと消える")
+    @Test("MCP サーバが終われば、置き場ごと消える")
     func theRootGoesWithTheWindow() throws {
         let directory = TestScratch.path("mokume-copy", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -357,7 +357,7 @@ struct ObservationCopyTests {
         #expect(!FileManager.default.fileExists(atPath: root.path))
     }
 
-    @Test("既定の置き場は、窓口ごとに違う一時の場所で、区画の中ではない")
+    @Test("既定の置き場は、MCP サーバごとに違う一時の場所で、区画の中ではない")
     func theDefaultRootIsPerWindowAndOutsideTheFacet() {
         let first = ObservationCopies()
         let second = ObservationCopies()
@@ -366,9 +366,9 @@ struct ObservationCopyTests {
         #expect(!first.root.path.contains("/.mokume/"))
     }
 
-    // MARK: - 信号で終わった窓口の置き場
+    // MARK: - 信号で終わった MCP サーバの置き場
 
-    @Test("持ち主のプロセスが居ない古い置き場は、次の窓口が掃く。生きている持ち主と自分のは残す")
+    @Test("持ち主のプロセスが居ない古い置き場は、次の MCP サーバが掃く。生きている持ち主と自分のは残す")
     func staleRootsOfDeadOwnersAreSwept() throws {
         let directory = TestScratch.path("mokume-sweep", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -395,7 +395,7 @@ struct ObservationCopyTests {
 
     /// 道具の束を作るたびに一時の場所の全体を一覧すると、溜まった数万の項目を検査のたびになめて、
     /// 無関係な検査が桁違いに遅くなる ([#3131](https://github.com/mokume-metal/mokume/pull/3131))。
-    /// 掃くのは窓口が立つときだけ (`MCPCommand.run`) で、置き場を作るだけでは何も消さない。
+    /// 掃くのは MCP サーバが立つときだけ (`MCPCommand.run`) で、置き場を作るだけでは何も消さない。
     @Test("置き場を作るだけでは、一時の場所を掃かない")
     func makingTheRootDoesNotSweep() throws {
         // 走っているはずのない pid (macOS の pid は 99999 まで)

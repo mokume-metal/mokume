@@ -7,15 +7,15 @@ import Testing
 
 @testable import MokumeCLI
 
-/// **窓口の入口 (`JSONRPC.parse`) に、壊した行を当てる** ([#3220]・#3207 の提案 5)。GPU を使わない。
+/// **MCP サーバの入口 (`JSONRPC.parse`) に、壊した行を当てる** ([#3220]・#3207 の提案 5)。GPU を使わない。
 ///
-/// 窓口は、外のエージェントが送ってくる 1 行ずつの JSON を最初に読む。壊れた行は、落ちず・止まらず、
+/// MCP サーバは、外のエージェントが送ってくる 1 行ずつの JSON を最初に読む。壊れた行は、落ちず・止まらず、
 /// 呼び出しとして読むか、JSON-RPC 2.0 の誤りで断るか、応答として読み飛ばすかのどれかで答える。断りの
 /// 1 行は、それ自体が 1 行の JSON で、`error.code` (整数)・`error.message` と、読めるなら `id` を持つ。
 /// 見本は本物の呼び出しの形で、`MokumeCoreTests` の `LoaderProbeTests` と同じ生成器 (``ProbeBytes``) で壊す。
 ///
 /// [#3220]: https://github.com/mokume-metal/mokume/issues/3220
-@Suite("窓口の入口は、壊した行にも落ちず止まらず、呼び出しか名乗りつきの断りか読み飛ばしで答える")
+@Suite("MCP サーバの入口は、壊した行にも落ちず止まらず、呼び出しか名乗りつきの断りか読み飛ばしで答える")
 nonisolated struct JSONRPCProbeTests {
     static let samples: [[UInt8]] = [
         #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1.0"}}}"#,

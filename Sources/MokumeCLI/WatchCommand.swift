@@ -39,7 +39,7 @@ enum WatchCommand {
     ///
     /// **専用の小さなディレクトリの中に置く。** 書く側 (`AtomicFile`) は、落とされた書き手が残した一時ファイルを
     /// 探すために、最初に置くときファイルの隣を 1 度だけ引く — 一時ディレクトリの直下に置くと、物が溜まった
-    /// 一時ディレクトリ (実測で 14 万件) を最初の枚の中で引いて、窓の枚が 1 秒詰まった。錠のファイルと
+    /// 一時ディレクトリ (実測で 14 万件) を最初の枚の中で引いて、ウィンドウの枚が 1 秒詰まった。錠のファイルと
     /// 書きかけの一時ファイルも同じディレクトリに入るので、後始末はディレクトリごと消すだけで済む。
     static func keepTimeFile() -> URL {
         FileManager.default.temporaryDirectory
@@ -121,7 +121,7 @@ enum WatchCommand {
 
         // **場所を 1 本のものとして取る。区画に触れる前に** ([#2093](https://github.com/mokume-metal/mokume/issues/2093))。
         // 見張りは場所の区画を自分 1 本のものとして作り直し・畳むので、同じ場所に 2 本目が居ると
-        // 1 本目の窓が 2 本目の子を映し、止めると 1 本目の次の世代が自分の窓を開く。先客が居ればここで
+        // 1 本目のウィンドウが 2 本目の子を映し、止めると 1 本目の次の世代が自分のウィンドウを開く。先客が居ればここで
         // 断って終わる — 区画も、子の起動も、何も始めない。錠は終わりまで持つ (後始末の後に手放す)。
         // **宣言の検査より後に置く** — 宣言の不備で始まらない回に `.mokume` を作らない。区画の基準は
         // 環境変数が決める (走らせるスケッチは親の環境を引き継ぐので、記録をパッケージの場所へ置くと
@@ -164,7 +164,7 @@ enum WatchCommand {
         // ビルドと配布版の取り違えに気付けない** (#633 が実際にそうなった・#684)
         say("Tool: \(ToolVersion.describe())")
         // **常に名乗る。** 以前は基準がスケッチの場所と違うときだけ出していたが、それだと
-        // 窓口の側にだけ MOKUME_WORK_DIR が効いている向きで比べる材料が出ない (#380)
+        // MCP サーバの側にだけ MOKUME_WORK_DIR が効いている向きで比べる材料が出ない (#380)
         say(
             StartupReadsReport.baseLine(
                 base: session.facetBase, given: WorkDirectory.given != nil))
@@ -185,7 +185,7 @@ enum WatchCommand {
         // (#1219)、黙っていると固まったと読まれる
         session.willWaitForFinish = { say(finishWaitLine(remaining: $0)) }
 
-        // **窓口が使う区画は、窓より先に置く。** 窓が出せるかどうかと関係が無いうえ、
+        // **MCP サーバが使う区画は、ウィンドウより先に置く。** ウィンドウが出せるかどうかと関係が無いうえ、
         // 置き損ねると道具ごとに 1 回ずつ起動し直させることになる (#464)
         let prepared = prepareFacets(under: session.facetBase)
         // **見張りが答える区画は、見張り自身が作る** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
@@ -193,7 +193,7 @@ enum WatchCommand {
         // **作れなかったら、1 度だけ名乗る** — 黙っていると、置いた要求にいつまでも応答が返らない
         if let failure = session.serveRequests() { say(requestFacetFailedLine(reason: failure)) }
 
-        // **窓を先に出す。** 出せたときだけ区画ができ、子は窓を持たずに走る
+        // **ウィンドウを先に出す。** 出せたときだけ区画ができ、子はウィンドウを持たずに走る
         // ([ADR-0032] 決定 1)。子を起こしてからでは間に合わない — 区画は起動の瞬間に
         // しか読まれない
         //
@@ -204,12 +204,12 @@ enum WatchCommand {
         // 既定の振る舞い (親だけが即座に終わる) に落ちて子が残る
         installStopHandlers()
 
-        // **最初の作り直しも巡回の中で始める。** ここで直に呼ぶと、窓が画面に出るのは
+        // **最初の作り直しも巡回の中で始める。** ここで直に呼ぶと、ウィンドウが画面に出るのは
         // 作り直しが終わってからになる — いちばん長く待つのが初回なのに、待っている間
-        // だけ状態がどこにも出ない (#695 が端末で直したことが、窓では直らない)
+        // だけ状態がどこにも出ない (#695 が端末で直したことが、ウィンドウでは直らない)
         // **道具立ての終わり方も受ける。** Dock からの終了・ログアウト・システム終了は
-        // 窓を閉じる経路を通らない (`windowShouldClose` も巡回も通らない) ので、受けないと
-        // 子と区画が置き去りになる — 窓を持つ道具は `.regular` なので Dock に出ている
+        // ウィンドウを閉じる経路を通らない (`windowShouldClose` も巡回も通らない) ので、受けないと
+        // 子と区画が置き去りになる — ウィンドウを持つ道具は `.regular` なので Dock に出ている
         // ([#826](https://github.com/mokume-metal/mokume/issues/826))
         let delegate = ApplicationDelegate(
             stopRequested: {
@@ -220,7 +220,7 @@ enum WatchCommand {
             teardown: { teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile) })
         NSApplication.shared.delegate = delegate
 
-        // **巡回に入る前に断る。** 窓が覆われてから立てるのでは遅い — App Nap は
+        // **巡回に入る前に断る。** ウィンドウが覆われてから立てるのでは遅い — App Nap は
         // 起動から 30〜60 秒で入る (#1199)
         refuseThrottling()
         watching(session, viewer)
@@ -256,14 +256,14 @@ enum WatchCommand {
         return nil
     }
 
-    /// 窓口が使う区画を、子を起こす前に置く。**窓も GPU も要さない。**
+    /// MCP サーバが使う区画を、子を起こす前に置く。**ウィンドウも GPU も要さない。**
     ///
-    /// 区画が在るかどうかを見るのは起動の瞬間だけなので、誰も置かないと窓口の道具は
+    /// 区画が在るかどうかを見るのは起動の瞬間だけなので、誰も置かないと MCP サーバの道具は
     /// 初めて呼んだ回に必ず空振りし、道具ごとに 1 回ずつ起動し直すことになる ([#464])。
     /// 置くのは要求を置く側 (`Facets.exchange`) だが、それでは間に合わない。
     ///
-    /// **`viewport` は入れない。** 見張りの子はあれが在ると窓を開かず共有面へ差し出すので、
-    /// 窓が出せなかった回に置くと絵がどこにも出ない ([ADR-0032] 決定 1)。置く場所は
+    /// **`viewport` は入れない。** 見張りの子はあれが在るとウィンドウを開かず共有面へ差し出すので、
+    /// ウィンドウが出せなかった回に置くと絵がどこにも出ない ([ADR-0032] 決定 1)。置く場所は
     /// `openViewer` の中が正しい。
     ///
     /// - Returns: **こちらが作ったものだけ。** 元から在ったものは含めない — 人が置いた
@@ -302,7 +302,7 @@ enum WatchCommand {
         // **断りを返す。** 終わりの経路は 2 つある (巡回が抜けた / 道具立てが終わらせた)
         // が、どちらもここを通る
         allowThrottling()
-        // **待つ手続きは、窓を開いたまま済んでいる。** ここは窓を閉じる前の取りこぼしを拾うだけで、
+        // **待つ手続きは、ウィンドウを開いたまま済んでいる。** ここはウィンドウを閉じる前の取りこぼしを拾うだけで、
         // 通常は何もしない (``finishBlocking(_:)``)
         finishBlocking(session)
         // **止めている最中に失敗した子の理由も残さない** (#3169)。巡回が読む前に見張りが終わった子の分
@@ -311,8 +311,8 @@ enum WatchCommand {
         // **見張りが答える区画も置いていかない** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))
         session.closeRequests()
         // **置いていかない。** 区画は面の番号を置く場所で、置いた見張りが居なくなれば
-        // 指す先も無い (同じ場所に別の見張りは居ない — ``WatchPlaceLock`` が断っている・#2093)。残っても居合わせた実行は窓を開くが、開くたびに「区画が在るのに
-        // 窓の持ち主から起こされていない」と名乗らせることになる (#2028)
+        // 指す先も無い (同じ場所に別の見張りは居ない — ``WatchPlaceLock`` が断っている・#2093)。残っても居合わせた実行はウィンドウを開くが、開くたびに「区画が在るのに
+        // ウィンドウの持ち主から起こされていない」と名乗らせることになる (#2028)
         if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
         for facet in created { try? FileManager.default.removeItem(at: facet) }
         // **時計を渡すファイルも置いていかない** (`--keep-time`・#2414)。Dock の「終了」・ログアウト・システム終了は
@@ -333,7 +333,7 @@ enum WatchCommand {
 
     /// 省電力の間引きを断る。
     ///
-    /// **窓が覆われて前面から降りると、道具は App Nap に入る。** そこでは実行ループの
+    /// **ウィンドウが覆われて前面から降りると、道具は App Nap に入る。** そこでは実行ループの
     /// タイマーの断り (`PreventTimerThrottleTier0`) だけでなく、CPU の優先度の断り
     /// (`PreventSuppressedCPU` / `PreventLowPriorirtyCPU`) も外れる — 機械が混んでいると
     /// **走れる状態のまま順番が回ってこない** (`pri` が 46 から 4 へ落ちる)。入れ替わり
@@ -365,7 +365,7 @@ enum WatchCommand {
 
     /// 道具立ての終わり方を受ける。
     ///
-    /// **窓を閉じる経路を通らない終わり方がある。** `NSApplication` を終わらせる経路
+    /// **ウィンドウを閉じる経路を通らない終わり方がある。** `NSApplication` を終わらせる経路
     /// (Dock の「終了」・ログアウト・システム終了) は `windowShouldClose` を問わず、
     /// `run()` からも戻らない — 後始末はここでしか通れない。
     final class ApplicationDelegate: NSObject, NSApplicationDelegate {
@@ -379,11 +379,11 @@ enum WatchCommand {
         /// 見に来る間隔 (秒)。
         static let pollInterval: TimeInterval = 0.1
 
-        /// - Parameter stopRequested: 終われと言われたことを、窓の × と同じ印で伝える
+        /// - Parameter stopRequested: 終われと言われたことを、ウィンドウの × と同じ印で伝える
         ///   (``requestStop()`` と ``WatchSession/noteStopRequested()``)。**返事より先に呼ぶ** —
         ///   止めている間も巡回は回り続けるので、覚えさせないと新しい作り直しを始める。
         /// - Parameter isFinished: 走らせていたものを止め終えたか (``WatchSession/finishStage``)。
-        /// - Parameter teardown: 窓を閉じる・区画を片付ける。
+        /// - Parameter teardown: ウィンドウを閉じる・区画を片付ける。
         /// - Parameter reply: 終わってよいと返す。**検査が差し替える** — 実際に返すと、走者ごと終わる。
         init(
             stopRequested: @escaping () -> Void, isFinished: @escaping () -> Bool,
@@ -400,10 +400,10 @@ enum WatchCommand {
         }
 
         /// **子を止め終えてから終わると返す。** 同期の `applicationWillTerminate` で眠って待つと、
-        /// 撮っていた動画を閉じ終えるまで (最大 38 秒) 窓が開いたまま止まる
+        /// 撮っていた動画を閉じ終えるまで (最大 38 秒) ウィンドウが開いたまま止まる
         /// ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
         ///
-        /// **止める仕事はここでは起こさず、窓の × と同じ道に任せる。** 印を立てれば、巡回が抜けて
+        /// **止める仕事はここでは起こさず、ウィンドウの × と同じ道に任せる。** 印を立てれば、巡回が抜けて
         /// (`finish` で子を止め、`leave` する) 道が既にある。**main actor の仕事 (`Task`) で待たない**
         /// — `terminate(_:)` が main actor の仕事から呼ばれると、`await` の続きが永久に来ず終わりが
         /// 保留されたまま固まる (実測・`SketchApplicationDelegate.shouldTerminate` と同じ作法)。
@@ -440,13 +440,13 @@ enum WatchCommand {
         }
     }
 
-    /// 作品の窓を出し、絵を渡す区画を置く。
+    /// 作品のウィンドウを出し、絵を渡す区画を置く。
     ///
-    /// **順序に意味がある。** 区画を先に作ると、窓を出せなかったときに子も窓を開かず、
+    /// **順序に意味がある。** 区画を先に作ると、ウィンドウを出せなかったときに子もウィンドウを開かず、
     /// **どこにも絵が出ない実行**になる。出せたときだけ区画を作るので、失敗はいままでの
-    /// 振る舞い (スケッチが自分の窓を開く) に落ちる。
+    /// 振る舞い (スケッチが自分のウィンドウを開く) に落ちる。
     ///
-    /// 窓には**道具の都合を何も載せない** ([ADR-0032] 決定 1)。つまみも作り直しの状態も
+    /// ウィンドウには**道具の都合を何も載せない** ([ADR-0032] 決定 1)。つまみも作り直しの状態も
     /// 回っている印も、別に立てるプレビューの仕事である。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
@@ -475,10 +475,10 @@ enum WatchCommand {
             say("No window can open here, so the sketch will open its own")
             return nil
         }
-        // **どちらの窓で触っても、同じ作品へ届く。** 送る前にキャンバスの座標へ写して
-        // あるので、窓の大きさの違いはそこで吸収されている — 指は 1 本しかないので、
-        // 2 つの窓が「いまの値」を同時に持つことにはならない ([ADR-0032] 決定 4)
-        // **試聴の間だけ、窓ごとに宛先が変わる** (#3565)。プレビューで触った出来事は、プレビューが映している世代へ届く
+        // **どちらのウィンドウで触っても、同じ作品へ届く。** 送る前にキャンバスの座標へ写して
+        // あるので、ウィンドウの大きさの違いはそこで吸収されている — 指は 1 本しかないので、
+        // 2 つのウィンドウが「いまの値」を同時に持つことにはならない ([ADR-0032] 決定 4)
+        // **試聴の間だけ、ウィンドウごとに宛先が変わる** (#3565)。プレビューで触った出来事は、プレビューが映している世代へ届く
         window.onInput = { [weak session] in session?.send($0) }
         preview.onInput = { [weak session, weak preview] line in
             session?.send(line, shownBy: preview?.displayedPID)
@@ -493,7 +493,7 @@ enum WatchCommand {
                 "Dropped an input event of \(bytes) bytes: the sketch reads at most "
                     + "\(InputWire.lineLimit) bytes for one (for example, far too many files dropped at once)")
         }
-        // **窓が出せたときだけ世代を重ねる。** 前の世代を畳む合図はこの窓から来るので、
+        // **ウィンドウが出せたときだけ世代を重ねる。** 前の世代を畳む合図はこのウィンドウから来るので、
         // 出せなかった実行で重ねると、止める者の居ない子が残る (#1142)
         session.overlapsGenerations = true
         // **畳んだ・居なくなった世代の頼みを、両方の台で下ろす** (#2983)。台の知らせを通らない 3 つの口
@@ -512,10 +512,10 @@ enum WatchCommand {
             window?.expectGeneration(pids: pids)
             preview?.expectGeneration(pids: pids)
         }
-        // **2 つの窓は独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
+        // **2 つのウィンドウは独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
         //
         // **止める待ちは main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
-        // 合図は窓の側の同期の呼び出しなので、待つ仕事は `Task` へ渡す
+        // 合図はウィンドウの側の同期の呼び出しなので、待つ仕事は `Task` へ渡す
         let viewer = Viewer(window: window, preview: preview)
         let firstFrame = viewer.firstFrame
         // **合図が名乗った子の番号を渡す** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
@@ -528,9 +528,9 @@ enum WatchCommand {
             firstFrame.promoted(.preview)
             Task { @MainActor in await retire(after: session, pid: pid) }
         }
-        // **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る
+        // **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具のウィンドウだけが知る
         // ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。名乗って、乗り換えたとみなす。
-        // 窓ごとに来るので、畳むのは 1 度である (``WatchSession/retireAfterUndeliverable()``)
+        // ウィンドウごとに来るので、畳むのは 1 度である (``WatchSession/retireAfterUndeliverable()``)
         //
         // **知らせを受けた時点で、待っている世代を同期に控える。** 捌くのは `Task` で遅れ、知らせは世代の
         // 印を持たないので、作り直しの続きが先に走ると前の世代の知らせが次の世代に当たる
@@ -548,7 +548,7 @@ enum WatchCommand {
                     cause, session: session, waiting: waiting, pid: pid, viewer: viewer)
             }
         }
-        // **どちらの窓が先に出しても畳む。** 2 つの窓は独立に 1 枚目を出すので合図は 2 度来るが、
+        // **どちらのウィンドウが先に出しても畳む。** 2 つのウィンドウは独立に 1 枚目を出すので合図は 2 度来るが、
         // 畳むのは待っている間の 1 度だけである (``FirstFrameWait/shown(_:)``)
         //
         // **見張りへも、1 枚目を出した子の番号で伝える** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
@@ -562,18 +562,18 @@ enum WatchCommand {
             if firstFrame.shown(.preview) { preview?.report(nil, spinning: false) }
         }
         // **出す前に繋ぐ。** 出してから繋ぐと、その隙間に閉じられたぶんが素通りする
-        // (窓の中身を繋ぐ順序と同じ理由)
+        // (ウィンドウの中身を繋ぐ順序と同じ理由)
         askBeforeClosing(viewer)
-        // **プレビューを先に出す。** 後に出すと作品の窓の上に重なるので、本番へ送る
+        // **プレビューを先に出す。** 後に出すと作品のウィンドウの上に重なるので、本番へ送る
         // ほうを掴み直す手間がいちばん最初に生まれる
         preview.open()
         window.open()
         return viewer
     }
 
-    /// 試聴の間、2 つの窓が別の世代を映すための口を、見張りと繋ぐ ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    /// 試聴の間、2 つのウィンドウが別の世代を映すための口を、見張りと繋ぐ ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// 目録は 1 枚で、最後に書いた子のもので上書きされる。**置き方は変えず、読み手の窓が子の番号で採る目録を
+    /// 目録は 1 枚で、最後に書いた子のもので上書きされる。**置き方は変えず、読み手のウィンドウが子の番号で採る目録を
     /// 選ぶ** (``WatchSession/windowAccepts(pid:)``・``WatchSession/previewAccepts(pid:)``)。プレビューには、試聴を
     /// 出るときの戻り先 (本番の目録) を押し出さずに覚えさせる。
     static func connectAudition(
@@ -585,7 +585,7 @@ enum WatchCommand {
         session.returnsPreviewToGeneration = { [weak preview] pid in
             preview?.returnToGeneration(pid: pid) ?? false
         }
-        // 入る要求が、作品の窓が番号を名乗る本番を映しているかを問う口
+        // 入る要求が、作品のウィンドウが番号を名乗る本番を映しているかを問う口
         session.windowShowsPID = { [weak window] in window?.displayedPID }
     }
 
@@ -609,20 +609,20 @@ enum WatchCommand {
         WorkDirectory.facet(StartupReads.params.key, under: session.facetBase)
     }
 
-    /// 窓から終わりを頼まれた。
+    /// ウィンドウから終わりを頼まれた。
     ///
     /// **合図の置き場を増やさない。** シグナルと同じ印を立てるだけなので、この後は既に
-    /// ある道 (巡回が抜ける → 子を止める → 窓を畳む → 区画を片付ける) がそのまま通る。
-    /// 窓を閉じるのもここではない — 順序は `run` の後始末が持っている ([#826])。
+    /// ある道 (巡回が抜ける → 子を止める → ウィンドウを畳む → 区画を片付ける) がそのまま通る。
+    /// ウィンドウを閉じるのもここではない — 順序は `run` の後始末が持っている ([#826])。
     ///
     /// [#826]: https://github.com/mokume-metal/mokume/issues/826
     static func requestStop() {
         watchStopRequested = 1
     }
 
-    /// 窓の × を押した人に問うことを、2 つの窓へ同じように繋ぐ。
+    /// ウィンドウの × を押した人に問うことを、2 つのウィンドウへ同じように繋ぐ。
     ///
-    /// **作品の窓とプレビューで意味を分けない** ([ADR-0032] 決定 7)。プレビューだけが
+    /// **作品のウィンドウとプレビューで意味を分けない** ([ADR-0032] 決定 7)。プレビューだけが
     /// 消える形は、決定 7 が作らないと決めた「既定を外す口」そのものである。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
@@ -647,11 +647,11 @@ enum WatchCommand {
         announce(await session?.generationPromoted(pid: pid))
     }
 
-    /// 道具の窓が新しい世代の絵を受け取れないと知らされたとき、前の世代を畳み、端末とプレビューへ名乗る
+    /// 道具のウィンドウが新しい世代の絵を受け取れないと知らされたとき、前の世代を畳み、端末とプレビューへ名乗る
     /// ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
     ///
     /// **乗り換えを待っている、生きている世代のときだけ動く** (``WatchSession/retireAfterUndeliverable()``)。
-    /// 窓ごとに呼ばれるので、2 度目以降は何もしない。名乗るのも 1 度である。
+    /// ウィンドウごとに呼ばれるので、2 度目以降は何もしない。名乗るのも 1 度である。
     ///
     /// - Parameter waiting: 知らせを受けた時点で乗り換えを待っていた世代 (``WatchSession/waitingGeneration``)。
     /// - Parameter pid: 知らせが読めた目録の子の番号 (#2982)。待っている世代でなければ何もしない。
@@ -679,7 +679,7 @@ enum WatchCommand {
             undeliverableLine(previous: undelivered.previous, cause: cause, inTerminal: false), false)
     }
 
-    /// 道具の窓が新しい世代の絵を受け取れないとき、見張りが名乗る行 (#2928)。
+    /// 道具のウィンドウが新しい世代の絵を受け取れないとき、見張りが名乗る行 (#2928)。
     ///
     /// **理由の候補は、版のずれの可能性を断定せずに挙げる** (ADR-0018 決定 6)。目録が読めない形では、
     /// 台が理由と同じ候補を端末へ名乗り済み (#2889) なので、**端末の行は候補を繰り返さず**そちらを指す。
@@ -728,10 +728,10 @@ enum WatchCommand {
         }
     }
 
-    /// 作り直した子が共有面を作れず自分の窓を開いたとき、見張りが名乗る行 (#2350)。
+    /// 作り直した子が共有面を作れず自分のウィンドウを開いたとき、見張りが名乗る行 (#2350)。
     ///
     /// **子が名乗る理由** (`Could not place …` / `Could not make …`) は端末に既に出ているので、
-    /// ここは見張りの側で起きたこと — 絵と入力が子の窓へ移り、前の世代を畳んだこと — を言う。
+    /// ここは見張りの側で起きたこと — 絵と入力が子のウィンドウへ移り、前の世代を畳んだこと — を言う。
     /// 前の世代が居なかった回 (最初の子) は畳んでいないので、言わない。
     static func fellBackLine(previous: WatchSession.FallbackPrevious) -> String {
         let head = "could not hand its frames to this window, so it opened its own"
@@ -749,7 +749,7 @@ enum WatchCommand {
     /// **印を 0 に書いてから置く。** 置いた後の最初の書き込みがハンドラからだと、
     /// 変数の初期化がハンドラの中で起きうる。
     static func installStopHandlers() {
-        // **畳まれた管へ書いても死なないようにする。** 道具は窓が拾った出来事を子へ
+        // **畳まれた管へ書いても死なないようにする。** 道具はウィンドウが拾った出来事を子へ
         // 書くが、子は保存のたびに入れ替わる — 既定のままだと、入れ替えの隙間に触った
         // だけで**見張りごと消える** ([ADR-0032] 決定 4)
         signal(SIGPIPE, SIG_IGN)
@@ -782,7 +782,7 @@ enum WatchCommand {
         stopped: () -> Bool = { watchStopRequested != 0 },
         preview: ((String?, Bool) -> Void)? = nil
     ) async -> Bool {
-        // プレビューへ出す口。**検査は窓を作らずに、出した行を見られる**ように差し替える
+        // プレビューへ出す口。**検査はウィンドウを作らずに、出した行を見られる**ように差し替える
         let showInPreview = preview ?? { line, spinning in viewer?.preview.report(line, spinning: spinning) }
         if stopped() {
             session.noteStopRequested()
@@ -823,7 +823,7 @@ enum WatchCommand {
             }
         }
         // **試聴の子が消えた・倒れた回は、本番を畳まない** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
-        // 名乗るだけで、作品の窓は本番の版のまま回り続け、プレビューは最後の絵のまま残る
+        // 名乗るだけで、作品のウィンドウは本番の版のまま回り続け、プレビューは最後の絵のまま残る
         if let departure = session.auditionDeparted() {
             let lines =
                 departure.failedToStart && departure.report != nil
@@ -837,7 +837,7 @@ enum WatchCommand {
             }
         }
         // **番号を名乗らない版を試聴の子として起こした回は、止めて名乗る** (#3565)。本番と番号で区別できず、
-        // 作品の窓にも出せない・プレビューで触った出来事の宛先も引けない。試聴は続く
+        // 作品のウィンドウにも出せない・プレビューで触った出来事の宛先も引けない。試聴は続く
         if session.auditionIsUnidentified {
             announce(await session.stopUnidentifiedAudition())
             say(auditionUnidentifiedLine)
@@ -850,7 +850,7 @@ enum WatchCommand {
             showInPreview(auditionFellBackLine, false)
         }
         // **倒れた子は、乗り換えの合図が来ないので、ここで見つける** (#2350)。作り直した子が共有面を
-        // 作れず自分の窓を開いた回は、前の世代が道具の窓に映ったまま並走する
+        // 作れず自分のウィンドウを開いた回は、前の世代が道具のウィンドウに映ったまま並走する
         if let fallen = await session.retireAfterFallback() {
             announce(fallen.outcome)
             let line = fellBackLine(previous: fallen.previous)
@@ -866,8 +866,8 @@ enum WatchCommand {
             // し直せ」と案内することになる (#2875 の反証)
             guard !session.stopRequested else { return true }
             report(outcome, holdingPrevious: session.keepsPreviousRunning, on: viewer)
-            // **試聴の版を起こした回は、作品の窓がまだ前の版であることを添える** (#3565)。「Rebuilt」だけだと、
-            // 両方の窓が入れ替わったと読める
+            // **試聴の版を起こした回は、作品のウィンドウがまだ前の版であることを添える** (#3565)。「Rebuilt」だけだと、
+            // 両方のウィンドウが入れ替わったと読める
             if session.isAuditioning, outcome.ok, outcome.launched { say(auditionStartedLine) }
             // **差し替えで期限に掛かったことも名乗る。** 止め方は終わるときと同じ経路を
             // 通るので、保存のたびにも起こりうる (#732)
@@ -894,23 +894,23 @@ enum WatchCommand {
 
     /// 巡回する。**終わりの合図が来るまで回り、来たら抜ける。**
     ///
-    /// 眠って回るのではなく**アプリケーションの巡回に乗る**のは、道具が窓を持つように
-    /// なったからである ([ADR-0032] 決定 1)。窓の描き直しも画面の切り替えも AppKit の
-    /// 巡回の上で起きるので、そこを止めて眠ると窓が固まる。
+    /// 眠って回るのではなく**アプリケーションの巡回に乗る**のは、道具がウィンドウを持つように
+    /// なったからである ([ADR-0032] 決定 1)。ウィンドウの描き直しも画面の切り替えも AppKit の
+    /// 巡回の上で起きるので、そこを止めて眠るとウィンドウが固まる。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static func watch(_ session: WatchSession, viewer: Viewer? = nil) {
         let application = NSApplication.shared
-        // **最初の 1 拍で子を起こす。** 巡回に入る前に起こすと、窓が出るのは初回の
+        // **最初の 1 拍で子を起こす。** 巡回に入る前に起こすと、ウィンドウが出るのは初回の
         // 作り直しが終わってからになる
         let state = LoopState()
         // **`.common` へ載せる。** `Timer.scheduledTimer` は `.default` にしか載らず、
-        // 窓を掴んで動かしている間や大きさを変えている間は巡回が**止まる** — その間に
+        // ウィンドウを掴んで動かしている間や大きさを変えている間は巡回が**止まる** — その間に
         // 保存しても作り直されない
         let timer = loopTimer { _ in
             MainActor.assumeIsolated { () -> Void in
                 // **1 拍を `Task` へ渡す。** 作り直しを待つのはこの中で、待っている間
-                // main actor は空く — 窓の描き直しも × の問いもそこで捌かれる (#834)。
+                // main actor は空く — ウィンドウの描き直しも × の問いもそこで捌かれる (#834)。
                 // 待っている間に来た拍は `WatchSession` の印が弾く
                 Task<Void, Never> {
                     if !state.started {
@@ -926,8 +926,8 @@ enum WatchCommand {
                     if await step(session, viewer: viewer) { return }
                     guard !state.leaving else { return }
                     state.leaving = true
-                    // **窓を開いたまま、走らせていたものを止める。** 実行ループを抜けてから
-                    // 止めると、撮っていた動画を閉じ終えるまで (最大 38 秒) 窓が固まって見える。
+                    // **ウィンドウを開いたまま、走らせていたものを止める。** 実行ループを抜けてから
+                    // 止めると、撮っていた動画を閉じ終えるまで (最大 38 秒) ウィンドウが固まって見える。
                     // 待つあいだ main actor は空く ([#2576](https://github.com/mokume-metal/mokume/issues/2576))
                     await finish(session)
                     leave(application)
@@ -942,9 +942,9 @@ enum WatchCommand {
     /// 巡回の拍を刻むタイマー。**最初の拍は巡回に入った直後に来る** ([#1789])。
     ///
     /// `Timer(timeInterval:repeats:block:)` の最初の発火は「作った時刻 + 間隔」で、初回の
-    /// 作り直しは最初の拍で始まるので、窓が出てから必ず 1 拍 (0.25 秒) 空で待っていた。
+    /// 作り直しは最初の拍で始まるので、ウィンドウが出てから必ず 1 拍 (0.25 秒) 空で待っていた。
     /// 発火の時刻を今にしておけば、`application.run()` の最初の周回で拍が来る。作り直し
-    /// は拍の中から `Task` へ渡すので、巡回はすぐ空く — 窓を先に出す順序は変わらない。
+    /// は拍の中から `Task` へ渡すので、巡回はすぐ空く — ウィンドウを先に出す順序は変わらない。
     ///
     /// [#1789]: https://github.com/mokume-metal/mokume/issues/1789
     static func loopTimer(_ tick: @escaping @Sendable (Timer) -> Void) -> Timer {
@@ -972,9 +972,9 @@ enum WatchCommand {
     /// 「止めた」と見分けが付かない (#732)。
     ///
     /// **待つあいだ main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
-    /// 撮っていた動画を閉じ終えるまで最大 38 秒かかり、窓を閉じるのはこの後なので、塞ぐと
-    /// その間は窓が開いたまま止まって見える。**窓を閉じる前に済ませる順序は変えない** —
-    /// 呼ぶ側 (巡回を抜けるとき・道具立ての終了) が、窓を開いたままこれを待ってから窓を畳む。
+    /// 撮っていた動画を閉じ終えるまで最大 38 秒かかり、ウィンドウを閉じるのはこの後なので、塞ぐと
+    /// その間はウィンドウが開いたまま止まって見える。**ウィンドウを閉じる前に済ませる順序は変えない** —
+    /// 呼ぶ側 (巡回を抜けるとき・道具立ての終了) が、ウィンドウを開いたままこれを待ってからウィンドウを畳む。
     ///
     /// **2 度呼ばれても、止めて名乗るのは 1 度きり。** 終わりの経路は 2 つあり (巡回を抜けた・
     /// 道具立てが終わらせた)、後から来た呼び手は、先の手続きが済むまで待って戻る。
@@ -998,7 +998,7 @@ enum WatchCommand {
 
     /// ``finish(_:)`` の、main actor を塞ぐ版。**プロセスが終わる直前の後始末だけが使う。**
     ///
-    /// 通常の終わり方は ``finish(_:)`` を窓を開いたまま済ませてから抜けるので、ここへ来るのは
+    /// 通常の終わり方は ``finish(_:)`` をウィンドウを開いたまま済ませてから抜けるので、ここへ来るのは
     /// 先に済んでいない場合 (検査が見張りの口だけを通した・想定外の経路) だけである。それでも
     /// 置いていかないために、残っているものを同じ手順で止める。
     static func finishBlocking(_ session: WatchSession) {
@@ -1044,8 +1044,8 @@ enum WatchCommand {
         for line in reportLines(outcome, holdingPrevious: holdingPrevious) { say(line) }
         guard let viewer else { return }
         // **起こせた回は、新しい子の 1 枚目が出るまで畳まない** ([#2875])。子の起動と
-        // `setup()` の間は長いことがあり (初回はとくに)、ここで畳むと作品の窓もプレビューも
-        // 何も言わない時間ができる。畳むのは窓が 1 枚目を出した合図 (``Viewer/firstFrame``)
+        // `setup()` の間は長いことがあり (初回はとくに)、ここで畳むと作品のウィンドウもプレビューも
+        // 何も言わない時間ができる。畳むのはウィンドウが 1 枚目を出した合図 (``Viewer/firstFrame``)
         //
         // [#2875]: https://github.com/mokume-metal/mokume/issues/2875
         if outcome.ok && outcome.launched {
@@ -1073,8 +1073,8 @@ enum WatchCommand {
     ///
     /// - Parameter holdingPrevious: 何かの世代が生きているか — 前の版が走り続けているか、起動中の新しい世代があるか
     ///   (``WatchSession/keepsPreviousRunning``)。
-    ///   起こせなかった回に、そうであるときだけ ``holdingLine`` を名乗る — 窓のある見張りは前の
-    ///   世代を残してから起こし、窓の無い見張りは起こす前に止める。**通らなかった回も同じ口で
+    ///   起こせなかった回に、そうであるときだけ ``holdingLine`` を名乗る — ウィンドウのある見張りは前の
+    ///   世代を残してから起こし、ウィンドウの無い見張りは起こす前に止める。**通らなかった回も同じ口で
     ///   分ける** ([#2875](https://github.com/mokume-metal/mokume/issues/2875)) — 最初の 1 回と、
     ///   子が自分で消えた後の回には前の版が居ないので、``holdingLine`` は偽になる。
     static func reportLines(_ outcome: BuildReport, holdingPrevious: Bool) -> [String] {
@@ -1108,12 +1108,12 @@ enum WatchCommand {
     /// 言う** — 何も走っていないとだけ言うと、もう一度起こし直す必要があると読める。
     static let nothingRunningLine = "nothing is running yet — fix it and save to rebuild"
 
-    /// 窓を閉じようとした人に問う言葉。
+    /// ウィンドウを閉じようとした人に問う言葉。
     ///
-    /// **窓に出る言葉も、端末に出ている言葉と同じ側で持つ** (#695 が `startingLine` で
-    /// 定めた規律)。窓の側 (`SharedFrame*`) は出し方だけを持ち、何と言うかは決めない。
+    /// **ウィンドウに出る言葉も、端末に出ている言葉と同じ側で持つ** (#695 が `startingLine` で
+    /// 定めた規律)。ウィンドウの側 (`SharedFrame*`) は出し方だけを持ち、何と言うかは決めない。
     static let closeMessage = "Stop watching?"
-    /// 押した後どうなるか。**両方の窓が畳まれることを言う** — 押した人が閉じようとしたのは
+    /// 押した後どうなるか。**両方のウィンドウが畳まれることを言う** — 押した人が閉じようとしたのは
     /// 片方だが、終わるのは見張りごとである。
     static let closeDetail = "The running sketch stops too, and both the work's window and the preview close."
     /// 終わる側の押しどころ。
@@ -1162,7 +1162,7 @@ enum WatchCommand {
 
     /// 試聴の版が、誰も頼んでいないのに消えたことを名乗る行 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// ``departedLine(_:)`` と同じく、終わり方と数字を載せる。違うのは、**作品の窓が止まっていない**ことと、
+    /// ``departedLine(_:)`` と同じく、終わり方と数字を載せる。違うのは、**作品のウィンドウが止まっていない**ことと、
     /// 次の一手 — 保存すれば、新しい版がまたプレビューで試される。
     static func auditionDepartedLine(_ departure: WatchSession.Departure) -> String {
         departure.wasSignalled
@@ -1174,9 +1174,9 @@ enum WatchCommand {
                 + "Save and the new version is tried in the preview again"
     }
 
-    /// 試聴の間に、作品の窓が映していた版が消えたことを名乗る行 (#3565)。
+    /// 試聴の間に、作品のウィンドウが映していた版が消えたことを名乗る行 (#3565)。
     ///
-    /// **「保存すれば起こし直す」とは言わない** — 試聴の間の保存は試聴の版しか起こさない。作品の窓は最後の絵のまま
+    /// **「保存すれば起こし直す」とは言わない** — 試聴の間の保存は試聴の版しか起こさない。作品のウィンドウは最後の絵のまま
     /// 残り、試聴は続く。
     static func productionDepartedInAuditionLine(_ departure: WatchSession.Departure) -> String {
         let how =
@@ -1203,7 +1203,7 @@ enum WatchCommand {
         + "(an older mokume library), so it cannot be told apart from the work's version. The "
         + "work's window keeps running the version it had"
 
-    /// 試聴の版が共有面を作れず自分の窓を開いたことを名乗る行 (#3565)。
+    /// 試聴の版が共有面を作れず自分のウィンドウを開いたことを名乗る行 (#3565)。
     static let auditionFellBackLine =
         "The version under audition could not hand its frames to the preview, so it opened its own "
         + "window — the work's window keeps running the version it had"
@@ -1228,7 +1228,7 @@ enum WatchCommand {
     ///   と同じ口)。
     /// - Returns: 通って起こせたら `nil` (``startingSketchLine`` は出し手の ``report`` が置く)。通らなかったら**出したままにする行** — 消すと
     ///   「保存したのに絵が変わらない」が「変えた結果が同じだった」と見分けられない。
-    ///   **通って起こせなかった回も同じ理由で出す** — 畳むと、窓の側では「保存した → 絵が
+    ///   **通って起こせなかった回も同じ理由で出す** — 畳むと、ウィンドウの側では「保存した → 絵が
     ///   止まっている → 何も出ない」になる ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。
     static func notice(for outcome: BuildReport, holdingPrevious: Bool) -> String? {
         guard outcome.ok else {
@@ -1241,17 +1241,17 @@ enum WatchCommand {
         return outcome.notStartedNotice
     }
 
-    /// 道具が出す窓。
+    /// 道具が出すウィンドウ。
     ///
-    /// **作品の窓とプレビューは兄弟**で、同じ区画を独立に見る ([ADR-0032] 決定 1)。
-    /// 親子にしないのは、作品が窓を持たない日 (Syphon で外へ流すなど) にプレビューだけを
+    /// **作品のウィンドウとプレビューは兄弟**で、同じ区画を独立に見る ([ADR-0032] 決定 1)。
+    /// 親子にしないのは、作品がウィンドウを持たない日 (Syphon で外へ流すなど) にプレビューだけを
     /// 出せる形にしておくためである。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     struct Viewer {
-        /// 作品の窓。**道具の都合を何も載せない。**
+        /// 作品のウィンドウ。**道具の都合を何も載せない。**
         let window: SharedFrameWindow
-        /// 制作を助ける窓。状態と印とつまみが載る。
+        /// 制作を助けるウィンドウ。状態と印とつまみが載る。
         let preview: SharedFramePreview
         /// 起こした子の 1 枚目を待っているか (#2875)。
         let firstFrame = FirstFrameWait()
@@ -1269,7 +1269,7 @@ enum WatchCommand {
     /// 作り直しが通って子を起こし、その 1 枚目を待つ間にプレビューへ出す行 (#2875)。
     ///
     /// **端末の要約 (`Rebuilt: …`) と同じ事実だけを言う。** 起こしたことは要約の頭が名乗って
-    /// おり、ここが足すのは「絵はまだ出ていない」ことで、それは作品の窓を見れば分かる。
+    /// おり、ここが足すのは「絵はまだ出ていない」ことで、それは作品のウィンドウを見れば分かる。
     static let startingSketchLine = "Rebuilt — starting the sketch…"
 
     /// 変化を見つけて作り直すときの行。
@@ -1309,20 +1309,20 @@ enum WatchCommand {
 
 /// 起こした子の 1 枚目を待っているか ([#2875](https://github.com/mokume-metal/mokume/issues/2875))。
 ///
-/// **畳むのは、待ちを置いた後にその窓が乗り換えた世代の 1 枚目だけである。** 窓の 1 枚目の合図は
+/// **畳むのは、待ちを置いた後にそのウィンドウが乗り換えた世代の 1 枚目だけである。** ウィンドウの 1 枚目の合図は
 /// 世代の印を持たない (目録も同じ)。最初の世代は絵が来る前に採用されるので、`setup()` の最中に
 /// 保存すると、前の子が遅れて出した 1 枚目の合図が、新しい子を待っている間に来る。待ちを置いた後の
-/// 乗り換えを窓ごとに見ていれば、それは新しい子の世代である — 子を起こしてから待ちを置くまでの
+/// 乗り換えをウィンドウごとに見ていれば、それは新しい子の世代である — 子を起こしてから待ちを置くまでの
 /// 間に中断点は無く、新しい子の目録がそれより先に採用されることはない。
 ///
 /// 作り直しが始まった後に前の子の合図が遅れて来ても畳まない。畳むと、作り直しの行が消える。
 @MainActor
 final class FirstFrameWait {
-    /// 合図を出す窓。2 つの窓は独立に世代を乗り換える。
+    /// 合図を出すウィンドウ。2 つのウィンドウは独立に世代を乗り換える。
     enum Pane: Hashable { case window, preview }
 
     private(set) var waiting = false
-    /// 待ちを置いた後に世代を乗り換えた窓。
+    /// 待ちを置いた後に世代を乗り換えたウィンドウ。
     private var promoted: Set<Pane> = []
 
     /// 子を起こした。1 枚目が出るまで、起こしている行を残す。
@@ -1334,12 +1334,12 @@ final class FirstFrameWait {
     /// 別の行が上書きした (作り直しが始まった・結果を名乗った・子が消えた)。もう待たない。
     func settle() { waiting = false }
 
-    /// 窓が出す世代を乗り換えた。
+    /// ウィンドウが出す世代を乗り換えた。
     func promoted(_ pane: Pane) {
         if waiting { promoted.insert(pane) }
     }
 
-    /// 窓が 1 枚目を出した。**待ちを置いた後にその窓が乗り換えた世代のときだけ `true`** を返し、
+    /// ウィンドウが 1 枚目を出した。**待ちを置いた後にそのウィンドウが乗り換えた世代のときだけ `true`** を返し、
     /// 待ちを下ろす。
     func shown(_ pane: Pane) -> Bool {
         guard waiting, promoted.contains(pane) else { return false }

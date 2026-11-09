@@ -7,7 +7,7 @@ import mokume
 
 /// 区画への読み書き。
 ///
-/// **窓口は決して起こさない** — 走っているスケッチを立ち上げることも、作り直すことも
+/// **MCP サーバは決して起こさない** — 走っているスケッチを立ち上げることも、作り直すことも
 /// しない。所有はいつでも見張っている道具の側にあり、ここは区画のファイルを読み書き
 /// するだけの薄い層である。
 ///
@@ -21,7 +21,7 @@ struct Facets {
     static let defaultWaitLimit: TimeInterval = 5
     /// 期限へ足す待ちの長さの上限 (秒)。1 日。
     ///
-    /// 窓口が待つ本番の最長 (撮る列の上限 120 枚 × 間隔 60 フレームを 30fps で換算して約 4 分)
+    /// MCP サーバが待つ本番の最長 (撮る列の上限 120 枚 × 間隔 60 フレームを 30fps で換算して約 4 分)
     /// より十分大きく、`DispatchTime` のナノ秒 (Int64) に収まる。**呼び手が渡す待ちは
     /// 外から来る値で足されるので**、無限・巨大・NaN・負が `DispatchTime` の期限の計算へ
     /// 届かないよう、足す前にここで丸める ([#1940](https://github.com/mokume-metal/mokume/issues/1940))
@@ -44,11 +44,11 @@ struct Facets {
     /// **応えないときの案内が名乗る。** 走らせる側と食い違っていても症状は「誰も応えない」
     /// でしかなく、それは「まだ起動していない」と見分けが付かない (#380 着手条件 2)。
     var workDirectoryGiven: Bool = false
-    /// 窓口を立てた場所と、そこがスケッチか (``InterfacePlace``)。
+    /// MCP サーバを立てた場所と、そこがスケッチか (``InterfacePlace``)。
     ///
-    /// **``workDirectoryGiven`` と同じく、起動の時点で決まる事実として持つ** (#2487)。窓口は
+    /// **``workDirectoryGiven`` と同じく、起動の時点で決まる事実として持つ** (#2487)。MCP サーバは
     /// 在る場所なら受ける (#2321) ので、スケッチでない場所でも立つ。応えないときの案内は
-    /// 「窓口の場所 = スケッチの場所」を前提にせず、この事実から組む。`nil` は場所を知らない
+    /// 「MCP サーバの場所 = スケッチの場所」を前提にせず、この事実から組む。`nil` は場所を知らない
     /// 呼び手で、場所の話をしない (``Tools`` は組むときに必ず埋める)。
     var place: InterfacePlace?
     /// 区画の基準に、作り直しを見張っている見張り (`watch`) が今居るか。**検査から差し替える。**
@@ -57,15 +57,15 @@ struct Facets {
     /// 場所の錠を見る (``WatchPlaceLock/isHeld(under:)``)。
     var isWatching: @Sendable (URL) -> Bool = { WatchPlaceLock.isHeld(under: $0) }
 
-    /// 区画の基準が、スケッチでない窓口の場所に落ちているか。
+    /// 区画の基準が、スケッチでない MCP サーバの場所に落ちているか。
     ///
-    /// `MOKUME_WORK_DIR` があれば基準は窓口の場所に依らないので、窓口をどこで立てたかは
-    /// 応えない原因にならない。無ければ基準は窓口を立てた場所で、そこにスケッチが無ければ、
+    /// `MOKUME_WORK_DIR` があれば基準は MCP サーバの場所に依らないので、MCP サーバをどこで立てたかは
+    /// 応えない原因にならない。無ければ基準は MCP サーバを立てた場所で、そこにスケッチが無ければ、
     /// 自分の場所で走るスケッチ (`watch`) とは噛み合わない。区画を読み書きする答え
     /// (応えない・作り直しの記録が無い・置けない) が、場所の手を添えるのはこのときだけである。
     var facetsOutsideSketch: Bool { !workDirectoryGiven && place?.isSketch == false }
 
-    // 区画の名前も ``StartupReads`` から取る。窓口の側で綴りを持つと、スケッチが見る
+    // 区画の名前も ``StartupReads`` から取る。MCP サーバの側で綴りを持つと、スケッチが見る
     // 場所と黙って食い違いうる (#380)
     var observeFacet: URL { facet(StartupReads.observe) }
     var inputFacet: URL { facet(StartupReads.input) }
@@ -119,10 +119,10 @@ struct Facets {
     /// - Parameter now: 期限を測る時計。**眠っている間は進まない `DispatchTime` で測る** —
     ///   壁時計 (`Date`) だと、待っている最中に機械が眠ると起きた瞬間に期限を越えて、
     ///   スケッチの応答を待たずに「誰も応えない」を返す ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
-    /// - Throws: 置けなかったときだけ。**型が付いているので、窓口は `\(error)` を
+    /// - Throws: 置けなかったときだけ。**型が付いているので、MCP サーバは `\(error)` を
     ///   そのまま返さずに済む** — untyped だったころは `NSCocoaErrorDomain Code=513 …`
     ///   がエージェントへ届いていた。`CommandFailure` は「どの失敗にも次に何をすれば
-    ///   よいかを書く」と宣言しているのに、窓口の 2 箇所だけがその規律の外だった。
+    ///   よいかを書く」と宣言しているのに、MCP サーバの 2 箇所だけがその規律の外だった。
     func exchange(
         facet: URL, request: [String: Any], id: String, extraWait: TimeInterval = 0,
         isCancelled: () -> Bool = { false },
@@ -143,9 +143,9 @@ struct Facets {
             // 鍵の並びは ``AtomicFile/writeJSON(_:to:)`` と揃える。ここは辞書を直に
             // 書くので `Encodable` の口を通せない (#989)。**置き方は揃えない**: 区画の JSON (`writeJSON`・
             // プロセス内の `RemoteParams.send` の `publishJSON`) は毎フレームも書くので `rename(2)` で置くが、
-            // 窓口の要求は決定の 6 種に入らず、毎フレーム書かないので `AtomicFile.write` (`replaceItemAt`) のまま (#2382)。**形を先に見る** — JSON に
+            // MCP サーバの要求は決定の 6 種に入らず、毎フレーム書かないので `AtomicFile.write` (`replaceItemAt`) のまま (#2382)。**形を先に見る** — JSON に
             // できない値を渡すと `JSONSerialization` は Swift の error ではなく ObjC の
-            // 例外を出すので、`try` では捕まらず窓口ごと落ちる
+            // 例外を出すので、`try` では捕まらず MCP サーバごと落ちる
             guard JSONSerialization.isValidJSONObject(request) else {
                 throw CommandFailure.facetUnwritable(
                     path: requestURL.path, reason: "the request is not in a shape that turns into JSON")
@@ -280,7 +280,7 @@ struct Facets {
 
     /// 走っているスケッチが応えないときの答え。**その場で直せるところまで書く。**
     ///
-    /// 応えない理由は**打つ手の違う 4 つ**に分かれる (4 つ目は窓口がスケッチでない場所で立った
+    /// 応えない理由は**打つ手の違う 4 つ**に分かれる (4 つ目は MCP サーバがスケッチでない場所で立った
     /// ときだけ)。`existed` (要求を置く前に区画が在ったか) が 1 つ目を絞る:
     ///
     /// - **在らせたのがこの呼び出し自身** — 走っているスケッチは区画を持っていない。
@@ -288,7 +288,7 @@ struct Facets {
     ///   ([#227](https://github.com/mokume-metal/mokume/issues/227))
     /// - **元から在った** — 区画を作る順序は合っているので、走っていないか応答が止まっている
     ///
-    /// **2 つ目はどちらの側でも起きる** — 走らせる側と窓口で区画の基準が割れていると、互いに
+    /// **2 つ目はどちらの側でも起きる** — 走らせる側と MCP サーバで区画の基準が割れていると、互いに
     /// 別の区画を見る。症状は上のどちらとも同じ形で出るのに、**起動し直しても直らない**
     /// ([#380](https://github.com/mokume-metal/mokume/issues/380))。実際に踏むと、案内どおり
     /// 起動し直した先で「まだ立ち上がっていない」と言われる — `watch` は走っているのに、である。
@@ -296,14 +296,14 @@ struct Facets {
     /// 文面は読む時点ごとに書き足さず、**起動の瞬間に決まるものの一覧を名指す**。一覧
     /// (``StartupReads``) に増えたものは `reference` の `startup` に自動で並ぶ。
     ///
-    /// **文面は窓口の場所の事実 (``place``・``workDirectoryGiven``) から組む** ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
-    /// 「窓口の場所 = スケッチの場所」を前提に書くと、スケッチでない場所で立った窓口では
+    /// **文面は MCP サーバの場所の事実 (``place``・``workDirectoryGiven``) から組む** ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
+    /// 「MCP サーバの場所 = スケッチの場所」を前提に書くと、スケッチでない場所で立った MCP サーバでは
     /// 1 (起動し直せば区画を拾う) と 2 (基準が割れているなら `MOKUME_WORK_DIR` を揃える) が
     /// 偽になり、4 と食い違う:
     ///
-    /// - **2 には、`MOKUME_WORK_DIR` が無ければ「窓口をスケッチの場所で起こす」を常に載せる。**
-    ///   本当の条件は「窓口と走っているスケッチの区画の基準が割れている」で、`Package.swift` の
-    ///   有無はその代理でしかない — 別のスケッチの場所で立った窓口も同じ形で割れる
+    /// - **2 には、`MOKUME_WORK_DIR` が無ければ「MCP サーバをスケッチの場所で起こす」を常に載せる。**
+    ///   本当の条件は「MCP サーバと走っているスケッチの区画の基準が割れている」で、`Package.swift` の
+    ///   有無はその代理でしかない — 別のスケッチの場所で立った MCP サーバも同じ形で割れる
     /// - **区画の基準がスケッチでない場所に落ちていれば (``facetsOutsideSketch``)、1 をその場所の
     ///   話として言い直し、4 つ目の可能性として場所の手を言う。** 区画は今どおり作る (#2487 の
     ///   案 B) — 組み上げた実行ファイルをその場所から起こすと、スケッチの区画もそこに置かれて
@@ -407,11 +407,11 @@ struct Facets {
     }
 
     /// 1 つ目の可能性。区画の基準がスケッチでない場所に落ちていれば (`outside`)、その場所の話と
-    /// して言う — `watch` は自分のスケッチの場所で走るので、そこを起動し直しても窓口の区画は
+    /// して言う — `watch` は自分のスケッチの場所で走るので、そこを起動し直しても MCP サーバの区画は
     /// 見ない。この場所を見るのは、ここから起こした (組み上げた実行ファイルの) スケッチだけである。
     /// 前に取り消した要求を、スケッチがまだ撮っているときの答え。
     ///
-    /// **取り消しは窓口の待ちを切るだけで、スケッチへは届かない** (#3030)。続けて撮る観測 (最長で
+    /// **取り消しは MCP サーバの待ちを切るだけで、スケッチへは届かない** (#3030)。続けて撮る観測 (最長で
     /// 約 4 分) は撮り終えるまで区画を塞ぎ、その間に置いた次の要求は拾われない。置いた要求は
     /// 自分のまま残るので、取り合いとも見えず、「応えない」と案内すると、起動し直しを勧めて
     /// 撮っている最中のスケッチを止めさせる。
@@ -464,8 +464,8 @@ struct Facets {
     }
 
     /// 2 つ目の可能性。基準の 1 行は `watch` と同じ言葉で名乗る (#380) ので、ここでは変えない。
-    /// **`MOKUME_WORK_DIR` が無ければ、窓口をスケッチの場所で起こす手を常に載せる** — 基準は
-    /// それぞれが立った場所なので、窓口をスケッチの場所で起こせば揃う (#2487)。
+    /// **`MOKUME_WORK_DIR` が無ければ、MCP サーバをスケッチの場所で起こす手を常に載せる** — 基準は
+    /// それぞれが立った場所なので、MCP サーバをスケッチの場所で起こせば揃う (#2487)。
     private func secondPossibility() -> String {
         var text = """
             2. The interface and the sketch disagree on the facet base
@@ -498,7 +498,7 @@ struct Facets {
     /// 依存がその面を持たないと読めたときの答え。
     ///
     /// **候補を並べない。** 原因が確定しているので、並べると読み手に選ばせることになる。
-    /// 書くのは打つ手だけで、どちらも走らせる側を変えるものである — 窓口の側では直らない。
+    /// 書くのは打つ手だけで、どちらも走らせる側を変えるものである — MCP サーバの側では直らない。
     func lacksFacet(_ entry: StartupReads.Entry) -> String {
         """
         The running sketch did not answer. **The mokume this sketch depends on does not have
@@ -515,16 +515,16 @@ struct Facets {
     }
 }
 
-/// 窓口を立てた場所と、そこがスケッチか。**起動の時点で決まる事実** ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
+/// MCP サーバを立てた場所と、そこがスケッチか。**起動の時点で決まる事実** ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
 ///
-/// 窓口は在る場所なら受ける (`claude mcp add mokume -- mokume mcp` は打った場所で起こす・#2321)
-/// ので、スケッチでない場所でも立つ。答えの文面は「窓口の場所 = スケッチの場所」を前提にせず、
+/// MCP サーバは在る場所なら受ける (`claude mcp add mokume -- mokume mcp` は打った場所で起こす・#2321)
+/// ので、スケッチでない場所でも立つ。答えの文面は「MCP サーバの場所 = スケッチの場所」を前提にせず、
 /// この事実から組む — 前提にしたまま 1 行を足すと、同じ答えの中で行どうしが食い違う。
 ///
 /// **起動の時点で 1 度だけ見る。** 立てた後に `new` で `Package.swift` が置かれても追わない —
 /// 区画の基準 (``Facets/workDirectoryGiven``) と同じく、起動の瞬間に決まるものとして扱う。
 struct InterfacePlace: Equatable {
-    /// 窓口を立てた場所 (パッケージの場所)。
+    /// MCP サーバを立てた場所 (パッケージの場所)。
     let directory: URL
     /// そこに `Package.swift` があるか。`run`・`watch` が場所を受けるときと同じ見方。
     let isSketch: Bool
