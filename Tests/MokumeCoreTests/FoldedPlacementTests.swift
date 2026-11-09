@@ -393,10 +393,9 @@ struct FoldedPlacementTests {
     // MARK: - 頂点段の出力を読み戻す
 
     /// 頂点段の置き方 (`mokume_flatMove` → `mokume_flatPlace`)・貼る絵の読み取り位置 (`mokume_flatFillUV`)・額縁の
-    /// 半幅と被覆と帯の数 (`mokume_thinRectBand`)・額縁の頂点 (`mokume_thinRectVertex`・#3788。`miter` と `bevel`) を、
-    /// Shapes.metal の原文に足した計算の入口から呼び、CPU の式と **1 ビットずつ** 突き合わせる。画素の比べでは
-    /// 1 ulp の差は縁の画素が振れたときしか見えない。
-    @Test("頂点段の置き方・読み取り位置・額縁の半幅と頂点は、CPU の式と 1 ビットも違わない")
+    /// 半幅と被覆 (`mokume_thinRectBand`) を、Shapes.metal の原文に足した計算の入口から呼び、CPU の式と **1 ビットずつ**
+    /// 突き合わせる。画素の比べでは 1 ulp の差は縁の画素が振れたときしか見えない。
+    @Test("頂点段の置き方・読み取り位置・額縁の半幅は、CPU の式と 1 ビットも違わない")
     func vertexStageMatchesTheCPUBitForBit() throws {
         let gpu = try RenderDevice()
         let shapes = try gpu.shaders.bundledShaderSource(named: "Shapes")
@@ -406,21 +405,13 @@ struct FoldedPlacementTests {
             constant float4 *linears [[buffer(0)]], constant float4 *offsets [[buffer(1)]],
             constant float4 *boxes [[buffer(2)]], constant float2 *inputs [[buffer(3)]],
             constant float4 *bands [[buffer(4)]],
-            device float2 *placed [[buffer(5)]], device float2 *uvs [[buffer(6)]], device float4 *widths [[buffer(7)]],
-            constant ShapeVertex *frameVertices [[buffer(8)]], constant uint &frameCount [[buffer(9)]],
-            device float2 *framePoints [[buffer(10)]],
+            device float2 *placed [[buffer(5)]], device float2 *uvs [[buffer(6)]], device float2 *widths [[buffer(7)]],
             uint id [[thread_position_in_grid]])
         {
             float2 moved = mokume_flatMove(inputs[id], offsets[0].xy);
             placed[id] = mokume_flatPlace(linears[0], offsets[0].zw, moved);
             uvs[id] = mokume_flatFillUV(boxes[0], offsets[0].xy, moved);
-            float3 band = mokume_thinRectBand(linears[id], bands[0].xy, bands[0].z, bands[0].w);
-            widths[id] = float4(band, 0.0);
-            // 額縁の頂点 (#3788): 雛形 (形自身の座標の矩形の額縁) を置き場所 id で置く
-            for (uint k = 0; k < frameCount; k++) {
-                framePoints[id * frameCount + k] = mokume_thinRectVertex(
-                    frameVertices, 0, k, linears[id], offsets[0].zw, offsets[0].xy, bands[0].xy, band);
-            }
+            widths[id] = mokume_thinRectBand(linears[id], bands[0].xy, bands[0].z, bands[0].w);
         }
         """
         let library = try gpu.shaders.makeShapeLibrary(named: "FlatPlacementProbe", body: shapes + probe)
@@ -443,18 +434,16 @@ struct FoldedPlacementTests {
             try #require(
                 gpu.device.makeBuffer(length: count * MemoryLayout<SIMD2<Float>>.stride, options: .storageModeShared))
         }
-        func read<T>(_ buffer: any MTLBuffer, _ count: Int, as: T.Type = SIMD2<Float>.self) -> [T] {
-            Array(UnsafeBufferPointer(start: buffer.contents().bindMemory(to: T.self, capacity: count), count: count))
+        func read(_ buffer: any MTLBuffer, _ count: Int) -> [SIMD2<Float>] {
+            Array(UnsafeBufferPointer(start: buffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: count), count: count))
         }
         let count = 64
         var compared = 0
         for density in [Float(1), 0.5] {
             // 額縁の半幅は、いまの細かさの描く画素で測る (CPU の `thinRectFrame` は Canvas の状態を読む)
             let canvas = try Self.makeCanvas(density: density)
-            let rect = Canvas.rectOutline(width: 40, height: 30)
+            canvas.strokeJoin(.miter)
             for round in 0..<150 {
-                // 額縁の角の形は回ごとに替える (`miter` と `bevel` で片の並びが違う・#3788)
-                canvas.strokeJoin(round % 2 == 0 ? .miter : .bevel)
                 let angle = next() * 6.2831853
                 let (c, s) = (cos(angle), sin(angle))
                 let stretch: Float = 0.3 + next() * 3
@@ -477,21 +466,7 @@ struct FoldedPlacementTests {
                 }
                 let commands = try #require(queue.makeCommandBuffer())
                 let encoder = try #require(commands.makeComputeCommandEncoder())
-                let (placedBuffer, uvBuffer) = (try output(count), try output(count))
-                let widthBuffer = try #require(
-                    gpu.device.makeBuffer(length: count * MemoryLayout<SIMD4<Float>>.stride, options: .storageModeShared))
-                // 雛形の額縁: 角 (`bases`) と向き (`slopes`) を、雛形の頂点と同じく `position`・`uv` に入れる
-                // (``Canvas/appendWidenedTemplateStroke(_:)``)。並びは置き場所によらないので、組める置き場所 1 つで組む
-                canvas.strokeWeight(weight)
-                let template = try #require(
-                    canvas.thinRectFrame(rect, placedBy: Canvas.placementMatrix(SIMD4(1, 0, 0, 1))))
-                let frameCount = template.bases.count
-                let frameVertices = zip(template.bases, template.slopes).map {
-                    ShapeVertex(position: $0, uv: $1, color: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))
-                }
-                let framePointBuffer = try #require(
-                    gpu.device.makeBuffer(
-                        length: count * frameCount * MemoryLayout<SIMD2<Float>>.stride, options: .storageModeShared))
+                let (placedBuffer, uvBuffer, widthBuffer) = (try output(count), try output(count), try output(count))
                 encoder.setComputePipelineState(pipeline)
                 encoder.setBuffer(
                     try buffer(
@@ -510,18 +485,13 @@ struct FoldedPlacementTests {
                 encoder.setBuffer(placedBuffer, offset: 0, index: 5)
                 encoder.setBuffer(uvBuffer, offset: 0, index: 6)
                 encoder.setBuffer(widthBuffer, offset: 0, index: 7)
-                encoder.setBuffer(try buffer(frameVertices), offset: 0, index: 8)
-                encoder.setBuffer(try buffer([UInt32(frameCount)]), offset: 0, index: 9)
-                encoder.setBuffer(framePointBuffer, offset: 0, index: 10)
                 encoder.dispatchThreads(
                     MTLSize(width: count, height: 1, depth: 1),
                     threadsPerThreadgroup: MTLSize(width: count, height: 1, depth: 1))
                 encoder.endEncoding()
                 commands.commit()
                 commands.waitUntilCompleted()
-                let (placed, uvs) = (read(placedBuffer, count), read(uvBuffer, count))
-                let widths = read(widthBuffer, count, as: SIMD4<Float>.self)
-                let framePoints = read(framePointBuffer, count * frameCount)
+                let (placed, uvs, widths) = (read(placedBuffer, count), read(uvBuffer, count), read(widthBuffer, count))
 
                 // CPU: 周を位置ぶんずらし (`moved(by:)`)、`Transform.placed` で移す
                 let matrix = simd_float4x4(
@@ -535,34 +505,19 @@ struct FoldedPlacementTests {
                     #expect(uvs[index] == uvOf(moved[index]), "読み取り位置 \(index): GPU \(uvs[index]) CPU \(uvOf(moved[index]))")
                     compared += 1
                 }
-                // CPU: 額縁 (`thinRectFrame`) の半幅・被覆・帯の数と、頂点 (`thinRectPoints`)。先頭は剪断を含みうる
-                // 置き場所なので飛ばす。頂点は、位置ぶんずらした矩形 (1 つ目を直に組むときの周) を置き場所で置いて
-                // 半画素寄せる (`strokePoint`)
-                let movedRect = rect.moved(by: anchor)
+                // CPU: 額縁 (`thinRectFrame`) の半幅と被覆。先頭は剪断を含みうる置き場所なので飛ばす
+                canvas.strokeWeight(weight)
+                let rect = Canvas.rectOutline(width: 40, height: 30)
                 for index in 1..<count {
-                    let linear = SIMD4(
-                        similar[index].columns.0.x, similar[index].columns.0.y,
-                        similar[index].columns.1.x, similar[index].columns.1.y)
-                    let frame = canvas.thinRectFrame(movedRect, placedBy: Canvas.placementMatrix(linear))
+                    let frame = canvas.thinRectFrame(rect, placedBy: Canvas.placementMatrix(
+                        SIMD4(similar[index].columns.0.x, similar[index].columns.0.y,
+                              similar[index].columns.1.x, similar[index].columns.1.y)))
                     // 細くない置き場所は額縁を組まない (頂点段にも来ない)
                     guard let frame else { continue }
-                    let band = SIMD4(frame.half, frame.coverage, frame.crossings, 0)
-                    #expect(widths[index] == band, "額縁 \(index): GPU \(widths[index]) CPU \(band)")
+                    #expect(
+                        widths[index] == SIMD2(frame.half, frame.coverage),
+                        "額縁 \(index): GPU \(widths[index]) CPU \(SIMD2(frame.half, frame.coverage))")
                     compared += 1
-                    let placing = simd_float4x4(
-                        SIMD4(linear.x, linear.y, 0, 0), SIMD4(linear.z, linear.w, 0, 0), SIMD4(0, 0, 1, 0),
-                        SIMD4(translation.x, translation.y, 0, 1))
-                    let points = Canvas.thinRectPoints(frame, units: units) {
-                        Transform(matrix: placing).placed(x: $0.x, y: $0.y) + 0.5
-                    }
-                    #expect(points.count == frameCount, "額縁の頂点の数 \(index): CPU \(points.count) 雛形 \(frameCount)")
-                    for ordinal in 0..<min(points.count, frameCount) {
-                        let gpuPoint = framePoints[index * frameCount + ordinal]
-                        #expect(
-                            gpuPoint == points[ordinal],
-                            "額縁の頂点 \(index)・\(ordinal): GPU \(gpuPoint) CPU \(points[ordinal])")
-                        compared += 1
-                    }
                 }
             }
         }

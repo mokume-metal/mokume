@@ -679,9 +679,7 @@ extension Canvas {
     // MARK: - 細い矩形の輪郭 (額縁)
 
     /// 相似な置き場所の矩形の細い輪郭を組む片 (#3733)。頂点ごとに、形自身の座標の点 `bases` と、形自身の座標の
-    /// 半幅 t に掛ける向き `slopes` を持ち、置く点は `bases + t × slopes` である。ただし先頭の
-    /// ``thinRectBandVertexCount`` 個 (4 本の帯) の写しの頂点は、頂点の番号で決まる役割 (``thinRectRole(_:)``) に従って
-    /// 同じ端の 2 点から組む (#3788・``thinRectPoints(_:units:place:)``)。
+    /// 半幅 t に掛ける向き `slopes` を持ち、頂点は `bases + t × slopes` である。
     struct ThinRectFrame {
         var bases: [SIMD2<Float>]
         var slopes: [SIMD2<Float>]
@@ -689,86 +687,6 @@ extension Canvas {
         var half: Float
         /// 被覆 (4 本の帯で同じ)。
         var coverage: Float
-        /// 列 (行) が帯を切る長さ n (``widenedBand(_:along:)`` の帯の数・4 本の帯で同じ・#3788)。
-        var crossings: Float
-        /// 置き場所の描く画素の 2x2 (``drawnLinear(_:)``)。写しの向きを決める (#3788)。
-        var drawn: simd_float2x2
-    }
-
-    /// 額縁の 4 本の帯の頂点の数 (帯 1 本で 30・#3788)。帯は形の y0 の辺・y1 の辺 (x の帯)・x0 の辺・x1 の辺
-    /// (y の帯) の順で、1 本は「始まりの端の片 12・本体の平行四辺形 6・終わりの端の片 12」である。
-    static let thinRectBandVertexCount = 120
-
-    /// 額縁の帯の頂点 `ordinal` の役割 (#3788)。`role` は 0 が角を置いた点、1 が外の縁の写しの頂点 X、
-    /// 2 が内の縁の写しの頂点 Y で、写しの頂点は `bases`・`slopes` に同じ端の内側の角 F を持ち、`outer` は同じ端の
-    /// 外の縁の端点 A の番号である。**頂点段 (`Shapes.metal` の `mokume_thinRectRole`) と同じ表** — 片の並びを
-    /// 変えるときは両方を同時に変える。
-    ///
-    /// 端の片は (P, A, X)・(P, X, Y)・(P, Y, F)・(P, F, B) の扇で、P は miter で A、bevel で端の辺に乗る角の片の
-    /// 頂点、B は内の縁の端点 (y の帯では F と同じ点)。本体は (X, X′, Y′)・(X, Y′, Y) (′ は終わりの端)。
-    static func thinRectRole(_ ordinal: Int) -> (role: Int, outer: Int) {
-        guard ordinal < thinRectBandVertexCount else { return (0, 0) }
-        let band = ordinal / 30 * 30
-        let slot = ordinal % 30
-        if slot >= 12, slot < 18 {
-            let (end, role) = [(0, 1), (18, 1), (18, 2), (0, 1), (18, 2), (0, 2)][slot - 12]
-            return (role, band + end + 1)
-        }
-        let end = slot >= 18 ? 18 : 0
-        let index = slot - end
-        let role = index == 2 || index == 4 ? 1 : (index == 5 || index == 7 ? 2 : 0)
-        return (role, band + end + 1)
-    }
-
-    /// 出す座標の点 `placed` を、描く画素の 1/256 の格子へ丸める (#3788)。GPU は頂点を描く画素の 1/256 へ丸めて
-    /// 三角形を刻むので、先に同じ格子へ置いておけば、写し (格子の点 + 整数) は刻むときも写しのままになる。
-    /// 出す座標へ戻すと単精度で 1/256 の格子からわずかにずれるが、ずれは格子の半分よりずっと小さい。
-    /// **頂点段の `mokume_thinRectGrid` と同じ順。**
-    static func thinRectGrid(_ placed: SIMD2<Float>, units: SIMD2<Float>) -> SIMD2<Float> {
-        ((placed / units) * 256).rounded(.toNearestOrEven) * (1 / 256)
-    }
-
-    /// 帯の端の写しの頂点 (描く画素の格子) を、同じ端の外の縁の端点 `outer` と内側の角 `inner` から組む (#3788)。
-    /// `slope` は内側の角の向き (形自身の座標で、角から矩形の内へ向く (±1, ±1))。
-    ///
-    /// 帯を切る軸 (帯が x 寄りなら y) に沿った外 → 内の写し c (長さ n)。内側の角が、切る軸でない軸の座標で外の縁の端点
-    /// より帯の内向きにあれば、X = 内側の角 − c・Y = 内側の角 (内側の角を端の片と共有する)、そうでなければ X = 外の縁の
-    /// 端点・Y = 外の縁の端点 + c。どちらでも X と Y は格子の上の写しで、本体の 2 本の縁は列 (行) ごとにちょうど n 個の
-    /// 画素の中心を挟む。**頂点段の `mokume_thinRectCopy` と同じ順。**
-    static func thinRectCopy(
-        outer: SIMD2<Float>, inner: SIMD2<Float>, slope: SIMD2<Float>, drawn: simd_float2x2, crossings: Float,
-        xBand: Bool, isInner: Bool
-    ) -> SIMD2<Float> {
-        // 帯をこの端から内へ進む向きと、外 → 内の向き (描く画素)
-        let inward = xBand ? drawn.columns.0 * slope.x : drawn.columns.1 * slope.y
-        let across = xBand ? drawn.columns.1 * slope.y : drawn.columns.0 * slope.x
-        let axis = abs(inward.x) >= abs(inward.y) ? 1 : 0
-        let other = 1 - axis
-        var copy = SIMD2<Float>(0, 0)
-        copy[axis] = across[axis] >= 0 ? crossings : -crossings
-        let fromInner = (inner[other] - outer[other]) * (inward[other] >= 0 ? 1 : -1) >= 0
-        if isInner { return fromInner ? inner : outer + copy }
-        return fromInner ? inner - copy : outer
-    }
-
-    /// 額縁の頂点を出す座標で求める (#3788)。`place` は形自身の座標の点を出す座標へ置く (直に描く口は `strokePoint`)。
-    /// 角を置いた点は描く画素の格子へ丸め (``thinRectGrid(_:units:)``)、帯の写しの頂点は ``thinRectCopy`` で組む。
-    static func thinRectPoints(
-        _ frame: ThinRectFrame, units: SIMD2<Float>, place: (SIMD2<Float>) -> SIMD2<Float>
-    ) -> [SIMD2<Float>] {
-        func grid(_ index: Int) -> SIMD2<Float> {
-            thinRectGrid(place(frame.bases[index] + frame.half * frame.slopes[index]), units: units)
-        }
-        return frame.bases.indices.map { index in
-            let (role, outer) = thinRectRole(index)
-            let pixel =
-                role == 0
-                ? grid(index)
-                : thinRectCopy(
-                    outer: grid(outer), inner: grid(index), slope: frame.slopes[index], drawn: frame.drawn,
-                    crossings: frame.crossings, xBand: index < thinRectBandVertexCount / 2, isInner: role == 2)
-            return pixel * units
-        }
     }
 
     /// 細い矩形の輪郭を額縁の片で組めるか。**畳みの鍵** (``thinStrokeLinear(form:)``) **と直に描く口が同じ規則を
@@ -799,17 +717,10 @@ extension Canvas {
     /// - 左右の帯: 上下の帯の間 (`bevel` は外側の半分だけ角の点まで延ばす)
     /// - `bevel` の角: 角の点と、2 本の帯の外の縁の角を結んだ三角形
     ///
-    /// **帯の長方形は、2 本の長い縁を写しにした平行四辺形と両端の片に割る** (#3788・``thinRectRole(_:)``)。
-    /// 帯の 2 本の縁は、帯を切る軸に沿ってちょうど n 離れているが、別々の頂点で組むと GPU が頂点を描く画素の 1/256 へ
-    /// 丸めたときに別々に動き、45° 近くで縁が画素の中心とほぼ重なる行が続くと、中心を 2 つ (または 0 個) 数える。
-    /// 本体の一方の縁を他方の縁 + n の写しにすれば、列 (行) ごとにちょうど n 個になる。端の片は帯の長方形の残りを
-    /// 埋め、内側の角 (隣の帯の端の頂点) も頂点に持つので、帯の領域・角の片・角の形は割る前と同じで、片どうしは
-    /// 頂点を共有して継ぎ目に T 字を作らない。
-    ///
     /// 頂点が t について線形なので、雛形は角と向きを持たせて頂点段で置き場所ごとに広げ直せる
-    /// (``appendWidenedTemplateStroke(_:)``)。**半幅と被覆の式と、頂点の組み方 (``thinRectPoints(_:units:place:)``)
-    /// は、頂点段 (`Shapes.metal` の `mokume_thinRectBand`・`mokume_thinRectVertex`) と 1 つずつ同じ順である** —
-    /// 1 つ目 (ここで直に組む) と雛形で額縁の頂点が 1 ulp も違わないよう、式を変えるときは両方を同時に変える (#3555)。
+    /// (``appendWidenedTemplateStroke(_:)``)。**半幅と被覆の式は、頂点段 (`Shapes.metal` の `mokume_thinRectBand`) と
+    /// 1 つずつ同じ順である** — 1 つ目 (ここで直に組む) と雛形で額縁の角が 1 ulp も違わないよう、式を変えるときは
+    /// 両方を同時に変える (#3555)。
     func thinRectFrame(_ outline: Outline, placedBy matrix: simd_float4x4) -> ThinRectFrame? {
         guard outline.isClosed, outline.points.count == 4, outline.cornerDiagonals.count == 4 else { return nil }
         let points = outline.points
@@ -826,10 +737,7 @@ extension Canvas {
         let along = drawn * SIMD2<Float>(1, 0)
         let length = simd_length(along)
         guard length > 0, length.isFinite else { return nil }
-        let direction = along / length
-        let widened = Self.widenedBand(drawnWeight, along: direction)
-        // 帯の数 n (``widenedBand(_:along:)`` の中と同じ式)
-        let crossings: Float = drawnWeight / max(abs(direction.x), abs(direction.y)) <= 1 ? 1 : 2
+        let widened = Self.widenedBand(drawnWeight, along: along / length)
         let drawnHalf = drawnWeight * widened.widen / 2
         var bases: [SIMD2<Float>] = []
         var slopes: [SIMD2<Float>] = []
@@ -849,39 +757,18 @@ extension Canvas {
                 (right.0, right.1, bottom.0, bottom.1), (left.0, left.1, bottom.0, bottom.1),
             ])
         }
-        // 4 本の帯 (``thinRectRole(_:)`` の並び)。帯の長方形は main の額縁と同じで、`miter` の上下の帯は角の正方形
-        // まで横に通し、`bevel` の上下の帯は角の点まで、左右の帯は上下の帯の間。端ごとに、矩形の角と、角から矩形の内へ
-        // 向く (ix, iy) で、P (扇の要)・A (外の縁の端点)・F (内側の角)・B (内の縁の端点) を決める
-        let miter = join == .miter
-        for (xBand, start, end) in [
-            (true, SIMD2(x0, y0), SIMD2(x1, y0)), (true, SIMD2(x0, y1), SIMD2(x1, y1)),
-            (false, SIMD2(x0, y0), SIMD2(x0, y1)), (false, SIMD2(x1, y0), SIMD2(x1, y1)),
-        ] {
-            func inward(_ corner: SIMD2<Float>) -> SIMD2<Float> {
-                SIMD2(corner.x == x0 ? 1 : -1, corner.y == y0 ? 1 : -1)
-            }
-            func endPieces(_ corner: SIMD2<Float>) {
-                let inner = inward(corner)
-                let (ix, iy) = (inner.x, inner.y)
-                let outer = xBand ? SIMD2(miter ? -ix : 0, -iy) : SIMD2(-ix, iy)
-                let side = xBand ? SIMD2(miter ? -ix : 0, iy) : inner
-                let pivot = miter ? outer : (xBand ? SIMD2<Float>(0, 0) : SIMD2(0, iy))
-                // (P, A, X)・(P, X, Y)・(P, Y, F)・(P, F, B)。写しの頂点 X・Y は内側の角を持つ
-                for slope in [pivot, outer, inner, pivot, inner, inner, pivot, inner, inner, pivot, inner, side] {
-                    bases.append(corner)
-                    slopes.append(slope)
-                }
-            }
-            endPieces(start)
-            // 本体の平行四辺形 (X, X′, Y′)・(X, Y′, Y)
-            for corner in [start, end, end, start, end, start] {
-                bases.append(corner)
-                slopes.append(inward(corner))
-            }
-            endPieces(end)
-        }
-        if !miter {
-            // 左右の帯の外側の半分を角の点まで
+        if join == .miter {
+            // 上下の帯は角の正方形まで横に通し、左右の帯はその間を埋める
+            box((x0, -1), (x1, 1), (y0, -1), (y0, 1))
+            box((x0, -1), (x1, 1), (y1, -1), (y1, 1))
+            box((x0, -1), (x0, 1), (y0, 1), (y1, -1))
+            box((x1, -1), (x1, 1), (y0, 1), (y1, -1))
+        } else {
+            // 上下の帯は角の点まで。左右の帯は上下の帯の間と、外側の半分を角の点まで
+            box((x0, 0), (x1, 0), (y0, -1), (y0, 1))
+            box((x0, 0), (x1, 0), (y1, -1), (y1, 1))
+            box((x0, -1), (x0, 1), (y0, 1), (y1, -1))
+            box((x1, -1), (x1, 1), (y0, 1), (y1, -1))
             box((x0, -1), (x0, 0), (y0, 0), (y0, 1))
             box((x0, -1), (x0, 0), (y1, -1), (y1, 0))
             box((x1, 0), (x1, 1), (y0, 0), (y0, 1))
@@ -893,18 +780,19 @@ extension Canvas {
             piece([(x0, 0, y1, 0), (x0, -1, y1, 0), (x0, 0, y1, 1)])
         }
         return ThinRectFrame(
-            bases: bases, slopes: slopes, half: drawnHalf / scale, coverage: widened.coverage,
-            crossings: crossings, drawn: drawn)
+            bases: bases, slopes: slopes, half: drawnHalf / scale, coverage: widened.coverage)
     }
 
-    /// 額縁の片を、いまの変換で積む (直に描く口)。被覆を頂点に付ける。面積 0 の片 (端の片の使わない側) も
-    /// 積む — 雛形と頂点の数を揃える。
+    /// 額縁の片を、いまの変換で積む (直に描く口)。被覆を頂点に付ける。
     func appendThinRectFrame(_ frame: ThinRectFrame) {
         let start = vertices.count
-        let points = Self.thinRectPoints(frame, units: unitsPerDrawnPixel) { strokePoint(x: $0.x, y: $0.y) }
         var index = 0
-        while index + 2 < points.count {
-            appendTriangle(points[index], points[index + 1], points[index + 2], color: style.stroke)
+        while index + 2 < frame.bases.count {
+            func point(_ offset: Int) -> SIMD2<Float> {
+                let shape = frame.bases[index + offset] + frame.half * frame.slopes[index + offset]
+                return strokePoint(x: shape.x, y: shape.y)
+            }
+            appendTriangle(point(0), point(1), point(2), color: style.stroke)
             index += 3
         }
         noteCoverage(frame.coverage, in: start..<vertices.count)
@@ -921,8 +809,6 @@ extension Canvas {
     /// 2x2 から半幅と被覆を ``thinRectFrame(_:placedBy:)`` と同じ式で求め、`(角 + 位置) + 半幅 × 向き` に置く —
     /// 1 つ目を直に組むときの `ずらした角 + 半幅 × 向き` と同じ順で、畳んだ頂点が 1 ビットも違わない (#3555)。
     /// 鍵の置き場所で組んだ半幅を雛形に焼いて置き場所ごとに差分を足す形にすると、丸めが 1 つ目と違う。
-    /// 帯の写しの頂点は、頂点段が輪郭の何番目の頂点かで役割を引き (``thinRectRole(_:)``)、同じ端の外の縁の端点を
-    /// 雛形から読んで ``thinRectPoints(_:units:place:)`` と同じ順で組む (#3788)。
     func appendWidenedTemplateStroke(_ outline: Outline) -> SIMD4<Float>? {
         guard let matrix = thinStrokeMatrix, let frame = thinRectFrame(outline, placedBy: matrix) else {
             return nil
