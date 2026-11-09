@@ -200,7 +200,7 @@ class SubIssueTest(unittest.TestCase):
         self.create_call(calls)
 
     def test_human_run_is_not_checked_for_pictures(self):
-        # 人の起票は雑でよい (AGENTS.md「進め方」1)。絵の要求はエージェントにだけ掛ける
+        # 人の起票は雑でよい (AGENTS.md「Issue」)。絵の要求はエージェントにだけ掛ける
         proc, calls = self.run_sub_issue("fix: 欠ける", "--body", "`Shapes.metal` の塗りが欠ける")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.create_call(calls)

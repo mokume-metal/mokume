@@ -11,7 +11,7 @@ SPDX-License-Identifier: MIT
 
 # 視覚証跡を残す
 
-何を載せるかの規律は AGENTS.md「描画に影響する変更」が正本で (描画が変わらなくても、見て分かるものは気軽に
+何を載せるかの規律は AGENTS.md「絵」が正本で (描画が変わらなくても、見て分かるものは気軽に
 載せる — [#2195](https://github.com/mokume-metal/mokume/issues/2195))、ここは手順だけを持つ。CI は描画を実行できない
 ([#180](https://github.com/mokume-metal/mokume/issues/180)) ので、**PR に貼った絵が描画の唯一の検証記録になり、
 squash merge の後には足せない。** 人なら入力欄へ画像をドロップするだけでよく、この文書はエージェントの手順を扱う。

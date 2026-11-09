@@ -1348,6 +1348,48 @@ struct SharedFrameStageTests {
         return surface
     }
 
+    /// **映す世代の子が載せた名乗りの中身に従う** ([#3919](https://github.com/mokume-metal/mokume/issues/3919))。見張りの
+    /// 作品のウィンドウは、これを見て目録へ名乗る・下ろす。載っていないのは断っている (古いライブラリの子も)。
+    /// 手放した世代の面からは読まない (畳まれる世代の最後の数枚で名乗りが戻らない)。
+    @Test("映す世代の絵から名乗りの中身を読むたびに知らせ、載っていなければ断っていると読み、手放した世代からは読まない")
+    func theFrameShareFollowsTheShownGeneration() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let child = try publish(in: facet, gpu: gpu, pid: 100, frames: 0, pointerLock: false)
+            let share = FrameShare(sketch: "Bricks", title: "Bricks and ball")
+            child.frameShare = share
+            try draw(child, frame: 1, gpu: gpu)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("frame-share"))
+            defer { stage.close() }
+            var read: [FrameShare?] = []
+            stage.onFrameShareRead = { read.append($0) }
+            stage.open()
+            stage.displayLinkFired()
+            #expect(stage.frameShare == share)
+            #expect(read == [share])
+
+            // 同じ中身でも、新しい絵が来るたびに知らせる (受け手が重複を捨てる)
+            try draw(child, frame: 2, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(read == [share, share])
+
+            // 断った世代の絵には載っていない
+            child.frameShare = nil
+            try draw(child, frame: 3, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(stage.frameShare == nil)
+            #expect(read == [share, share, nil])
+
+            // 手放した世代の面からは読まない
+            child.frameShare = share
+            stage.relinquishSource(pids: [100])
+            try draw(child, frame: 4, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(stage.frameShare == nil, "手放した世代の名乗りを読んだ")
+            #expect(read == [share, share, nil], "手放した世代の名乗りを知らせた")
+        }
+    }
+
     /// **乗り換えを待つ子が 1 枚書いてすぐ死に、離脱の知らせが台の拍より先に来ても、台は死んだ子の頼みを読まない**
     /// ([#2983] の反証 6)。伝えた時点では台はまだ死んだ子の目録を採っていないので、番号で指して、採った目録も
     /// 生まれたときから手放した扱いにする。生きた別の世代の頼みには従う。

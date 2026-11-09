@@ -468,14 +468,20 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     private var hasArea: Bool { width > 0 && height > 0 }
 }
 
-/// 値型の `draw()` が描く先。走っている実行の面で、外から呼ばれたら 1 度だけ警告して `nil` を返す。
+/// 値型の `draw()` が描く先。実行中の描画先で、外から呼ばれたら 1 度だけ警告して `nil` を返す。
 ///
 /// 語彙 (``SketchPart``) が使う ``SketchPart/liveCanvas(_:_:)`` と同じ扱いである。値型は
 /// `SketchPart` を名乗らないので、同じ控えへ自分の名前で言う。
+///
+/// **呼ぶ所へ展開し、外から呼ばれたときの警告は展開しない関数に任せる** ([#3082])。``SketchPart/liveCanvas(_:_:)`` と
+/// 同じく、関数の境界を越えて返すと実行の保持と解放 (参照数の遅い道) が 1 対増える。
+///
+/// [#3082]: https://github.com/mokume-metal/mokume/issues/3082
 @MainActor
+@inline(__always)
 func shapeValueCanvas(_ call: String) -> Canvas? {
     guard let runtime = activeRun(for: .act) else {
-        OutsideRun.log.warn(call, .act)
+        warnOutsideRun(call, .act)
         return nil
     }
     return runtime.activeCanvas

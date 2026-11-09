@@ -71,10 +71,10 @@ struct DensityInvarianceTests {
     /// 比べる細かさ。
     static let densities: [Float] = [1, 0.5]
 
-    /// 出す大きさ ``size`` の面を、細かさ `density` で作る。
-    private static func makeCanvas(density: Float) throws -> Canvas {
+    /// 出す大きさ `side` (既定 ``size``) の面を、細かさ `density` で作る。
+    private static func makeCanvas(density: Float, side: Int = size) throws -> Canvas {
         let gpu = try RenderDevice()
-        let output = try RenderTarget(gpu: gpu, width: size, height: size)
+        let output = try RenderTarget(gpu: gpu, width: side, height: side)
         return try Canvas(output: output, gpu: gpu, pixelDensity: density, upscale: .spatial)
     }
 
@@ -112,7 +112,8 @@ struct DensityInvarianceTests {
         // 回した細い線 (#2172)。帯は列 (行) が帯を切る長さを整数にして広げるので、45° でも置く位置で振れない
         case diagonalShaderLine = "rotate(θ) の shader() の line (三角形の経路)"
         case diagonalRetained = "rotate(θ) で置く保持した形の輪郭 (三角形の経路)"
-        // 回した細い輪郭の雛形 (#3733)。相似な置き場所の矩形は、回した置き場所も 1 つの雛形に畳み、頂点段で広げ直す
+        // 回した細い輪郭の雛形 (#3733)。相似な置き場所の矩形は、回した置き場所も 1 つの雛形に畳み、頂点段で広げ直す。
+        // 角の形と矩形の寸法も生成する (``Pose/join``・``Pose/size``・#3862)
         case diagonalFoldedRect = "rotate(θ) の shader() の rect の輪郭を畳んだ雛形 (三角形の経路)"
         /// 回転をまたいで 1 つの雛形に畳む丸い周 (#3863)。生成する検査は、描く画素での短い径・縦横比・縦の倍率・1 つ目の
         /// 向きを、畳む境目 (``Canvas/foldsThinRingAcrossTurns(_:drawn:)``) のすぐ内側から振る (``Pose/Ring``)。固定の例は
@@ -334,7 +335,8 @@ struct DensityInvarianceTests {
             // 丸い端の回した細い線 (#3748)。帯は長さ 40 で、両端の丸い片は ``roundCaps`` が足す
             case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
                 40
-            // 40×20 の矩形の輪郭 (留め継ぎの角)。額縁の面積は周の長さ 120 × 太さ
+            // 矩形の輪郭。額縁の面積は周の長さ × 太さ (既定の 40×20 で 120)。周と面取りの角は置き方から出す
+            // (``DensityInvarianceTests/measurement(_:_:)``・``Pose/framePerimeter``)
             case .diagonalFoldedRect: 120
             // 楕円の輪郭。量は置き方で決まる (``Pose/ringArea``)。ここでは面全体で見る印だけを持つ
             case .diagonalFoldedRing: 0
@@ -415,11 +417,13 @@ struct DensityInvarianceTests {
                 // 置いた 2 つ目である (``foldedRect`` と同じ)。雛形は回さない向きで組まれるので、2 つ目は頂点段で
                 // 置き場所の向きに広げ直す (#3733)
                 canvas.shader(try Self.plainShader(canvas))
+                canvas.strokeJoin(pose.join)
+                let size = pose.size
                 for (anchor, turn) in [(SIMD2<Float>(64, 64 + offset - 400), Float(0)), (SIMD2(64, 64 + offset), angle)] {
                     canvas.pushMatrix()
                     canvas.translate(anchor.x, anchor.y)
                     canvas.rotate(turn)
-                    canvas.rect(-20, -10, 40, 20)
+                    canvas.rect(-size.x / 2, -size.y / 2, size.x, size.y)
                     canvas.popMatrix()
                 }
             case .diagonalFoldedRing:
@@ -698,8 +702,17 @@ struct DensityInvarianceTests {
             return Double(shape.squash) * Double.pi * (3 * (a + b) - ((3 * a + b) * (a + 3 * b)).squareRoot())
         }
 
+        /// 矩形の輪郭の口 (``Amount/diagonalFoldedRect``) の角の形。
+        var join: StrokeJoin = .miter
+        /// 矩形の輪郭の口 (``Amount/diagonalFoldedRect``) の幅と高さ (出す画素)。
+        var size = SIMD2<Float>(40, 20)
+
+        /// 矩形の周の長さ (出す画素)。
+        var framePerimeter: Double { 2 * Double(size.x + size.y) }
+
         var description: String {
-            let base = "太さ \(weight)・細かさ \(density)・ずらし (\(offset.x), \(offset.y))・角度 \(angle)・倍率 \(squash)"
+            let frame = join == .miter && size == SIMD2(40, 20) ? "" : "・角 \(join)・矩形 \(size.x)×\(size.y)"
+            let base = "太さ \(weight)・細かさ \(density)・ずらし (\(offset.x), \(offset.y))・角度 \(angle)・倍率 \(squash)" + frame
             guard let ring else { return base }
             return base + "・周 (短い径 \(ring.minor)・縦横比 \(ring.aspect)・縦の倍率 \(ring.squash)・1 つ目 \(ring.first))"
         }
@@ -728,16 +741,30 @@ struct DensityInvarianceTests {
     /// - 角度: `[0, π/2)`。正方形の格子は π/2 で元に戻る
     /// - 倍率: `[0.1, 1)`。固定の例の 0.1 と 0.25 を含む。0.1 未満は ``Amount/stretchedQuad`` の
     ///   縦の辺が出す面 (128) を越える
+    /// - 矩形の輪郭の口 (``Amount/diagonalFoldedRect``) だけ、角の形 (`join`: 0 が `miter`・1 が `bevel`) と矩形の
+    ///   幅 `[16, 120)`・高さ `[16, 40)` も振る (#3862)。額縁の外れは角の数え誤差と、縁が画素の中心とほぼ重なる行の数で
+    ///   決まり、どちらも周の長さに対する割合が寸法で変わる。下端 16 は、細かさ 0.25 でも描く画素で辺が 4 以上
+    ///   (額縁で組む下限・``Canvas/framesThinRect(width:height:weight:join:drawn:)``) になる長さ。上端は、45° に回しても
+    ///   回さなくても形が出す面 (128) に収まる長さ。`round` の角は額縁で組まない (一般の細い輪郭の帯で組む) ので振らない
     /// - 丸い周の口 (``Amount/diagonalFoldedRing``・#3863) だけが、形の座標を足す (``ringAxes``)
     static func axes(for mouth: Amount) -> [ProbeAxis] {
-        [
+        var axes = [
             ProbeAxis("weight", 0.07..<(mouth.maxWeight + 0.0001), simplest: 1),
             ProbeAxis("density", 0.25..<1.0001, simplest: 1, step: 1.0 / 128),
             ProbeAxis("dx", 0..<2, simplest: 0),
             ProbeAxis("dy", 0..<2, simplest: 0),
             ProbeAxis("angle", 0..<(Double.pi / 2), simplest: 0),
             ProbeAxis("squash", 0.1..<1, simplest: 0.5),
-        ] + (mouth == .diagonalFoldedRing ? ringAxes : [])
+        ]
+        if mouth == .diagonalFoldedRect {
+            axes += [
+                ProbeAxis("join", 0..<2, simplest: 0, step: 1),
+                ProbeAxis("width", 16..<120, simplest: 40),
+                ProbeAxis("height", 16..<40, simplest: 20),
+            ]
+        }
+        if mouth == .diagonalFoldedRing { axes += ringAxes }
+        return axes
     }
 
     /// 丸い周の口の形の座標 (#3863)。畳む境目 (描く画素で短い径 8・縦横比 0.5。``Canvas/ringFoldMinimumDiameter``・
@@ -845,6 +872,11 @@ struct DensityInvarianceTests {
             try mouth.draw(on: canvas, pose)
         }
         let pixels = try canvas.target.readPixels()
+        if mouth == .diagonalFoldedRect {
+            // 額縁は周 × 太さ。面取りの角は、外の角の直角を落とした直角二等辺三角形 4 つ (描く画素で 太さ² / 2) だけ欠ける
+            let bevel = pose.join == .bevel ? drawn * drawn / 2 : 0
+            return (totalSum(pixels), pose.framePerimeter * drawn * Double(density) - bevel)
+        }
         if var area = mouth.fillArea {
             if mouth == .diagonalFoldedRing { area = pose.ringArea }
             let caps = mouth.roundCaps ? Double.pi * drawn * drawn / 4 : 0
@@ -872,12 +904,16 @@ struct DensityInvarianceTests {
             "density", suite: "DensityInvarianceTests", key: "amount/\(mouth)", axes: Self.axes(for: mouth),
             cases: Self.generatedCases
         ) { input in
-            let pose = Pose(
+            var pose = Pose(
                 weight: input.float("weight"), density: input.float("density"),
                 offset: SIMD2(input.float("dx"), input.float("dy")),
                 angle: mouth.rotates ? input.float("angle") : 0,
                 squash: mouth.squashes ? input.float("squash") : 1,
                 ring: mouth == .diagonalFoldedRing ? Self.ringPose(input, density: input.float("density")) : nil)
+            if mouth == .diagonalFoldedRect {
+                pose.join = input["join"] >= 1 ? .bevel : .miter
+                pose.size = SIMD2(input.float("width"), input.float("height"))
+            }
             return try Self.measure(mouth, pose)
         }
         #expect(report.failure == nil, "\(mouth.rawValue): \(report.failure ?? "")")
@@ -995,6 +1031,181 @@ struct DensityInvarianceTests {
         #expect(broken.isEmpty, "\(mouth.rawValue): \(broken.joined(separator: " / "))")
     }
 
+    /// 丸い端の保持した形の、置き場所の位相をまたいだ控えの使い回し (#3864) で試す形。
+    enum RoundRetainedShape: Int, CaseIterable, Sendable {
+        /// 2 点の開いた線 (長さ ``RoundRetainedForm/length``)
+        case line
+        /// 3 点の開いた折れ線 (長さ ``RoundRetainedForm/length`` の 2 本を ``RoundRetainedForm/bend`` 曲げる)
+        case bent
+        /// 閉じた正方形 (位相を鍵に足さない輪郭)
+        case closed
+        /// 回した後に縦に潰した 2 点の線 (倍率 0.5)
+        case squashed
+        /// 両端だけ ``RoundRetainedForm/tiny`` の長さで ``RoundRetainedForm/bend`` 曲がる 4 点の折れ線。端の線分が
+        /// 端の列より短く、端の列の中で曲がる (``ThinEndCut/staysStraight(_:)`` が位相で変わる・#3864 の反証の 2)
+        case tinyEnds
+        /// 半径 ``RoundRetainedForm/radius`` の開いた弧 (`arc`・長さ ``RoundRetainedForm/length``)。小さい半径では
+        /// 端の列の中で曲がる
+        case arc
+        /// `curveVertex` の S 字 (幅 ``RoundRetainedForm/length``)
+        case curve
+    }
+
+    /// 丸い端の保持した形の寸法 (出す画素)。
+    struct RoundRetainedForm: Sendable {
+        var kind: RoundRetainedShape
+        var length: Float
+        var bend: Float
+        /// ``RoundRetainedShape/tinyEnds`` の端の線分の長さ
+        var tiny: Float = 0.3
+        /// ``RoundRetainedShape/arc`` の半径
+        var radius: Float = 3
+        /// 回す前に掛ける縦の倍率 (`scale(1, skew)` → `rotate`。1 でなければ描く画素へ写す 2x2 がせん断を含む)
+        var skew: Float = 1
+
+        /// 形を描く (保持した形の記録と、その場で引く線で同じ呼び出し)。
+        @MainActor
+        func draw(on canvas: Canvas) {
+            switch kind {
+            case .line, .squashed:
+                canvas.beginShape()
+                canvas.vertex(-length / 2, 0)
+                canvas.vertex(length / 2, 0)
+                canvas.endShape()
+            case .bent:
+                canvas.beginShape()
+                canvas.vertex(-length, 0)
+                canvas.vertex(0, 0)
+                canvas.vertex(length * cos(bend), length * sin(bend))
+                canvas.endShape()
+            case .closed:
+                canvas.beginShape()
+                canvas.vertex(-length / 2, -length / 2)
+                canvas.vertex(length / 2, -length / 2)
+                canvas.vertex(length / 2, length / 2)
+                canvas.vertex(-length / 2, length / 2)
+                canvas.endShape(.close)
+            case .tinyEnds:
+                let reach = SIMD2(cos(bend), sin(bend)) * tiny
+                canvas.beginShape()
+                canvas.vertex(-length / 2 + reach.x, reach.y)
+                canvas.vertex(-length / 2, 0)
+                canvas.vertex(length / 2, 0)
+                canvas.vertex(length / 2 - reach.x, -reach.y)
+                canvas.endShape()
+            case .arc:
+                let sweep = min(length / radius, 2 * .pi - 0.1)
+                canvas.arc(0, 0, 2 * radius, 2 * radius, -sweep / 2, sweep / 2)
+            case .curve:
+                let (step, lift) = (length / 3, length * 0.3 * sin(bend))
+                canvas.beginShape()
+                canvas.curveVertex(-1.5 * step, lift)
+                canvas.curveVertex(-1.5 * step, 0)
+                canvas.curveVertex(-0.5 * step, lift)
+                canvas.curveVertex(0.5 * step, -lift)
+                canvas.curveVertex(1.5 * step, 0)
+                canvas.curveVertex(1.5 * step, -lift)
+                canvas.endShape()
+            }
+        }
+    }
+
+    /// 丸い端の形 `form` を `pose` に置いて光の量を測る。`immediate` ならその場で引いた線、そうでなければ保持した形を
+    /// 1 つ作って置く。`prime` があれば、保持した形をまずその位相で 1 フレーム置いてから (控えを作ってから) `pose` で置き直す。
+    /// 出す面は 1 辺 `side` で、形は面の中心に置く。
+    @MainActor
+    static func roundRetainedInk(
+        _ form: RoundRetainedForm, pose: Pose, prime: Pose?, immediate: Bool = false, side: Int = size
+    ) throws -> Double {
+        let canvas = try makeCanvas(density: pose.density, side: side)
+        let center = Float(side) / 2
+        var held: Shape?
+        func place(_ at: Pose) {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.strokeCap(.round)
+            canvas.strokeWeight(at.weight)
+            // 記録は置き場所の変換を掛ける前に (記録のときの変換は形が持つ)
+            if !immediate, held == nil { held = canvas.createShape { form.draw(on: canvas) } }
+            canvas.translate(center + at.offset.x, center + at.offset.y)
+            if form.skew != 1 { canvas.scale(1, form.skew) }
+            canvas.rotate(at.angle)
+            if form.kind == .squashed { canvas.scale(1, 0.5) }
+            if immediate { form.draw(on: canvas) } else { canvas.shape(held!) }
+        }
+        if let prime, !immediate { try draw(on: canvas) { place(prime) } }
+        try draw(on: canvas) { place(pose) }
+        return totalSum(try canvas.target.readPixels())
+    }
+
+    /// 長さ・半径は描く画素で振り、出す画素へは細かさで割って直す (位相を残す線引き
+    /// ``ThinStrokeRecipe/phaseFreeMinimumLength`` の両側を同じ割合で踏む)。出す面は 1 辺 256 で、細かさ 0.4 でも
+    /// 描く画素で長さ 72 の線が収まる。
+    nonisolated static let roundReuseAxes: [ProbeAxis] = [
+        ProbeAxis("kind", 0..<Double(RoundRetainedShape.allCases.count), simplest: 0, step: 1),
+        ProbeAxis("weight", 0.2..<1.0001, simplest: 1),
+        ProbeAxis("density", 0.4..<1.0001, simplest: 1, step: 1.0 / 128),
+        ProbeAxis("length", 4..<72, simplest: 40),
+        ProbeAxis("bend", 0.3..<2.8, simplest: 1),
+        ProbeAxis("tiny", 0.05..<1.2, simplest: 0.3),
+        ProbeAxis("radius", 2..<12, simplest: 3),
+        ProbeAxis("skew", 0.4..<1.0001, simplest: 1),
+        ProbeAxis("angle", 0..<(Double.pi), simplest: 0),
+        ProbeAxis("dx", 0..<2, simplest: 0), ProbeAxis("dy", 0..<2, simplest: 0),
+        ProbeAxis("px", 0..<2, simplest: 0), ProbeAxis("py", 0..<2, simplest: 0),
+    ]
+
+    /// 丸い端の保持した形は、別の位相で置いた控えを使い回しても、**その場で引いた線**の光の量の ±25% (#3859) に収まる (#3864)。
+    ///
+    /// **この検査が ±25% の門である** (``ThinEndCutTests`` の `retainedRoundEndsReuseAcrossPhases` の光の量の上限は、
+    /// 環境差に余裕を持たせた粗い見張り)。控えを使い回したかどうかは見ない (戻した条件を拾うのは同じ検査の組み直しの回数と、
+    /// 線引きの両側を踏む `retainedRoundEndsPhaseFreeBoundary`)。控えを作る位相 (`px`・`py`) は測る位相 (`dx`・`dy`) と
+    /// 独立に生成する。形 (端だけ短く曲がる折れ線・小さい半径の弧・`curveVertex` を含む)・長さ・折れ角・向き・回す前の
+    /// 縦の倍率 (せん断) も振る。比べる基準は #3859 の物差しどおり、その場で引いた同じ線である。
+    @Test("丸い端の保持した形は、別の位相で置いた控えを使い回しても、その場で引いた線の光の量の ±25% に収まる (#3864)")
+    func roundRetainedReusedAcrossPhases() throws {
+        let report = try Probe.run(
+            "density", suite: "DensityInvarianceTests", key: "reuse/round", axes: Self.roundReuseAxes,
+            cases: Self.generatedCases * 4
+        ) { input in
+            let density = input.float("density")
+            let form = RoundRetainedForm(
+                kind: RoundRetainedShape(rawValue: Int(input["kind"])) ?? .line,
+                length: input.float("length") / density, bend: input.float("bend"),
+                tiny: input.float("tiny") / density, radius: input.float("radius") / density,
+                skew: input.float("skew"))
+            let pose = Pose(
+                weight: input.float("weight"), density: density,
+                offset: SIMD2(input.float("dx"), input.float("dy")), angle: input.float("angle"), squash: 1)
+            if pose.weight * pose.density * form.skew * (form.kind == .squashed ? 0.5 : 1) < 0.07 { return .skip }
+            var prime = pose
+            prime.offset = SIMD2(input.float("px"), input.float("py"))
+            let direct = try Self.roundRetainedInk(form, pose: pose, prime: nil, immediate: true, side: 256)
+            let reused = try Self.roundRetainedInk(form, pose: pose, prime: prime, side: 256)
+            if abs(reused - direct) > 0.25 * direct {
+                return .fail("光の量 \(reused) (その場で引いた線 \(direct)・\(form.kind))")
+            }
+            return .pass
+        }
+        #expect(report.failure == nil, "\(report.failure ?? "")")
+    }
+
+    /// 固定の例: 控えの使い回しが短い折れ線で ×1.26 になった置き方 (#3864 の生成の検査が見つけた入力)。描く画素で長さ 1.8 の線分 2 本
+    /// を約 100° に折った形は、端を切るかどうかが位相で変わる (``Canvas/thinEnds(_:outline:thin:offset:)`` の両端の片の重なり)。
+    /// 十分に長い線だけ控えを使い回す (``ThinStrokeRecipe/endsAreFreeOfPhase(drawnBy:)``) と収まる。
+    @Test("固定の例: 短い折れ線の丸い端は、別の位相で置いた控えを使い回さず、その場で組んだ光の量の ±25% に収まる (#3864)")
+    func shortBentRoundRetainedStaysWithinTolerance() throws {
+        let pose = Pose(
+            weight: 1, density: 0.3359375, offset: SIMD2(1.8640598, 1.3252786), angle: 2.5, squash: 1)
+        var prime = pose
+        prime.offset = SIMD2(0.34997286, 0.90107313)
+        let form = RoundRetainedForm(kind: .bent, length: 5.338, bend: 1.7879679)
+        let fresh = try Self.roundRetainedInk(form, pose: pose, prime: nil)
+        let reused = try Self.roundRetainedInk(form, pose: pose, prime: prime)
+        #expect(abs(reused - fresh) <= 0.25 * fresh, "光の量 \(reused) (その場で \(fresh))")
+    }
+
     /// 固定の例: #3385 で落ちた box の稜線の置き方 (専用機の定期の回が生成した入力を縮めたもの。#2251 の追記)。
     ///
     /// 細かさ 0.36 以下で横のずらしが特定の位相のとき、見る列の最初の列が出す画素の 54 より左へ出て、
@@ -1017,11 +1228,15 @@ struct DensityInvarianceTests {
 
     /// 固定の例: #3788 で落ちた、45° 近くに回した細い輪郭の矩形の置き方 (専用機の定期の回が生成した入力)。
     ///
-    /// 帯を線に垂直な長方形で組んでいた頃は、2 つの外れが重なった。(1) 角を列の境目で切っていないので、角 1 つで
+    /// 帯は線に垂直な長方形で組むので、2 つの外れが重なる。(1) 角を列の境目で切っていないので、角 1 つで
     /// 画素の中心を ±1 個多く (少なく) 数える。(2) 帯の 2 本の縁は行の向きにちょうど n 離れているが、頂点が別々に
     /// 1/256 画素へ丸められるので、縁が画素の中心とほぼ重なる行で中心を 2 つ数える。45° 近くでは縁が格子に沿って
-    /// 何行も続く。縮めた置き方 (太さ 1) で光の量 14.48 (期待 12.31・+17.6%)、縮める前 (太さ 0.5138) で +13.9% だった。
-    /// 縦のずらしは、同じ角度・細かさで 1 周期ぶん (1/32 刻み) も振る (main で 1 つが +21% になる位相を含む)。
+    /// 何行も続く。縮めた置き方 (太さ 1) で光の量 14.48 (期待 12.31・+17.6%)、縮める前 (太さ 0.5138) で +13.9%。
+    /// 縦のずらしは、同じ角度・細かさで 1 周期ぶん (1/32 刻み) も振る (1 つが +21% になる位相を含む)。
+    ///
+    /// #3834 は (2) を縁の写しの平行四辺形で直したが、額縁 1 つの頂点が 24 から 120 になり、#3859 の許容 ±25% の下で
+    /// 戻した (#3862)。この例は、戻した組み方の外れ (最大 ×1.21) が ±25% の内に留まることを見る。戻した木で角の形
+    /// (`miter`・`bevel`) と寸法 (12×8〜160×40) を振って測った外れの最大も、この置き方の ×1.21 だった。
     nonisolated static let diagonalFrameRectPoses: [Pose] =
         [
             Pose(weight: 1, density: 0.3203125, offset: SIMD2(1.87, 1.95), angle: 0.7859946616474819, squash: 1),

@@ -517,7 +517,12 @@ enum WatchCommand {
         //
         // **止める待ちは main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
         // 合図はウィンドウの側の同期の呼び出しなので、待つ仕事は `Task` へ渡す
-        let viewer = Viewer(window: window, preview: preview)
+        let viewer = Viewer(
+            window: window, preview: preview,
+            listing: WatchFrameListing(identity: FrameListing.identity(ofPackageAt: session.directory)))
+        // **作品のウィンドウが映す世代の子に従って名乗る** ([ADR-0049] 決定 2)。プレビューは試聴の子を映すことが
+        // あるので見ない。子は断っていなければ作品名と題を絵に載せている
+        window.onFrameShareRead = { [listing = viewer.listing] share in listing.follow(share) }
         let firstFrame = viewer.firstFrame
         // **合図が名乗った子の番号を渡す** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
         // 見張りは、待っている世代のものだけを受ける
@@ -853,6 +858,8 @@ enum WatchCommand {
         // **倒れた子は、乗り換えの合図が来ないので、ここで見つける** (#2350)。作り直した子が共有面を
         // 作れず自分のウィンドウを開いた回は、前の世代が道具のウィンドウに映ったまま並走する
         if let fallen = await session.retireAfterFallback() {
+            // **倒れた子が自分のウィンドウで名乗るので、道具は下ろす** ([ADR-0049] 決定 2)
+            viewer?.listing.fellBack()
             announce(fallen.outcome)
             let line = fellBackLine(previous: fallen.previous)
             say(line)
@@ -1256,8 +1263,11 @@ enum WatchCommand {
         let preview: SharedFramePreview
         /// 起こした子の 1 枚目を待っているか (#2875)。
         let firstFrame = FirstFrameWait()
+        /// 作品のウィンドウの持ち主としての、目録への名乗り ([#3919](https://github.com/mokume-metal/mokume/issues/3919))。
+        let listing: WatchFrameListing
 
         func close() {
+            listing.withdraw()
             window.close()
             preview.close()
         }

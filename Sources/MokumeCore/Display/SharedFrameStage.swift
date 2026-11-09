@@ -308,6 +308,16 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// (``SharedFrameSurface/selectInputAttribute``・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
     /// 読み方は ``pointerLockRequested`` と同じで、**自分が映す世代の頼みに従う**。検査から読む。
     private(set) var selectionRequested: (pid: Int32?, request: SelectionBroker.Request)?
+    /// 出している世代のスケッチが載せた名乗りの中身。**`nil` なら断っている** (古いライブラリの子も)。**面の属性から
+    /// 読む** (``SharedFrameSurface/frameShareAttribute``・[#3919](https://github.com/mokume-metal/mokume/issues/3919))。
+    /// 読み方は ``pointerLockRequested`` と同じで、**自分が映す世代の値に従う**。検査から読む。
+    private(set) var frameShare: FrameShare?
+    /// 映す世代の新しい絵から ``frameShare`` を読むたびの知らせ。道具の作品のウィンドウが、目録への名乗りを
+    /// 付け外しする ([ADR-0049] 決定 2)。**変わらなくても読むたびに呼ぶ** — 受け手は「映す世代から絵が届いた」
+    /// ことも知る (子が自分のウィンドウへ倒れた後、次に共有面へ戻った世代を見分ける)。同じ値の重複は受け手が捨てる。
+    ///
+    /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
+    var onFrameShareRead: ((FrameShare?) -> Void)?
     /// ファイルを選ばせるダイアログの出し方。**検査から差し替える** — 本物の `NSOpenPanel` は人の操作を待つ。
     var filePicker: any FilePicker = OpenPanelPicker()
     /// いま出している (出していた) ダイアログ。**頼みが面から消えるまで持つ** — 答えた後も、頼みが残っている間は
@@ -631,6 +641,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             selectionRequested = SharedFrameSurface.selectionRequest(on: surface).map {
                 (source?.pid, $0)
             }
+            frameShare = SharedFrameSurface.frameShare(on: surface)
+            onFrameShareRead?(frameShare)
         }
         let numbers = SharedFrameSurface.numbers(on: surface)
         // **警告の控えは、数字が載っていない面でも新しい世代の値にする。** 速さを載せない古いライブラリの子は

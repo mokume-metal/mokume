@@ -367,8 +367,8 @@ struct FlatStrokeStencilTests {
         }
     }
 
-    /// `.temporal` の拡大は、フレームごとに描く位置を描く画素 1 個弱まで揺らす (``UpscaleStage``)。額縁の片は頂点を
-    /// 共有する重ならない分割 (帯の写しの平行四辺形と両端の片・#3788) なので、揺らしは頂点をまとめて動かすだけで、
+    /// `.temporal` の拡大は、フレームごとに描く位置を描く画素 1 個弱まで揺らす (``UpscaleStage``)。額縁の片は重ならない
+    /// 分割 (留め継ぎ: 角の正方形まで通した帯 / 面取り: 帯・外側の半分・角の三角形・#3733) なので、揺らしは頂点をまとめて動かすだけで、
     /// どの揺らしでも塗られた画素は 1 回ぶんの値になる。揺らしの周期の 8 フレームを描いて、フレームごとに見る。
     @Test("畳んだ回した細い rect の輪郭は、.temporal の揺らしの下でも角を重ねて混ぜない", arguments: [StrokeJoin.miter, .bevel])
     func foldedRotatedThinRectMixesOnceUnderJitter(join: StrokeJoin) throws {

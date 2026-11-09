@@ -547,7 +547,7 @@ class ReviewGateTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
     # --- <details> に畳んだ節 (#3184) ------------------------------------------
-    # 本文の先頭に人が読む要約を置き、詳細を <details> に畳んでよい (AGENTS.md「説明と報告」)。
+    # 本文の先頭に人が読む要約を置き、詳細を <details> に畳んでよい (AGENTS.md「発言」)。
     # 畳んだ中の「確認方法」「反証」も節として読む。<details> は HTML コメントではない
 
     def test_a_verification_section_folded_in_details_is_read(self):
@@ -944,7 +944,7 @@ class ReviewGateTest(unittest.TestCase):
                 self.assertSays(err, "指摘が 1 件も無かったなら、そう書けば空ではありません")
 
     def test_the_missing_verify_label_message_says_who_may_attach_it(self):
-        """印を付けてよいのは起票者だけ。他人の Issue には、自分で付けず付与を頼む (AGENTS.md「進め方」2)。"""
+        """印を付けてよいのは起票者だけ。他人の Issue には、自分で付けず付与を頼む (AGENTS.md「着手」1)。"""
         err = self.every_blocked_message()["verify の不在"]
         self.assertSays(err, "verify: triaged を付けてよいのは完了条件を知る起票者だけ")
         self.assertSays(err, "他の人が起票した Issue なら自分では付けず")

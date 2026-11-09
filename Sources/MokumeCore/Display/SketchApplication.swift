@@ -106,6 +106,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         if case .window(let window, _, _) = outlet { window } else { nil }
     }
 
+    /// 共有面へ差し出している経路の面。**読むだけを内へ開けてある** — 検査が、面に載せた名乗りの中身を見るため (#3919)。
+    var sharedSurface: SharedFrameSurface? {
+        if case .shared(let shared) = outlet { shared } else { nil }
+    }
+
     /// 最後のウィンドウが閉じたら、スケッチも終わってよいか。
     ///
     /// **ウィンドウを持たない経路では終わらない** ([ADR-0032] 決定 1)。ウィンドウが画面の出口である経路では
@@ -960,6 +965,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             return
         }
         outlet = .shared(shared)
+        // **名乗るのは道具** ([ADR-0049] 決定 2)。子は「断っていない」と作品名・題を面に載せ、道具がそれを見て名乗る
+        shared.frameShare = FrameShare(
+            sketch: FrameAnnouncement.ownSketchName, title: title)
         // **全画面の頼みは、目録に載せて道具へ渡した** (#2188)。作品のウィンドウは道具が持つので
         // ([ADR-0032] 決定 1)、こちらからは全画面にできない。道具が頼みを受けて、宣言した
         // ディスプレイで全画面にする。**道具が頼みを読んだかは、こちらからは分からない** —
@@ -981,6 +989,23 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 人へ 1 行伝える口。**検査から差し替える** (言ったかどうかを数えるため)。
     var announce: @MainActor (String) -> Void = { Diagnostics.warn($0) }
+
+    /// 自分のウィンドウを開いたときに名乗る口 ([ADR-0049] 決定 2・[#3919])。引数は一覧に見せる名前 (題)。
+    ///
+    /// **名乗るのは自分のウィンドウを持つ実行だけ** — 直に走らせる・`run`・束ねた `.app`・見張りの子が自分の
+    /// ウィンドウへ倒れた回。共有面へ差し出す子は道具が代わりに名乗り、書き出しと埋め込みは名乗らない。
+    /// **検査から差し替える** (名乗ったかを数えるため)。
+    ///
+    /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
+    /// [#3919]: https://github.com/mokume-metal/mokume/issues/3919
+    var listFrames: @MainActor (String) -> FrameAnnouncement? = { title in
+        FrameAnnouncement.announce(
+            sketch: FrameAnnouncement.ownSketchName, identity: FrameAnnouncement.ownIdentity,
+            title: title)
+    }
+
+    /// 名乗っている項目。自分のウィンドウを開くまでと、名乗れなかった実行では `nil`。
+    private(set) var frameAnnouncement: FrameAnnouncement?
 
     /// 全画面で出すディスプレイの画面を引く口 (#2020)。外れていれば `nil`。
     ///
@@ -1095,6 +1120,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         surface.synchronizeDrawableSize()
 
         outlet = .window(window, surface, hasPresented: false)
+        // **ウィンドウを持ったので名乗る** ([ADR-0049] 決定 2)。名乗れなくても走り続ける
+        frameAnnouncement = listFrames(title)
 
         if takesFocus { NSApp.activate() }
 
@@ -1242,6 +1269,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // なるのは、AppKit が返事を待たずに終わらせたとき (返事を待っている間に
         // `terminate(_:)` が重なったとき) だけで、ここが最後の砦である
         runtime.closePlugins()
+        // **目録から下ろす** ([ADR-0049] 決定 3)。信号で落ちた実行の項目は、次に名乗る送り手が掃除する
+        frameAnnouncement?.withdraw()
         screenLink.invalidate()
         fullSpeedDriver.invalidate()
         NotificationCenter.default.removeObserver(
@@ -1514,6 +1543,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         isTerminating = true
         reportStartFailure(failure, note: noteStartFailure)
         runtime.closePlugins()
+        // **目録から下ろす** ([ADR-0049] 決定 3)。信号で落ちた実行の項目は、次に名乗る送り手が掃除する
+        frameAnnouncement?.withdraw()
         screenLink.invalidate()
         fullSpeedDriver.invalidate()
         exitProcess(1)

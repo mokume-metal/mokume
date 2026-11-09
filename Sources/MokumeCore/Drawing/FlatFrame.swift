@@ -50,8 +50,7 @@ struct FlatFrame {
     /// 畳んだ矩形の雛形の細い輪郭を、頂点段で置き場所ごとに広げるか (``Canvas/ThinFold/widensInVertexStage``・#3733)。
     /// 1 なら、`strokeStart` から後ろの頂点の `position` は額縁の片の角 (形自身の座標・置き場所の位置を足す前)、
     /// `uv` は角から広げる向き (各成分 −1・0・1) で、頂点段が置き場所の 2x2 から半幅と被覆を
-    /// ``Canvas/thinRectFrame(_:placedBy:)`` と同じ式で求め、`(角 + 位置) + 半幅 × 向き` に置く (#3555)。帯の縁の写しの
-    /// 頂点は、輪郭の何番目の頂点かで役割を引いて組む (``Canvas/thinRectPoints(_:units:place:)``・#3788)。0 は広げない。
+    /// ``Canvas/thinRectFrame(_:placedBy:)`` と同じ式で求め、`(角 + 位置) + 半幅 × 向き` に置く (#3555)。0 は広げない。
     var thinStroke: UInt32 = 0
     /// x: 線の太さ (形自身の座標)・y: 1 に丸める描く画素の太さの下限 (``Canvas/roundedDrawnWeight(_:)``)・
     /// zw: 白い区画の読み取り位置 (輪郭の頂点の `uv` の代わりに断片へ渡す)。`thinStroke` が 1 のときだけ読む。
