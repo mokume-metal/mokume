@@ -92,9 +92,33 @@ package final class FrameAnnouncement {
         try? FrameListing.place(entry, in: directory)
     }
 
-    /// 下ろす。目録の項目を消し、名前を手放す。2 度目は何もしない。
+    /// 繋いできた受け手へ絵を渡す送り手 ([#3920](https://github.com/mokume-metal/mokume/issues/3920))。起こすまで `nil`。
+    package private(set) var sender: FrameSender?
+
+    /// 受け手の頼みを受け始め、送り手を返す。2 度目は同じ送り手を返す。下ろした後は `nil`。
+    ///
+    /// - Parameters:
+    ///   - width: いまの描く解像度 (受け手の面はこの大きさで受け入れる)。
+    ///   - startsListening: 頼みを main queue で受け始めるか。**検査は `false` にして** ``FrameSender/drain()`` を直に呼ぶ。
+    @discardableResult
+    package func startSending(
+        gpu: RenderDevice, width: Int, height: Int, startsListening: Bool = true
+    ) -> FrameSender? {
+        guard receivePort != 0 else { return nil }
+        if let sender { return sender }
+        let sender = FrameSender(gpu: gpu, port: receivePort, width: width, height: height)
+        if startsListening { sender.start() }
+        self.sender = sender
+        return sender
+    }
+
+    /// 下ろす。目録の項目を消し、送り手を畳み、名前を手放す。2 度目は何もしない。
+    ///
+    /// **受け手の頼みを受ける口を先に畳む** — 受信の権利を手放した後に main queue の受け口が動くと、死んだ port を読む。
     package func withdraw() {
         guard receivePort != 0 else { return }
+        sender?.stop()
+        sender = nil
         FrameListing.remove(entry.serviceName, in: directory)
         Bootstrap.releaseReceive(receivePort)
         receivePort = 0

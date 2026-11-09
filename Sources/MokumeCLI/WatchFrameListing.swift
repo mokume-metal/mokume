@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Darwin
+import Metal
 import MokumeCore
+import MokumeDiagnostics
 
 /// 見張りの下で、道具が作品のウィンドウの持ち主として目録へ名乗る ([ADR-0049] 決定 2・[#3919])。
 ///
@@ -25,15 +28,43 @@ final class WatchFrameListing {
     var announce: (_ identity: String, _ share: FrameShare) -> FrameAnnouncement?
     /// 名乗っている項目。名乗っていなければ `nil`。
     private(set) var announcement: FrameAnnouncement?
+    /// 子の面から受け手の面へ写す GPU (作品のウィンドウの台のもの)。`nil` なら受け手へ渡さない (検査)。
+    private let gpu: RenderDevice?
+    /// 受け手へ渡すフレームの番号。**道具が数える** — 保存で子が入れ替わっても途切れない ([#3920])。
+    ///
+    /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
+    private(set) var frameCount: Int64 = 0
+    /// 写せなかったことを言ったか。毎フレーム同じ 1 行を流さない。
+    private var saidCopyFailure = false
 
     init(
-        identity: String,
+        identity: String, gpu: RenderDevice? = nil,
         announce: @escaping (String, FrameShare) -> FrameAnnouncement? = { identity, share in
             FrameAnnouncement.announce(sketch: share.sketch, identity: identity, title: share.title)
         }
     ) {
         self.identity = identity
+        self.gpu = gpu
         self.announce = announce
+    }
+
+    /// 作品のウィンドウが映す世代の新しい絵を、繋いできた受け手の面へ写す ([ADR-0049] 決定 2・[#3920])。
+    /// 名乗っていなければ何もしない。受け手の頼みは、名乗った後の最初の絵から受け始める。
+    ///
+    /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
+    func handOver(_ texture: any MTLTexture) {
+        guard let announcement, let gpu,
+            let sender = announcement.startSending(gpu: gpu, width: texture.width, height: texture.height)
+        else { return }
+        frameCount += 1
+        do {
+            try sender.deliver(copying: texture, frameCount: frameCount, hostTime: mach_absolute_time())
+            saidCopyFailure = false
+        } catch {
+            guard !saidCopyFailure else { return }
+            saidCopyFailure = true
+            Diagnostics.warn("Could not hand this frame to the apps receiving it: \(error)")
+        }
     }
 
     /// 映す世代の絵から名乗りの中身を読んだ。`nil` は断っている。

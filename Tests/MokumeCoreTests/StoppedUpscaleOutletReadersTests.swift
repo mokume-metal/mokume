@@ -171,9 +171,9 @@ struct StoppedUpscaleOutletReadersTests {
             reason: "ウィンドウなしの実行の読む口 (readPixels・displayImage・writePNG・#3870)。呼ぶ先の readPixels() (RenderTarget.swift) と encodeForDisplay・writePNG (出力段) が、どれも頭で catchUpWithDrawnPicture() を通る"),
         // MARK: ランタイムの配った後
         Reader(
-            file: "MokumeCore/Display/SketchApplication.swift", token: "runtime.target", count: 3,
+            file: "MokumeCore/Display/SketchApplication.swift", token: "runtime.target", count: 4,
             catchUp: .afterDelivery, vouchedIn: "MokumeCore/Sketch/SketchRuntime.swift",
-            reason: "ウィンドウ (presenter.present) と共有の面 (shared.write)、止まっている間に出し直すかの鍵 (shownFrame・描画先の番号と明るさだけを読み、絵は読まない)。advance() がコールバックを配った直後と止めている間に catchUpOutputWithoutThrowing() を済ませた後に呼ぶ (#1882・#1906・#2367)"),
+            reason: "ウィンドウ (presenter.present) と共有の面 (shared.write)、繋いできた受け手の面 (deliverToReceivers の presenter.draw・#3920。presentFrame の中でウィンドウより先に書く)、止まっている間に出し直すかの鍵 (shownFrame・描画先の番号と明るさだけを読み、絵は読まない)。advance() がコールバックを配った直後と止めている間に catchUpOutputWithoutThrowing() を済ませた後に呼ぶ (#1882・#1906・#2367)"),
         Reader(
             file: "MokumeCore/Display/FramePresenter.swift", token: ".setSource(", count: 1,
             catchUp: .afterDelivery, vouchedIn: "MokumeCore/Sketch/SketchRuntime.swift",

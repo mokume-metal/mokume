@@ -112,6 +112,55 @@ struct FrameShareLaunchTests {
         #expect(FrameListing.entries(in: directory).isEmpty, "終わったのに目録に残っている")
     }
 
+    /// **受け手へは、ウィンドウの見え方に縛られずに書く** ([#3920])。画面への差し出しはウィンドウが見えない間は休むが、
+    /// マッパーの裏に作品のウィンドウを隠すのは普通の使い方である (ADR-0049 決定 4)。受け手は目録の名前を本物の
+    /// `bootstrap_look_up` で引いて繋ぐ。
+    ///
+    /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
+    @Test("自分のウィンドウが見えない間も、繋いできた受け手へは番号を進めて書く")
+    func aHiddenWindowStillHandsFramesOver() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let missing = TestScratch.path("mokume-viewport", isDirectory: true)
+        let gpu = try RenderDevice()
+        let application = try SketchApplication(sketch: Titled(), gpu: gpu)
+        application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
+        application.announce = { _ in }
+        application.listensForReceivers = false
+        application.listFrames = { title in
+            FrameAnnouncement.announce(
+                sketch: "Titled", identity: "/work/Titled", title: title, in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") })
+        }
+        application.resolveOutlet(at: missing, owner: nil)
+        application.didFinishLaunching()
+        defer {
+            application.window?.close()
+            application.willTerminate()
+        }
+        application.windowVisibilityForTesting = false
+        let sender = try #require(application.frameAnnouncement?.sender, "送り手を起こしていない")
+        let entry = try #require(FrameListing.entries(in: directory).first)
+        let service = try #require(Bootstrap.lookUp(entry.serviceName), "目録の名前を引けない")
+        defer { Bootstrap.releaseSend(service) }
+
+        let receiver = ModelReceiver(width: 32, height: 16, count: 3)
+        defer { receiver.die() }
+        receiver.connect(to: service)
+        sender.drain()
+        var counts: [Int64] = []
+        for _ in 0..<120 where counts.count < 3 {
+            application.displayLinkFired()
+            _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+            sender.drain()
+            for frame in ModelReceiver.frames(in: receiver.receiveAll()) {
+                counts.append(frame.frameCount)
+                receiver.release(slot: frame.slot, to: service)
+            }
+        }
+        #expect(counts.count >= 3, "見えないウィンドウの間、受け手へ書いていない")
+        #expect(counts == counts.sorted() && Set(counts).count == counts.count, "番号が進んでいない: \(counts)")
+    }
+
     @Test("共有面へ差し出す見張りの子は名乗らず、作品名と題を面に載せる")
     func theSharedChildLeavesItToTheTool() throws {
         let facet = try TestScratch.directory("mokume-viewport")
