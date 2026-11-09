@@ -92,18 +92,16 @@ final class DashAndGrid: Sketch {
         popStyle()
 
         // 変換 — 長さと間隔は変換の前の単位で測るので、拡大すれば破線も伸びる
-        pushStyle()
-        pushMatrix()
-        noFill()
-        stroke(153, 128, 230)
-        strokeWeight(3)
-        strokeCap(.square)
-        strokeDash(5, 5)
-        translate(450, 240)
-        line(0, 0, 150, 0)
-        scale(2, 2)
-        line(0, 10, 75, 10)
-        popMatrix()
-        popStyle()
+        push {
+            noFill()
+            stroke(153, 128, 230)
+            strokeWeight(3)
+            strokeCap(.square)
+            strokeDash(5, 5)
+            translate(450, 240)
+            line(0, 0, 150, 0)
+            scale(2, 2)
+            line(0, 10, 75, 10)
+        }
     }
 }

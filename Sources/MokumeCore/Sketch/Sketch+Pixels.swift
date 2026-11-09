@@ -215,17 +215,17 @@ extension SketchPart {
     ///     noStroke()
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     // 床の後に loadPixels() を呼ばない
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -245,17 +245,17 @@ extension SketchPart {
     ///     noStroke()
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     loadPixels()   // 床はここで描き切られる
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -264,8 +264,8 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=1276c674
-    // shot: 2 snippet=2bff752d
+    // shot: 1 snippet=4d4d8899 image=a9cb98156acb92ed
+    // shot: 2 snippet=c5818c56 image=ba0ac101f13c7b4f
     public func loadPixels() { liveCanvas()?.loadPixels() }
 
     /// 1 画素の色。原点は左上。範囲の外は透明を返す。索引は ``pixels`` と同じ。

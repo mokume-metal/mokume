@@ -65,13 +65,13 @@ final class PartsAndFormats: Sketch {
                 continue
             }
             fill(214, 168, 96)
-            push()
-            translate(x, height / 2 - 20, 0)
-            // **寝かせてから、歯車の軸のまわりに回す。** 台の上で回る部品の見え方になる
-            rotateX(1.1)
-            rotateZ(time * 0.5)
-            model(gear)
-            pop()
+            push {
+                translate(x, height / 2 - 20, 0)
+                // **寝かせてから、歯車の軸のまわりに回す。** 台の上で回る部品の見え方になる
+                rotateX(1.1)
+                rotateZ(time * 0.5)
+                model(gear)
+            }
             captions.append((shelf.title, [Self.describe(gear)], x))
         }
 

@@ -73,11 +73,11 @@ final class ShapesFromSVG: Sketch {
 
             // まん中: 4 倍。左上の 4 分の 1 ほど (葉の縁・三日月・輪の縁) を切り抜いて見せる
             clip(360, 40, 400, 520)
-            push()
-            translate(360 - 15 * 4, 40 - 10 * 4)
-            scale(4, 4)
-            shape(logo)
-            pop()
+            push {
+                translate(360 - 15 * 4, 40 - 10 * 4)
+                scale(4, 4)
+                shape(logo)
+            }
             noClip()
         }
 

@@ -57,11 +57,11 @@ final class TypeAndImagery: Sketch {
         cluster = Shape.group(
             (0..<9).map { index in
                 createShape {
-                    push()
-                    translate(Float(index % 3) * 46, Float(index / 3) * 46)
-                    rotate(Float(index) * 0.4)
-                    shape(leaf)
-                    pop()
+                    push {
+                        translate(Float(index % 3) * 46, Float(index / 3) * 46)
+                        rotate(Float(index) * 0.4)
+                        shape(leaf)
+                    }
                 }
             })
 
@@ -170,18 +170,18 @@ final class TypeAndImagery: Sketch {
             56, 170, 364, 130)
 
         // 字の輪郭を図形として扱う
-        push()
-        translate(48, 380)
-        stroke(242, 153, 76)
-        strokeWeight(2)
-        noFill()
-        textSize(72)
-        for contour in textOutline("outline", 0, 60) {
-            beginShape()
-            for point in contour.points { vertex(point.x, point.y) }
-            endShape(.close)
+        push {
+            translate(48, 380)
+            stroke(242, 153, 76)
+            strokeWeight(2)
+            noFill()
+            textSize(72)
+            for contour in textOutline("outline", 0, 60) {
+                beginShape()
+                for point in contour.points { vertex(point.x, point.y) }
+                endShape(.close)
+            }
         }
-        pop()
 
         // 自分の色を持つ字形。**塗りの色は掛からない** ので、同じ 1 行の中で
         // 単色の字は塗りの色で出て、絵文字だけが自分の色で出る
@@ -199,12 +199,12 @@ final class TypeAndImagery: Sketch {
         }
 
         // 保持した形 — 1 枚ずつと、組にしたもの
-        push()
-        translate(560, 360)
-        for index in 0..<4 {
-            shape(leaf, index * 52, 0)
+        push {
+            translate(560, 360)
+            for index in 0..<4 {
+                shape(leaf, index * 52, 0)
+            }
         }
-        pop()
         shape(cluster, 790, 340)
 
         // 同じ絵を 3 つの道で — 直に書いた・読み終わるまで待って読んだ・待たずに読んだ

@@ -13,7 +13,7 @@ extension SketchPart {
     /// 平面の点が、いまの変換といまの視点でどこへ移るか (横)。
     ///
     /// 読んだ値は**面の座標**で、変換を戻した後の図形にそのまま使える。下は、回した枠の角
-    /// `(90, 0)` に点を打ってその横の位置を読み、`pop()` の後に縦線を引いたもの。枠を回す
+    /// `(90, 0)` に点を打ってその横の位置を読み、`push { }` を抜けた後に縦線を引いたもの。枠を回す
     /// 角度を 0・45 度・90 度と動かしても、線は角の点を通り続ける。
     ///
     /// @Row {
@@ -23,19 +23,20 @@ extension SketchPart {
     ///     // 枠を回す角度を 0・45 度・90 度と動かす
     ///     let angles: [Float] = [0, Float.pi / 4, Float.pi / 2]
     ///     for i in 0..<3 {
-    ///         push()
-    ///         translate(30 + i * 130, 40)
-    ///         rotate(angles[i])
-    ///         noFill()
-    ///         stroke(89, 97, 115)
-    ///         strokeWeight(2)
-    ///         rect(0, 0, 90, 50)
-    ///         // 枠の角 (90, 0) に点を打ち、その横の位置を読む
-    ///         noStroke()
-    ///         fill(242, 115, 64)
-    ///         circle(90, 0, 10)
-    ///         let x = screenX(90, 0)
-    ///         pop()
+    ///         var x: Float = 0
+    ///         push {
+    ///             translate(30 + i * 130, 40)
+    ///             rotate(angles[i])
+    ///             noFill()
+    ///             stroke(89, 97, 115)
+    ///             strokeWeight(2)
+    ///             rect(0, 0, 90, 50)
+    ///             // 枠の角 (90, 0) に点を打ち、その横の位置を読む
+    ///             noStroke()
+    ///             fill(242, 115, 64)
+    ///             circle(90, 0, 10)
+    ///             x = screenX(90, 0)
+    ///         }
     ///         // 読んだ値は面の座標なので、変換を戻した後に縦線で引ける
     ///         stroke(242, 115, 64)
     ///         strokeWeight(2)
@@ -45,7 +46,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の縦線が通っている -->
-    ///     ![灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の縦線が通っている](https://i.gyazo.com/c0db6e05a4b0f4d081b9eb858fbc7b57.png)
+    ///     ![灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の縦線が通っている](https://i.gyazo.com/fba79cc6fb6625fb048b526424e970a6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -109,13 +110,13 @@ extension SketchPart {
     ///     camera(320, -60, 360, 200, 150, 0, 0, 1, 0)
     ///     var marks: [(Float, Float)] = []
     ///     for i in 0..<3 {
-    ///         push()
-    ///         translate(110 + Float(i) * 90, 150, Float(i - 1) * 120)
-    ///         fill(89, 97, 115)
-    ///         box(50)
-    ///         // 箱の中心が面のどこに写るか
-    ///         marks.append((screenX(0, 0), screenY(0, 0)))
-    ///         pop()
+    ///         push {
+    ///             translate(110 + Float(i) * 90, 150, Float(i - 1) * 120)
+    ///             fill(89, 97, 115)
+    ///             box(50)
+    ///             // 箱の中心が面のどこに写るか
+    ///             marks.append((screenX(0, 0), screenY(0, 0)))
+    ///         }
     ///     }
     ///     // 視点を戻してから、読んだ面の座標に印を描く
     ///     camera()
@@ -133,9 +134,9 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7702f10a
+    // shot: 1 snippet=2d2bdbd0 image=b217b93c0aa09713
     // shot: 2 snippet=9bbf7c9f
-    // shot: 3 snippet=da296039 image=c1861738afbee631
+    // shot: 3 snippet=3d657186 image=c1861738afbee631
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
         return liveCanvas(.read(returning: "0"))?.screenX(x, y) ?? 0
@@ -144,7 +145,7 @@ extension SketchPart {
     /// 平面の点が、いまの変換といまの視点でどこへ移るか (縦)。
     ///
     /// ``screenX(_:_:)`` の縦の読み。奥行きを渡さない形なので、こちらも奥行き 0 の点として視点を通す。下は、回した
-    /// 枠の角 `(90, 0)` に点を打ってその縦の位置を読み、`pop()` の後に横線を引いたもの。枠を回す
+    /// 枠の角 `(90, 0)` に点を打ってその縦の位置を読み、`push { }` を抜けた後に横線を引いたもの。枠を回す
     /// 角度を 0・45 度・90 度と動かすと、線は角の点を通ったまま下へ移っていく。
     ///
     /// @Row {
@@ -154,19 +155,20 @@ extension SketchPart {
     ///     // 枠を回す角度を 0・45 度・90 度と動かす
     ///     let angles: [Float] = [0, Float.pi / 4, Float.pi / 2]
     ///     for i in 0..<3 {
-    ///         push()
-    ///         translate(30 + i * 130, 40)
-    ///         rotate(angles[i])
-    ///         noFill()
-    ///         stroke(89, 97, 115)
-    ///         strokeWeight(2)
-    ///         rect(0, 0, 90, 50)
-    ///         // 枠の角 (90, 0) に点を打ち、その縦の位置を読む
-    ///         noStroke()
-    ///         fill(242, 115, 64)
-    ///         circle(90, 0, 10)
-    ///         let y = screenY(90, 0)
-    ///         pop()
+    ///         var y: Float = 0
+    ///         push {
+    ///             translate(30 + i * 130, 40)
+    ///             rotate(angles[i])
+    ///             noFill()
+    ///             stroke(89, 97, 115)
+    ///             strokeWeight(2)
+    ///             rect(0, 0, 90, 50)
+    ///             // 枠の角 (90, 0) に点を打ち、その縦の位置を読む
+    ///             noStroke()
+    ///             fill(242, 115, 64)
+    ///             circle(90, 0, 10)
+    ///             y = screenY(90, 0)
+    ///         }
     ///         // 読んだ値は面の座標なので、変換を戻した後に横線で引ける
     ///         stroke(242, 115, 64)
     ///         strokeWeight(2)
@@ -176,7 +178,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の横線が通っている -->
-    ///     ![灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の横線が通っている](https://i.gyazo.com/2ec48886c31bfff78238038533e21206.png)
+    ///     ![灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の横線が通っている](https://i.gyazo.com/792fd0d32ecd5b4335aebadd8ba3fbfe.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -222,7 +224,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=27c88e8f
+    // shot: 1 snippet=f32feae7 image=d67699aac9e6c5fb
     // shot: 2 snippet=d464e610
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
@@ -235,7 +237,7 @@ extension SketchPart {
     /// 立体に文字や印を重ねる、当たり判定を面の座標で書く、といった用途のためにある。
     ///
     /// 下は、傾けた箱 (`box(120)`) の中心から、座標を 1 つずつ 90 動かした 3 つの点 (手前へ
-    /// `z`・左へ `x`・上へ `y`) に球を置き、`pop()` の後に読んだ横の位置へ縦線を引いたもの。
+    /// `z`・左へ `x`・上へ `y`) に球を置き、`push { }` を抜けた後に、読んだ横の位置へ縦線を引いたもの。
     /// 線は、箱の傾きと遠近を通した、球の中心を通る。
     ///
     /// @Row {
@@ -244,25 +246,25 @@ extension SketchPart {
     ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     rotateX(-0.5)
-    ///     rotateY(0.6)
-    ///     fill(89, 97, 115)
-    ///     box(120)
-    ///     // 座標を 1 つずつ動かした 3 点に球を置き、横の位置を読む
     ///     let points: [SIMD3<Float>] = [[0, 0, 90], [-90, 0, 0], [0, -90, 0]]
     ///     let colors: [SIMD3<Float>] = [[242, 115, 64], [89, 191, 242], [242, 217, 89]]
     ///     var xs: [Float] = []
-    ///     for (i, p) in points.enumerated() {
-    ///         push()
-    ///         translate(p.x, p.y, p.z)
-    ///         fill(colors[i].x, colors[i].y, colors[i].z)
-    ///         sphere(8)
-    ///         pop()
-    ///         xs.append(screenX(p.x, p.y, p.z))
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         rotateX(-0.5)
+    ///         rotateY(0.6)
+    ///         fill(89, 97, 115)
+    ///         box(120)
+    ///         // 座標を 1 つずつ動かした 3 点に球を置き、横の位置を読む
+    ///         for (i, p) in points.enumerated() {
+    ///             push {
+    ///                 translate(p.x, p.y, p.z)
+    ///                 fill(colors[i].x, colors[i].y, colors[i].z)
+    ///                 sphere(8)
+    ///             }
+    ///             xs.append(screenX(p.x, p.y, p.z))
+    ///         }
     ///     }
-    ///     pop()
     ///     // 読んだ値は面の座標なので、変換を戻した後に縦線で引ける
     ///     strokeWeight(2)
     ///     for (i, x) in xs.enumerated() {
@@ -277,7 +279,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=25260204
+    // shot: 1 snippet=0ccb0d37 image=6a0ac36a89d506e0
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         return liveCanvas(.read(returning: "0"))?.screenX(x, y, z) ?? 0
@@ -294,25 +296,25 @@ extension SketchPart {
     ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     rotateX(-0.5)
-    ///     rotateY(0.6)
-    ///     fill(89, 97, 115)
-    ///     box(120)
-    ///     // 座標を 1 つずつ動かした 3 点に球を置き、縦の位置を読む
     ///     let points: [SIMD3<Float>] = [[0, 0, 90], [-90, 0, 0], [0, -90, 0]]
     ///     let colors: [SIMD3<Float>] = [[242, 115, 64], [89, 191, 242], [242, 217, 89]]
     ///     var ys: [Float] = []
-    ///     for (i, p) in points.enumerated() {
-    ///         push()
-    ///         translate(p.x, p.y, p.z)
-    ///         fill(colors[i].x, colors[i].y, colors[i].z)
-    ///         sphere(8)
-    ///         pop()
-    ///         ys.append(screenY(p.x, p.y, p.z))
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         rotateX(-0.5)
+    ///         rotateY(0.6)
+    ///         fill(89, 97, 115)
+    ///         box(120)
+    ///         // 座標を 1 つずつ動かした 3 点に球を置き、縦の位置を読む
+    ///         for (i, p) in points.enumerated() {
+    ///             push {
+    ///                 translate(p.x, p.y, p.z)
+    ///                 fill(colors[i].x, colors[i].y, colors[i].z)
+    ///                 sphere(8)
+    ///             }
+    ///             ys.append(screenY(p.x, p.y, p.z))
+    ///         }
     ///     }
-    ///     pop()
     ///     // 読んだ値は面の座標なので、変換を戻した後に横線で引ける
     ///     strokeWeight(2)
     ///     for (i, y) in ys.enumerated() {
@@ -327,7 +329,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=45110c8e
+    // shot: 1 snippet=95656753 image=5d9d537e5c172b8e
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         return liveCanvas(.read(returning: "0"))?.screenY(x, y, z) ?? 0
@@ -355,12 +357,12 @@ extension SketchPart {
     ///     let colors: [SIMD3<Float>] = [[242, 115, 64], [89, 191, 242], [242, 217, 89]]
     ///     var depths: [Float] = []
     ///     for i in 0..<3 {
-    ///         push()
-    ///         translate(xs[i], 110, 100 - Float(i) * 100)
-    ///         fill(colors[i].x, colors[i].y, colors[i].z)
-    ///         sphere(30)
-    ///         depths.append(screenZ(0, 0, 0))
-    ///         pop()
+    ///         push {
+    ///             translate(xs[i], 110, 100 - Float(i) * 100)
+    ///             fill(colors[i].x, colors[i].y, colors[i].z)
+    ///             sphere(30)
+    ///             depths.append(screenZ(0, 0, 0))
+    ///         }
     ///     }
     ///     // 帯の左端が 0、右端が 1。球の奥行きを目盛りで置く
     ///     stroke(89, 97, 115)
@@ -378,14 +380,14 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 手前の橙色から青、黄色の順に奥へ小さくなる 3 つの球。下の 0 から 1 の帯には、球と同じ色の目盛りが手前の橙色から奥の黄色へ右へ寄って並んでいる -->
-    ///     ![手前の橙色から青、黄色の順に奥へ小さくなる 3 つの球。下の 0 から 1 の帯には、球と同じ色の目盛りが手前の橙色から奥の黄色へ右へ寄って並んでいる](https://i.gyazo.com/f787cbabe310bbe64fc17f62d23fe953.png)
+    ///     ![手前の橙色から青、黄色の順に奥へ小さくなる 3 つの球。下の 0 から 1 の帯には、球と同じ色の目盛りが手前の橙色から奥の黄色へ右へ寄って並んでいる](https://i.gyazo.com/5548089bd4d0f8986920e4cc629aabc3.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// この値がそのまま ``spacePosition(screenX:screenY:depth:)`` の `depth` になる —
     /// 前向きの 3 本が、後ろ向きの入力を過不足なく作る。
-    // shot: 1 snippet=1263b738
+    // shot: 1 snippet=3b9579ce image=27f84a999968c8c7
     public func screenZ(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         return liveCanvas(.read(returning: "0"))?.screenZ(x, y, z) ?? 0
@@ -415,23 +417,23 @@ extension SketchPart {
     ///     let points: [SIMD3<Float>] = [[0, 0, 90], [-90, 0, 0], [0, -90, 0]]
     ///     for p in points {
     ///         // 元の点に、青い球を置く
-    ///         push()
-    ///         translate(p.x, p.y, p.z)
-    ///         fill(89, 191, 242)
-    ///         sphere(5)
-    ///         pop()
+    ///         push {
+    ///             translate(p.x, p.y, p.z)
+    ///             fill(89, 191, 242)
+    ///             sphere(5)
+    ///         }
     ///         // 面の上の位置と奥行きに写してから戻した点を、橙色の枠で囲む
     ///         let q = spacePosition(
     ///             screenX: screenX(p.x, p.y, p.z),
     ///             screenY: screenY(p.x, p.y, p.z),
     ///             depth: screenZ(p.x, p.y, p.z))
-    ///         push()
-    ///         translate(q.x, q.y, q.z)
-    ///         noFill()
-    ///         stroke(242, 115, 64)
-    ///         strokeWeight(2)
-    ///         box(20)
-    ///         pop()
+    ///         push {
+    ///             translate(q.x, q.y, q.z)
+    ///             noFill()
+    ///             stroke(242, 115, 64)
+    ///             strokeWeight(2)
+    ///             box(20)
+    ///         }
     ///         noStroke()
     ///     }
     ///     ```
@@ -459,11 +461,11 @@ extension SketchPart {
     ///     let colors: [SIMD3<Float>] = [[242, 115, 64], [89, 191, 242], [242, 217, 89]]
     ///     for (i, depth) in [Float(0.8), 0.9, 0.95].enumerated() {
     ///         let p = spacePosition(screenX: 270, screenY: 100, depth: depth)
-    ///         push()
-    ///         translate(p.x, p.y, p.z)
-    ///         stroke(colors[i].x, colors[i].y, colors[i].z)
-    ///         plane(50, 50)
-    ///         pop()
+    ///         push {
+    ///             translate(p.x, p.y, p.z)
+    ///             stroke(colors[i].x, colors[i].y, colors[i].z)
+    ///             plane(50, 50)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -486,8 +488,8 @@ extension SketchPart {
     /// ```
     ///
     /// 平行投影でも透視投影でも同じように使える (式の違いは視点の側が持つ)。
-    // shot: 1 snippet=e8bfd5e4
-    // shot: 2 snippet=7cd7de68
+    // shot: 1 snippet=aa3da8a5 image=0d65a01e40847ae8
+    // shot: 2 snippet=e5663892 image=fd194d2c59ae96be
     public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> Vector3 {
         let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
         return liveCanvas(.read(returning: "(0, 0, 0)"))?.spacePosition(screenX: screenX, screenY: screenY, depth: depth)

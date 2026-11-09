@@ -27,10 +27,10 @@ extension SketchPart {
     ///     for (index, level) in [Float(0.15), 0.4, 0.9].enumerated() {
     ///         noLights()
     ///         ambientLight(.linear(red: level, green: level, blue: level))
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -47,7 +47,7 @@ extension SketchPart {
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。初期化の
     ///   ときや、止まっている間の入力のコールバックで置いた光はどのフレームにも
     ///   属さないので、警告して無視される。
-    // shot: 1 snippet=5e98096a
+    // shot: 1 snippet=1d22246a image=c0cd4941abcb5738
     public func ambientLight(_ color: LinearRGBA) { liveCanvas()?.ambientLight(color) }
 
     /// 向きだけを持つ光を置く (無限に遠くから差す光)。
@@ -74,10 +74,10 @@ extension SketchPart {
     ///         noLights()
     ///         ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///         directionalLight(.linear(red: 0.95, green: 0.95, blue: 0.95), way.0, way.1, way.2)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -92,7 +92,7 @@ extension SketchPart {
     /// 初回だけ理由を知らせる。
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=97d91466
+    // shot: 1 snippet=77beef0a image=a39f22343af63399
     public func directionalLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
@@ -118,10 +118,10 @@ extension SketchPart {
     ///     ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///     // 面より手前 (z = 160) の、左上に置く
     ///     pointLight(.linear(red: 1.1, green: 1.1, blue: 1.1), 110, 90, 160)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -135,7 +135,7 @@ extension SketchPart {
     /// 初回だけ理由を知らせる。
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=ebd428d6
+    // shot: 1 snippet=d3da13b6 image=5580e116867d955b
     public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
@@ -176,10 +176,10 @@ extension SketchPart {
     ///         160, 120, 200,
     ///         0, 0, -1,
     ///         angle: Float.pi / 12)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -202,10 +202,10 @@ extension SketchPart {
     ///         160, 120, 200,
     ///         0, 0, -1,
     ///         angle: Float.pi / 7)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -219,8 +219,8 @@ extension SketchPart {
     /// 初回だけ理由を知らせる。
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=3525df13
-    // shot: 2 snippet=6b577fab
+    // shot: 1 snippet=501de3b1 image=d44df847a91ad4b6
+    // shot: 2 snippet=6842b8d1 image=049bb5de42056406
     public func spotLight(
         _ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
         _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
@@ -249,24 +249,24 @@ extension SketchPart {
     ///     fill(242, 115, 64)
     ///     // ① 底上げの光だけ
     ///     ambientLight(.linear(red: 0.35, green: 0.35, blue: 0.35))
-    ///     push()
-    ///     translate(70, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(70, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     // ② 斜め上から差す光だけ
     ///     noLights()
     ///     directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.35, 0.75, -0.55)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     // ③ lights() = ① と ②
     ///     noLights()
     ///     lights()
-    ///     push()
-    ///     translate(330, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(330, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -288,7 +288,7 @@ extension SketchPart {
     ///   ならない (``directionalLight(_:_:_:_:_:_:)``)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    // shot: 1 snippet=44052481
+    // shot: 1 snippet=3f7ffdb4 image=ea2fe19603c892b4
     public func lights() { liveCanvas()?.lights() }
 
     /// 置いた光をすべて取り除く。以降の立体は塗り 1 色で描かれる。
@@ -304,16 +304,16 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     lights()
-    ///     push()
-    ///     translate(120, 150, 0)
-    ///     sphere(70)
-    ///     pop()
+    ///     push {
+    ///         translate(120, 150, 0)
+    ///         sphere(70)
+    ///     }
     ///     // ここから先は塗り 1 色になる
     ///     noLights()
-    ///     push()
-    ///     translate(280, 150, 0)
-    ///     sphere(70)
-    ///     pop()
+    ///     push {
+    ///         translate(280, 150, 0)
+    ///         sphere(70)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -331,6 +331,6 @@ extension SketchPart {
     ///
     /// - Note: 光は**フレームを越えない**ので、フレームの外 (初期化のときなど) には取り除く
     ///   光が無い。そこで呼ぶと、光を置く口と同じく警告して無視される。
-    // shot: 1 snippet=a55d02ef
+    // shot: 1 snippet=05c32aa3 image=b8562b9be32ca929
     public func noLights() { liveCanvas()?.noLights() }
 }

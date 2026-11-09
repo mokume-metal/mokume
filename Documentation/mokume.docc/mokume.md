@@ -701,13 +701,13 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 
 ### 変換とスタイルの push / pop
 
+- ``SketchPart/push(_:)``
 - ``SketchPart/pushMatrix(fileID:line:)``
 - ``SketchPart/popMatrix(fileID:line:)``
 - ``SketchPart/pushStyle(fileID:line:)``
 - ``SketchPart/popStyle(fileID:line:)``
 - ``SketchPart/push(fileID:line:)``
 - ``SketchPart/pop(fileID:line:)``
-- ``SketchPart/push(_:)``
 
 ### 切り抜く
 

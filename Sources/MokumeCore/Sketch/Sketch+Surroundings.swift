@@ -15,10 +15,10 @@ extension SketchPart {
     ///     background(.sky)        // 背景にも出す (置くのと描くのは別)
     ///     metalness(1)
     ///     shininess(90)
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     sphere(120)
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height / 2, 0)
+    ///         sphere(120)
+    ///     }
     /// }
     /// ```
     ///
@@ -39,10 +39,10 @@ extension SketchPart {
     ///     shininess(90)
     ///     for (index, around) in [Surroundings.sky, .studio, .sunset].enumerated() {
     ///         surroundings(around)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -54,7 +54,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 周囲は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=f1ee1778
+    // shot: 1 snippet=f605a576 image=877c954eb76fbfd2
     public func surroundings(_ surroundings: Surroundings) {
         guard let canvas = liveCanvas() else { return }
         canvas.surroundings(surroundings)
@@ -87,10 +87,10 @@ extension SketchPart {
     ///     fill(230, 230, 230)
     ///     metalness(1)
     ///     shininess(90)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     sphere(105)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         sphere(105)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -99,7 +99,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=0713ef18
+    // shot: 1 snippet=16b05fe5 image=d615b3a85c13674f
     public func background(_ surroundings: Surroundings) {
         guard let canvas = liveCanvas() else { return }
         canvas.background(surroundings)

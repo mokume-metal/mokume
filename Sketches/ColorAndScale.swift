@@ -172,10 +172,10 @@ final class ColorAndScale: Sketch {
             noLights()
             entry.place(self, x, y)
             fill(230)
-            push()
-            translate(x, y, 0)
-            sphere(40)
-            pop()
+            push {
+                translate(x, y, 0)
+                sphere(40)
+            }
             fill(150)
             text(entry.name, x, 516)
         }

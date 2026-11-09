@@ -220,12 +220,12 @@ extension SketchPart {
     ///         shader(stripes)
     ///         rect(30, 90, 120, 120)
     ///         // 立体では、光を通した後の色が in.color に入る
-    ///         push()
-    ///         translate(280, 150, 0)
-    ///         rotateX(-0.5)
-    ///         rotateY(0.6)
-    ///         box(120)
-    ///         pop()
+    ///         push {
+    ///             translate(280, 150, 0)
+    ///             rotateX(-0.5)
+    ///             rotateY(0.6)
+    ///             box(120)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -346,7 +346,7 @@ extension SketchPart {
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=bf971035
-    // shot: 2 snippet=5b4c9e1b
+    // shot: 2 snippet=5f5357c8 image=e93c134eeb4344b4
     // shot: 3 snippet=935650ae
     // shot: 4 snippet=94dcd4a6
     public func createShader(

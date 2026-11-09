@@ -69,16 +69,16 @@ final class SurfaceAndGrain: Sketch {
         // **同じ姿勢で 2 枚**。時計はフレーム番号から導かれるので、何度撮っても同じ動き
         let spin = time * 0.55
         for (index, painted) in [grain, slipping].enumerated() {
-            push()
-            translate(width * 0.28 + Float(index) * width * 0.44, height * 0.52, 0)
-            rotateX(-0.45)
-            rotateY(spin)
-            if let painted { shader(painted) }
-            // 断片は `in.color` を掛けて使う。白で塗っておくと、そこに光の強さだけが載る
-            fill(255, 255, 255)
-            box(300, 18, 190)
-            resetShader()
-            pop()
+            push {
+                translate(width * 0.28 + Float(index) * width * 0.44, height * 0.52, 0)
+                rotateX(-0.45)
+                rotateY(spin)
+                if let painted { shader(painted) }
+                // 断片は `in.color` を掛けて使う。白で塗っておくと、そこに光の強さだけが載る
+                fill(255, 255, 255)
+                box(300, 18, 190)
+                resetShader()
+            }
         }
 
         fill(235, 235, 224)

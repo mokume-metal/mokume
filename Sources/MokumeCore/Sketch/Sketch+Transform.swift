@@ -295,10 +295,10 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     for (index, depth) in [Float(-110), 0, 80].enumerated() {
-    ///         push()
-    ///         translate(90 + Float(index) * 105, 150, depth)
-    ///         sphere(28)
-    ///         pop()
+    ///         push {
+    ///             translate(90 + Float(index) * 105, 150, depth)
+    ///             sphere(28)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -310,7 +310,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
-    // shot: 1 snippet=ceef2b2d
+    // shot: 1 snippet=01348fa7 image=3ff66f48cf88abe7
     public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
@@ -331,11 +331,11 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     for (index, angle) in [Float(0), 0.6, 1.2].enumerated() {
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         rotateX(angle)
-    ///         box(100, 44, 8)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             rotateX(angle)
+    ///             box(100, 44, 8)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -347,7 +347,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
-    // shot: 1 snippet=54abaf07
+    // shot: 1 snippet=95ddffdf image=48dbbfdcb7e8fecc
     public func rotateX(_ radians: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let radians = radians.asFloat
@@ -368,11 +368,11 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     for (index, angle) in [Float(0), 0.6, 1.2].enumerated() {
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         rotateY(angle)
-    ///         box(100, 44, 8)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             rotateY(angle)
+    ///             box(100, 44, 8)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -384,7 +384,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
-    // shot: 1 snippet=d031c80c
+    // shot: 1 snippet=191de039 image=dc0416c50e9c4761
     public func rotateY(_ radians: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let radians = radians.asFloat
@@ -403,11 +403,11 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     for (index, angle) in [Float(0), 0.6, 1.2].enumerated() {
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         rotateZ(angle)
-    ///         box(100, 44, 8)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             rotateZ(angle)
+    ///             box(100, 44, 8)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -419,7 +419,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
-    // shot: 1 snippet=7f65053a
+    // shot: 1 snippet=a63c80a4 image=299b959469af4d1a
     public func rotateZ(_ radians: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let radians = radians.asFloat
@@ -439,23 +439,23 @@ extension SketchPart {
     ///     lights()
     ///     noStroke()
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(200, 55, 0)
-    ///     rotateY(0.35)
-    ///     box(50)
-    ///     pop()
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     rotateY(0.35)
-    ///     scale(2, 1, 1)
-    ///     box(50)
-    ///     pop()
-    ///     push()
-    ///     translate(200, 245, 0)
-    ///     rotateY(0.35)
-    ///     scale(1, 1, 2)
-    ///     box(50)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 55, 0)
+    ///         rotateY(0.35)
+    ///         box(50)
+    ///     }
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         rotateY(0.35)
+    ///         scale(2, 1, 1)
+    ///         box(50)
+    ///     }
+    ///     push {
+    ///         translate(200, 245, 0)
+    ///         rotateY(0.35)
+    ///         scale(1, 1, 2)
+    ///         box(50)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -466,7 +466,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
-    // shot: 1 snippet=e3260042
+    // shot: 1 snippet=c53fabb4 image=341c82cd56c809e1
     public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)

@@ -59,23 +59,23 @@ final class SolidsAndLight: Sketch {
         // 床。**受けるだけで落とさない** — 落とす側に入れると自分の影で暗くなる
         castShadow(false)
         fill(128, 128, 140)
-        push()
-        translate(center.x, center.y + 130, 0)
-        rotateX(Float.pi / 2)
-        plane(760, 760)
-        pop()
+        push {
+            translate(center.x, center.y + 130, 0)
+            rotateX(Float.pi / 2)
+            plane(760, 760)
+        }
 
         // 灯りの印。点の光とスポットの光が**どこから差しているか**を見せる。形の外の目印
         // なので、影を**落とさず受けもしない** — 受けると、光の真下に来た立体の影で印が消える
         // (落とす側からは、床のところで外したままになっている)
         receiveShadow(false)
         for lamp in lamps {
-            push()
-            emissive(lamp.color)
-            fill(lamp.color)
-            translate(lamp.x, lamp.y, lamp.z)
-            sphere(9)
-            pop()
+            push {
+                emissive(lamp.color)
+                fill(lamp.color)
+                translate(lamp.x, lamp.y, lamp.z)
+                sphere(9)
+            }
         }
         receiveShadow(true)
 
@@ -92,18 +92,18 @@ final class SolidsAndLight: Sketch {
         for (index, solid) in solids.enumerated() {
             let around = Float(index) / Float(solids.count) * 2 * .pi
             fill(solid.color)
-            push()
-            translate(center.x + cos(around) * radius, center.y + 55, sin(around) * radius)
-            // 名札を置く位置は**回す前に**取る — 立体の真上 (縦軸は下向きなので -y) を、
-            // いまの変換といまの視点で画面の座標へ落とす
-            tags.append(
-                (solid.name, screenX(0, -80, 0), screenY(0, -80, 0), screenZ(0, -80, 0)))
-            // **視点から見て斜めを向かせる。** 正面を向いた箱や板は、静止画だと
-            // ただの四角にしか見えず、輪の向こう側では真横になって消える
-            rotateY(-around + solid.spin)
-            rotateX(solid.tilt)
-            solid.draw(self)
-            pop()
+            push {
+                translate(center.x + cos(around) * radius, center.y + 55, sin(around) * radius)
+                // 名札を置く位置は**回す前に**取る — 立体の真上 (縦軸は下向きなので -y) を、
+                // いまの変換といまの視点で画面の座標へ落とす
+                tags.append(
+                    (solid.name, screenX(0, -80, 0), screenY(0, -80, 0), screenZ(0, -80, 0)))
+                // **視点から見て斜めを向かせる。** 正面を向いた箱や板は、静止画だと
+                // ただの四角にしか見えず、輪の向こう側では真横になって消える
+                rotateY(-around + solid.spin)
+                rotateX(solid.tilt)
+                solid.draw(self)
+            }
         }
 
         // 名札。**2D の文字も視点を通る**ので、視点と写し方を既定へ戻してから、上で落とした画面の

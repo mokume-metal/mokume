@@ -51,13 +51,13 @@ extension SketchPart {
     ///     let x = bezierPoint(60, 260, 640, 900, t)
     ///     let y = bezierPoint(420, 60, 600, 160, t)
     ///     let angle = atan2(bezierTangent(420, 60, 600, 160, t), bezierTangent(60, 260, 640, 900, t))
-    ///     push()
-    ///     translate(x, y)
-    ///     rotate(angle)
-    ///     noStroke()
-    ///     fill(255)
-    ///     triangle(14, 0, -10, -8, -10, 8)
-    ///     pop()
+    ///     push {
+    ///         translate(x, y)
+    ///         rotate(angle)
+    ///         noStroke()
+    ///         fill(255)
+    ///         triangle(14, 0, -10, -8, -10, 8)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {

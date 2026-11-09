@@ -43,10 +43,10 @@ final class PartsAndSurfaces: Sketch {
         fill(230)
         textSize(16)
         text("SketchPart on main canvas", 20, 30)
-        push()
-        translate(20, 50)
-        part.paint()
-        pop()
+        push {
+            translate(20, 50)
+            part.paint()
+        }
 
         let step = (frameCount - 1) % 180
         let paused = (60..<120).contains(step)
@@ -70,12 +70,12 @@ final class PartsAndSurfaces: Sketch {
         noTint()
         fill(255)
         image(pad, 20, 290)
-        push()
-        translate(350, 290)
-        texture(pad)
-        rect(0, 0, 240, 140)
-        noTexture()
-        pop()
+        push {
+            translate(350, 290)
+            texture(pad)
+            rect(0, 0, 240, 140)
+            noTexture()
+        }
         shape(retained, 680, 290)
 
         fill(230)
