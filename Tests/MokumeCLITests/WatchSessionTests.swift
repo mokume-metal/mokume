@@ -111,7 +111,7 @@ struct WatchSessionTests {
     func leavesTheDefaultConfigurationToTheToolchain() throws {
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: Recorder().hooks())
         #expect(session.context.configuration == nil)
-        #expect(session.context.configurationName == RunCommand.defaultConfigurationName)
+        #expect(session.context.configurationName == RunCommand.toolchainDefaultConfigurationName)
         #expect(RunCommand.configurationArguments(session.context.configuration).isEmpty)
     }
 

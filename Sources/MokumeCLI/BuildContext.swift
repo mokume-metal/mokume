@@ -26,8 +26,16 @@ import Foundation
 /// 見張っていてほしい場面**である。分からないときは `nil` にして、作り直しの後に読み直す。
 /// その場合の置き場は必ずパッケージ直下なので、取り違えの危険はそこには無い。
 nonisolated struct BuildContext: Equatable {
-    /// 選ばれた構成。**渡されなければ道具立ての既定に任せる** — ここで既定を書き固めると、
-    /// 道具立てが既定を変えた日に黙ってずれる。
+    /// 選ばれた構成。
+    ///
+    /// **`run` と `watch` は、選ばれなければ release を入れてここへ渡す** (``RunCommand/defaultConfiguration``)。
+    /// 以前はここで既定を書き固めず道具立ての既定に任せていた — 道具立てが既定を変えた日に黙って
+    /// ずれるのを避けるためである。それを覆した理由は 2 つ。(1) 作者が普通に走らせたときの実行時性能を、
+    /// 初回と保存後の組み立ての待ちより優先する、というメンテナの方針
+    /// ([#3079](https://github.com/mokume-metal/mokume/issues/3079))。道具立ての既定 (debug) に任せたままでは
+    /// 最適化されない。(2) 書き固めても、道具立てが既定を変えた日にずれない — 渡す引数と名乗りが
+    /// 同じ ``RunCommand/defaultConfiguration`` から出るので、道具立ての側の既定には依存しなくなった。
+    /// 渡す口を持たない呼び出し (`render` など) だけが、これまでどおり `nil` で道具立てに任せる。
     let configuration: String?
     /// ビルドの置き場。
     let place: BuildDirectory.Place
@@ -76,7 +84,7 @@ nonisolated struct BuildContext: Equatable {
     static let indexStoreArguments = ["--disable-index-store"]
 
     /// 名乗るときの構成の名前。選ばれていなければ既定の名前。
-    var configurationName: String { configuration ?? RunCommand.defaultConfigurationName }
+    var configurationName: String { configuration ?? RunCommand.toolchainDefaultConfigurationName }
 
     /// ビルドの置き場そのもの (`workspace-state.json` と `checkouts/` を読む側が使う)。
     func directory(under package: URL) -> URL { place.directory(under: package) }
