@@ -490,8 +490,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         record: ReplayRequest? = nil
     ) throws(RenderFailure) {
         self.gpu = gpu
-        self.title = sketch.settings.title
-        self.sharesFrames = sketch.settings.sharesFrames
+        // **設定は 1 度だけ読む。** 計算型の設定は読むたびに別の値を返しうるので、題名と断る口を別々に読むと、組み立て
+        // (`SketchRuntime`) が読む前に読みが増える (#1642・`SetupValueRangeTests` の `Fickle`)
+        let settings = sketch.settings
+        self.title = settings.title
+        self.sharesFrames = settings.sharesFrames
         // **刻みは頼みから採る。** 撮る係の刻みも時計から決まる (`SketchRuntime.launchFrameRate`)
         // ので、`--fps` が作品の宣言と違っても最後の 1 枚まで揃う。頼みが無ければ、ランタイムが
         // 組み立てで読んだ作品の時計 (`SketchSettings.clock`) で、既定は実時間 (#2601)。**ここで
