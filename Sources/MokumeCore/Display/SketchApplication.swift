@@ -1007,6 +1007,26 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 名乗っている項目。自分のウィンドウを開くまでと、名乗れなかった実行では `nil`。
     private(set) var frameAnnouncement: FrameAnnouncement?
 
+    /// 受け手の頼みを main queue で受けるか。**検査は `false` にして**、送り手の ``FrameSender/drain()`` を直に呼ぶ。
+    var listensForReceivers = true
+
+    /// 自分のウィンドウの経路で、繋いできた受け手の面へ今のフレームを書く ([#3920])。
+    ///
+    /// **ウィンドウの見え方に縛られない** — 画面への差し出しはウィンドウが見えない間 (最小化・被覆・別の Space) は
+    /// 休むが (``FramePresenter/shouldPresent(windowIsVisible:hasPresented:)``)、受け手へは書く。マッパーの裏に作品の
+    /// ウィンドウを隠すのは普通の使い方である (ADR-0049 決定 4)。受け手が居なければ何もしない。
+    ///
+    /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
+    private func deliverToReceivers() throws(RenderFailure) {
+        guard let sender = frameAnnouncement?.sender, sender.receiverCount > 0 else { return }
+        try sender.deliver(
+            width: runtime.target.width, height: runtime.target.height,
+            frameCount: Int64(runtime.frameNumbers.frameCount), hostTime: mach_absolute_time()
+        ) { [presenter, runtime] texture throws(RenderFailure) in
+            try presenter.draw(runtime.target, into: texture)
+        }
+    }
+
     /// 全画面で出すディスプレイの画面を引く口 (#2020)。外れていれば `nil`。
     ///
     /// **検査から差し替える** — 検査が注入した一覧のディスプレイは、この機械の画面に無い。
@@ -1120,8 +1140,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         surface.synchronizeDrawableSize()
 
         outlet = .window(window, surface, hasPresented: false)
-        // **ウィンドウを持ったので名乗る** ([ADR-0049] 決定 2)。名乗れなくても走り続ける
+        // **ウィンドウを持ったので名乗る** ([ADR-0049] 決定 2)。名乗れなくても走り続ける。名乗れたら受け手の頼みを
+        // 受け始める (繋がっていない間はフレームの仕事は増えない・#3920)
         frameAnnouncement = listFrames(title)
+        frameAnnouncement?.startSending(
+            gpu: gpu, width: runtime.target.width, height: runtime.target.height,
+            startsListening: listensForReceivers)
 
         if takesFocus { NSApp.activate() }
 
@@ -1590,6 +1614,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
                 lastShown = shown
             }
         case .window(let window, let surface, let hasPresented):
+            // 受け手へは、見え方の判定 (``presentToSurface(_:hasPresented:)``) より前に書く
+            try deliverToReceivers()
             if try presentToSurface(surface, hasPresented: hasPresented), !hasPresented {
                 outlet = .window(window, surface, hasPresented: true)
             }

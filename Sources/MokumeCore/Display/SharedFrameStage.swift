@@ -147,7 +147,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// (全画面のウィンドウは動かせないので、抜けてから移す)。
     private var pendingFullScreenEntry: FullScreenDisplay?
 
-    private let gpu: RenderDevice
+    let gpu: RenderDevice
     private let facet: URL
     private let look: Look
     private let presenter: FramePresenter
@@ -318,6 +318,14 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
     var onFrameShareRead: ((FrameShare?) -> Void)?
+
+    /// 映す世代の新しい絵が来たときの知らせ ([#3920])。引数は子の面のテクスチャ (面は `iosurface` で引ける)。
+    /// 見張りがこれを受け手の面へ写す。**ウィンドウが見えなくても呼ぶ。**
+    ///
+    /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
+    var onNewFrame: ((any MTLTexture) -> Void)?
+    /// ``onNewFrame`` で最後に知らせた枚数。
+    private var lastHandedFrame = 0
     /// ファイルを選ばせるダイアログの出し方。**検査から差し替える** — 本物の `NSOpenPanel` は人の操作を待つ。
     var filePicker: any FilePicker = OpenPanelPicker()
     /// いま出している (出していた) ダイアログ。**頼みが面から消えるまで持つ** — 答えた後も、頼みが残っている間は
@@ -515,6 +523,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // **面に載ったもの (速さ・捕まえの要求) は、ウィンドウの有無と関係なく読む。** 絵を出す先が
         // 無くても、走っている側が名乗ったことは変わらない
         readNumbers(from: newest, in: source.lookup)
+        // **受け手へ渡す絵も、ウィンドウの有無・見え方と関係なく渡す** ([#3920])。作品のウィンドウが映す世代の
+        // 新しい絵ごとに 1 度だけ知らせる
+        if newest.frame != lastHandedFrame, let onNewFrame, let frame = source.frames[newest.id] {
+            lastHandedFrame = newest.frame
+            onNewFrame(frame.texture)
+        }
         guard let view, let layer = view.metalLayer,
             newest.frame != lastFrame, let frame = source.frames[newest.id]
         else { return }

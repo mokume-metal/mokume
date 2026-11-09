@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import CoreGraphics
 import IOSurface
 import Metal
 import MokumeDiagnostics
@@ -599,6 +600,12 @@ final class SharedFrameSurface {
         // **確保したリソースは必ず常駐を通す。** 通し忘れると検証層が咎め、実装や OS の
         // 版が変われば黙って壊れうる (#357)。面は起動時に作り切るので 1 回で済む
         gpu.makeResident(texture)
+        // **絵の性質を面に載せる** ([ADR-0049] 決定 2・4)。見張りの道具は、受け手へ写すときにこの値をそのまま写す
+        // (焼く側の版で決まる。ADR-0032 決定 2)。値は面ごとに変わらないので、作るときに 1 度だけ載せる
+        IOSurfaceSetValue(
+            surface, FrameLink.Attribute.colorSpace as CFString,
+            CGColorSpace.extendedLinearDisplayP3 as CFString)
+        IOSurfaceSetValue(surface, FrameLink.Attribute.alpha as CFString, "premultiplied" as CFString)
         return Slot(surface: surface, texture: texture)
     }
 

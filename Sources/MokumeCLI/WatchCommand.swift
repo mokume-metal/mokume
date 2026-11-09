@@ -519,10 +519,13 @@ enum WatchCommand {
         // 合図はウィンドウの側の同期の呼び出しなので、待つ仕事は `Task` へ渡す
         let viewer = Viewer(
             window: window, preview: preview,
-            listing: WatchFrameListing(identity: FrameListing.identity(ofPackageAt: session.directory)))
+            listing: WatchFrameListing(
+                identity: FrameListing.identity(ofPackageAt: session.directory), gpu: window.gpu))
         // **作品のウィンドウが映す世代の子に従って名乗る** ([ADR-0049] 決定 2)。プレビューは試聴の子を映すことが
         // あるので見ない。子は断っていなければ作品名と題を絵に載せている
         window.onFrameShareRead = { [listing = viewer.listing] share in listing.follow(share) }
+        // **受け手へは、作品のウィンドウが映す世代の新しい絵を道具の GPU で写す** (#3920)。ウィンドウが見えなくても渡す
+        window.onNewFrame = { [listing = viewer.listing] texture in listing.handOver(texture) }
         let firstFrame = viewer.firstFrame
         // **合図が名乗った子の番号を渡す** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
         // 見張りは、待っている世代のものだけを受ける

@@ -147,6 +147,16 @@ public final class SharedFrameWindow {
         set { stage.onFrameShareRead = newValue }
     }
 
+    /// 映している世代の新しい絵が来たときの知らせ (``SharedFrameStage/onNewFrame``)。見張りが受け手の面へ写す
+    /// ([#3920](https://github.com/mokume-metal/mokume/issues/3920))。ウィンドウが見えなくても呼ぶ。
+    package var onNewFrame: ((any MTLTexture) -> Void)? {
+        get { stage.onNewFrame }
+        set { stage.onNewFrame = newValue }
+    }
+
+    /// 台が描く GPU。見張りの送り手が、子の面から受け手の面へ写すのに使う。
+    package var gpu: RenderDevice { stage.gpu }
+
     /// このウィンドウが採る目録の関所 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
     /// 引数は目録が名乗る子の番号で、名乗らない子は `nil`。`false` を返した目録は採らない。試聴の間、作品のウィンドウは
