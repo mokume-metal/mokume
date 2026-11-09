@@ -599,24 +599,38 @@ struct PixelGridTests {
             }
         }
         let count = 512
-        let points = (0...count).map { index -> SIMD2<Double> in
-            let t = start + sweep * Double(index) / Double(count)
-            return radii * SIMD2(cos(t), sin(t))
-        }
+        // 弧の点列は成分ごとの配列で持ち、最近点の走査は成分の演算だけで行う (debug の SIMD の関数呼び出しを避ける。
+        // 演算の順序は SIMD の距離と同じ `dx * dx + dy * dy` で、最近点と同点の扱い (先に見つけた点) は変わらない)
+        let pointsX = (0...count).map { radii.x * cos(start + sweep * Double($0) / Double(count)) }
+        let pointsY = (0...count).map { radii.y * sin(start + sweep * Double($0) / Double(count)) }
         return { p in
             var nearest = 0
             var best = Double.infinity
-            for (index, point) in points.enumerated() {
-                let d = simd_distance_squared(p, point)
-                if d < best {
-                    best = d
-                    nearest = index
+            pointsX.withUnsafeBufferPointer { xs in
+                pointsY.withUnsafeBufferPointer { ys in
+                    var index = 0
+                    while index <= count {
+                        let dx = p.x - xs[index]
+                        let dy = p.y - ys[index]
+                        let d = dx * dx + dy * dy
+                        if d < best {
+                            best = d
+                            nearest = index
+                        }
+                        index += 1
+                    }
                 }
             }
-            func distance(_ t: Double) -> Double { simd_distance(p, radii * SIMD2(cos(t), sin(t))) }
+            func distance(_ t: Double) -> Double {
+                let dx = p.x - radii.x * cos(t)
+                let dy = p.y - radii.y * sin(t)
+                return (dx * dx + dy * dy).squareRoot()
+            }
             var low = start + sweep * Double(max(0, nearest - 1)) / Double(count)
             var high = start + sweep * Double(min(count, nearest + 1)) / Double(count)
-            for _ in 0..<30 {
+            var step = 0
+            while step < 30 {
+                step += 1
                 let a = low + (high - low) / 3
                 let b = high - (high - low) / 3
                 if distance(a) < distance(b) { high = b } else { low = a }
