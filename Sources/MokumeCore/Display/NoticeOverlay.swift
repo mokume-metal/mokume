@@ -12,7 +12,7 @@ import QuartzCore
 /// **経路が別であることそのもの**が「1 画素も触らない」を守っている
 /// ([ADR-0032] 決定 6)。作者が「これは作品に写さない」ためのスイッチを書く必要は無い。
 ///
-/// ## 出す窓を選ばない
+/// ## 出すウィンドウを選ばない
 ///
 /// ここは重ね方だけを持ち、**何を出すかは持ち主が決める** — 文言の正本は端末であり
 /// ([#695](https://github.com/mokume-metal/mokume/issues/695))、それを映すのがこの面である。
@@ -26,7 +26,7 @@ import QuartzCore
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
 final class NoticeOverlay: NSView {
-    /// 窓の縁からの隔たり。つまみと揃える。
+    /// ウィンドウの縁からの隔たり。つまみと揃える。
     static let inset: CGFloat = 12
     /// 文字の周りの余白。
     static let padding: CGFloat = 10
@@ -46,7 +46,7 @@ final class NoticeOverlay: NSView {
 
     init() {
         super.init(frame: .zero)
-        // **窓の大きさが変わっても、下の左に留まる。** 置き直しは自分で決めるが、
+        // **ウィンドウの大きさが変わっても、下の左に留まる。** 置き直しは自分で決めるが、
         // 印を空にすると AppKit が大きさの変化を伝えてこない (`KnobOverlay` と同じ)
         autoresizingMask = [.maxXMargin, .maxYMargin]
 
@@ -112,7 +112,7 @@ final class NoticeOverlay: NSView {
         CATransaction.flush()
     }
 
-    /// 収める大きさ。**窓を立てずに決められる形にしてある。**
+    /// 収める大きさ。**ウィンドウを立てずに決められる形にしてある。**
     ///
     /// - Parameters:
     ///   - textWidth: 文字の幅。
@@ -147,7 +147,7 @@ final class NoticeOverlay: NSView {
             width: max(0, bounds.width - 2 * Self.padding - mark), height: text.height)
     }
 
-    /// 窓の大きさが変わったら置き直す。**自動整列だけでは足りない** — 窓を縮めたときに
+    /// ウィンドウの大きさが変わったら置き直す。**自動整列だけでは足りない** — ウィンドウを縮めたときに
     /// 幅を詰める必要がある。
     override func resize(withOldSuperviewSize oldSize: NSSize) { reposition() }
 

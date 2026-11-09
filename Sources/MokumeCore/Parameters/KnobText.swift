@@ -6,7 +6,7 @@ import Foundation
 /// つまみの脇と数字の欄に出す表記。
 enum KnobText {
     /// 測れていないことの表し方。**0 と書かない** ([ADR-0030] 決定 7) — 測れた 0 と
-    /// 区別が付かなくなる。綴りをここ 1 つに持ち、窓の中で表明の形を揃える。
+    /// 区別が付かなくなる。綴りをここ 1 つに持ち、ウィンドウの中で表明の形を揃える。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     static let notMeasured = "—"
@@ -17,7 +17,7 @@ enum KnobText {
         return value.formatted(.number.precision(.fractionLength(fractionDigits)))
     }
 
-    /// 数字の欄に並ぶもの。**組み立ては純関数**にして、窓を立てずに検められるようにする。
+    /// 数字の欄に並ぶもの。**組み立ては純関数**にして、ウィンドウを立てずに検められるようにする。
     ///
     /// 進めた枚数と時刻は常に測れている (どちらも数え上げなので)。速さとフレーム時間は
     /// 起動直後と止めている間は測れていないので、**同じ 1 つの綴り**で欠測を表す。
@@ -65,7 +65,7 @@ enum KnobText {
         case .color(let value):
             // 出口の境界を通してから綴る ([ADR-0011] 決定 3)。作業空間の成分は線形で
             // アルファを乗算済みなので、そのまま 255 倍すると転送関数のぶんだけずれ、
-            // **窓の綴りをコードへ写すと別の色になる** (#746)
+            // **ウィンドウの綴りをコードへ写すと別の色になる** (#746)
             "#" + [red(value), green(value), blue(value)]
                 .map { String(format: "%02X", Int(min(max($0, 0), 255).rounded())) }
                 .joined()

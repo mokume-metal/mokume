@@ -18,7 +18,7 @@
 //
 // **控えるのは観測であって、組み立てを変えない。** 控えた後も図形はいままでどおり 1 本の組み立てを
 // 通って描かれる。頼まれていないフレームが払うのは、各口の先頭の読み (`vector.capture` が nil か・
-// 「置いた」印が立っているか) だけで、書き込みは窓ごとの 1 度 (印を立てる) に限る。
+// 「置いた」印が立っているか) だけで、書き込みはウィンドウごとの 1 度 (印を立てる) に限る。
 //
 // [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
 // [#3139]: https://github.com/mokume-metal/mokume/issues/3139
@@ -143,14 +143,14 @@ extension Canvas {
         var isOpen = false
         /// 控えている途中なら、その器。
         var capture: VectorCapture?
-        /// この窓の中で、控える前に図形を置いたか。`save("x.svg")` が呼ぶ前に置いたものがあれば、
+        /// このウィンドウの中で、控える前に図形を置いたか。`save("x.svg")` が呼ぶ前に置いたものがあれば、
         /// 1 度知らせる。
         var placedBefore = false
     }
 
-    // MARK: - 窓
+    // MARK: - ウィンドウ
 
-    /// `draw()` の窓を開く。`pending` は `draw()` の外で頼まれた行き先で、この `draw()` を丸ごと控える。
+    /// `draw()` のウィンドウを開く。`pending` は `draw()` の外で頼まれた行き先で、この `draw()` を丸ごと控える。
     func beginVectorWindow(pending: [String]) {
         vector = VectorWindow(isOpen: true)
         guard !pending.isEmpty else { return }
@@ -194,7 +194,7 @@ extension Canvas {
         }
     }
 
-    /// 窓を閉じて、控えを渡す。頼まれていなければ nil。
+    /// ウィンドウを閉じて、控えを渡す。頼まれていなければ nil。
     func endVectorWindow() -> VectorCapture? {
         defer { vector = VectorWindow() }
         // 効果 (`effects()`) は出力段の手前に立つ段で、ベクターには効かない。このフレームに掛けていれば、

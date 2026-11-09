@@ -46,7 +46,7 @@ struct DroppedWorkReadersTests {
         TestScratch.path("mokume-dropped", pathExtension: "png")
     }
 
-    /// 打ち切りを名乗る失敗か。**理由は 1 行目に載る** (窓の経路は 1 行目しか流さない・#1343)。
+    /// 打ち切りを名乗る失敗か。**理由は 1 行目に載る** (ウィンドウの経路は 1 行目しか流さない・#1343)。
     private func namesTheDrop(_ failure: RenderFailure?) -> Bool {
         failure == .workDropped(reason: Self.victim) && failure?.headline.contains(Self.victim) == true
     }

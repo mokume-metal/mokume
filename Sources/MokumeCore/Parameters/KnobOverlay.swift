@@ -4,7 +4,7 @@
 import AppKit
 import SwiftUI
 
-/// つまみの面を、絵と同じ窓に重ねる。
+/// つまみの面を、絵と同じウィンドウに重ねる。
 ///
 /// **絵の外に立つ** ([ADR-0030] 決定 1)。描画の成果物のテクスチャには一切描かず、
 /// 出口を通った後の提示に重なるだけである — [ADR-0023] 決定 1 でいう段では**ない**し、
@@ -14,16 +14,16 @@ import SwiftUI
 /// `Canvas` から `RenderTarget` へ、つまみは AppKit の層へ描かれる。だから作者が
 /// 「作品に写さない」ための表示スイッチを書く必要が無い。
 ///
-/// ## 別の窓にしない
+/// ## 別のウィンドウにしない
 ///
-/// 上映やライブでは窓を出したまま触るので、同じ窓に重ねる ([ADR-0030] 決定 1)。
+/// 上映やライブではウィンドウを出したまま触るので、同じウィンドウに重ねる ([ADR-0030] 決定 1)。
 /// 全画面でも同じである。
 ///
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 @MainActor
 final class KnobOverlay: NSView {
-    /// 窓の縁からの隔たり。
+    /// ウィンドウの縁からの隔たり。
     static let inset: CGFloat = 12
 
     private let hosting: NSHostingView<KnobPanel>
@@ -32,7 +32,7 @@ final class KnobOverlay: NSView {
     /// 別の問いである (数字だけの面が出る場合がある)。
     let knobCount: Int
 
-    /// 警告の欄に出す値 (#3087)。数字を出す面 (道具の窓) だけが使う。
+    /// 警告の欄に出す値 (#3087)。数字を出す面 (道具のウィンドウ) だけが使う。
     private let warningFeed = WarningFeed()
 
     init(boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil) {
@@ -42,7 +42,7 @@ final class KnobOverlay: NSView {
         super.init(frame: NSRect(origin: .zero, size: hosting.fittingSize))
         hosting.frame = bounds
         hosting.autoresizingMask = [.width, .height]
-        // **印を空にしない。** 空のままだと AppKit は窓の大きさが変わったことを
+        // **印を空にしない。** 空のままだと AppKit はウィンドウの大きさが変わったことを
         // 部分ビューへ伝えず、置き直しの入口 (`resize(withOldSuperviewSize:)`) が
         // 一度も呼ばれない。値そのものは使わない — 置き方は下で丸ごと決める
         autoresizingMask = [.minYMargin, .maxXMargin]
@@ -69,7 +69,7 @@ final class KnobOverlay: NSView {
 
     /// 面へ重ねる。
     ///
-    /// 絵の面の**部分ビューとして**足す。窓を分けないので、上映中に窓を並べ替える
+    /// 絵の面の**部分ビューとして**足す。ウィンドウを分けないので、上映中にウィンドウを並べ替える
     /// 必要が無い。
     func attach(to host: NSView) {
         host.addSubview(self)
@@ -79,7 +79,7 @@ final class KnobOverlay: NSView {
     /// 警告の欄に出すものを差し替える ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
     ///
     /// **欄が出入りしたり行が増えたりすると面の丈が変わる。** 枠の丈は置いたときに 1 度測って決めるので、
-    /// 値を替えただけでは枠が追い付かず、後から来た警告は窓の下に切れて見えない。**変わったら丈を測り直して
+    /// 値を替えただけでは枠が追い付かず、後から来た警告はウィンドウの下に切れて見えない。**変わったら丈を測り直して
     /// 置き直す。** 同じ値なら何もしない (呼ぶ側は拍ごとに押し込んでよい)。
     func show(warnings: WarningSummary?) {
         guard warningFeed.summary != warnings else { return }
@@ -89,10 +89,10 @@ final class KnobOverlay: NSView {
         reposition()
     }
 
-    /// 窓の左上へ留め、収まらない丈は詰める。
+    /// ウィンドウの左上へ留め、収まらない丈は詰める。
     ///
-    /// 留め方が左上なのは、下や右に留めると窓を縮めたときにつまみが窓の外へ出るためで
-    /// ある。**丈は窓に収まるところまでに詰める** — 宣言の数は作品が決めるので、
+    /// 留め方が左上なのは、下や右に留めるとウィンドウを縮めたときにつまみがウィンドウの外へ出るためで
+    /// ある。**丈はウィンドウに収まるところまでに詰める** — 宣言の数は作品が決めるので、
     /// そのまま伸ばすと下のつまみへ手が届かなくなる (詰めたぶんは面の中で巻き取る)。
     func reposition() {
         guard let host = superview else { return }
@@ -103,13 +103,13 @@ final class KnobOverlay: NSView {
             width: KnobPanel.width, height: height)
     }
 
-    /// これより低くは詰めない。窓が極端に小さいときに面が消えるより、はみ出すほうがよい。
+    /// これより低くは詰めない。ウィンドウが極端に小さいときに面が消えるより、はみ出すほうがよい。
     private static let minimumHeight: CGFloat = 80
 
-    /// 窓の大きさが変わったら置き直す。
+    /// ウィンドウの大きさが変わったら置き直す。
     ///
     /// **自動整列 (`autoresizingMask`) では足りない。** 上端と左端を固定したまま丈だけを
-    /// 窓に合わせて詰める必要があり、余白の伸び縮みの組み合わせでは表せない。
+    /// ウィンドウに合わせて詰める必要があり、余白の伸び縮みの組み合わせでは表せない。
     override func resize(withOldSuperviewSize oldSize: NSSize) { reposition() }
 
     override func viewDidMoveToSuperview() {

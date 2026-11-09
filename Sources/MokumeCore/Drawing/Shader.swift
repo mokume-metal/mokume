@@ -175,7 +175,7 @@ public final class Shader {
 
     /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(inBackground:prepare:adopt:)``)。
     ///
-    /// 窓の経路では裏で組み、組み上がった後のフレームの頭で差し替える (``ShaderBox`` の「裏で組む」)。
+    /// ウィンドウの経路では裏で組み、組み上がった後のフレームの頭で差し替える (``ShaderBox`` の「裏で組む」)。
     func reload() {
         box.reload(
             inBackground: gpu.shaderRebuildsRunInBackground,

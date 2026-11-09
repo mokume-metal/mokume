@@ -126,8 +126,8 @@ nonisolated struct RenderRequestTests {
         #expect(RenderRequest(environmentValue: value) == nil)
     }
 
-    /// **合図が無ければ、いつもの窓の経路。** 合図が在って読めなければ、窓へ倒さず断る ([#2481])。
-    /// 窓を開いて 0 で終わると、`mokume render` は書けたと読んで、何も書かれていないのに名乗っていた。
+    /// **合図が無ければ、いつものウィンドウの経路。** 合図が在って読めなければ、ウィンドウへ倒さず断る ([#2481])。
+    /// ウィンドウを開いて 0 で終わると、`mokume render` は書けたと読んで、何も書かれていないのに名乗っていた。
     ///
     /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
     @Test("起動の瞬間の読みは、合図が無ければ頼みを持たず、読めない合図は断る")
@@ -137,11 +137,11 @@ nonisolated struct RenderRequestTests {
         #expect(
             try RenderRequest.startup(environment: [key: "24:48:/tmp/a.mov"])
                 == RenderRequest(frameRate: 24, frameCount: 48, destination: "/tmp/a.mov"))
-        // 窓へ倒す (`nil`) のでなく、読めなかった値を名乗って断る
+        // ウィンドウへ倒す (`nil`) のでなく、読めなかった値を名乗って断る
         for value in ["not a request", "", "30:120", "0:10:/tmp/a.mov", "24:48:/tmp/a.png"] {
             #expect(
                 throws: RenderFailure.unreadableRenderRequest(value: value),
-                "読めない値 \(value.debugDescription) を窓へ倒している"
+                "読めない値 \(value.debugDescription) をウィンドウへ倒している"
             ) {
                 try RenderRequest.startup(environment: [key: value])
             }
@@ -149,7 +149,7 @@ nonisolated struct RenderRequestTests {
     }
 
     /// 書き出せない組 (fps が `.mov` の上限を越える) も、形は読めても断る。
-    @Test("書き出せない組も、窓へ倒さず断る")
+    @Test("書き出せない組も、ウィンドウへ倒さず断る")
     func anUnwritableRequestIsRefusedToo() {
         let key = StartupReads.render.key
         let value = "\(RenderRequest.movieFrameRateLimit + 1):10:/tmp/a.mov"
@@ -173,7 +173,7 @@ nonisolated struct RenderRequestTests {
         #expect(text.hasSuffix("\n"))
     }
 
-    /// 道具が決めて子へ渡すもの。一覧に載っていれば `doctor` と窓口の案内にも出る。
+    /// 道具が決めて子へ渡すもの。一覧に載っていれば `doctor` と MCP サーバの案内にも出る。
     @Test("合図は道具が決める環境変数として一覧に載る")
     func theSignalIsListedAsTheTools() {
         #expect(StartupReads.render.origin == .environment)

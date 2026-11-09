@@ -51,10 +51,10 @@ private final class RunningSketch: Sketch {
     func draw() {}
 }
 
-/// 止まっている間は、絵が変わらない限り窓にも出口にも出し直さない ([#2367])。
+/// 止まっている間は、絵が変わらない限りウィンドウにも出口にも出し直さない ([#2367])。
 ///
 /// 見るのは**投入の本数と、共有面が名乗る枚数**である。変わったときは必ず 1 回だけ出ること
-/// (出し忘れると、止めた絵が窓にも道具にも出なくなる) を対で見る。
+/// (出し忘れると、止めた絵がウィンドウにも道具にも出なくなる) を対で見る。
 ///
 /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
 @Suite(
@@ -85,7 +85,7 @@ struct StoppedSketchOutletTests {
             }
         }
 
-        /// 道具の窓が拾った出来事を送る。
+        /// 道具のウィンドウが拾った出来事を送る。
         func click() throws {
             try pipe.fileHandleForWriting.write(
                 contentsOf: Data(InputEvent.mouseDown(x: 5, y: 5, button: .left).wireLine.utf8))
@@ -106,7 +106,7 @@ struct StoppedSketchOutletTests {
             return SharedFrameSurface.selectionRequest(on: surface)
         }
 
-        /// 道具の窓が拾った選ばせる結果を送る。
+        /// 道具のウィンドウが拾った選ばせる結果を送る。
         func answer(_ path: String?, serial: Int? = nil) throws {
             try pipe.fileHandleForWriting.write(
                 contentsOf: Data(InputEvent.fileSelected(path: path, serial: serial).wireLine.utf8))
@@ -248,7 +248,7 @@ struct StoppedSketchOutletTests {
 
     /// **`noLoop()` で止めたスケッチが頼んだ `selectInput` も、道具へ届く** ([#3062])。頼みは絵と一緒に面の
     /// 属性に載るので、止まっている間は絵が変わらないと出ない — 頼みが焼き直しの鍵に入っていなければ、
-    /// 止めたスケッチのダイアログは出ない。結果は道具の窓が子の標準入力へ書く 1 行で届き、待ちを終える。
+    /// 止めたスケッチのダイアログは出ない。結果は道具のウィンドウが子の標準入力へ書く 1 行で届き、待ちを終える。
     ///
     /// [#3062]: https://github.com/mokume-metal/mokume/issues/3062
     @Test("止まっている間に頼んだ selectInput が面に載り、結果の 1 行で待ちが終わると載らなくなる")
@@ -270,7 +270,7 @@ struct StoppedSketchOutletTests {
             #expect(child.namedFrame == named + 1, "頼みが出口に出ていない / 2 回出た (\(named) → \(child.namedFrame))")
             #expect(sketch.selected.isEmpty)
 
-            // 道具の窓は頼みの番号を載せ、頼みが残る間は送り直す: 同じ行が 2 度届いても待ちを終えるのは 1 度
+            // 道具のウィンドウは頼みの番号を載せ、頼みが残る間は送り直す: 同じ行が 2 度届いても待ちを終えるのは 1 度
             try child.answer("/tmp/a.csv", serial: 1)
             try child.answer("/tmp/a.csv", serial: 1)
             #expect(await eventually { child.refresh(); return sketch.selected.count == 1 })
@@ -336,19 +336,19 @@ struct StoppedSketchOutletTests {
         }
     }
 
-    // MARK: - 窓の経路
+    // MARK: - ウィンドウの経路
 
-    /// 窓を開いて回す。present は窓が見えているときだけ通る (見えていない間は出さない・#223) ので、
+    /// ウィンドウを開いて回す。present はウィンドウが見えているときだけ通る (見えていない間は出さない・#223) ので、
     /// 見えていることにして (``SketchApplication/windowVisibilityForTesting``)、最初の数回に present が
     /// 実際に出ていること (投入が増えること) を前提に確かめる。
-    @Test("窓の経路でも、止まった後は present を出さず、変わったら 1 回だけ出す")
+    @Test("ウィンドウの経路でも、止まった後は present を出さず、変わったら 1 回だけ出す")
     func aStoppedWindowStopsPresenting() throws {
         let sketch = StoppedSketch()
         sketch.reaction = .exposure
         let gpu = try RenderDevice()
         let application = try SketchApplication(sketch: sketch, gpu: gpu)
         application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
-        // 検査のプロセスは前面ではないので、窓は見えていることにならない
+        // 検査のプロセスは前面ではないので、ウィンドウは見えていることにならない
         application.windowVisibilityForTesting = true
         application.didFinishLaunching()
         defer { application.willTerminate() }

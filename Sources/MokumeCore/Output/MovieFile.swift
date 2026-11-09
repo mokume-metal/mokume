@@ -104,7 +104,7 @@ enum MovieWriteFailure: Error, Equatable {
 /// - **`PixelBufferReceiver.append(_:with:) async`** — 非推奨の案内が指す先だが、入力が
 ///   受け取れる状態のまま戻らないことがある (macOS 26.6 で、256×192・120 枚の書き出しの
 ///   約 9%)。ここで止まると枠が返らず、上限に達したところで main actor が塞がって
-///   **撮影中に窓ごと固まる**
+///   **撮影中にウィンドウごと固まる**
 /// - **KVO で変化を待つ** — 通知を 1 度取りこぼせば、同じく永久に待つ。取りこぼしが無いと
 ///   言えるだけの回数を測れていない
 ///
@@ -188,7 +188,7 @@ nonisolated final class MovieFile: MovieOutput {
     ///
     /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
     private let soundInput: AVAssetWriterInput?
-    /// 最初の窓の先頭の時刻。区間の始まりは、これと最初の映像の時刻の早いほう。
+    /// 最初のウィンドウの先頭の時刻。区間の始まりは、これと最初の映像の時刻の早いほう。
     private let soundStart: CMTime?
     private let frameDuration: Double
     /// 最初の 1 枚を受け取ったか。**区間の始まりは最初のフレームの時刻**で、
@@ -400,7 +400,7 @@ nonisolated final class MovieFile: MovieOutput {
     }
 
     /// - Parameters:
-    ///   - soundStart: 音声トラックを付けるとき、最初の窓の先頭の標本の番号。`nil` なら付けない。
+    ///   - soundStart: 音声トラックを付けるとき、最初のウィンドウの先頭の標本の番号。`nil` なら付けない。
     ///   - placement: 隣の一時ファイルへ書いて、閉じ終えたときだけ ``path`` へ置く段取り (`AtomicFile.reserve` が作る)。
     ///     渡せば、書いている間も書き損じたときも ``path`` の前のファイルに触れない (#3426)。
     init(
@@ -539,7 +539,7 @@ nonisolated final class MovieFile: MovieOutput {
             guard writerStatus == .writing else {
                 throw .writeFailed(path: path, reason: failureReason)
             }
-            // 区間の始まりは、映像の最初の時刻と音声の最初の時刻の早いほう (音声の窓の先頭は標本に切り捨てるので、
+            // 区間の始まりは、映像の最初の時刻と音声の最初の時刻の早いほう (音声のウィンドウの先頭は標本に切り捨てるので、
             // 映像より最大 1 標本ぶん早い)
             writer.startSession(atSourceTime: soundStart.map { CMTimeMinimum($0, stamp) } ?? stamp)
             hasStarted = true
@@ -572,15 +572,15 @@ nonisolated final class MovieFile: MovieOutput {
         }
     }
 
-    /// 音の 1 窓を書き足す。**最初の映像を書き足した後に呼ぶ** (区間は映像の最初の時刻で始まる)。
+    /// 音の 1 ウィンドウを書き足す。**最初の映像を書き足した後に呼ぶ** (区間は映像の最初の時刻で始まる)。
     ///
-    /// 時刻は窓の先頭の標本の番号 ÷ 標本化率で、映像と同じ絶対の時刻。詰まっているあいだは映像と同じく
+    /// 時刻はウィンドウの先頭の標本の番号 ÷ 標本化率で、映像と同じ絶対の時刻。詰まっているあいだは映像と同じく
     /// 読み直して待ち、writer が止まっていれば writer の理由で書き損じにする。音声トラックを付けていなければ
     /// 何もしない。
     func appendSound(_ window: SoundWindow) async throws(MovieWriteFailure) {
         guard let soundInput else { return }
-        // **0 標本の窓は書かずに飛ばす。** fps が標本化率を越える (48000 を越える) と、`⌊N·sr/fps⌋` が進まない
-        // フレームがあり、窓の長さが 0 になる。標本の束は作れないので、書き損じにせず、継ぎ目が詰まるだけにする
+        // **0 標本のウィンドウは書かずに飛ばす。** fps が標本化率を越える (48000 を越える) と、`⌊N·sr/fps⌋` が進まない
+        // フレームがあり、ウィンドウの長さが 0 になる。標本の束は作れないので、書き損じにせず、継ぎ目が詰まるだけにする
         guard window.count > 0 else { return }
         guard hasStarted else {
             throw .writeFailed(path: path, reason: "a sound window came before the first picture")
@@ -599,7 +599,7 @@ nonisolated final class MovieFile: MovieOutput {
         }
     }
 
-    /// 窓を、2 チャンネルが交互に並ぶ LPCM の標本の束にする (``soundSettings()`` と同じ形)。
+    /// ウィンドウを、2 チャンネルが交互に並ぶ LPCM の標本の束にする (``soundSettings()`` と同じ形)。
     static func soundBuffer(of window: SoundWindow) -> CMSampleBuffer? {
         let count = window.count
         guard count > 0, window.right.count == count else { return nil }

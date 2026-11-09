@@ -212,7 +212,7 @@ struct EffectSurfaceExchangeTests {
 
     /// 塗り直さないフレーム (頭の戻しと最後の段の 2 回の取り替えを含む) が打ち切られたら、面は投入の前の姿に
     /// 戻り、描く先は前のフレームの効果を通した絵のままである (2 回の取り替えは面の割り当てを元に戻している)。
-    /// 1 回だけ戻すと、描く先が効果を通す前の絵になり、窓は前の絵を出し続けるのに、読む画素・書き出しは
+    /// 1 回だけ戻すと、描く先が効果を通す前の絵になり、ウィンドウは前の絵を出し続けるのに、読む画素・書き出しは
     /// 効果を通していない絵を返す。
     @Test("塗り直さないフレームが打ち切られても、描く先は前の効果を通した絵の面のままで、印も戻る", arguments: [true, false])
     func aDroppedFlushThatRestoredLeavesTheSurfacesAsTheyWere(dropped: Bool) throws {
@@ -243,7 +243,7 @@ struct EffectSurfaceExchangeTests {
         #expect(canvas.carriesPictureBeforeEffects, "控えを戻す印が下りた (次のフレームは控えから戻せる)")
     }
 
-    /// 打ち切られたら、持ち替えた面の中身が変わったと名乗る。止まっているスケッチの窓は、出し直しの印
+    /// 打ち切られたら、持ち替えた面の中身が変わったと名乗る。止まっているスケッチのウィンドウは、出し直しの印
     /// (``RenderTarget/contentRevision``) が変わらなければ出し直しを飛ばし、取り替えが戻った絵を出さない。
     @Test("打ち切られた投入の取り替えを戻すと、出し直しの印が進む。打ち切りが無ければ進まない", arguments: [true, false])
     func revertingAnExchangeBumpsTheContentRevision(dropped: Bool) throws {

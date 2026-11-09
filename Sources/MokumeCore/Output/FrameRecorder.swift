@@ -230,7 +230,7 @@ final class FrameRecorder: Outlet {
     ///
     /// 書き損じは**種類ごとではなく行き先ごとに** 1 度名乗る。`save()` は作者が明示に頼む
     /// 書き出しで、2 つ目の行き先で転んだことを 1 つ目を言ったからと黙ると、頼んだ 1 枚が
-    /// 誰にも知らされずに失われる (窓で走らせる経路は ``hasFailedToWrite`` を読まない)。
+    /// 誰にも知らされずに失われる (ウィンドウで走らせる経路は ``hasFailedToWrite`` を読まない)。
     /// 同じ行き先で続けて転んでも名乗りは 1 度である。
     ///
     /// 毎フレーム違う名前へ転ぶ形 (連番・`save("shots/\(frameCount).png")`) で行が毎フレーム
@@ -646,7 +646,7 @@ final class FrameRecorder: Outlet {
                 + "that calls beginRecord() ends")
     }
 
-    /// 音の 1 窓を、載せる録りへ書く。載せていなければ何もしない。
+    /// 音の 1 ウィンドウを、載せる録りへ書く。載せていなければ何もしない。
     func writeSound(_ window: SoundWindow) {
         guard case .carrying = soundTrack else { return }
         movie?.writeSound(window)

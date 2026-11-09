@@ -40,8 +40,8 @@ public struct ParamRange: Equatable, Sendable {
         lhs.lowerBound == rhs.lowerBound && lhs.upperBound == rhs.upperBound
     }
 
-    /// 両端が有限か。**偽の範囲は、面 (応答の `min` / `max`・窓のつまみ) には出さない** — 応答の
-    /// `min` / `max` は JSON に書けず、窓のスライダーは有限の幅を持たない
+    /// 両端が有限か。**偽の範囲は、面 (応答の `min` / `max`・ウィンドウのつまみ) には出さない** — 応答の
+    /// `min` / `max` は JSON に書けず、ウィンドウのスライダーは有限の幅を持たない
     /// ([#2475](https://github.com/mokume-metal/mokume/issues/2475))。整数で書いた範囲は常に真。
     var hasFiniteBounds: Bool { lowerBound.isFinite && upperBound.isFinite }
 
@@ -72,13 +72,13 @@ public struct ParamRange: Equatable, Sendable {
 extension Int {
     /// 最も近い整数。**`Int` に収まらなければ、近いほうの端へ収める。**
     ///
-    /// `Int(_: Double)` は収まらない値で**プロセスごと落ちる**。窓のスライダーが返す実数
+    /// `Int(_: Double)` は収まらない値で**プロセスごと落ちる**。ウィンドウのスライダーが返す実数
     /// (範囲の右端は `Double(Int.max)` = 2^63) を整数へ戻す所は、この変換を通す
     /// ([#2478](https://github.com/mokume-metal/mokume/issues/2478))。
     ///
     /// NaN は 0 を返す (落とさないための値で、意味は無い)。**この手前で NaN は拒まれない**
-    /// — 整数の値は `hasOnlyFiniteNumbers` が常に有限と読むので、窓の整数のつまみが NaN を
-    /// 出せば 0 になる。窓のスライダーは有限の値しか出さないので、実際には通らない。
+    /// — 整数の値は `hasOnlyFiniteNumbers` が常に有限と読むので、ウィンドウの整数のつまみが NaN を
+    /// 出せば 0 になる。ウィンドウのスライダーは有限の値しか出さないので、実際には通らない。
     init(roundingAndSaturating value: Double) {
         let rounded = value.rounded()
         if let exact = Int(exactly: rounded) {
@@ -109,13 +109,13 @@ public struct ParamDeclaration: Equatable, Sendable {
     public let choices: [String]?
     /// スライダーの刻み。**実数の範囲 (`float`・`vec2`・`vec3`) にだけ付き**、書かれていなければ `nil`。
     ///
-    /// **窓のスライダーの動き方だけを決める** — 外からの書き込み・保存の復元・コードからの代入は
+    /// **ウィンドウのスライダーの動き方だけを決める** — 外からの書き込み・保存の復元・コードからの代入は
     /// 刻みへ丸めない。範囲へ収めたことを名乗る `clamped` の意味も変わらない
     /// ([ADR-0013] 決定 2・[#2438](https://github.com/mokume-metal/mokume/issues/2438))。
     ///
     /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
     public let step: Double?
-    /// 書かれたが、端が非有限なので面に出さない範囲 (``range`` は `nil`)。**窓が、つまみを出さない理由を
+    /// 書かれたが、端が非有限なので面に出さない範囲 (``range`` は `nil`)。**ウィンドウが、つまみを出さない理由を
     /// 言い分けるためだけに持つ** — 作者は範囲を書いているので、「範囲を書けばつまみが出る」と言うと
     /// 誤る ([#2475](https://github.com/mokume-metal/mokume/issues/2475))。応答には書かない (読み直すと `nil`)。
     let unshownRange: ParamRange?
@@ -145,7 +145,7 @@ public struct ParamDeclaration: Equatable, Sendable {
 
 /// `step:` に書かれた刻みを検める。**検める所は ``ParamBox`` の初期化の 1 点** ([#2438])。
 ///
-/// 刻みは窓のスライダーの動き方だけを決める。0 以下・非有限の刻みはスライダーを組めず、
+/// 刻みはウィンドウのスライダーの動き方だけを決める。0 以下・非有限の刻みはスライダーを組めず、
 /// 実数でない値 (整数・真偽・文字・色) には刻みの意味が無い。どちらも**置かずに** (刻みの無い
 /// スライダーのまま)、書いた人へ 1 度だけ名乗る — 黙って捨てると、書いたのに効かない刻みになる。
 ///

@@ -135,7 +135,7 @@ private struct EmbeddingApp: View {
     }
 }
 
-/// SwiftUI のアプリの中に映すビュー (#3511)。GPU と窓を使うので、1 本ずつ走らせる。
+/// SwiftUI のアプリの中に映すビュー (#3511)。GPU とウィンドウを使うので、1 本ずつ走らせる。
 @MainActor
 @Suite(
     "SketchView", .serialized,
@@ -144,7 +144,7 @@ private struct EmbeddingApp: View {
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct SketchViewTests {
-    /// ホストの窓を建てて、中の `SketchHostView` を取る。
+    /// ホストのウィンドウを建てて、中の `SketchHostView` を取る。
     private func embed(_ root: some View) throws -> (NSWindow, SketchHostView) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 160), styleMask: [.titled],
@@ -273,7 +273,7 @@ struct SketchViewTests {
             #expect(await eventually { second.application != nil }, "先を止めても、2 つ目が始まらない")
             let started = try #require(second.application)
             #expect(!second.isWaiting)
-            #expect(started.screenLink.isAttached, "窓に載っているのに駆動源が繋がっていない")
+            #expect(started.screenLink.isAttached, "ウィンドウに載っているのに駆動源が繋がっていない")
             #expect(third.application == nil && third.isWaiting, "先頭が走り始めたのに、次も始まった")
             #expect(
                 Diagnostics.takeUnreported().isEmpty, "始まるときに、余計な警告を言った")
@@ -421,9 +421,9 @@ struct SketchViewTests {
         #expect(!runtime.isPresenceAnnounced, "ホストの中で名乗りを出した")
     }
 
-    /// 対照: 同じ時計の進みで、窓で走るなら名乗る長さに達する (上の検査が空振りでないことの裏)。名乗りそのものは
+    /// 対照: 同じ時計の進みで、ウィンドウで走るなら名乗る長さに達する (上の検査が空振りでないことの裏)。名乗りそのものは
     /// 起こさない — 2 度目の `advance()` を呼ばず、経過だけを読む。
-    @Test("対照: 窓で走るなら、同じ時計の進みで名乗る長さに達する")
+    @Test("対照: ウィンドウで走るなら、同じ時計の進みで名乗る長さに達する")
     func theSameClocksWouldAnnounceInAWindow() throws {
         let time = TimeBox()
         let runtime = try SketchRuntime(
@@ -465,7 +465,7 @@ struct SketchViewTests {
     }
 
     /// 対照: 埋め込みでなければ、同じ頼みでディスプレイを選びに行く (読まない検査が空振りでないことの裏)。
-    @Test("対照: 窓で開くなら、全画面を頼むとディスプレイの一覧を読み、選べなければ断る")
+    @Test("対照: ウィンドウで開くなら、全画面を頼むとディスプレイの一覧を読み、選べなければ断る")
     func fullScreenIsReadOutsideTheHost() throws {
         var read = 0
         #expect(throws: RenderFailure.self) {
@@ -479,8 +479,8 @@ struct SketchViewTests {
         #expect(read == 1)
     }
 
-    /// 同じことを、ホストの窓の中で通して: 窓は変わらず、絵の大きさは設定のまま、警告は 1 度だけ。
-    @Test("SketchView に全画面のスケッチを載せても、ホストの窓は変わらず、警告は 1 度だけ")
+    /// 同じことを、ホストのウィンドウの中で通して: ウィンドウは変わらず、絵の大きさは設定のまま、警告は 1 度だけ。
+    @Test("SketchView に全画面のスケッチを載せても、ホストのウィンドウは変わらず、警告は 1 度だけ")
     func aFullScreenSketchLeavesTheHostWindowAlone() throws {
         try Diagnostics.$digest.withValue(WarningDigest()) {
             let window = NSWindow(
@@ -501,8 +501,8 @@ struct SketchViewTests {
             let application = try #require(view.application)
             refresh(application, 5)
 
-            #expect(!window.styleMask.contains(.fullScreen), "ホストの窓を全画面にした")
-            #expect(window.frame == frame, "ホストの窓の大きさを変えた")
+            #expect(!window.styleMask.contains(.fullScreen), "ホストのウィンドウを全画面にした")
+            #expect(window.frame == frame, "ホストのウィンドウの大きさを変えた")
             let surface = try #require(view.subviews.compactMap { $0 as? SketchSurface }.first)
             #expect(surface.canvasWidth == 64, "描く大きさがディスプレイの大きさになった")
             let said = Diagnostics.takeUnreported()
@@ -528,7 +528,7 @@ struct SketchViewTests {
         try #require(view.subviews.compactMap { $0 as? SketchSurface }.first)
     }
 
-    /// ホストの窓に、`SketchHostView` を直に並べる (SwiftUI を介さない)。
+    /// ホストのウィンドウに、`SketchHostView` を直に並べる (SwiftUI を介さない)。
     private func hostWindow() -> (NSWindow, NSView) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 160), styleMask: [.titled],
@@ -676,8 +676,8 @@ struct SketchViewTests {
         }
     }
 
-    /// 駆動源は窓に載ったときに繋ぎ、外れたら畳む。
-    @Test("窓から外れると駆動源を畳み、載り直すと繋ぎ直す")
+    /// 駆動源はウィンドウに載ったときに繋ぎ、外れたら畳む。
+    @Test("ウィンドウから外れると駆動源を畳み、載り直すと繋ぎ直す")
     func theDriverFollowsTheWindow() throws {
         let (window, view) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
         defer {
@@ -686,10 +686,10 @@ struct SketchViewTests {
         }
         let application = try #require(view.application)
         let hosting = try #require(window.contentView)
-        #expect(application.screenLink.isAttached, "窓に載っているのに繋がっていない")
+        #expect(application.screenLink.isAttached, "ウィンドウに載っているのに繋がっていない")
 
         hosting.removeFromSuperview()
-        #expect(!application.screenLink.isAttached, "窓から外れたのに畳まれていない")
+        #expect(!application.screenLink.isAttached, "ウィンドウから外れたのに畳まれていない")
 
         window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
@@ -821,8 +821,8 @@ struct SketchViewTests {
         }
     }
 
-    /// K6: ホストの窓が見えていない間は、ファイルを選ばせるシートを出さない (独立したパネルになり、ホストを前面へ出す)。
-    @Test("ホストの窓が見えない間はシートを出さず、見えたリフレッシュで出す")
+    /// K6: ホストのウィンドウが見えていない間は、ファイルを選ばせるシートを出さない (独立したパネルになり、ホストを前面へ出す)。
+    @Test("ホストのウィンドウが見えない間はシートを出さず、見えたリフレッシュで出す")
     func theSheetWaitsForAVisibleHostWindow() async throws {
         try await Diagnostics.$digest.withValue(WarningDigest()) {
             let (window, container) = hostWindow()
@@ -838,26 +838,26 @@ struct SketchViewTests {
             application.filePicker = picker
 
             window.orderOut(nil)
-            #expect(!window.isVisible, "検査の前提: ホストの窓が見えない")
+            #expect(!window.isVisible, "検査の前提: ホストのウィンドウが見えない")
             // 頼み (Task) が届くまで、見えないまま何度か回す
             for _ in 0..<8 {
                 application.displayLinkFired()
                 try await Task.sleep(for: .milliseconds(10))
             }
-            #expect(picker.shown.isEmpty, "見えない窓の頼みを、シートでない形で出した")
+            #expect(picker.shown.isEmpty, "見えないウィンドウの頼みを、シートでない形で出した")
 
             window.orderFront(nil)
             #expect(
                 await eventually {
                     application.displayLinkFired()
                     return !picker.shown.isEmpty
-                }, "窓が見えても、頼みが出ない")
+                }, "ウィンドウが見えても、頼みが出ない")
             #expect(picker.shown.count == 1)
         }
     }
 
-    /// K7: ビューが窓から外れただけ (dismantle されない) でも、シートは閉じる。載り直した最初のフレームが取り消しを汲む。
-    @Test("窓から外れたらシートを取り消しで閉じ、載り直すとスケッチの待ちが nil で終わる")
+    /// K7: ビューがウィンドウから外れただけ (dismantle されない) でも、シートは閉じる。載り直した最初のフレームが取り消しを汲む。
+    @Test("ウィンドウから外れたらシートを取り消しで閉じ、載り直すとスケッチの待ちが nil で終わる")
     func detachingFromTheWindowClosesTheSheet() async throws {
         try await Diagnostics.$digest.withValue(WarningDigest()) {
             let (window, container) = hostWindow()
@@ -881,7 +881,7 @@ struct SketchViewTests {
                 }, "頼んだシートが出ていない")
 
             view.removeFromSuperview()
-            #expect(picker.dismissals == 1, "窓から外れても、シートが元の窓に残った")
+            #expect(picker.dismissals == 1, "ウィンドウから外れても、シートが元のウィンドウに残った")
             #expect(
                 lines.contains(InputEvent.fileSelected(path: nil, serial: 1).wireLine),
                 "取り消しの結果を渡していない: \(lines)")

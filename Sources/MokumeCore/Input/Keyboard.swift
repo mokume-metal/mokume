@@ -42,7 +42,7 @@ public struct Keyboard {
     /// if keyboard.justReleased(.space) { charging = false }
     /// ```
     ///
-    /// **窓が前から退いたときも、押していたキーは離された扱いになる** (``SketchPart/keyboard``)。
+    /// **ウィンドウが前から退いたときも、押していたキーは離された扱いになる** (``SketchPart/keyboard``)。
     public func justReleased(_ key: Key) -> Bool {
         key.sides.contains(where: state.justReleasedKeys.contains)
     }

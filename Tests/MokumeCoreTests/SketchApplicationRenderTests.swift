@@ -8,7 +8,7 @@ import Testing
 
 @testable import MokumeCore
 
-/// 窓を開かずに、固定の fps で決めた枚数を書き出す経路 (`mokume render`・[#1282])。
+/// ウィンドウを開かずに、固定の fps で決めた枚数を書き出す経路 (`mokume render`・[#1282])。
 ///
 /// **本番と同じ経路を、run loop を回さずに辿る。** 駆動源の代わりに ``SketchApplication/displayLinkFired()``
 /// を叩き、`terminate(_:)` の代わりに AppKit が同じ呼び出しの中で問う ``SketchApplication/shouldTerminate()``
@@ -20,7 +20,7 @@ import Testing
 ///
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
 @Suite(
-    "窓を開かずに書き出す経路",
+    "ウィンドウを開かずに書き出す経路",
     .signalStateKept,
     .enabled(
         if: RenderDevice.isAvailable,
@@ -275,13 +275,13 @@ struct SketchApplicationRenderTests {
         }
     }
 
-    // MARK: - 窓を開かない (完了条件 5)
+    // MARK: - ウィンドウを開かない (完了条件 5)
 
     /// 区画 `viewport` は見張りが畳めずに終わると残る。残っていても、書き出す経路は共有面へ
-    /// 差し出さない — 面の番号の名乗り (manifest) も置かない。**窓を持つ道具の合図が来ていても
+    /// 差し出さない — 面の番号の名乗り (manifest) も置かない。**ウィンドウを持つ道具の合図が来ていても
     /// 同じである** — 書き出す経路は区画と合図より先に決まっている (#2025)。区画を本番と同じ
     /// 場所へ置く形は `LaunchedByToolTests` が見る。
-    @Test("書き出す経路は窓を開かず、区画 viewport が残っていても共有面へ差し出さない")
+    @Test("書き出す経路はウィンドウを開かず、区画 viewport が残っていても共有面へ差し出さない")
     func renderingOpensNoWindowEvenWithAViewportFacet() async throws {
         try await withTemporaryDirectory("mokume-render-headless") { directory in
             let facet = directory.appendingPathComponent("viewport", isDirectory: true)
@@ -298,7 +298,7 @@ struct SketchApplicationRenderTests {
             fire(application, times: 5)
 
             #expect(application.window == nil)
-            #expect(NSApplication.shared.windows.count == windowsBefore, "窓が建った")
+            #expect(NSApplication.shared.windows.count == windowsBefore, "ウィンドウが建った")
             #expect(application.activationPolicy == .accessory, "Dock に並ぶ")
             #expect(!application.endsAfterLastWindowClosed)
             #expect(
@@ -528,7 +528,7 @@ struct SketchApplicationRenderTests {
     }
 
     /// **待てば永久に届かない。** 止まったスケッチは入力が来なければ動き直さず、書き出す経路には
-    /// 窓も入力も無い — 終わらせないと、道具は子を待ち続ける。
+    /// ウィンドウも入力も無い — 終わらせないと、道具は子を待ち続ける。
     @Test("作者が noLoop() で止めたら、そこで書き出しを終え、揃わなかったと 0 以外で言う")
     func aSketchThatStopsItsLoopEndsTheRender() async throws {
         try await withTemporaryDirectory("mokume-render-noloop") { directory in
@@ -592,8 +592,8 @@ struct SketchApplicationRenderTests {
 
     // MARK: - 他の経路は変わらない (完了条件 8)
 
-    /// 検査のプロセスには合図が渡っていないので、公開の入口はいつもの窓の経路を組む。
-    @Test("書き出しの合図が無ければ、時計は実時間のまま窓の経路を組む")
+    /// 検査のプロセスには合図が渡っていないので、公開の入口はいつものウィンドウの経路を組む。
+    @Test("書き出しの合図が無ければ、時計は実時間のままウィンドウの経路を組む")
     func withoutTheSignalTheWindowPathIsUnchanged() throws {
         try #require(
             ProcessInfo.processInfo.environment[StartupReads.render.key] == nil,
@@ -601,7 +601,7 @@ struct SketchApplicationRenderTests {
         let application = try SketchApplication(sketch: Sweep(), gpu: RenderDevice())
         defer { application.willTerminate() }
         #expect(application.clock == .wallClock)
-        // 窓の経路は、利用者の断片の保存を裏で組む (#2365)
+        // ウィンドウの経路は、利用者の断片の保存を裏で組む (#2365)
         #expect(application.gpu.rebuildsShadersInBackground)
         #expect(application.activationPolicy == .regular)
         #expect(application.endsAfterLastWindowClosed)

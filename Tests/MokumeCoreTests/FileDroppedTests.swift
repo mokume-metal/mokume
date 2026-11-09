@@ -9,10 +9,10 @@ import Testing
 
 @testable import MokumeCore
 
-/// 窓へ落としたファイルを、フレームに属する入力の出来事 `fileDropped` として受ける
+/// ウィンドウへ落としたファイルを、フレームに属する入力の出来事 `fileDropped` として受ける
 /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
 ///
-/// 外から送る線・合流点・窓 (`NSDraggingDestination`) を、それぞれ固める。実際にファイルを窓へ
+/// 外から送る線・合流点・ウィンドウ (`NSDraggingDestination`) を、それぞれ固める。実際にファイルをウィンドウへ
 /// 落とす身振りは人の手 (PR 本文の「確認してほしい点」) で、ここは落とされた中身を持つ代役
 /// (``FakeDraggingInfo``) を面へ渡して、その先を見る。
 @Suite("ファイルの落とし: 合流点")
@@ -94,7 +94,7 @@ struct FileDroppedInputTests {
     func anEmptyDropIsRefusedAtTheConfluence() {
         let state = InputState()
         run(state, [.mouseMoved(x: 40, y: 50)])
-        // 入口 (窓・線) を通らず、公開の enqueue へ直に積まれても
+        // 入口 (ウィンドウ・線) を通らず、公開の enqueue へ直に積まれても
         let seen = run(
             state, [.fileDropped(paths: [], x: 5, y: 6), .fileDropped(paths: [], x: 7, y: 8)])
         #expect(seen.isEmpty, "fileDropped([]) が呼ばれた: \(seen)")
@@ -284,7 +284,7 @@ final class FakeDraggingInfo: NSObject, NSDraggingInfo {
     }
 }
 
-@Suite("ファイルの落とし: 窓")
+@Suite("ファイルの落とし: ウィンドウ")
 @MainActor
 struct FileDroppedSurfaceTests {
     private func makeSurface(_ input: InputState) throws -> SketchSurface {
@@ -294,7 +294,7 @@ struct FileDroppedSurfaceTests {
             input: input, canvasSize: (64, 64))
     }
 
-    /// 窓に載せた面。落とした所を写すには、面が層を持ち窓に載っている必要がある。
+    /// ウィンドウに載せた面。落とした所を写すには、面が層を持ちウィンドウに載っている必要がある。
     private func withWindowedSurface(
         _ input: InputState, _ body: (SketchSurface) throws -> Void
     ) throws {
@@ -365,7 +365,7 @@ struct FileDroppedSurfaceTests {
         try withWindowedSurface(input) { surface in
             var lines: [String] = []
             surface.relay = { lines.append($0) }
-            // 窓の座標は左下原点。面と窓が同じ大きさ (64 四方) なので、窓の (10, 44) はキャンバスの (10, 20)
+            // ウィンドウの座標は左下原点。面とウィンドウが同じ大きさ (64 四方) なので、ウィンドウの (10, 44) はキャンバスの (10, 20)
             let accepted = surface.performDragOperation(
                 FakeDraggingInfo.files(["/tmp/a.png"], at: NSPoint(x: 10, y: 44)))
             #expect(accepted)
@@ -420,7 +420,7 @@ struct FileDroppedSurfaceTests {
         #expect(
             try JSONDecoder().decode(RawInputEvent.self, from: Data(echoed.utf8)).event
                 == .fileDropped(paths: ["/tmp/a.png"], x: 5, y: 6),
-            "捕まえている間なのに、窓の座標を写した: \(echoed)")
+            "捕まえている間なのに、ウィンドウの座標を写した: \(echoed)")
     }
 
     @Test(
@@ -447,7 +447,7 @@ struct FileDroppedSurfaceTests {
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
     func aDropThatCannotBeLocatedSendsNothing() throws {
         let input = InputState()
-        // 層を持たせず、窓にも載せない面は、描く大きさが 0 で、落とした所を写せない
+        // 層を持たせず、ウィンドウにも載せない面は、描く大きさが 0 で、落とした所を写せない
         let surface = try makeSurface(input)
         var lines: [String] = []
         surface.relay = { lines.append($0) }

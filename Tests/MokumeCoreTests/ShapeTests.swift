@@ -18,7 +18,7 @@ struct ShapeTests {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
-    /// スケッチを窓を出さずに回すランタイム。**GPU は条件の掛かったこの型の本体で作る** (`GPUGateTests`)。
+    /// スケッチをウィンドウを出さずに回すランタイム。**GPU は条件の掛かったこの型の本体で作る** (`GPUGateTests`)。
     private func makeRuntime(_ sketch: some Sketch) throws -> SketchRuntime {
         try SketchRuntime(sketch: sketch, gpu: RenderDevice())
     }
@@ -198,12 +198,12 @@ struct ShapeTests {
     /// この suite の「組にした形は、何個入っていても 1 度の描画で出る」が
     /// `drawCallsInLastFrame` と `Shape/forms` の数で**決定論的に (debug でも)** 見ている。
     ///
-    /// ## 1 窓目は GPU のフレーム壁を測る
+    /// ## 1 ウィンドウ目は GPU のフレーム壁を測る
     ///
-    /// 暖機で飛んでいるフレームがあると、`measure` の最初の窓は環にした置き場の
+    /// 暖機で飛んでいるフレームがあると、`measure` の最初のウィンドウは環にした置き場の
     /// 空き待ち ([#754](https://github.com/mokume-metal/mokume/issues/754)) に毎回入り、
     /// CPU の投入費用ではなく GPU のフレーム所要時間を測る。GPU の仕事は組み立て直しでも
-    /// 再生でも同じ絵なので、**壁に当たった窓では両方が同じ数字になり倍率が 1 へ潰れる**
+    /// 再生でも同じ絵なので、**壁に当たったウィンドウでは両方が同じ数字になり倍率が 1 へ潰れる**
     /// (#1086 が報告した 0.446 対 0.450 がこれである)。だから **CPU の費用が壁より
     /// 十分に高い絵で測る** — 葉 2000 個の組み立て直しは 28ms で、壁 (0.45ms) の 60 倍以上
     /// ある。基本図形だけの絵では届かない。

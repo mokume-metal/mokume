@@ -53,7 +53,7 @@ import Testing
 /// **場面ごとに別のプロセスで打つ** (`footprintPeak` は前の場面の最大を引き継ぐ)。
 ///
 /// **切り抜きの場面** `clip.<none|rect|circle|nested2|switching>` (#2431): 同じ円 2,000 個を、切り抜き無し・矩形の
-/// `clip()`・`clip { circle }`・`clip { }` を 2 段・窓つきの部品 1,000 個 (`push(); clip { circle }; rect; pop()`) で
+/// `clip()`・`clip { circle }`・`clip { }` を 2 段・切り抜きつきの部品 1,000 個 (`push(); clip { circle }; rect; pop()`) で
 /// 描く。型板を使う描き切りと使わない描き切りの GPU 時間を見比べる。打ち方は次と同じ:
 ///
 /// ```bash
@@ -171,7 +171,7 @@ struct FrameProbeTests {
         }
     }
 
-    /// 同じ円 2,000 個を、切り抜きの仕方だけ変えて描く場面 (#2431)。`switching` は窓つきの部品 1,000 個で、
+    /// 同じ円 2,000 個を、切り抜きの仕方だけ変えて描く場面 (#2431)。`switching` はウィンドウつきの部品 1,000 個で、
     /// 部品ごとに型板を描き直す (段を足して外す) 最悪の場面。
     final class Clipped: Sketch {
         enum Mode { case none, rect, circle, nested2, switching }
@@ -323,7 +323,7 @@ struct FrameProbeTests {
     @Test("clip { } を 2 段重ねた中の円 2,000 個")
     func clipNested2() throws { try probe("clip.nested2", sketch: Clipped(.nested2)) }
 
-    @Test("窓つきの部品 1,000 個 (部品ごとに型板を描き直す)")
+    @Test("切り抜きつきの部品 1,000 個 (部品ごとに型板を描き直す)")
     func clipSwitching() throws { try probe("clip.switching", sketch: Clipped(.switching)) }
 
     @Test("動く立体の三角形・6 万頂点 (面の向きを書いた対照)")

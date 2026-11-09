@@ -52,7 +52,7 @@ struct SharedFrameSurfaceFacetTests {
     }
 
     /// **番号だけで引ける印が載っていること。** 載っていないと `IOSurfaceLookup` は同じ
-    /// プロセスからしか通らず、外から引くと黙って `nil` が返る — 症状は「窓は出ているのに
+    /// プロセスからしか通らず、外から引くと黙って `nil` が返る — 症状は「ウィンドウは出ているのに
     /// 真っ白」としてしか現れない (#704)。同じプロセスからの検査では捕まらないので、
     /// せめて印が載っていることをここで見る。
     @Test("面には、番号だけで引ける印が載っている")
@@ -98,14 +98,14 @@ struct SharedFrameManifestTests {
             #expect(manifest.ids == [7, 8, 9])
             #expect(manifest.width == 960)
             #expect(manifest.height == 540)
-            // 倍率を書かない子 (古いライブラリ) の目録も読む。窓の大きさには触らない
+            // 倍率を書かない子 (古いライブラリ) の目録も読む。ウィンドウの大きさには触らない
             #expect(manifest.windowScale == nil)
         }
     }
 
-    /// **倍率は絵の出る出ないに関わらない。** 開けない値を理由に目録ごと捨てると、窓の
+    /// **倍率は絵の出る出ないに関わらない。** 開けない値を理由に目録ごと捨てると、ウィンドウの
     /// 大きさの話で絵が消える (#1624)。
-    @Test("窓の倍率を読み、開けない値は頼まれていないものとして読む")
+    @Test("ウィンドウの倍率を読み、開けない値は頼まれていないものとして読む")
     func readsTheWindowScale() throws {
         try withManifest(
             #"{"schemaVersion":1,"ids":[7],"width":320,"height":180,"windowScale":4}"#
@@ -268,8 +268,8 @@ struct SharedFrameSurfaceTests {
         #expect(SharedFrameSurface.makeIfEnabled(gpu: gpu, width: 16, height: 8, at: missing) == nil)
     }
 
-    /// 作れなかった理由を黙って捨てない (#2263)。窓へ倒すのは正しいが、理由が無いと
-    /// 見張りの窓に絵が来ない原因を辿れない。**寸法の関所で落とす** — GPU の確保より
+    /// 作れなかった理由を黙って捨てない (#2263)。ウィンドウへ倒すのは正しいが、理由が無いと
+    /// 見張りのウィンドウに絵が来ない原因を辿れない。**寸法の関所で落とす** — GPU の確保より
     /// 前に投げるので、資源を食わずに失敗を注入できる。
     @Test("区画が在るのに面を作れなければ、型と理由を 1 行言って nil を返す")
     func failingToMakeTheSurfaceSaysWhy() throws {
@@ -313,7 +313,7 @@ struct SharedFrameSurfaceTests {
 
     @Test("面はキャンバスと同じ大きさなので、帯が 1 画素も入らない")
     func noLetterboxIsBakedIn() throws {
-        // 2:1 の絵。窓へ出すときは帯が要る比だが、面は同じ大きさなので入らない
+        // 2:1 の絵。ウィンドウへ出すときは帯が要る比だが、面は同じ大きさなので入らない
         let shared = try withFacet {
             try written(color: .linear(red: 1, green: 1, blue: 1), size: (32, 16), in: $0)
         }

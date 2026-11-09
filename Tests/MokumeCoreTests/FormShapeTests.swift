@@ -1630,7 +1630,7 @@ struct FormShapeTests {
     ///
     /// 輪郭の太さが形の大きさに近いと、帯の穴 (内縁の内) が 1 画素より細く残る (`mokume_thinHole`)。
     /// 穴の被覆も、形の軸の長さの積では 45° で置く位置により穴の面積が振れた (穴の半幅 0.5 の
-    /// 45° の `rect` で、穴の窓の光の量が 0.945〜0.980 倍)。穴の周りは帯が覆うので、穴の中心の
+    /// 45° の `rect` で、穴のウィンドウの光の量が 0.945〜0.980 倍)。穴の周りは帯が覆うので、穴の中心の
     /// 画素の被覆は 1 − 穴との重なりの面積になる。穴の四角を画素の四角で切った面積と画素ごとに比べる。
     /// 穴の半幅は 0.4 と 0.2 (半幅 0.5 の 45° の穴は、幅が画素の対角より狭いのに 1 画素と数えて細い形の分岐に
     /// 入らず、縁 1 本の式に残る。#2991)。
@@ -1662,7 +1662,7 @@ struct FormShapeTests {
                 if abs(drawn - (1 - overlap)) > worst { (worst, worstAt) = (abs(drawn - (1 - overlap)), (x, y)) }
             }
         }
-        #expect(holeArea > 0.1, "穴が窓に入っていない (面積 \(holeArea))")
+        #expect(holeArea > 0.1, "穴がウィンドウに入っていない (面積 \(holeArea))")
         #expect(worst <= 0.01, "\(angle) rad・太さ \(weight) の穴の画素ごとの最大のずれ: \(worst) (画素 \(worstAt))")
     }
 
@@ -1671,7 +1671,7 @@ struct FormShapeTests {
     /// 楕円の穴は外接する四角で数える (細い塗りの円と同じ数え方・`mokume_thinEllipseHoleCoverage`) ので、
     /// 厳密な円との重なりとは比べず、**回さない同じ円の穴の面積との差**を見る。形の軸の長さの積では、
     /// 45° の円の穴 (半径 0.4) の面積が置く位置で回さない円の 0.93〜1.01 倍に振れた (直した後は 0.97〜0.99)。
-    /// 窓の光の量で測った半径 0.5 の穴は 0.986〜1.052 倍で、穴が消える位置もあった。
+    /// ウィンドウの光の量で測った半径 0.5 の穴は 0.986〜1.052 倍で、穴が消える位置もあった。
     @Test("回した円の輪郭の細い穴は、置く位置によらず回さない円と同じ面積で出る")
     func tiltedThinCircleHolesKeepTheirArea() throws {
         func holeArea(angle: Float, offset: Float) throws -> Double {
@@ -1689,7 +1689,7 @@ struct FormShapeTests {
         }
         // 回さない円は 4 画素の角に置く (offset 0) と、画素の中心に置く (offset 0.5) の平均
         let reference = try (holeArea(angle: 0, offset: 0) + holeArea(angle: 0, offset: 0.5)) / 2
-        #expect(reference > 0.5, "穴が窓に入っていない (面積 \(reference))")
+        #expect(reference > 0.5, "穴がウィンドウに入っていない (面積 \(reference))")
         for step in 0..<8 {
             let offset = Float(step) * 0.25
             let tilted = try holeArea(angle: Float.pi / 4, offset: offset)

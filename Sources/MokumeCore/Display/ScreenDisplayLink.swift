@@ -42,13 +42,13 @@ protocol DisplayRefresh {
 
 extension CADisplayLink: DisplayRefresh {}
 
-/// フレームの駆動源を**画面**のリフレッシュに紐づけ、窓が移った先へ張り替える。
+/// フレームの駆動源を**画面**のリフレッシュに紐づけ、ウィンドウが移った先へ張り替える。
 ///
 /// ## なぜ面ではなく画面から取るのか
 ///
 /// 面 (`NSView`) から取った駆動源は、面が hidden になると呼ばれなくなる — AppKit の
 /// ヘッダが `NSView` の側にだけ「If the view is hidden, or not on any display, the
-/// callback will not be invoked」と書いている。窓を最小化すると面は hidden になるので、
+/// callback will not be invoked」と書いている。ウィンドウを最小化すると面は hidden になるので、
 /// フレームループごと止まり、絵だけでなく観測も入力も応答しなくなっていた
 /// ([#223](https://github.com/mokume-metal/mokume/issues/223))。
 ///
@@ -73,10 +73,10 @@ extension CADisplayLink: DisplayRefresh {}
 ///
 /// ## なぜ 1 つの部品にしたのか
 ///
-/// 窓を出す経路は 2 つある。**張り替えの判定は逐語同文だったのに、理由は片方にしか
+/// ウィンドウを出す経路は 2 つある。**張り替えの判定は逐語同文だったのに、理由は片方にしか
 /// 書かれていなかった** — 「最小化でも同じ通知が飛び、そのとき `window.screen` は `nil` を
 /// 返す」という契約が一方の doc にしか無く、もう一方では冗長な二重 guard にしか見えない。
-/// 読める側を「整理」した日に、**道具の窓を最小化すると駆動源が消えて二度と戻らない** —
+/// 読める側を「整理」した日に、**道具のウィンドウを最小化すると駆動源が消えて二度と戻らない** —
 /// 症状は「固まった」だけで、原因からは遠い
 /// ([#956](https://github.com/mokume-metal/mokume/issues/956))。
 ///
@@ -130,9 +130,9 @@ final class ScreenDisplayLink: NSObject {
         super.init()
     }
 
-    /// 画面に紐づけ、窓が移ったら追う。
+    /// 画面に紐づけ、ウィンドウが移ったら追う。
     ///
-    /// **窓を渡さない呼び方を許す。** 外のプロセスへ差し出す経路は窓を持たないまま駆動源
+    /// **ウィンドウを渡さない呼び方を許す。** 外のプロセスへ差し出す経路はウィンドウを持たないまま駆動源
     /// だけを回すので、追う対象が無い。
     ///
     /// **画面が `nil` でも予備は回り始める。** 画面が 1 枚も無ければ表示のリフレッシュは
@@ -140,7 +140,7 @@ final class ScreenDisplayLink: NSObject {
     ///
     /// - Parameters:
     ///   - screen: 紐づける画面。`nil` なら表示のリフレッシュには繋がない。
-    ///   - window: 移動を追う窓。
+    ///   - window: 移動を追うウィンドウ。
     func attach(to screen: NSScreen?, following window: NSWindow? = nil) {
         // 二重に登録すると 1 回の移動で 2 度張り替える。張り直す前に必ず外す
         stopFollowing()
@@ -153,10 +153,10 @@ final class ScreenDisplayLink: NSObject {
         startFallback()
     }
 
-    /// 繋がっているか (予備が回っているか)。**検査が読む** (窓に載り・外れたときの繋ぎ・畳み)。
+    /// 繋がっているか (予備が回っているか)。**検査が読む** (ウィンドウに載り・外れたときの繋ぎ・畳み)。
     var isAttached: Bool { fallbackTimer != nil }
 
-    /// 駆動源を畳み、窓を追うのもやめる。**何度呼んでもよい。**
+    /// 駆動源を畳み、ウィンドウを追うのもやめる。**何度呼んでもよい。**
     func invalidate() {
         stopFollowing()
         link?.invalidate()
@@ -167,17 +167,17 @@ final class ScreenDisplayLink: NSObject {
         isDrivenByFallback = false
     }
 
-    /// 窓が別の画面へ移ったら張り替える。
+    /// ウィンドウが別の画面へ移ったら張り替える。
     ///
     /// 画面ごとにリフレッシュ率が違うので、移った先に付け替えないと駆動が噛み合わない。
     ///
-    /// **窓がどの画面にも乗っていないときは触らない。** 最小化でも同じ通知が飛び、その
+    /// **ウィンドウがどの画面にも乗っていないときは触らない。** 最小化でも同じ通知が飛び、その
     /// とき `window.screen` は `nil` を返す — 素直に張り替えると、直そうとした最小化で
     /// こそ駆動源を失う。
     ///
-    /// **窓は通知から取る。** 自分で持つと、持ち主を手放しても窓だけが生き残る — 環を
+    /// **ウィンドウは通知から取る。** 自分で持つと、持ち主を手放してもウィンドウだけが生き残る — 環を
     /// 見張っている検査は持ち主しか見ないので、その漏れは素通りする。`object:` を指定して
-    /// 登録している以上、届く通知の `object` はその窓そのものである。
+    /// 登録している以上、届く通知の `object` はそのウィンドウそのものである。
     @objc private func windowChangedScreen(_ notification: Notification) {
         guard let screen = (notification.object as? NSWindow)?.screen,
             screen !== linkedScreen

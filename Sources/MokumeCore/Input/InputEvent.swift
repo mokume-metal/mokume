@@ -5,20 +5,20 @@ import Foundation
 
 /// 入ってくる出来事。
 ///
-/// 窓からの実操作も、外から送られたものも、同じ形でここへ集まる。
+/// ウィンドウからの実操作も、外から送られたものも、同じ形でここへ集まる。
 public enum InputEvent: Equatable, Sendable {
     /// `clickCount` は、この押下が何回目の連続した押下か (1 で単発、2 でダブルクリック)。
-    /// 窓は `NSEvent.clickCount` をそのまま運び、外から送る線は省くと 1 と読む。
+    /// ウィンドウは `NSEvent.clickCount` をそのまま運び、外から送る線は省くと 1 と読む。
     case mouseDown(x: Float, y: Float, button: MouseButton, clickCount: Int = 1)
     case mouseUp(x: Float, y: Float, button: MouseButton)
     case mouseMoved(x: Float, y: Float)
     /// どこへではなく、**どれだけ**動いたか (描く解像度の画素・縦軸は下向き)。位置は動かさない。
     ///
-    /// カーソルを捕まえている間 (``SketchPart/requestPointerLock()``) の窓は、位置が動かないので
+    /// カーソルを捕まえている間 (``SketchPart/requestPointerLock()``) のウィンドウは、位置が動かないので
     /// これを送る ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。外から送る線
     /// (`mouseMovedBy`) も同じ形で、捕まえていなくても量として届く。
     case mouseMovedBy(dx: Float, dy: Float)
-    /// スクロールされた。**量の単位は点** (窓はホイールの 1 行を 10 点に換算して流す。外から送る線は
+    /// スクロールされた。**量の単位は点** (ウィンドウはホイールの 1 行を 10 点に換算して流す。外から送る線は
     /// 点として扱い、換算しない・[#2442](https://github.com/mokume-metal/mokume/issues/2442))。
     /// 指を離した後の慣性の続きも同じ量として届く。
     case scrolled(dx: Float, dy: Float)
@@ -26,11 +26,11 @@ public enum InputEvent: Equatable, Sendable {
     /// `NSEvent.magnification` と同じ量である ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
     /// スケッチからはフレームの合計 (``SketchPart/pinch``) として読む。
     case pinched(amount: Float)
-    /// 窓へファイルが落とされた。`paths` は**ファイルの絶対パスだけ** (中身は運ばない)。落とした
+    /// ウィンドウへファイルが落とされた。`paths` は**ファイルの絶対パスだけ** (中身は運ばない)。落とした
     /// 所は `x`・`y` で、スケッチからは ``SketchPart/mouseX``・``SketchPart/mouseY`` に当たる
     /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
     ///
-    /// 窓は `SketchSurface` がファイルの URL だけを受け、1 本も無いドロップは送らない。外から送る線
+    /// ウィンドウは `SketchSurface` がファイルの URL だけを受け、1 本も無いドロップは送らない。外から送る線
     /// (`fileDropped`) は、`paths` が空の 1 件を読めない 1 件として落とす。
     case fileDropped(paths: [String], x: Float, y: Float)
     /// ファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) の結果。選んだファイルの絶対パスで、
@@ -41,7 +41,7 @@ public enum InputEvent: Equatable, Sendable {
     /// 捨てる。
     ///
     /// `serial` は**どの頼みへの答えか** (``SketchPart/selectInput(_:)`` の頼みの通し番号)。**省ける** —
-    /// 道具の窓が子へ送る結果は載せ、外から送る結果は載せなくてよい。載っていれば、合流点は**いまの待ちと番号が
+    /// 道具のウィンドウが子へ送る結果は載せ、外から送る結果は載せなくてよい。載っていれば、合流点は**いまの待ちと番号が
     /// 同じときだけ**待ちを終え、違う番号の結果 (前の待ちの古い答え・待ちが終わった後の送り直し) は黙って捨てる。
     /// 載っていなければ今の待ちへ届く。番号があるので、道具は頼みが残っている間、落ちた結果を送り直せる。
     case fileSelected(path: String?, serial: Int? = nil)
@@ -50,8 +50,8 @@ public enum InputEvent: Equatable, Sendable {
 }
 
 extension String {
-    /// 絶対パスの綴りか (`/` で始まる)。**窓の落としはファイルの URL だけを受け、パスは必ず絶対パスになる**
-    /// ので、外から送る線も同じ約束を守らせる — 空文字列・`https://…`・相対パスは、窓なら届かないもので、
+    /// 絶対パスの綴りか (`/` で始まる)。**ウィンドウの落としはファイルの URL だけを受け、パスは必ず絶対パスになる**
+    /// ので、外から送る線も同じ約束を守らせる — 空文字列・`https://…`・相対パスは、ウィンドウなら届かないもので、
     /// 作例の `loadImage(paths[0])` が別のものを読む元になる。
     var isAbsolutePath: Bool { hasPrefix("/") }
 }
@@ -72,7 +72,7 @@ extension String {
 /// `amount` (ピンチの量) も省略に意味が無い。量の無いピンチは何も動かさず、送り手には `accepted: 1` が
 /// 返るので、省いた 1 件を読めない 1 件として数える。`paths` (落としたファイルの並び) も同じで、
 /// 無い・空の落としは何も届けず、スケッチの `paths[0]` を落とすだけなので読めない 1 件にする。要素が
-/// 絶対パス (`/` で始まる) でないもの — 空文字列・`https://…`・相対パス — を含む落としも、窓なら届かない
+/// 絶対パス (`/` で始まる) でないもの — 空文字列・`https://…`・相対パス — を含む落としも、ウィンドウなら届かない
 /// ものなので読めない 1 件にする。
 /// 選んだ結果 (`fileSelected`) の `paths` は、**空の配列が取り消し**という意味を持つ。だから空は読めるが、
 /// **無い (書き忘れ) は取り消しと読まず**読めない 1 件にし、2 本以上も 1 本を選ばせる口の結果として
@@ -83,7 +83,7 @@ extension String {
 /// **`amount`・`clickCount`・`paths`・`serial` は、それぞれ読む種別 (`pinched`・`mouseDown`・
 /// `fileDropped` と `fileSelected`・`fileSelected`) でだけ読む** (``readKeys(forType:)``)。
 ///
-/// 一方 `button` の 0 は主釦 (左)、`dx` の 0 は動いていない (スクロールでも、相対の移動
+/// 一方 `button` の 0 は主ボタン (左)、`dx` の 0 は動いていない (スクロールでも、相対の移動
 /// `mouseMovedBy` でも)、`isRepeat` の false は押しっぱなしでない — こちらは省略が自然に
 /// 読めるので埋める。
 ///
@@ -124,7 +124,7 @@ struct RawInputEvent: Decodable {
     /// `serial` は `fileSelected` でだけ読む**
     /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762)・[#3061](https://github.com/mokume-metal/mokume/issues/3061))。
     /// ほかの種別に付いていたら、足す前と同じく読まない鍵として名乗り、その 1 件は通す (値の型が違っても
-    /// 解けない 1 件にしない — `mouseUp` の `"clickCount": 1.5` で解放が落ちると、釦が押されたまま残る)。
+    /// 解けない 1 件にしない — `mouseUp` の `"clickCount": 1.5` で解放が落ちると、ボタンが押されたまま残る)。
     /// 種別が欠けた・知らない出来事は、どの種別の鍵か決まらないので、すべての鍵を読む鍵として扱う (名乗りに出さない)。
     static func readKeys(forType type: String?) -> [String] {
         guard let type, let kind = InputEventType(rawValue: type) else { return readKeys }
@@ -162,10 +162,10 @@ struct RawInputEvent: Decodable {
             kind == .fileSelected ? try container.decodeIfPresent(Int.self, forKey: .serial) : nil
     }
 
-    /// 線の番号を釦にする。**番号を型へ絞る関所は、ここと窓 (`SketchSurface`) の 2 つだけ。**
+    /// 線の番号をボタンにする。**番号を型へ絞る関所は、こことウィンドウ (`SketchSurface`) の 2 つだけ。**
     ///
     /// 線は macOS の `NSEvent.buttonNumber` のまま据え置いたので ([ADR-0034] 決定 4)、
-    /// 変換はせず包むだけである。省いた 1 件は主釦 (左) として読む。
+    /// 変換はせず包むだけである。省いた 1 件は主ボタン (左) として読む。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     private var mouseButton: MouseButton {

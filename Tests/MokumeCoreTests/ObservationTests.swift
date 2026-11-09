@@ -597,7 +597,7 @@ struct ObservationTests {
 ///
 /// 通常のフレームと同じ手順で描かれることを見る。かつてはここだけが別に書かれており、
 /// 入り口の供給と面への時刻の受け渡しが落ちていた
-/// ([#808](https://github.com/mokume-metal/mokume/issues/808))。**窓で走らせている限り
+/// ([#808](https://github.com/mokume-metal/mokume/issues/808))。**ウィンドウで走らせている限り
 /// 再現しない**ので、外から観測する側でしか気付けない。
 @Suite(
     "観測が最初に叩いた 1 枚",

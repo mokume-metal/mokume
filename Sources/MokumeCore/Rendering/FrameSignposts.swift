@@ -6,7 +6,7 @@ import os
 /// フレームの区間を Instruments に見せる印 ([#2378](https://github.com/mokume-metal/mokume/issues/2378))。
 ///
 /// **3 つの区間を張る**: `draw` (作者の `draw()` を呼んでいる間・CPU)・`flush` (描き切り — 積んだ図形を
-/// コマンドへ組んで投入するまで・CPU)・`present` (描いた絵を窓または共有面へ差し出すまで・CPU)。
+/// コマンドへ組んで投入するまで・CPU)・`present` (描いた絵をウィンドウまたは共有面へ差し出すまで・CPU)。
 /// Instruments の「Points of Interest」に subsystem `mokume` で並び、フレームの CPU の時間をどこが
 /// 食っているかを、同じ時間軸の上で GPU の仕事 (Metal System Trace) と見比べられる。
 ///

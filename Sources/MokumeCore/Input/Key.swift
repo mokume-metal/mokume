@@ -174,7 +174,7 @@ nonisolated extension Key {
 
     /// 修飾キーか (左右の 8 つ)。**押下の状態だけを変え、呼び出しも `keyCode` も生まない。**
     ///
-    /// 窓から届く経路 (`flagsChanged`) と外から送る経路 (`keyDown` の `code`) は、どちらも
+    /// ウィンドウから届く経路 (`flagsChanged`) と外から送る経路 (`keyDown` の `code`) は、どちらも
     /// ここで同じに扱う。
     var isModifier: Bool {
         Self.rightSide.keys.contains(self) || Self.rightSide.values.contains(self)

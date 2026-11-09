@@ -499,7 +499,7 @@ struct VectorSaveTests {
     // MARK: - 5 画面は変わらない
 
     /// **`save("x.svg")` の有無で、同じスケッチの画素が一致する** (控えるだけで、組み立てを別の経路にしない)。
-    /// 窓を開いて控える道と、控えない道の両方を、本物のランタイムで回す (GPU を使う。単発で 1 回)。
+    /// ウィンドウを開いて控える道と、控えない道の両方を、本物のランタイムで回す (GPU を使う。単発で 1 回)。
     @Test("save(\"x.svg\") の有無で、同じスケッチの画素が一致する")
     func savingDoesNotChangeThePicture() throws {
         try withTemporaryDirectory("mokume-svg-pixels") { directory in

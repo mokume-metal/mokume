@@ -10,7 +10,7 @@ import Testing
 
 @testable import MokumeCore
 
-/// 窓を開かずに、配る形 (GIF・MP4) へ書き出す経路 (`mokume render --out loop.gif`・[#2440])。
+/// ウィンドウを開かずに、配る形 (GIF・MP4) へ書き出す経路 (`mokume render --out loop.gif`・[#2440])。
 ///
 /// 本番と同じ経路を、run loop を回さずに辿る (``SketchApplicationRenderTests`` と同じ)。駆動源の代わりに
 /// ``SketchApplication/displayLinkFired()`` を叩き、終わりの経路を畳み、書き上がった実物を ImageIO・

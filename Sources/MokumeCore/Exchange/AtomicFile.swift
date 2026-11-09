@@ -158,7 +158,7 @@ package enum AtomicFile {
                 try body(temporary)
                 // 置換は 1 回の置き換えで済ませる (`replaceItemAt` か `rename(2)`)。先に消してから置くと、
                 // その隙間に読み手が「ファイルが無い」状態を見る
-                // 本体を走らせている間に置かれたものも見る。見てから置き換えるまでの窓は縮めるだけで、
+                // 本体を走らせている間に置かれたものも見る。見てから置き換えるまでのウィンドウは縮めるだけで、
                 // ゼロにはならない (``AtomicFile/refuseDirectory(_:)``)
                 try AtomicFile.refuseDirectory(url)
                 switch replacement {
@@ -221,13 +221,13 @@ package enum AtomicFile {
     /// **symlink は辿って見る (`stat`)。** 辿った先がディレクトリなら、置かない向きに倒す。宛先の無い
     /// symlink は辿れない (`stat` が失敗する) ので断らず、そのあとの置き方に任せる (従来どおり)。
     ///
-    /// **窓が残る。** 見てから置き換えまでは別の syscall なので、その間に別の主体が同じ場所へディレクトリを
+    /// **ウィンドウが残る。** 見てから置き換えまでは別の syscall なので、その間に別の主体が同じ場所へディレクトリを
     /// 置けば、いままでどおり置き換わる (`rename(2)` で置く区画の JSON は、ディレクトリへの `rename` が
-    /// `EISDIR` で原子的に失敗するので窓が閉じる)。`replaceItemAt` で置く経路は、**既存のファイルへ置くときの
+    /// `EISDIR` で原子的に失敗するのでウィンドウが閉じる)。`replaceItemAt` で置く経路は、**既存のファイルへ置くときの
     /// 属性を引き継ぐ**のでそちらを残した: 実測では `replaceItemAt` は既存のファイルの権限 (0640)・拡張属性・
     /// 作成日時を新しい中身へ引き継ぎ、`rename(2)` はそのどれも引き継がず、権限は一時ファイルの
     /// 既定 (0644) になり、拡張属性は消える。保存・作品の出力の振る舞いを変えない (#2859 の完了条件 4)
-    /// ので、窓を狭める直前の検査にとどめた。
+    /// ので、ウィンドウを狭める直前の検査にとどめた。
     nonisolated fileprivate static func refuseDirectory(_ url: URL) throws {
         guard isDirectory(url, following: true) else { return }
         throw POSIXError(.EISDIR)
@@ -296,7 +296,7 @@ package enum AtomicFile {
     /// **呼んだ糸が読むのは最初の ``syncSweepBudget`` 件まで。** 残りは裏の列で続ける
     /// ([#3176](https://github.com/mokume-metal/mokume/issues/3176))。ここは `reserve` から main で
     /// 同期に呼ばれ、置き場所のディレクトリを全件引く。`$TMPDIR` のように物の溜まった所 (14 万件) だと、
-    /// その 1 回が約 1 秒、窓の最初の枚を詰まらせた。
+    /// その 1 回が約 1 秒、ウィンドウの最初の枚を詰まらせた。
     ///
     /// **続きは、ディレクトリごとに 1 本だけ。** 同じディレクトリで続きが積まれている・走っている間に別の
     /// 名前が来たら、読まずに、その続きが探す名前に足す (``Continuations``)。枚ごとに名前が変わる呼び手

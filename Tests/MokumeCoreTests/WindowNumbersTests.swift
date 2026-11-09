@@ -65,23 +65,23 @@ struct FrameTempoTests {
         #expect(abs(rate - 40) < 0.001)
     }
 
-    @Test("遡るのは直近の窓のぶんだけ")
+    @Test("遡るのは直近のウィンドウのぶんだけ")
     func onlyTheRecentWindowCounts() throws {
         var moments = [0.0]
         // 最初は遅く、そのあとずっと速い
         moments.append(1.0)
         for step in 1...FrameTempo.window { moments.append(1.0 + Double(step) * 0.01) }
         let rate = try #require(tempo(moments).frameRate(now: moments.last!))
-        // 最初の 1 秒の間隔が窓から押し出されているので 100fps に寄る
+        // 最初の 1 秒の間隔がウィンドウから押し出されているので 100fps に寄る
         #expect(abs(rate - 100) < 0.001)
     }
 }
 
-/// 窓に出る数字の表記。
+/// ウィンドウに出る数字の表記。
 ///
-/// **測れていない値の表明を、窓の中で揃える** (決定 7)。1 つの表示だけが `0` を出す
+/// **測れていない値の表明を、ウィンドウの中で揃える** (決定 7)。1 つの表示だけが `0` を出す
 /// 状態にしない。
-@Suite("窓に出る数字の表記")
+@Suite("ウィンドウに出る数字の表記")
 struct WindowNumbersTextTests {
     private func cells(_ numbers: FrameNumbers) -> [String: String] {
         Dictionary(uniqueKeysWithValues: KnobText.numbers(numbers).map { ($0.label, $0.value) })
@@ -175,7 +175,7 @@ struct RemoteTempoTests {
     }
 
     /// しきい値は集計器と**同じもの**を使う (`FrameTempo.staleAfter`) — 同じ問いに 2 つの
-    /// しきい値を持つと、片方だけ直した日に窓と応答が違うことを言い始める。
+    /// しきい値を持つと、片方だけ直した日にウィンドウと応答が違うことを言い始める。
     @Test("しばらく届かなければ、測れていないへ戻る")
     func stopsClaimingAStaleNumber() {
         var tempo = RemoteTempo()
@@ -194,12 +194,12 @@ struct RemoteTempoTests {
     }
 }
 
-/// **窓に出る数字と、面が返す数字が同じ源から来ること** (決定 7)。
+/// **ウィンドウに出る数字と、面が返す数字が同じ源から来ること** (決定 7)。
 ///
 /// 一致させる努力ではなく、**同じ源から来る構造で一致する**。源が 2 つに割れたら
 /// この検査が落ちる — 2 つの集計器が同じ値を出し続ける偶然は無い。
 @Suite(
-    "窓の数字と面の数字は同じ源",
+    "ウィンドウの数字と面の数字は同じ源",
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
@@ -223,7 +223,7 @@ struct WindowNumbersSourceTests {
         return report["load"] as? [String: Any] ?? [:]
     }
 
-    @Test("窓が読む速さと、応答が返す速さが一致する")
+    @Test("ウィンドウが読む速さと、応答が返す速さが一致する")
     func theWindowAndTheReportAgree() throws {
         let facet = try makeFacet()
         var clock = 0.0
@@ -248,9 +248,9 @@ struct WindowNumbersSourceTests {
         #expect(window.frameRate != nil, "そもそも測れていない (一致だけでは何も示せない)")
     }
 
-    /// 観測が無効でも窓は数字を出す。**ここを観測に紐づけると、窓が自分で測り直す**
+    /// 観測が無効でもウィンドウは数字を出す。**ここを観測に紐づけると、ウィンドウが自分で測り直す**
     /// ことになり、源が 2 つに割れる。
-    @Test("観測が無くても、窓の数字は測れている")
+    @Test("観測が無くても、ウィンドウの数字は測れている")
     func numbersAreMeasuredWithoutTheObserver() throws {
         var clock = 0.0
         let runtime = try SketchRuntime(
@@ -265,7 +265,7 @@ struct WindowNumbersSourceTests {
         #expect(numbers.frameCount == 4)
     }
 
-    /// 応答の側の欠測の形。**鍵ごと省く** — 窓が「—」と描くのと同じ意味である。
+    /// 応答の側の欠測の形。**鍵ごと省く** — ウィンドウが「—」と描くのと同じ意味である。
     @Test("測れていない値は、応答から鍵ごと消える")
     func unmeasuredValuesAreOmittedFromTheReport() throws {
         let empty = RuntimeLoad.sample(tempo: FrameTempo(), budget: FrameBudget(frameRate: 60), now: 0)

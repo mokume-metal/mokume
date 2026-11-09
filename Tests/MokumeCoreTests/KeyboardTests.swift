@@ -10,7 +10,7 @@ import Testing
 /// 押下の 3 語 (``Keyboard``) と、押下の集合の出入りで決まる呼び出し
 /// ([#2599](https://github.com/mokume-metal/mokume/issues/2599))。
 ///
-/// 出来事は ``InputState`` へ直に注入する。窓からも外からも同じここへ入るので、ここで
+/// 出来事は ``InputState`` へ直に注入する。ウィンドウからも外からも同じここへ入るので、ここで
 /// 決まった答えはどちらの経路でも同じになる。フレームはランタイムと同じ順で回す —
 /// 頭で流し込み (`beginFrame`)、`draw()` の後で端を消す (`endFrame`)。
 @Suite("キーボードの 3 語")
@@ -148,7 +148,7 @@ struct KeyboardTests {
                 == [.keyPressed, .keyTyped, .keyTyped, .keyTyped, .keyReleased])
     }
 
-    /// 窓が退いて離した扱いにした後で、本物の解放が届く形 (#2443)。
+    /// ウィンドウが退いて離した扱いにした後で、本物の解放が届く形 (#2443)。
     @Test("押されていないキーの解放は、keyReleased を呼ばない")
     func releasingAnUnheldKeyDoesNotCall() {
         #expect(
@@ -182,7 +182,7 @@ struct KeyboardTests {
         #expect(Keyboard(state: state).justPressed(.space))
     }
 
-    // MARK: - マウスの釦
+    // MARK: - マウスのボタン
 
     @Test("左を押したまま右を押して離しても、左は押されたまま")
     func buttonsAreHeldPerButton() {
@@ -199,7 +199,7 @@ struct KeyboardTests {
         #expect(!state.isMouseDown)
     }
 
-    @Test("ほかの釦を押していても、押していない釦の解放はクリックにならない")
+    @Test("ほかのボタンを押していても、押していないボタンの解放はクリックにならない")
     func clickNeedsThatButtonHeld() {
         #expect(
             callbacks([
@@ -212,7 +212,7 @@ struct KeyboardTests {
             ]) == [.mousePressed, .mousePressed, .mouseReleased, .mouseClicked])
     }
 
-    @Test("片方の釦を離しても、押したままの移動は引きずりのまま")
+    @Test("片方のボタンを離しても、押したままの移動は引きずりのまま")
     func dragContinuesWhileAnotherButtonIsHeld() {
         #expect(
             callbacks([
@@ -222,8 +222,8 @@ struct KeyboardTests {
     }
 }
 
-/// 窓の面が、修飾キーの変化と、退いたときの解放を合流点の出来事にする形。
-@Suite("窓の押下の受け口")
+/// ウィンドウの面が、修飾キーの変化と、退いたときの解放を合流点の出来事にする形。
+@Suite("ウィンドウの押下の受け口")
 @MainActor
 struct SurfaceHeldInputTests {
     /// 左右を分けた修飾のビット (`NX_DEVICE*KEYMASK`) と、まとめた旗 (`.shift` など)。
@@ -261,8 +261,8 @@ struct SurfaceHeldInputTests {
         return (surface, input)
     }
 
-    /// アプリが退く知らせは窓を持たずに出せるので、窓を開かずに通る経路を見る。窓が key で
-    /// なくなる経路は `SketchApplicationTests` が本物の窓で見る。
+    /// アプリが退く知らせはウィンドウを持たずに出せるので、ウィンドウを開かずに通る経路を見る。ウィンドウが key で
+    /// なくなる経路は `SketchApplicationTests` が本物のウィンドウで見る。
     @Test(
         "アプリが退くと、面が流した押下に解放を流し、注入した押下は離さない",
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
@@ -275,7 +275,7 @@ struct SurfaceHeldInputTests {
         surface.deliver(.keyDown(code: .a, characters: "a", isRepeat: false))
         surface.deliver(.keyUp(code: .a))
         surface.deliver(.mouseDown(x: 5, y: 6, button: .left))
-        // 外から注入した押下。人が触っていないので、窓の都合では離さない
+        // 外から注入した押下。人が触っていないので、ウィンドウの都合では離さない
         input.enqueue(.keyDown(code: .space, characters: " ", isRepeat: false))
         input.beginFrame()
         input.endFrame()
@@ -291,7 +291,7 @@ struct SurfaceHeldInputTests {
             ])
         var calls: [InputCallback] = []
         input.beginFrame { calls.append($0) }
-        // 釦の解放には、押していた釦なのでクリックが続く (離した扱いの代償。PR の反証の節に記録)
+        // ボタンの解放には、押していたボタンなのでクリックが続く (離した扱いの代償。PR の反証の節に記録)
         #expect(Array(calls.prefix(2)) == [.keyReleased, .mouseReleased])
         let keyboard = Keyboard(state: input)
         #expect(keyboard.justReleased(.arrowRight))
@@ -306,7 +306,7 @@ struct SurfaceHeldInputTests {
         #expect(lines.isEmpty)
     }
 
-    /// メニューの追跡の間に離したキーは面へ届かず、窓は key のままフレームが回る。
+    /// メニューの追跡の間に離したキーは面へ届かず、ウィンドウは key のままフレームが回る。
     @Test(
         "メニューを開くと、面が流した押下に解放を流す",
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))

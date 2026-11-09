@@ -23,7 +23,7 @@ import Testing
 // - **置く口**: 描き場所に面を置く口は、置いた時点で `Canvas.note(placing:)` が追い付かせる
 // - **読む口**: 出力段 (`RenderTarget.encodeToImage()` ほか) と `readPixels()` は、頭で
 //   `RenderTarget.catchUpWithDrawnPicture()` を通る
-// - **ランタイムの配った後**: 窓と共有の面は出す先のテクスチャを直に読み、止まっている間の
+// - **ランタイムの配った後**: ウィンドウと共有の面は出す先のテクスチャを直に読み、止まっている間の
 //   コールバックを配った直後の `Canvas.catchUpOutputWithoutThrowing()` (`SketchRuntime.advance()`)
 //   に頼る
 // - **わざと古い**: 置いた時点の写し ([#1656]) や時間方向の履歴のように、古い絵を読むのが約束
@@ -111,7 +111,7 @@ struct StoppedUpscaleOutletReadersTests {
         ("output.texture", /\boutput\.texture\b/),
         // ランタイムの出す先を、大きさ以外のために渡す (大きさは絵を読まない)
         ("runtime.target", /\bruntime\.target\b(?!\.(?:width|height)\b)/),
-        // テクスチャを標本にする口へ渡す (出力段・窓と共有の面)
+        // テクスチャを標本にする口へ渡す (出力段・ウィンドウと共有の面)
         (".setSource(", /\.setSource\(/),
     ]
 
@@ -168,16 +168,16 @@ struct StoppedUpscaleOutletReadersTests {
         Reader(
             file: "MokumeHost/HeadlessRun.swift", token: "runtime.target", count: 3,
             catchUp: .reading, vouchedIn: "MokumeCore/Output/RenderTarget+Output.swift",
-            reason: "窓なしの実行の読む口 (readPixels・displayImage・writePNG・#3870)。呼ぶ先の readPixels() (RenderTarget.swift) と encodeForDisplay・writePNG (出力段) が、どれも頭で catchUpWithDrawnPicture() を通る"),
+            reason: "ウィンドウなしの実行の読む口 (readPixels・displayImage・writePNG・#3870)。呼ぶ先の readPixels() (RenderTarget.swift) と encodeForDisplay・writePNG (出力段) が、どれも頭で catchUpWithDrawnPicture() を通る"),
         // MARK: ランタイムの配った後
         Reader(
             file: "MokumeCore/Display/SketchApplication.swift", token: "runtime.target", count: 3,
             catchUp: .afterDelivery, vouchedIn: "MokumeCore/Sketch/SketchRuntime.swift",
-            reason: "窓 (presenter.present) と共有の面 (shared.write)、止まっている間に出し直すかの鍵 (shownFrame・描画先の番号と明るさだけを読み、絵は読まない)。advance() がコールバックを配った直後と止めている間に catchUpOutputWithoutThrowing() を済ませた後に呼ぶ (#1882・#1906・#2367)"),
+            reason: "ウィンドウ (presenter.present) と共有の面 (shared.write)、止まっている間に出し直すかの鍵 (shownFrame・描画先の番号と明るさだけを読み、絵は読まない)。advance() がコールバックを配った直後と止めている間に catchUpOutputWithoutThrowing() を済ませた後に呼ぶ (#1882・#1906・#2367)"),
         Reader(
             file: "MokumeCore/Display/FramePresenter.swift", token: ".setSource(", count: 1,
             catchUp: .afterDelivery, vouchedIn: "MokumeCore/Sketch/SketchRuntime.swift",
-            reason: "窓と共有の面が出す先のテクスチャを標本にする。渡されるのは上の runtime.target だけで、配った直後の追い付きの後に読む"),
+            reason: "ウィンドウと共有の面が出す先のテクスチャを標本にする。渡されるのは上の runtime.target だけで、配った直後の追い付きの後に読む"),
         // MARK: わざと古い
         Reader(
             file: "MokumeCore/Drawing/Canvas.swift", token: "output.texture", count: 2,

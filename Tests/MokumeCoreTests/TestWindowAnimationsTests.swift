@@ -4,11 +4,11 @@
 import AppKit
 import Testing
 
-/// 検査のプロセスの窓のアニメーション停止 (#3286)。止め方は `TestWindowAnimations.swift` にある。
+/// 検査のプロセスのウィンドウのアニメーション停止 (#3286)。止め方は `TestWindowAnimations.swift` にある。
 ///
-/// 専用機では、止めていない窓のアニメーションが GCD のワーカーを `NSAnimation` の中で止めたまま残し、
+/// 専用機では、止めていないウィンドウのアニメーションが GCD のワーカーを `NSAnimation` の中で止めたまま残し、
 /// グローバルキューが走れなくなった。**この検査が赤なら、その連鎖が戻る。**
-@Suite("検査のプロセスでは窓のアニメーションを止める")
+@Suite("検査のプロセスではウィンドウのアニメーションを止める")
 struct TestWindowAnimationsTests {
     @Test("アプリ全体の既定が false になっている")
     func theAppWideDefaultIsOff() {
@@ -17,9 +17,9 @@ struct TestWindowAnimationsTests {
         #expect(!defaults.bool(forKey: TestWindowAnimations.defaultsKey))
     }
 
-    /// 作った窓の読み出しが `.none` になる。何も当てていない素の窓と、`.default` を明示した窓の
-    /// 両方で見る (後者は、窓の側の設定を上書きして読み出しを固定していることの確かめ)。
-    @Test("作った窓の animationBehavior は .none")
+    /// 作ったウィンドウの読み出しが `.none` になる。何も当てていない素のウィンドウと、`.default` を明示したウィンドウの
+    /// 両方で見る (後者は、ウィンドウの側の設定を上書きして読み出しを固定していることの確かめ)。
+    @Test("作ったウィンドウの animationBehavior は .none")
     func aNewWindowHasNoAnimation() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 64, height: 64), styleMask: [.titled],

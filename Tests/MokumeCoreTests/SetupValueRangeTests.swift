@@ -53,7 +53,7 @@ struct SetupValueRangeTests {
         func draw() {}
     }
 
-    /// 組み立ての入口は 2 つある (公開の入口と、観測の窓口を差し替える検査用の入口)。
+    /// 組み立ての入口は 2 つある (公開の入口と、観測の入口を差し替える検査用の入口)。
     /// **どちらからでも断る** — 片方だけで断ると、もう片方が丸めたまま走る。
     private func assemble(_ sketch: any Sketch, clock: Clock?, entry: Int) throws(RenderFailure) {
         let gpu = try RenderDevice()
@@ -66,7 +66,7 @@ struct SetupValueRangeTests {
     @Test("frameRate が 1 を割ると、どちらの入口の組み立ても断る", arguments: [0, 1])
     func refusesAFrameRateBelowOne(entry: Int) throws {
         for rate in Self.belowOne {
-            // 時計を省いたとき (窓の経路) も、書き出しの経路と同じ刻みの時計を渡したときも
+            // 時計を省いたとき (ウィンドウの経路) も、書き出しの経路と同じ刻みの時計を渡したときも
             for clock in [nil, Clock.wallClock, .frameIndex(frameRate: 30)] {
                 #expect(throws: RenderFailure.invalidFrameRate(rate), "frameRate \(rate)・時計 \(String(describing: clock))") {
                     try assemble(Scene(frameRate: rate), clock: clock, entry: entry)
@@ -88,7 +88,7 @@ struct SetupValueRangeTests {
 
     // MARK: - windowScale (#1624)
 
-    /// 窓を開く倍率で何もしないスケッチ。
+    /// ウィンドウを開く倍率で何もしないスケッチ。
     private final class Scaled: Sketch {
         var settings = SketchSettings(width: 10, height: 10)
         init() {}
@@ -99,9 +99,9 @@ struct SetupValueRangeTests {
         func draw() {}
     }
 
-    /// **0 以下・無限大・NaN は断る** (ADR-0020 決定 5 の 2 行目)。窓を開かない組み立てでも
+    /// **0 以下・無限大・NaN は断る** (ADR-0020 決定 5 の 2 行目)。ウィンドウを開かない組み立てでも
     /// 断るので、ランタイムの 2 つの入口で見る。
-    @Test("窓の倍率が 0 以下・無限大・NaN なら、どちらの入口の組み立ても断る", arguments: [0, 1])
+    @Test("ウィンドウの倍率が 0 以下・無限大・NaN なら、どちらの入口の組み立ても断る", arguments: [0, 1])
     func refusesAWindowScaleThatOpensNothing(entry: Int) throws {
         for scale: Float in [0, -0.5, -.infinity, .infinity] {
             #expect(throws: RenderFailure.invalidWindowScale(scale), "windowScale \(scale)") {
@@ -118,7 +118,7 @@ struct SetupValueRangeTests {
     }
 
     /// 下の端の側。0 を僅かに超える値も、既定より大きな値も組み立てられる。
-    @Test("窓の倍率が 0 より大きければ、小さくても大きくても組み立てられる")
+    @Test("ウィンドウの倍率が 0 より大きければ、小さくても大きくても組み立てられる")
     func assemblesAnyPositiveWindowScale() throws {
         for scale: Float in [.leastNonzeroMagnitude, 0.5, 4, 1000] {
             let runtime = try SketchRuntime(sketch: Scaled(windowScale: scale), gpu: RenderDevice())
@@ -141,8 +141,8 @@ struct SetupValueRangeTests {
     // MARK: - 書き出しの経路・画面の駆動源
 
     /// **書き出しの経路も同じ組み立てを通る。** `--fps` に正しい値を渡していても、作品の
-    /// 宣言が 1 を割れば断る (反証役の指摘 5)。窓の経路も同じ。
-    @Test("窓の経路も書き出しの経路も、宣言の frameRate が 1 を割れば断る")
+    /// 宣言が 1 を割れば断る (反証役の指摘 5)。ウィンドウの経路も同じ。
+    @Test("ウィンドウの経路も書き出しの経路も、宣言の frameRate が 1 を割れば断る")
     @MainActor
     func bothLaunchPathsRefuseADeclaredRateBelowOne() throws {
         let request = try #require(
@@ -157,7 +157,7 @@ struct SetupValueRangeTests {
         }
     }
 
-    /// 読むたびに速さが変わる設定。**組み立てまでに読まれる 2 回** (窓の題名と、ランタイムの
+    /// 読むたびに速さが変わる設定。**組み立てまでに読まれる 2 回** (ウィンドウの題名と、ランタイムの
     /// 組み立て) は 30、以後は 0 を返す。組み立てより前の読みが増えると、組み立てが 0 を読んで
     /// 投げるので、この検査は黙って通らずに赤くなる。
     private final class Fickle: Sketch {

@@ -37,7 +37,7 @@ nonisolated enum WebFile {
     /// 本文を受け取る。**受け取るまで、他の仕事を止めない。**
     ///
     /// 期限は受け口の側の音沙汰の無い間 (`URLRequest.timeoutInterval` = `limit`) だけで、呼んでからの
-    /// 総時間は数えない — 待つ間も窓を塞がないので、同期版 (``fetchWaiting(_:path:limit:)``) の
+    /// 総時間は数えない — 待つ間もウィンドウを塞がないので、同期版 (``fetchWaiting(_:path:limit:)``) の
     /// ような上限は要らない。切れたときは同期版と同じ失敗 (``overdue(path:limit:)``) で投げる。
     /// 待たない読み込みの失敗は同期版と同じ、という約束 (``SketchPart/requestJSONObject(_:)``) のため
     /// である (#2264)。

@@ -355,7 +355,7 @@ struct ShaderTests {
         var testDescription: String { rawValue }
     }
 
-    /// 組に合わせて、断片を作る面と使う面を返す。`main` は窓の側の面。
+    /// 組に合わせて、断片を作る面と使う面を返す。`main` はウィンドウの側の面。
     private func surfaces(
         for pairing: Pairing, main: Canvas
     ) throws -> (maker: Canvas, user: Canvas) {
@@ -1099,7 +1099,7 @@ struct ShaderTests {
 
 /// main actor を譲らずに ``SketchRuntime/advance()`` を回しても、断片の保存が届く ([#1830])。
 ///
-/// 見張りは拾った事象を `Task { @MainActor }` で渡していたので、譲らないループ (窓を出さない
+/// 見張りは拾った事象を `Task { @MainActor }` で渡していたので、譲らないループ (ウィンドウを出さない
 /// 書き出しや検査) では 1 本も走らず、何フレーム回しても古い断片のまま描いた。誰が `advance()` を
 /// 叩くかは外側の話 (``SketchRuntime`` の説明) なので、叩き方で届き方が変わってはならない。
 ///

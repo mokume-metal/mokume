@@ -43,7 +43,7 @@ struct ParameterStoreTests {
 
     /// 静かになるまで進める。
     private func settle(_ store: ParamStore) async {
-        // 譲るループ (窓) の形で回す。知らせは譲らなくても届く (#1704)
+        // 譲るループ (ウィンドウ) の形で回す。知らせは譲らなくても届く (#1704)
         await Task.yield()
         for _ in 0...ParamStore.quietFrames { store.tick() }
     }
@@ -1108,7 +1108,7 @@ struct ParameterStoreRuntimeTests {
 /// `draw` の中で変えた値は、**main actor を譲らずに `advance()` を回しても**保存と区画へ
 /// 届く ([#1704](https://github.com/mokume-metal/mokume/issues/1704))。
 ///
-/// **この検査の関数はどれも同期で、main actor を譲らない。** 窓を出さない書き出しや検査の
+/// **この検査の関数はどれも同期で、main actor を譲らない。** ウィンドウを出さない書き出しや検査の
 /// ループがこの形で `advance()` を回す — 誰が叩くかは外側の話 (``SketchRuntime`` の説明) なので、
 /// 叩き方で保存・公開される値が変わってはならない。
 ///

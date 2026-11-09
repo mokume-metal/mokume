@@ -9,15 +9,15 @@ import Testing
 @testable import MokumeCore
 @testable import mokume
 
-/// 窓のつまみから値への書き戻し (``KnobBinding``) が、型ごとに正しい値を書くこと。
+/// ウィンドウのつまみから値への書き戻し (``KnobBinding``) が、型ごとに正しい値を書くこと。
 ///
-/// 窓を通した往復の検査 (`ParameterRoundTripTests`) が通すのは実数と候補の 2 つだけで、
+/// ウィンドウを通した往復の検査 (`ParameterRoundTripTests`) が通すのは実数と候補の 2 つだけで、
 /// 真偽・組の 1 成分・色・整数の丸めは**どの検査も通っていなかった**
 /// ([#1386](https://github.com/mokume-metal/mokume/issues/1386))。書き戻しを取り違えても
 /// 例外にはならず、つまみを動かすと違う値が入るだけになる。
 ///
-/// **窓が値を書く口をそのまま通す。** ``DeclaredParam/write(_:)`` を直に呼ぶと窓を
-/// 通したことにならない (``KnobBinding`` の説明)。窓を立てずに済むのは、口が
+/// **ウィンドウが値を書く口をそのまま通す。** ``DeclaredParam/write(_:)`` を直に呼ぶとウィンドウを
+/// 通したことにならない (``KnobBinding`` の説明)。ウィンドウを立てずに済むのは、口が
 /// SwiftUI の `Binding` という値だからである。
 @Suite("つまみから値への書き戻し")
 @MainActor
@@ -79,7 +79,7 @@ struct KnobWritebackTests {
         #expect(sketch.triple == Vector3(0.125, 0.25, -0.625))
     }
 
-    /// **窓が組を丸ごと持つと、外から 1 成分だけ書き換えられたときに古い成分で上書き
+    /// **ウィンドウが組を丸ごと持つと、外から 1 成分だけ書き換えられたときに古い成分で上書き
     /// してしまう** (``KnobBinding/component(_:at:)`` の説明)。掴んだ後に別の成分が外から
     /// 動いても、掴んだ口は読み直した値の上に書く。
     @Test("掴んだ後に外で動いた成分も、書き戻しで古い値に戻らない")

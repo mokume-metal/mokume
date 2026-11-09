@@ -6,13 +6,13 @@ import MokumeDiagnostics
 
 /// スケッチをアプリケーションとして走らせる。
 ///
-/// 窓とアプリケーションの寿命は AppKit が持つ ([ADR-0012] 決定 4)。フレームを進める
+/// ウィンドウとアプリケーションの寿命は AppKit が持つ ([ADR-0012] 決定 4)。フレームを進める
 /// 判断はランタイムのままで、ここは**表示のリフレッシュに合わせて `advance()` を叩く
 /// 3 つ目の駆動源**を足すだけである ([ADR-0012] 決定 3)。
 ///
-/// ## 駆動源は窓ではなく画面に紐づく
+/// ## 駆動源はウィンドウではなく画面に紐づく
 ///
-/// 面 (`NSView`) から取った駆動源は面が hidden になると呼ばれなくなるので、窓を
+/// 面 (`NSView`) から取った駆動源は面が hidden になると呼ばれなくなるので、ウィンドウを
 /// 最小化した瞬間にフレームループごと止まっていた。画面 (`NSScreen`) から取れば、
 /// 最小化・被覆・Space の切り替えのどれでも止まらない
 /// ([#223](https://github.com/mokume-metal/mokume/issues/223))。
@@ -26,10 +26,10 @@ import MokumeDiagnostics
 /// ([#370](https://github.com/mokume-metal/mokume/issues/370))。
 ///
 /// 落ちているのが**プロセスに割り当てられる CPU そのもの**であることは、観測の経路と無関係な
-/// 純 CPU のベンチまで同じ倍率で遅くなること・窓を持たないプロセスでは同じ持続負荷でも
+/// 純 CPU のベンチまで同じ倍率で遅くなること・ウィンドウを持たないプロセスでは同じ持続負荷でも
 /// 起きないこと・前面のままなら起きないことで確かめてある。
 ///
-/// [ADR-0012] 決定 5 は「窓が画面に出ていないときもフレームレートを維持する」を機能要件に
+/// [ADR-0012] 決定 5 は「ウィンドウが画面に出ていないときもフレームレートを維持する」を機能要件に
 /// 固定したうえで、**「OS の省電力機構は既定では前面でないアプリの周期処理を間引くため、
 /// 対処が要る」**と名指しし、手段は「実際に落ちることを確認してから」決めるとして空けていた。
 /// ここがその対処である。
@@ -63,36 +63,36 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 画面の出口。
     ///
     /// 分岐は「ビューアあり / なし」というモードではなく、**与えられた出口の構成**である
-    /// ([ADR-0032] 決定 1)。決めるのは起こし方で、窓を持つ道具に起こされたか
-    /// (``SharedFrameSurface/launchOwner``) を読む場所は 1 つである。窓を開かない
+    /// ([ADR-0032] 決定 1)。決めるのは起こし方で、ウィンドウを持つ道具に起こされたか
+    /// (``SharedFrameSurface/launchOwner``) を読む場所は 1 つである。ウィンドウを開かない
     /// ことも、標準入力の管を読むことも、決まった出口から従う。
     ///
-    /// **その 1 つの決定を 4 つの変数へ写さない。** かつては窓・面・共有面・出したかの
-    /// 4 つの Optional で持っており、片方だけ書き換えれば「窓も出るし面へも書く」が
+    /// **その 1 つの決定を 4 つの変数へ写さない。** かつてはウィンドウ・面・共有面・出したかの
+    /// 4 つの Optional で持っており、片方だけ書き換えれば「ウィンドウも出るし面へも書く」が
     /// 型として作れた — どちらの経路もそれを想定していないのに、である
     /// ([#955](https://github.com/mokume-metal/mokume/issues/955))。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     private enum ScreenOutlet {
-        /// 窓の経路だが、まだ建っていない。
+        /// ウィンドウの経路だが、まだ建っていない。
         ///
         /// **``run()`` の既定であり、``didFinishLaunching()`` が置き換える。** 2 段階に
         /// なるのは畳めない事情による — 活動の方針 (`setActivationPolicy`) は
-        /// `NSApplication.run()` より前にしか据えられず、窓はその後にしか建たない。
+        /// `NSApplication.run()` より前にしか据えられず、ウィンドウはその後にしか建たない。
         case pendingWindow
-        /// 自分の窓へ出す。付属の `hasPresented` は最初の 1 枚の扱いに使う。
+        /// 自分のウィンドウへ出す。付属の `hasPresented` は最初の 1 枚の扱いに使う。
         case window(NSWindow, SketchSurface, hasPresented: Bool)
-        /// ホストのアプリの `NSView` の中へ出す (``SketchView``・#3511)。**窓は持たない** — 窓も
+        /// ホストのアプリの `NSView` の中へ出す (``SketchView``・#3511)。**ウィンドウは持たない** — ウィンドウも
         /// アプリケーションの寿命もホストのもので、こちらは面と駆動源だけを持つ。付属の
         /// `hasPresented` は ``window`` と同じく最初の 1 枚の扱いに使う。
         case embedded(SketchSurface, hasPresented: Bool)
-        /// 外のプロセスが持つ区画へ差し出す。**窓は持たない。**
+        /// 外のプロセスが持つ区画へ差し出す。**ウィンドウは持たない。**
         case shared(SharedFrameSurface)
         /// 画面へは出さず、決めた枚数を書き出して終わる (`mokume render`・[#1282])。
-        /// **窓も共有面も持たない** — 出口は撮る係だけである。
+        /// **ウィンドウも共有面も持たない** — 出口は撮る係だけである。
         ///
         /// 決まるのは起動の瞬間 (``init(sketch:gpu:render:)``) で、区画 (`viewport`) より先に
-        /// 効く。窓を持たないのは、窓が受けた入力が作品へ届くと、同じ引数から同じ動きが
+        /// 効く。ウィンドウを持たないのは、ウィンドウが受けた入力が作品へ届くと、同じ引数から同じ動きが
         /// 出なくなるためである ([ADR-0025] 決定 1 の水準 2)。
         ///
         /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
@@ -101,45 +101,45 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     }
     private var outlet: ScreenOutlet
 
-    /// 開いている窓。**読むだけを内へ開けてある** — 検査が実際の経路の窓を閉じるため (#714)。
+    /// 開いているウィンドウ。**読むだけを内へ開けてある** — 検査が実際の経路のウィンドウを閉じるため (#714)。
     var window: NSWindow? {
         if case .window(let window, _, _) = outlet { window } else { nil }
     }
 
-    /// 最後の窓が閉じたら、スケッチも終わってよいか。
+    /// 最後のウィンドウが閉じたら、スケッチも終わってよいか。
     ///
-    /// **窓を持たない経路では終わらない** ([ADR-0032] 決定 1)。窓が画面の出口である経路では
-    /// 「最後の窓が閉じた」は作品が終わったことと同じだが、出口が外のプロセスに在る経路では
-    /// 何も意味しない — そこで数えられる窓は作品のものではないからである。
+    /// **ウィンドウを持たない経路では終わらない** ([ADR-0032] 決定 1)。ウィンドウが画面の出口である経路では
+    /// 「最後のウィンドウが閉じた」は作品が終わったことと同じだが、出口が外のプロセスに在る経路では
+    /// 何も意味しない — そこで数えられるウィンドウは作品のものではないからである。
     ///
     /// 実際に数えられていたのは**メニューバーの名乗り** (``SketchPresence``) が開くメニュー
-    /// だった。窓を 1 枚も持たないスケッチでは、それが開いて閉じた瞬間が「最後の窓が閉じた」
+    /// だった。ウィンドウを 1 枚も持たないスケッチでは、それが開いて閉じた瞬間が「最後のウィンドウが閉じた」
     /// になり、名乗りを覗いただけでスケッチが終わっていた
-    /// ([#1102](https://github.com/mokume-metal/mokume/issues/1102))。窓は道具のものなので
+    /// ([#1102](https://github.com/mokume-metal/mokume/issues/1102))。ウィンドウは道具のものなので
     /// 画面には残り、止まった絵のまま動かない。
     ///
-    /// **終わらせる経路が無くなるわけではない。** 窓を持たない子を止めるのは道具で、
-    /// 窓の × も端末の `Ctrl-C` も同じ後始末 (`WatchSession.stop()`) を通る。
+    /// **終わらせる経路が無くなるわけではない。** ウィンドウを持たない子を止めるのは道具で、
+    /// ウィンドウの × も端末の `Ctrl-C` も同じ後始末 (`WatchSession.stop()`) を通る。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     var endsAfterLastWindowClosed: Bool {
         switch outlet {
         case .shared, .render: false
         case .pendingWindow, .window: true
-        // 最後の窓を数えるのはホストで、`NSApplication` を回すのもホストである
+        // 最後のウィンドウを数えるのはホストで、`NSApplication` を回すのもホストである
         case .embedded: false
         }
     }
 
-    /// 活動の方針。**窓を持たない経路では Dock に並ばない** (`.accessory`) — 並ぶと、道具が
-    /// 出す窓と作品が 2 つ並んで見える。書き出す経路にはそもそも見せる窓が無い。
+    /// 活動の方針。**ウィンドウを持たない経路では Dock に並ばない** (`.accessory`) — 並ぶと、道具が
+    /// 出すウィンドウと作品が 2 つ並んで見える。書き出す経路にはそもそも見せるウィンドウが無い。
     ///
     /// 据えるのは ``run()`` で、ここは決めるだけである。据えると呼んだプロセス全体に効くので、
     /// 検査はこの値だけを読む。
     var activationPolicy: NSApplication.ActivationPolicy {
         switch outlet {
         case .shared, .render: .accessory
-        // 窓はまだ建っていないが、建てると決まっている
+        // ウィンドウはまだ建っていないが、建てると決まっている
         // 据えるのは ``run()`` だけで、埋め込んだ経路は据えない (ホストのアプリの方針)
         case .pendingWindow, .window, .embedded: .regular
         }
@@ -174,7 +174,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     }
 
     /// 最初の絵を出したか。**最初の `advance` と差し出しが例外なく戻ったら、1 度だけ ``markFirstFrame`` を呼ぶ。**
-    /// 差し出しが何も出さずに戻る回(窓が見えていない・待ちに入る)でも立つ — 印を消す側に倒した安全側の読みで、
+    /// 差し出しが何も出さずに戻る回(ウィンドウが見えていない・待ちに入る)でも立つ — 印を消す側に倒した安全側の読みで、
     /// 見張りは印が残っていた子だけを「最初の絵の前に終わった」と読む。
     private var hasPresentedFirstFrame = false
 
@@ -216,7 +216,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 閉じてよいと確定したときの行き先。
     ///
-    /// **道具立てごと終わらせる。** 窓を畳むだけでは後始末を通らず、差込口も駆動源も
+    /// **道具立てごと終わらせる。** ウィンドウを畳むだけでは後始末を通らず、差込口も駆動源も
     /// 生きたまま残る — 終わりの経路は `terminate(_:)` の 1 本で、後始末を待つ
     /// ``shouldTerminate()`` から ``willTerminate()`` へ進む。**検査から差し替える**: 既定の
     /// ままでは、押した後を検めるたびに検査のプロセスが終わる。
@@ -232,7 +232,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 起こした道具が居なくなったか。**1 度だけ `true` を返す** ([#1427])。
     ///
-    /// 道具が捕まえない合図や `SIGKILL` で消えると、窓 (道具のもの) だけが一緒に消えて子が
+    /// 道具が捕まえない合図や `SIGKILL` で消えると、ウィンドウ (道具のもの) だけが一緒に消えて子が
     /// 残り、人が止める入口が無くなる。気付くのは管が畳まれたことで
     /// (``SketchRuntime/takeDriverDeparture()``)、行き先は終わりの合図と同じ 1 本である。
     /// **検査から差し替える** — 検査のプロセスは道具から起こされていない。
@@ -263,9 +263,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 数回ぶんである。粗く取ると、そのぶん閉じ終えてから終わるまでが遅れる。
     static let terminationPollInterval = 0.01
 
-    /// 窓の出来事を、自分を強く持たせずに受ける。
+    /// ウィンドウの出来事を、自分を強く持たせずに受ける。
     ///
-    /// **窓の delegate に ``SketchApplication`` を直に据えない。** AppKit は delegate を
+    /// **ウィンドウの delegate に ``SketchApplication`` を直に据えない。** AppKit は delegate を
     /// 弱く参照するが、呼ぶ前に一時的な強い参照を作る (autorelease) ので、据えた側の解放が
     /// プールの掃除まで遅れる — 道具の台が同じ理由で中継を置いている
     /// (`SharedFrameStage.WindowRelay`)。
@@ -338,7 +338,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 足さないため。`.latencyCritical` は「この周期処理は時刻に縛られている」という名乗りで、
     /// ADR-0012 決定 5 が要件にした性質そのものである。
     private var activity: (any NSObjectProtocol)?
-    /// ディスプレイが勝手に消えるのを断っているもの。**窓を出す経路でだけ持つ。**
+    /// ディスプレイが勝手に消えるのを断っているもの。**ウィンドウを出す経路でだけ持つ。**
     private var displaySleepBlock: DisplaySleepBlock?
     /// 走っている間、ディスプレイが消えるのを断るか。**既定は断る** (#874)。書き出す経路 (`mokume render`) は
     /// 画面に出さないので、この値に依らず断らない (#3474)。
@@ -365,14 +365,14 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private var lastShown: ShownFrame?
 
     /// 出した絵が同じかを決める鍵。**絵が変わる理由はすべてここに載せる** — 載せ忘れた理由は、止まって
-    /// いる間に変わっても窓にも出口にも出ない。
+    /// いる間に変わってもウィンドウにも出口にも出ない。
     ///
     /// - `target`・`revision`: 描画先とその内容 (``RenderTarget/contentRevision``。GPU への書き込みと
     ///   CPU の画素の書き込み)
     /// - `brightness`: 出力段の明るさ (`exposure()`・`toneMapping()`)。止まっている間に変えても絵が変わる
-    /// - `drawable`: 窓の面の大きさ。変わったら出し直す (共有面は `nil`)
-    /// - `pointerLock`・`cursorHidden`: 共有面に絵と一緒に載る要求。窓へは渡す経路が別なので `false`
-    /// - `selection`: 共有面に絵と一緒に載る、ファイルを選ばせる頼み。窓へは渡す経路が別なので `nil`
+    /// - `drawable`: ウィンドウの面の大きさ。変わったら出し直す (共有面は `nil`)
+    /// - `pointerLock`・`cursorHidden`: 共有面に絵と一緒に載る要求。ウィンドウへは渡す経路が別なので `false`
+    /// - `selection`: 共有面に絵と一緒に載る、ファイルを選ばせる頼み。ウィンドウへは渡す経路が別なので `nil`
     struct ShownFrame: Equatable {
         let target: ObjectIdentifier
         let revision: UInt64
@@ -385,11 +385,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 名乗ってよい速さ。**測れていなければ `nil`。**
     ///
-    /// 数えるのは**進めたフレーム**で、画面へ出した回数ではない。窓が見えていない間も
+    /// 数えるのは**進めたフレーム**で、画面へ出した回数ではない。ウィンドウが見えていない間も
     /// スケッチは進み続けるので、ここで出した回数を数えると「最小化したら 0 になった」
     /// と読めてしまう — 測りたいのは絵が進んでいるかである。
     ///
-    /// **窓はここでも読み手である** ([ADR-0030] 決定 7)。自分では数えず、観測の応答が
+    /// **ウィンドウはここでも読み手である** ([ADR-0030] 決定 7)。自分では数えず、観測の応答が
     /// 返すのと同じ集計器を読む。止まったスケッチや起動直後は測れていないので `nil` を
     /// 返す — **欠測を 0 に化けさせると「とても重い」と誤読される** ([ADR-0029] 決定 3)。
     ///
@@ -403,24 +403,24 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 画面へ出しながら回す扱いか (`SketchRuntime.isOnScreen`)。**検査が読む。**
     var isOnScreen: Bool { runtime.isOnScreen }
 
-    /// 窓がいま画面に出ているか。
+    /// ウィンドウがいま画面に出ているか。
     public var isWindowOnScreen: Bool { window?.isVisible ?? false }
 
-    /// 窓の一部でも実際に見えているか。
+    /// ウィンドウの一部でも実際に見えているか。
     ///
-    /// 最小化・他の窓による被覆・別の Space への切り替えを **1 つの判定で覆う**。
+    /// 最小化・他のウィンドウによる被覆・別の Space への切り替えを **1 つの判定で覆う**。
     /// 最小化だけを特別扱いしないのは、どれも「画面へ出しても誰も見ない」という
     /// 同じ状態だからである。
     ///
-    /// 埋め込んだ経路では、面が載っているホストの窓を読む。
+    /// 埋め込んだ経路では、面が載っているホストのウィンドウを読む。
     private var isWindowVisible: Bool {
         windowVisibilityForTesting
             ?? (window ?? embeddedHostWindow)?.occlusionState.contains(.visible) ?? false
     }
 
-    /// 窓が見えているかの答えを**検査から決める**。製品の経路では常に `nil`。
+    /// ウィンドウが見えているかの答えを**検査から決める**。製品の経路では常に `nil`。
     ///
-    /// 検査のプロセスは前面のアプリケーションではないので、窓を出しても見えていることにならず
+    /// 検査のプロセスは前面のアプリケーションではないので、ウィンドウを出しても見えていることにならず
     /// (`occlusionState` が更新されない)、見えている間の出し方 (止まっている間に出し直さない・#2367)
     /// を確かめられない。
     var windowVisibilityForTesting: Bool?
@@ -431,10 +431,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 実際に流れた時間で動くのが正しい。作品が ``SketchSettings/clock`` で
     /// ``SketchSettings/ClockMode/frames`` を選んでいれば、宣言の刻みのフレーム番号にする。
     ///
-    /// 道具が書き出しを頼んだとき (`mokume render`・``StartupReads/render``) だけは、窓を
+    /// 道具が書き出しを頼んだとき (`mokume render`・``StartupReads/render``) だけは、ウィンドウを
     /// 開かずに決めた枚数を書き出す。その経路の時刻はフレーム番号から導く。
     ///
-    /// **頼みの合図が在って読めなければ、窓へ倒さず投げる** (``RenderFailure/unreadableRenderRequest(value:)``・
+    /// **頼みの合図が在って読めなければ、ウィンドウへ倒さず投げる** (``RenderFailure/unreadableRenderRequest(value:)``・
     /// [#2481](https://github.com/mokume-metal/mokume/issues/2481))。
     public convenience init(sketch: any Sketch, gpu: RenderDevice) throws(RenderFailure) {
         try self.init(sketch: sketch, gpu: gpu, embedded: false)
@@ -443,9 +443,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// ホストのアプリの中 (``SketchView``) で走らせる組み方を選べる入口。
     ///
     /// - Parameter embedded: `true` なら、全画面 (``SketchSettings/fullScreenDisplay``) を読まず・メニューバーの
-    ///   名乗りを出さない (``SketchRuntime/isEmbedded``)。窓もアプリの寿命もホストのものである。
+    ///   名乗りを出さない (``SketchRuntime/isEmbedded``)。ウィンドウもアプリの寿命もホストのものである。
     convenience init(sketch: any Sketch, gpu: RenderDevice, embedded: Bool) throws(RenderFailure) {
-        // **窓の持ち主の合図を、ここで読んで環境から消す** (``SharedFrameSurface/launchOwner``)。
+        // **ウィンドウの持ち主の合図を、ここで読んで環境から消す** (``SharedFrameSurface/launchOwner``)。
         // スケッチが `setup()` で子を起こしても、合図はもう継がれない
         _ = SharedFrameSurface.launchOwner
         // **置き場の元の合図も同じ** (#2517)。孫へ継がせない
@@ -463,11 +463,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 書き出しの頼みを渡せる入口。**検査から渡す** — 本番は起動の瞬間に環境から読む
     /// (``init(sketch:gpu:)``)。
     ///
-    /// **頼みは時計と画面の出口の両方を決める。** 時計だけ差し替えて窓を開くと、窓が受けた
+    /// **頼みは時計と画面の出口の両方を決める。** 時計だけ差し替えてウィンドウを開くと、ウィンドウが受けた
     /// 入力が作品に届き、同じ引数から同じ動きが出なくなる (``ScreenOutlet/render(_:)``)。
     ///
     /// - Parameters:
-    ///   - render: 書き出しの頼み。`nil` ならいつもの窓の経路。
+    ///   - render: 書き出しの頼み。`nil` ならいつものウィンドウの経路。
     ///   - displays: ディスプレイの一覧の出どころ (全画面で出す先を選ぶ・#2020)。既定はいま
     ///     繋がっているもの。**検査から差し替える。**
     ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time`・#2414)。**書き出しの頼みが
@@ -490,9 +490,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 設定を読み直さない** — 計算型の設定は読むたびに別の値を返しうる (#1642)
         let clock: Clock? = render.map { .frameIndex(frameRate: $0.frameRate) }
         self.outlet = render.map(ScreenOutlet.render) ?? .pendingWindow
-        // **利用者の断片の保存を裏で組むのも、窓・共有面の経路だけ** ([#2365])。書き出しは保存の
-        // 次のフレームの頭で組み、同じ引数から同じ絵が出る。窓の経路はもともと実時間の時計で、
-        // 保存のたびに窓が止まるほうが害が大きい ([ADR-0025] 追補 2026-10-14)
+        // **利用者の断片の保存を裏で組むのも、ウィンドウ・共有面の経路だけ** ([#2365])。書き出しは保存の
+        // 次のフレームの頭で組み、同じ引数から同じ絵が出る。ウィンドウの経路はもともと実時間の時計で、
+        // 保存のたびにウィンドウが止まるほうが害が大きい ([ADR-0025] 追補 2026-10-14)
         //
         // [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
         // [#2365]: https://github.com/mokume-metal/mokume/issues/2365
@@ -505,8 +505,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         self.clock = runtime.clock
         // **記録は最初の枚の前に始める** (途中から始める口は無い・#3570)。実時間の時計なら始めず、理由を言って走り続ける
         if let record { runtime.startRecording(record) }
-        // 先送りを許すのは、窓・共有面で回すときだけ。書き出す経路は絵が残るので、焼き切る (#2446)
-        // **記録している実行は送らない** (窓なしで流す側と同じ手順で描くので、画素のハッシュが割れない・#3570)
+        // 先送りを許すのは、ウィンドウ・共有面で回すときだけ。書き出す経路は絵が残るので、焼き切る (#2446)
+        // **記録している実行は送らない** (ウィンドウなしで流す側と同じ手順で描くので、画素のハッシュが割れない・#3570)
         runtime.defersEnlargedGlyphBakes = render == nil && runtime.replay == nil
         self.runtime = runtime
         self.driverDeparted = { runtime.takeDriverDeparture() }
@@ -542,13 +542,13 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         guard !SketchApplication.refusesSecondRun() else { return }
         let app = NSApplication.shared
         // **画面の出口を先に決める。** 活動の方針は `app.run()` より前にしか据えられない
-        // ので、窓を開くかどうかをここで知っている必要がある。窓を持たないなら Dock にも
-        // 並ばない (`.accessory`) — 並ぶと、道具が出す窓と作品が 2 つ並んで見える
+        // ので、ウィンドウを開くかどうかをここで知っている必要がある。ウィンドウを持たないなら Dock にも
+        // 並ばない (`.accessory`) — 並ぶと、道具が出すウィンドウと作品が 2 つ並んで見える
         resolveOutlet()
         app.setActivationPolicy(activationPolicy)
         // **delegate と自分を強く持っておく。** AppKit は delegate を弱く参照するので、
         // ここで持たないと、delegate を渡した直後に解放され、以後の呼び出しが 1 つも
-        // 来ない (窓が開かない形で表に出る)。走らせている間は生きているべきものなので、
+        // 来ない (ウィンドウが開かない形で表に出る)。走らせている間は生きているべきものなので、
         // 寿命をここで固定する
         let delegate = SketchApplicationDelegate(application: self)
         self.delegate = delegate
@@ -573,7 +573,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // **終わりの合図を、後始末を待つ経路へ運ぶ** (#1219)。見に来るのは駆動源 (書き出す経路では
         // 全速の駆動) が叩く ``displayLinkFired()`` で、`app.run()` の前に立った旗は最初の 1 回が拾う
         StopSignals.install()
-        // **与えられたときだけ仕掛ける。** 与えられなければ何も足さないので、窓口から
+        // **与えられたときだけ仕掛ける。** 与えられなければ何も足さないので、MCP サーバから
         // 立てたスケッチの出力は 1 バイトも変わらない ([ADR-0029] 決定 5 の 2 番目)
         if FrameRateNotice.announces(
             configuration: FrameRateNotice.configuration, isTerminal: FrameRateNotice.isTerminal),
@@ -756,7 +756,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// ホストのアプリの中 (``SketchView``) で走らせる組み方か (``SketchRuntime/isEmbedded``)。検査が読む。
     var runsEmbedded: Bool { runtime.isEmbedded }
 
-    /// 埋め込んだ面が載っているホストの窓。載っていなければ `nil`。
+    /// 埋め込んだ面が載っているホストのウィンドウ。載っていなければ `nil`。
     private var embeddedHostWindow: NSWindow? {
         if case .embedded(let surface, _) = outlet { surface.window } else { nil }
     }
@@ -764,7 +764,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// ホストのアプリの中で走らせる用意をして、絵を映す面を返す。**面をホストの `NSView` へ載せるのは
     /// 呼び出し側** (``SketchView``)。
     ///
-    /// ``run()`` の代わりに呼ぶ。**`NSApplication` を回さない** — アプリの寿命・メニュー・窓・Dock の
+    /// ``run()`` の代わりに呼ぶ。**`NSApplication` を回さない** — アプリの寿命・メニュー・ウィンドウ・Dock の
     /// 方針はホストのもので、ここは面と駆動源と省電力の断りだけを持つ。据えないもの:
     ///
     /// - 活動の方針 (`setActivationPolicy`)・`NSApplicationDelegate`・終わりの合図 (`StopSignals`)・
@@ -777,7 +777,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 断り (``refusesSecondRun()``) は使わない。あれは「この呼び出しは何もしない」と言うもので、`SketchView` は
     /// 先が終われば始まり、`Sketch.main()` が断る 1 度の名乗りも食わない。
     ///
-    /// 駆動源は面がホストの窓に載ってから ``attachEmbeddedDriver()`` で繋ぐ。終わるときは
+    /// 駆動源は面がホストのウィンドウに載ってから ``attachEmbeddedDriver()`` で繋ぐ。終わるときは
     /// ``stopEmbedded()`` を呼ぶ。
     ///
     /// - Parameters:
@@ -788,8 +788,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         pointerLock: PointerLock = PointerLock(), cursorHiding: CursorHiding = CursorHiding()
     ) -> SketchSurface? {
         guard SketchApplication.admission(for: .embedded) == .start else { return nil }
-        // **ファイルのドロップは受けない** (`acceptsFileDrops: false`)。窓はホストのもので、ホスト側のドロップと
-        // 取り合わない。受けるのは macOS の自前の窓だけ (``Sketch/fileDropped(_:)``)
+        // **ファイルのドロップは受けない** (`acceptsFileDrops: false`)。ウィンドウはホストのもので、ホスト側のドロップと
+        // 取り合わない。受けるのは macOS の自前のウィンドウだけ (``Sketch/fileDropped(_:)``)
         let surface = SketchSurface(
             frame: NSRect(x: 0, y: 0, width: runtime.target.width, height: runtime.target.height),
             device: gpu.device, input: runtime.input,
@@ -797,7 +797,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             cursorHiding: cursorHiding, acceptsFileDrops: false)
         surface.wantsLayer = true
         surface.autoresizingMask = [.width, .height]
-        // **つまみは絵の外に立つ** (ADR-0030 決定 1)。`Sketch.main()` の窓と同じく重ねる
+        // **つまみは絵の外に立つ** (ADR-0030 決定 1)。`Sketch.main()` のウィンドウと同じく重ねる
         KnobOverlay.makeIfNeeded(for: runtime.paramRegistry) { [runtime] in runtime.frameNumbers }?
             .attach(to: surface)
         outlet = .embedded(surface, hasPresented: false)
@@ -818,9 +818,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         return surface
     }
 
-    /// 面がホストの窓に載った。駆動源を窓の画面へ繋ぎ、窓が移ったら追う。
+    /// 面がホストのウィンドウに載った。駆動源をウィンドウの画面へ繋ぎ、ウィンドウが移ったら追う。
     ///
-    /// **窓に何も据わっていなければ、面を第一応答者にする** (キーが 1 件も来ないため・
+    /// **ウィンドウに何も据わっていなければ、面を第一応答者にする** (キーが 1 件も来ないため・
     /// ``SketchSurface/acceptsFirstResponder``)。ホストが別のものを据えていれば奪わない。
     func attachEmbeddedDriver() {
         guard case .embedded(let surface, _) = outlet, !isTerminating,
@@ -833,13 +833,13 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         screenLink.attach(to: window.screen ?? NSScreen.main, following: window)
     }
 
-    /// 面がホストの窓から外れた。駆動源を畳む (窓が無い間は進めない)。載り直したら
+    /// 面がホストのウィンドウから外れた。駆動源を畳む (ウィンドウが無い間は進めない)。載り直したら
     /// ``attachEmbeddedDriver()`` が繋ぎ直す。
     func detachEmbeddedDriver() {
         guard case .embedded = outlet else { return }
         screenLink.invalidate()
-        // **窓から外れたら、シートも閉じる** — ビューが消えたのに、シートが元の窓に残らない。結果は取り消しとして渡り、
-        // 載り直した最初のフレームが汲む。dismantle を通らない外れ方 (別の窓へ付け替える・ホストが外す) もここへ来る
+        // **ウィンドウから外れたら、シートも閉じる** — ビューが消えたのに、シートが元のウィンドウに残らない。結果は取り消しとして渡り、
+        // 載り直した最初のフレームが汲む。dismantle を通らない外れ方 (別のウィンドウへ付け替える・ホストが外す) もここへ来る
         _ = cancelOpenSelectionDialog()
     }
 
@@ -856,7 +856,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// `dismantleNSView` を通らないので、通知で受ける — 塞いで待つのは撮る係の書き切りだけで、その待ちは
     /// ``willTerminate()`` の最後の砦と同じ期限で諦める。
     ///
-    /// **ホストの窓に残しうるものも手放す。** ファイルを選ばせるシートが開いていれば閉じ (自前の窓で閉じたときと同じ
+    /// **ホストのウィンドウに残しうるものも手放す。** ファイルを選ばせるシートが開いていれば閉じ (自前のウィンドウで閉じたときと同じ
     /// 取り消しの結果を渡す)、捕まえているポインタと隠している矢印を戻し、面が第一応答者なら手放す — 次に始まる
     /// ``SketchView`` の面が、キーを受けられる。
     func stopEmbedded() {
@@ -918,26 +918,26 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 画面の出口を決める。``run()`` が `NSApplication.run()` より前に 1 度だけ呼ぶ。
     ///
-    /// **切り出してあるのは、検査が窓を持たない経路を作れるようにするため。** 出口が
+    /// **切り出してあるのは、検査がウィンドウを持たない経路を作れるようにするため。** 出口が
     /// 決まるのが `run()` の中だけだと、そこは戻らない呼び出し (`app.run()`) を含むので
-    /// 検査から通せず、**窓 0 枚の経路の振る舞いを 1 つも見られない**
+    /// 検査から通せず、**ウィンドウ 0 枚の経路の振る舞いを 1 つも見られない**
     /// ([#1102](https://github.com/mokume-metal/mokume/issues/1102) がそこで見過ごされた)。
     ///
     /// 区画の在処と起こした道具の名乗りを受けるのは同じ理由で、既定は本番の場所と本番の
     /// 環境である (`WorkDirectory.resolve(environment:)` などと同じ、既定引数で口を開ける形)。
     ///
-    /// **窓を持つ道具に起こされ、区画も在るときだけ、標準入力の管を読み始める**
-    /// ([ADR-0032] 決定 4)。窓の経路と書き出す経路は管に触らない — 区画が在っても、閉じた
+    /// **ウィンドウを持つ道具に起こされ、区画も在るときだけ、標準入力の管を読み始める**
+    /// ([ADR-0032] 決定 4)。ウィンドウの経路と書き出す経路は管に触らない — 区画が在っても、閉じた
     /// 標準入力を「道具が去った」と読まず (#2025)、端末に `O_NONBLOCK` を残さない (#2024)。
     ///
-    /// **共有面を用意できずに窓へ倒れた回も、管は読む。** 管を引いたのは見張りで、見張りが
+    /// **共有面を用意できずにウィンドウへ倒れた回も、管は読む。** 管を引いたのは見張りで、見張りが
     /// 去ったことに気付く口はこの管しか無い ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
     /// 出口が倒れたことと、起こした者が誰かは別の話である。
     ///
     /// **活動の方針 (`setActivationPolicy`) はここに置かない。** 呼んだプロセス全体に
     /// 効くので、検査から呼べる場所に混ぜると検査の走るプロセスの方針まで動く。
     ///
-    /// - Parameter owner: 起こした道具の名乗り。**無ければ区画が在っても自分の窓を開き、
+    /// - Parameter owner: 起こした道具の名乗り。**無ければ区画が在っても自分のウィンドウを開き、
     ///   そのことを 1 度名乗る** (#2026)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
@@ -954,16 +954,16 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         guard SharedFrameSurface.isEnabled(at: directory, owner: owner) else { return }
         runtime.relayToolInput(from: StandardInputEvents(descriptor: toolInput))
         guard let shared = attachSharedSurface(at: directory, owner: owner) else {
-            // **倒れたことを道具へ知らせる** (#2350)。道具は目録を置いた子が窓を乗り換えた合図で
+            // **倒れたことを道具へ知らせる** (#2350)。道具は目録を置いた子がウィンドウを乗り換えた合図で
             // 前の世代を畳むので、目録を置かない子では前の世代が残る
             SharedFrameSurface.declareFallback(at: directory)
             return
         }
         outlet = .shared(shared)
-        // **全画面の頼みは、目録に載せて道具へ渡した** (#2188)。作品の窓は道具が持つので
+        // **全画面の頼みは、目録に載せて道具へ渡した** (#2188)。作品のウィンドウは道具が持つので
         // ([ADR-0032] 決定 1)、こちらからは全画面にできない。道具が頼みを受けて、宣言した
         // ディスプレイで全画面にする。**道具が頼みを読んだかは、こちらからは分からない** —
-        // 読まない古い道具なら窓のままなので、そのときの手当てまで 1 行で言う。描く大きさは
+        // 読まない古い道具ならウィンドウのままなので、そのときの手当てまで 1 行で言う。描く大きさは
         // ディスプレイから決めてあるので、手で全画面にすれば合う
         if let display = runtime.fullScreenDisplay {
             announce(
@@ -974,7 +974,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
     }
 
-    /// 道具の窓が拾った出来事が来る管。**本番は標準入力** — 見張りが子の標準入力に引く
+    /// 道具のウィンドウが拾った出来事が来る管。**本番は標準入力** — 見張りが子の標準入力に引く
     /// (`WatchSession`)。**検査から差し替える**: 既定のまま共有面の経路を通すと、検査を
     /// 走らせている端末の標準入力に `O_NONBLOCK` が立つ。
     var toolInput: Int32 = FileHandle.standardInput.fileDescriptor
@@ -987,7 +987,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// **検査から差し替える** — 検査が注入した一覧のディスプレイは、この機械の画面に無い。
     var screenForDisplay: @MainActor (Display) -> NSScreen? = { Display.screen(for: $0) }
 
-    /// 窓を全画面にする口 (#2020)。
+    /// ウィンドウを全画面にする口 (#2020)。
     ///
     /// **検査から差し替える** — 既定のままでは、検査を走らせた機械の画面が全画面の操作
     /// スペースへ切り替わる。
@@ -995,7 +995,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 画面の出口が外のプロセスに在れば、そこへ差し出す用意をする。
     ///
-    /// **区画が在るのに用意できなかったときは、窓を開く側へ倒す** — 面も窓も無い実行は、
+    /// **区画が在るのに用意できなかったときは、ウィンドウを開く側へ倒す** — 面もウィンドウも無い実行は、
     /// 外から見て「動いていない」としか見えない。倒したことは黙らずに言う。
     private func attachSharedSurface(at directory: URL, owner: String?) -> SharedFrameSurface? {
         guard
@@ -1019,10 +1019,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         return shared
     }
 
-    /// 窓を開き、フレームの駆動源を繋ぐ。``SketchApplicationDelegate`` から呼ばれる。
+    /// ウィンドウを開き、フレームの駆動源を繋ぐ。``SketchApplicationDelegate`` から呼ばれる。
     ///
-    /// **画面の出口が外のプロセスに在れば、窓は作らない** ([ADR-0032] 決定 1)。駆動源は
-    /// 窓ではなく画面に紐づくので (下記)、窓が無くてもそのまま繋がる。
+    /// **画面の出口が外のプロセスに在れば、ウィンドウは作らない** ([ADR-0032] 決定 1)。駆動源は
+    /// ウィンドウではなく画面に紐づくので (下記)、ウィンドウが無くてもそのまま繋がる。
     func didFinishLaunching() {
         switch outlet {
         case .shared:
@@ -1038,7 +1038,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             fullSpeedDriver.start()
             return
         // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る。埋め込んだ経路は
-        // ここを通らず、ホストの窓に載ったとき ``attachEmbeddedDriver()`` が繋ぐ
+        // ここを通らず、ホストのウィンドウに載ったとき ``attachEmbeddedDriver()`` が繋ぐ
         case .window, .embedded: return
         case .pendingWindow: break
         }
@@ -1051,7 +1051,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
                 title: title, on: fullScreenScreen,
                 canvas: NSSize(width: runtime.target.width, height: runtime.target.height))
         } else {
-            // 窓は描く解像度 × 倍率で開く (既定 0.5)。描く解像度と窓の大きさは独立なので、
+            // ウィンドウは描く解像度 × 倍率で開く (既定 0.5)。描く解像度とウィンドウの大きさは独立なので、
             // どちらに合わせてもよい — 既定は大きな絵が画面からはみ出さない側にしてある
             let requested = WindowPlacement.requestedSize(
                 width: runtime.target.width, height: runtime.target.height,
@@ -1064,7 +1064,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
                 requested, in: window, autosaveName: WindowPlacement.autosaveName)
         }
 
-        // 見張りが起こした入れ替えでは、窓を出しはするが前面は取らない (#679)
+        // 見張りが起こした入れ替えでは、ウィンドウを出しはするが前面は取らない (#679)
         let takesFocus = WindowPlacement.takesFocus(
             isRelaunch: WindowPlacement.isRelaunch(stamp: SourceStamp.current))
 
@@ -1075,9 +1075,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         surface.wantsLayer = true
         surface.autoresizingMask = [.width, .height]
         window.contentView = surface
-        // **つまみは絵の外に立つ** (ADR-0030 決定 1)。同じ窓へ重ねるだけで、描画の
+        // **つまみは絵の外に立つ** (ADR-0030 決定 1)。同じウィンドウへ重ねるだけで、描画の
         // 成果物には 1 画素も触らない。宣言が 1 つも無ければ何も足さない
-        // 数字は**読む口を渡すだけ**。窓が自分で数えると源が 2 つに割れる
+        // 数字は**読む口を渡すだけ**。ウィンドウが自分で数えると源が 2 つに割れる
         // (ADR-0030 決定 7)
         KnobOverlay.makeIfNeeded(for: runtime.paramRegistry) { [runtime] in runtime.frameNumbers }?
             .attach(to: surface)
@@ -1086,9 +1086,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // どおり押した瞬間に作品を終わらせる
         if closeQuestion != nil { window.delegate = windowRelay }
 
-        // **前面を取らないときも、窓は出す。** 出さなければ、作り直すたびに絵が消える
+        // **前面を取らないときも、ウィンドウは出す。** 出さなければ、作り直すたびに絵が消える
         if takesFocus { window.makeKeyAndOrderFront(nil) } else { window.orderFrontRegardless() }
-        // **面を第一応答者に据える。** 据わっていない窓にはキーが 1 件も来ない —
+        // **面を第一応答者に据える。** 据わっていないウィンドウにはキーが 1 件も来ない —
         // 理由と、AppKit の自動選択に頼らない訳は `SketchSurface.acceptsFirstResponder`
         // が持つ
         window.makeFirstResponder(surface)
@@ -1099,20 +1099,20 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         if takesFocus { NSApp.activate() }
 
         screenLink.attach(to: window.screen ?? NSScreen.main, following: window)
-        // 窓を開く時刻は起点にしない。速さを数え始めるのは最初のフレームが
+        // ウィンドウを開く時刻は起点にしない。速さを数え始めるのは最初のフレームが
         // 来たときである ([FrameTempo]) — 進み始める前に測ったことにすると、
         // 1 枚目で「1 枚 ÷ 待っていた時間」が出て 0.0 という嘘の数字になる
 
-        // **全画面は窓を前へ出した後に頼む** — 画面に出ていない窓には効かない。駆動源は窓の
+        // **全画面はウィンドウを前へ出した後に頼む** — 画面に出ていないウィンドウには効かない。駆動源はウィンドウの
         // 居る画面を追うので、全画面の操作スペースへ移っても張り替えは要らない
         if fullScreenScreen != nil { goFullScreen(window) }
     }
 
     /// 全画面で出す画面を引く (#2020)。
     ///
-    /// **組み立ての後にディスプレイが外れていたら、窓で開くことを 1 行言って `nil` を返す。**
-    /// 組み立てが描く大きさを決めてから窓を出すまでの間にも、抜かれうる。そこから組み立てを
-    /// やり直す道は無く、黙って別の画面を全画面で塞ぐよりは、言ったうえで窓を出す。
+    /// **組み立ての後にディスプレイが外れていたら、ウィンドウで開くことを 1 行言って `nil` を返す。**
+    /// 組み立てが描く大きさを決めてからウィンドウを出すまでの間にも、抜かれうる。そこから組み立てを
+    /// やり直す道は無く、黙って別の画面を全画面で塞ぐよりは、言ったうえでウィンドウを出す。
     private func screenForFullScreen(_ display: Display) -> NSScreen? {
         if let screen = screenForDisplay(display) { return screen }
         announce(
@@ -1121,7 +1121,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         return nil
     }
 
-    /// 窓を全画面にし、入ったら中身の大きさを描く大きさと突き合わせる (#2020)。
+    /// ウィンドウを全画面にし、入ったら中身の大きさを描く大きさと突き合わせる (#2020)。
     private func goFullScreen(_ window: NSWindow) {
         NotificationCenter.default.addObserver(
             self, selector: #selector(windowDidEnterFullScreen(_:)),
@@ -1142,26 +1142,26 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// × を押された。**確かめている間は閉じない。**
     ///
-    /// 閉じてしまうと絵の出口が消え、開き直す経路が無い。窓は作品の唯一の出口なので
+    /// 閉じてしまうと絵の出口が消え、開き直す経路が無い。ウィンドウは作品の唯一の出口なので
     /// (メニューを組み立てないこの経路には `⌘Q` も `⌘W` も無い)、押し間違いで消えるのは
     /// 制作中の作品そのものである ([#1120](https://github.com/mokume-metal/mokume/issues/1120))。
     ///
-    /// **問いを持たない窓は、そのまま閉じる。** 道具が起こしたのでなければ、AppKit の既定を
+    /// **問いを持たないウィンドウは、そのまま閉じる。** 道具が起こしたのでなければ、AppKit の既定を
     /// 変える理由が無い (`SharedFrameStage.shouldClose(_:)` と同じ規律)。
     ///
     /// **終わりに向かっている間は問わずに閉じる** ([#978])。問いの先は `terminate(_:)` で、
     /// 後始末を待っている間にそれを重ねると、AppKit は問い直さずに**待ちを飛ばして**終わる
-    /// (実測)。窓を閉じるだけなら終わりは重ならない — 最後の窓が閉じても、返事を待っている
+    /// (実測)。ウィンドウを閉じるだけなら終わりは重ならない — 最後のウィンドウが閉じても、返事を待っている
     /// 間の AppKit は `applicationShouldTerminateAfterLastWindowClosed(_:)` を問わない (実測)。
     ///
     /// [#978]: https://github.com/mokume-metal/mokume/issues/978
     fileprivate func shouldClose(_ sender: NSWindow) -> Bool {
         guard let closeQuestion, !isTerminating else { return true }
-        // **問いを二重に出さない。** 下りている間 AppKit は親窓の操作を吸うが、閉じるよう
+        // **問いを二重に出さない。** 下りている間 AppKit は親ウィンドウの操作を吸うが、閉じるよう
         // 頼む経路は残る (`performClose(_:)` など)
         //
         // **ただし付いているのがファイルを選ばせるシートなら、それを取り消して問いへ進む** — 黙って × が効かない
-        // 窓にしない (#3062)。問いのシートが付いている間は、今までどおり受け流す
+        // ウィンドウにしない (#3062)。問いのシートが付いている間は、今までどおり受け流す
         if sender.attachedSheet != nil {
             guard !isAskingToClose, cancelOpenSelectionDialog() else { return false }
         }
@@ -1169,7 +1169,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         presentQuestion(closeQuestion, sender) { [weak self] confirmed in
             self?.isAskingToClose = false
             // **問いが出ている間に終わりが始まっていたら、答えで終わりを重ねない** —
-            // シートは窓にだけ掛かるので、出ている間も Dock からの終了は届く
+            // シートはウィンドウにだけ掛かるので、出ている間も Dock からの終了は届く
             guard confirmed, let self, !self.isTerminating else { return }
             self.onCloseConfirmed()
         }
@@ -1301,9 +1301,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 表示のリフレッシュごとに 1 フレーム進めて差し出す。書き出す経路では、画面を持たない全速の駆動
     /// (``fullSpeedDriver``) が run loop の 1 回ごとに叩く。
     ///
-    /// **止めるのは「出す」ほうだけ。** 窓が見えていなくてもフレームは進める — 観測が
+    /// **止めるのは「出す」ほうだけ。** ウィンドウが見えていなくてもフレームは進める — 観測が
     /// 返すのは「最後に描いた絵」ではなく「いま描いた絵」で (ADR-0018)、進めるのを
-    /// やめるとその約束が窓の状態で緩む。加えて、見えていない面へ差し出そうとすると
+    /// やめるとその約束がウィンドウの状態で緩む。加えて、見えていない面へ差し出そうとすると
     /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
     ///
     /// - Parameter displayTime: この枚が表示される予定の時刻 (``ScreenDisplayLinkOwner/displayLinkFired(at:)``)。
@@ -1325,11 +1325,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         finishRenderIfDone()
     }
 
-    /// スケッチの捕まえの要求を、自分の窓の面へ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+    /// スケッチの捕まえの要求を、自分のウィンドウの面へ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
     ///
-    /// **自分の窓を持つ経路だけ。** 共有面の経路は要求を面の属性に載せて道具の窓へ渡し
-    /// (``presentFrame()``)、書き出す経路には窓が無いので、要求は誰にも読まれない。
-    /// 毎リフレッシュ渡すのは、窓が前に出たか・ポインタが面の上かが、要求と関係なく変わるため
+    /// **自分のウィンドウを持つ経路だけ。** 共有面の経路は要求を面の属性に載せて道具のウィンドウへ渡し
+    /// (``presentFrame()``)、書き出す経路にはウィンドウが無いので、要求は誰にも読まれない。
+    /// 毎リフレッシュ渡すのは、ウィンドウが前に出たか・ポインタが面の上かが、要求と関係なく変わるため
     /// である。
     private func followPointerLockRequest() {
         if case .embedded(let surface, _) = outlet {
@@ -1340,8 +1340,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             surface.followPointerLock(requested: runtime.pointerLockRequested)
             surface.followCursorHiding(requested: runtime.cursorHidingRequested)
             if let window = surface.window {
-                // **ホストの窓がシートを受けられるときだけ出す** — 見えていない窓へは、独立したパネルになり、
-                // ホストのアプリを前面へ出す (決定: ホストの窓のシートで出す)。見えるまで頼みは残り、見えたリフレッシュで出す
+                // **ホストのウィンドウがシートを受けられるときだけ出す** — 見えていないウィンドウへは、独立したパネルになり、
+                // ホストのアプリを前面へ出す (決定: ホストのウィンドウのシートで出す)。見えるまで頼みは残り、見えたリフレッシュで出す
                 followSelectionRequest(
                     window: window, surface: surface,
                     canPresent: window.isVisible && !window.isMiniaturized)
@@ -1355,13 +1355,13 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         followSelectionRequest(window: window, surface: surface)
     }
 
-    /// スケッチのファイルを選ばせる頼み (``SketchPart/selectInput(_:)``) を、自分の窓で出す
+    /// スケッチのファイルを選ばせる頼み (``SketchPart/selectInput(_:)``) を、自分のウィンドウで出す
     /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
     ///
     /// **頼みの番号が変わったら出す。** 同じ番号の間は出し直さない (結果の出来事が合流点に当たるまで、頼みは残る)。
     /// 頼みが無くなった・別の番号になったら、出しているダイアログは結果ごと捨てて閉じる。結果は**同じ形の
     /// 出来事**にして自分の合流点へ積む — 外から送られた結果と同じ道を通る。共有面の経路は頼みを面の属性に
-    /// 載せて道具の窓へ渡す (``presentFrame()``)。
+    /// 載せて道具のウィンドウへ渡す (``presentFrame()``)。
     private func followSelectionRequest(
         window: NSWindow, surface: SketchSurface, canPresent: Bool = true
     ) {
@@ -1387,7 +1387,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         if shownSelection?.serial == serial { shownSelection?.answered = true }
     }
 
-    /// 窓の × が押されたとき、**ファイルを選ばせるシートが付いているなら、それを取り消す** (取り消しは
+    /// ウィンドウの × が押されたとき、**ファイルを選ばせるシートが付いているなら、それを取り消す** (取り消しは
     /// 利用者がダイアログを取り消したのと同じ結果として渡す)。
     ///
     /// シートが付いている間 ``shouldClose(_:)`` は閉じる問いを出さないので、黙って × が効かなくなる
@@ -1418,7 +1418,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 書き出す経路で、描き終えたら終わりを頼む。
     ///
     /// **作者が止めたスケッチ (`noLoop()`) は、そこで終える。** 止まったスケッチは入力が
-    /// 来なければ動き直さず、書き出す経路には窓も入力も無い — 待てば永久に決めた枚数に
+    /// 来なければ動き直さず、書き出す経路にはウィンドウも入力も無い — 待てば永久に決めた枚数に
     /// 届かない。揃わなかったことは ``concludeRender()`` が終了コードで言う。
     private func finishRenderIfDone() {
         guard case .render(let request) = outlet, !isTerminating else { return }
@@ -1446,8 +1446,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
     ///
-    /// **起こした道具が居なくなったことも、同じ 1 本へ入れる** ([#1427])。窓を持たない子に
-    /// とって、窓の持ち主が消えたことは終われと言われたのと同じである。両方を先に読むのは、
+    /// **起こした道具が居なくなったことも、同じ 1 本へ入れる** ([#1427])。ウィンドウを持たない子に
+    /// とって、ウィンドウの持ち主が消えたことは終われと言われたのと同じである。両方を先に読むのは、
     /// 短絡で片方の印を読み残さないためである。
     ///
     /// [#1427]: https://github.com/mokume-metal/mokume/issues/1427
@@ -1473,7 +1473,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private func advanceAndPresent(displayTime: Double?) {
         do {
             try runtime.advance(displayTime: displayTime)
-            // 差し出しの区間 (Instruments・#2378)。窓と共有面の両方がここを通る
+            // 差し出しの区間 (Instruments・#2378)。ウィンドウと共有面の両方がここを通る
             let presentInterval = FrameSignposts.beginPresent()
             defer { FrameSignposts.endPresent(presentInterval) }
             try presentFrame()
@@ -1494,7 +1494,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// ``Sketch/setup()`` が投げたので、起動できなかったことを言って 0 以外で終わる ([#2401])。
     ///
-    /// 文面は組み立てが投げたとき (``Sketch/main()``) と同じ ``startupFailureText(_:)`` で、窓の経路も
+    /// 文面は組み立てが投げたとき (``Sketch/main()``) と同じ ``startupFailureText(_:)`` で、ウィンドウの経路も
     /// 書き出し (`mokume render`) も同じになる。1 フレームも描いていないので、後始末する書き出しは無い。
     /// 道具は終了コードで「書けたか」を読むので、0 以外で終わる (``exitProcess``)。
     ///
@@ -1521,7 +1521,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 進めた 1 フレームを、与えられた出口へ差し出す。
     ///
-    /// **出口は 1 つに決まっている** — 窓を持つか、外の面へ差し出すかで、両方はしない
+    /// **出口は 1 つに決まっている** — ウィンドウを持つか、外の面へ差し出すかで、両方はしない
     /// ([ADR-0032] 決定 1)。面へ差し出す側で見えているかを見ないのは、**誰が見ているかを
     /// 知っているのが読む側 (道具) だから**である。
     ///
@@ -1533,7 +1533,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない。**名乗るのは
             // 前に焼いた 1 枚**で、いま焼く絵は次のリフレッシュで出る (#748)。走っている間は毎リフレッシュ
             // ここを通るので、控えが出ないまま残ることはない。捕まえの要求も
-            // 同じ面に載せて渡す — 捕まえるのは道具の窓である (#1144)。矢印を隠す要求も同じ (#2439)
+            // 同じ面に載せて渡す — 捕まえるのは道具のウィンドウである (#1144)。矢印を隠す要求も同じ (#2439)
             //
             // **止まっている間は、絵が変わらなければ焼かない** (#2367)。最後に変わった後の 1 回を焼いたら、
             // 以後は控えを名乗らせるだけにする (走っていないので次の書き込みは来ない)。変わる理由には、
@@ -1572,7 +1572,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
     }
 
-    /// 自分で持つ面 (窓の中の面・ホストの中の面) へ絵を出す。**出したら `true`** (最初の 1 枚の印を
+    /// 自分で持つ面 (ウィンドウの中の面・ホストの中の面) へ絵を出す。**出したら `true`** (最初の 1 枚の印を
     /// 立てるのは呼び出し元)。
     private func presentToSurface(_ surface: SketchSurface, hasPresented: Bool) throws(RenderFailure) -> Bool {
         guard let layer = surface.metalLayer,
@@ -1583,7 +1583,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             lastShown = nil
             return false
         }
-        // **止まっている間は、絵が変わらなければ出し直さない** (#2367)。窓の面の大きさ・明るさの
+        // **止まっている間は、絵が変わらなければ出し直さない** (#2367)。ウィンドウの面の大きさ・明るさの
         // 設定も鍵に入る。GPU が前の present を打ち切っていたら、次の書き込みは来ないので出し直す
         let shown = shownFrame(
             drawable: layer.drawableSize, pointerLock: false, cursorHidden: false,
@@ -1592,7 +1592,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             if gpu.undelivered(presenter.lastSubmission) != true { return false }
             lastShown = nil
         }
-        // **書き戻すのは 1 度だけ。** 素直に毎回組み直すと、出すたびに窓と面の
+        // **書き戻すのは 1 度だけ。** 素直に毎回組み直すと、出すたびにウィンドウと面の
         // retain/release が乗る (秒 60 回)。`shouldPresent` は一度 true になれば
         // 戻らないので、立てるのも 1 度でよい
         if try presenter.present(runtime.target, to: layer) {
@@ -1709,7 +1709,7 @@ extension Sketch {
         // 後始末なしに落とす
         guard !SketchApplication.refusesSecondRun() else { return }
         // **起動中の印を、できるだけ早く置く** ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
-        // スケッチの組み立て (`Self()`)・GPU の確保・窓の用意より前に置けば、そこで失敗して終わった子も、
+        // スケッチの組み立て (`Self()`)・GPU の確保・ウィンドウの用意より前に置けば、そこで失敗して終わった子も、
         // 見張りは最初の絵の前に終わったと読める(置くのは見張りに起こされた子だけ)。最初の絵を出したら
         // 消える(``SketchApplication``)。これより前に死ぬ子(動的リンクの失敗・`main()` に届く前の大域の
         // 初期化)は置けず、今までどおり「自分で消えた」と読まれる

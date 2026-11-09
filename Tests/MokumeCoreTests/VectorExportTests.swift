@@ -70,7 +70,7 @@ enum SVG {
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct VectorCaptureTests {
-    /// 控えた図形の読み書き。Canvas を 1 つ作り、`draw()` の窓の中で置いて控えを受け取る。
+    /// 控えた図形の読み書き。Canvas を 1 つ作り、`draw()` のウィンドウの中で置いて控えを受け取る。
     struct Harness {
         let canvas: Canvas
 
@@ -78,7 +78,7 @@ struct VectorCaptureTests {
             canvas = try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
         }
 
-        /// 窓を開き、呼んだ時点から控え、`body` で置いた図形と、書けなかった種類を返す。
+        /// ウィンドウを開き、呼んだ時点から控え、`body` で置いた図形と、書けなかった種類を返す。
         func capture(_ body: (Canvas) -> Void) throws -> (figures: [VectorFigure], drops: [VectorDrop]) {
             var captured: VectorCapture?
             try canvas.draw {
@@ -653,7 +653,7 @@ struct VectorCaptureTests {
 
     // MARK: - 反証の直し (#3139)
 
-    @Test("画素の窓への書き込み (添字・fill・update) も、set と同じく画素の書き込みとして名乗る")
+    @Test("画素のビューへの書き込み (添字・fill・update) も、set と同じく画素の書き込みとして名乗る")
     func pixelWindowWritesAreNamed() throws {
         let harness = try Harness()
         let (figures, drops) = try harness.capture { canvas in
@@ -1154,7 +1154,7 @@ struct VectorCaptureTests {
     }
 
     /// 有限の座標に有限の拡大率を掛けた積が桁あふれして ∞ になっても、入力は有限なので「数でない」図形とは違う。
-    /// 数でない図形は画面にも描かれないので黙って書かないが、桁あふれは画面にも描かれうる大きさの窓があり、
+    /// 数でない図形は画面にも描かれないので黙って書かないが、桁あふれは画面にも描かれうる大きさのウィンドウがあり、
     /// 黙って消さずに `tooLarge` で名乗る (#3350)。
     @Test("有限の座標 × 拡大率が Float の上限を越えて ∞ になった図形は、黙って落とさず名指しで落とす (#3350)")
     func aFiniteCoordinateOverflowingTheScaleIsNamed() throws {

@@ -501,8 +501,8 @@ struct PlacingOutsideFrameTests {
         #expect(!canvas.warnings.hasWarned(.pixelWriteOutsideFrame))
     }
 
-    /// 窓はプロパティに取っておける。**取った時点ではなく、書く時点で区間を見る。**
-    @Test("区間の中で取った窓に、区間の外で書いても書かない")
+    /// ウィンドウはプロパティに取っておける。**取った時点ではなく、書く時点で区間を見る。**
+    @Test("区間の中で取ったウィンドウに、区間の外で書いても書かない")
     func aWindowTakenInsideCannotWriteOutside() throws {
         let canvas = try PlacingSurface.graphics.make(gpu: try RenderDevice())
         canvas.beginDraw()
@@ -515,10 +515,10 @@ struct PlacingOutsideFrameTests {
         #expect(canvas.get(2, 2) != PixelWriteCall.color)
     }
 
-    /// 前のフレームで取った窓に、このフレームの区間の中で書く (#1672 の反証 1)。写しは前の
+    /// 前のフレームで取ったビューに、このフレームの区間の中で書く (#1672 の反証 1)。写しは前の
     /// フレームの絵 (効果を通した後) のままなので、書く前に読み直さないと、このフレームの最初の
     /// 描き切りが写し全体を書き戻し、効果が 2 回掛かる (#1655 と同じ形)。
-    @Test("前のフレームで取った窓に書いても、効果は 1 回だけ掛かる")
+    @Test("前のフレームで取ったウィンドウに書いても、効果は 1 回だけ掛かる")
     func aWindowKeptFromAnEarlierFrameWritesOnTheCurrentPicture() throws {
         func secondFrame(writes: Bool) throws -> LinearRGBA {
             let canvas = try PlacingSurface.graphics.make(gpu: try RenderDevice())

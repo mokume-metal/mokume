@@ -43,7 +43,7 @@ struct GlyphAtlasRebakeTests {
     /// 面を埋める字数の上限。**ここまでに届かなければ、検査の側が前提を外している。**
     private let fillerLimit = 400
 
-    /// 埋める字を置く位置。「M」の左の縦棒が、窓の中を上から下まで通る。
+    /// 埋める字を置く位置。「M」の左の縦棒が、ウィンドウの中を上から下まで通る。
     private let fillerX: Float = 8
     private let fillerBaseline: Float = 120
 

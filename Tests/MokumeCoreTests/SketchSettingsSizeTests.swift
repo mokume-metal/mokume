@@ -5,7 +5,7 @@ import Testing
 
 @testable import MokumeCore
 
-/// `SketchSettings.size(_:_:frameRate:title:)` ([#3361])。型の名前を繰り返さずに窓の大きさを書く
+/// `SketchSettings.size(_:_:frameRate:title:)` ([#3361])。型の名前を繰り返さずにウィンドウの大きさを書く
 /// 静的ファクトリで、`SketchSettings(width:height:frameRate:title:)` と同じ値を返す。
 ///
 /// [#3361]: https://github.com/mokume-metal/mokume/issues/3361
@@ -45,7 +45,7 @@ struct SketchSettingsSizeTests {
         #expect(SketchSettings.size(10, 20, title: "t").frameRate == 60)
     }
 
-    @Test("size は窓で開く設定で、fullScreen() は変わらない")
+    @Test("size はウィンドウで開く設定で、fullScreen() は変わらない")
     func fullScreenIsUntouched() {
         #expect(SketchSettings.size(800, 600).fullScreenDisplay == nil)
         #expect(SketchSettings.fullScreen().fullScreenDisplay == 1)

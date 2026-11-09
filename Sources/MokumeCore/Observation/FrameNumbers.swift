@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// 窓に出す警告の控え ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+/// ウィンドウに出す警告の控え ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
 ///
 /// 走らせている子 1 つが起動から言った警告の数と、最後の 1 行。**速さの数字と違い、新しい絵が来なくなっても
 /// 消さない** — `noLoop()` で絵を書かない間に言った警告は、次に絵を書くまで出ないが、出たら子が入れ替わるまで残る。
@@ -16,7 +16,7 @@ struct WarningSummary: Equatable {
     /// 片方だけ直したとき、載せる長さと出す長さが静かに食い違う。
     static let lineLimit = 140
 
-    /// 窓に載せ・出す 1 行にする。改行は畳み、長ければ末尾を省く (``lineLimit``)。
+    /// ウィンドウに載せ・出す 1 行にする。改行は畳み、長ければ末尾を省く (``lineLimit``)。
     ///
     /// **書き手が載せる前にも通す** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。警告の文面は
     /// 上限が無く (`Diagnostics.warn` に渡る文は呼ぶ側が決める)、面の属性は毎フレーム書き直すので、無制限の
@@ -27,22 +27,22 @@ struct WarningSummary: Equatable {
     }
 }
 
-/// 窓に出す数字。
+/// ウィンドウに出す数字。
 ///
-/// **速さ・時刻・予算を越えたフレームは、観測の応答と同じ集計器から採る** ([ADR-0030] 決定 7)。窓は読み手であり、
+/// **速さ・時刻・予算を越えたフレームは、観測の応答と同じ集計器から採る** ([ADR-0030] 決定 7)。ウィンドウは読み手であり、
 /// 自分で平均を取らない — 一致させるのは源であって経路ではない。**警告の件数と最後の 1 行だけは別の源**で、
 /// 観測の `warnings` が持っていく行の控え (``Diagnostics/takeUnreported()``) ではなく、
 /// ``Diagnostics/warningSummary()`` から採る ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
-/// 観測の側の控えは読むと空になるので、窓が同じ控えを読むと観測から行を奪う。
+/// 観測の側の控えは読むと空になるので、ウィンドウが同じ控えを読むと観測から行を奪う。
 ///
-/// ファイルの応答を窓に読ませる形は採らない。応答を組む手間 (メモリ・熱の問い合わせ)
+/// ファイルの応答をウィンドウに読ませる形は採らない。応答を組む手間 (メモリ・熱の問い合わせ)
 /// が毎フレームの描画に乗るためである。**同じ源を 2 人が読む**のであって、片方が
 /// もう片方の出力を読むのではない。
 ///
 /// ## 測れていない値は持たない
 ///
 /// 速さもフレーム時間も、起動直後と止めている間は測れていない。**それを 0 で表さない** —
-/// 測れた 0 と区別が付かなくなる。応答が鍵ごと省くのと同じ形にし、窓は「—」と描く。
+/// 測れた 0 と区別が付かなくなる。応答が鍵ごと省くのと同じ形にし、ウィンドウは「—」と描く。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 struct FrameNumbers: Equatable {
@@ -60,9 +60,9 @@ struct FrameNumbers: Equatable {
     var heaviestFrame: Int?
     /// このプロセス (走らせている子 1 つ) が起動から言った警告の数 (``Diagnostics/warningSummary()``)。
     ///
-    /// **速さの数字と違い、測れていないことは無い** (数え上げ) が、窓は古くなっても消さない
+    /// **速さの数字と違い、測れていないことは無い** (数え上げ) が、ウィンドウは古くなっても消さない
     /// (``SharedFrameStage/warnings``)。観測の `warnings` が持っていく行 (``Diagnostics/takeUnreported()``) とは
-    /// 別に数えるので、窓に出しても観測の側から行が消えない ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// 別に数えるので、ウィンドウに出しても観測の側から行が消えない ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
     var warningCount = 0
     /// 最後に言った警告の文面。**まだ何も言っていなければ `nil`。**
     var lastWarning: String?

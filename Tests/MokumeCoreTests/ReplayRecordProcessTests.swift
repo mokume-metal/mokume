@@ -9,12 +9,12 @@ import Testing
 
 /// 実プロセスの終わり方 — 終わりの合図で、完成した記録ができる ([#3570])。
 ///
-/// ランタイムを直に回す検査 (``ReplayRecordingRuntimeTests``) は `closePlugins()` を呼んで終える。ここは、窓を開く
+/// ランタイムを直に回す検査 (``ReplayRecordingRuntimeTests``) は `closePlugins()` を呼んで終える。ここは、ウィンドウを開く
 /// 実プロセス (ビルド済みの `reference-sketches`) を `MOKUME_RECORD` つきで起こし、`SIGTERM` / `SIGINT` を送って、
-/// 合図 → 終わりの経路 → 記録の閉じ、までが 1 本につながっていることを見る。つながっていなければ、窓を閉じる経路は
+/// 合図 → 終わりの経路 → 記録の閉じ、までが 1 本につながっていることを見る。つながっていなければ、ウィンドウを閉じる経路は
 /// 通っても、道具が子を止める経路 (`mokume run` の中継・見張りの停止) で完成品ができない。
 ///
-/// 窓を持てない環境 (GPU の無い CI) と、実行ファイルが隣に無いときは飛ばす。窓の × の経路は人の手で確かめる。
+/// ウィンドウを持てない環境 (GPU の無い CI) と、実行ファイルが隣に無いときは飛ばす。ウィンドウの × の経路は人の手で確かめる。
 ///
 /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
 @Suite(
@@ -22,7 +22,7 @@ import Testing
     .serialized,
     .enabled(
         if: RenderDevice.isAvailable && ReplayRecordProcess.executable != nil,
-        "窓を開ける GPU と、ビルド済みの reference-sketches が要る")
+        "ウィンドウを開ける GPU と、ビルド済みの reference-sketches が要る")
 )
 @MainActor
 struct ReplayRecordProcessTests {
@@ -66,7 +66,7 @@ struct ReplayRecordProcessTests {
         let data = try Data(contentsOf: destination)
         let record = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(record["complete"] as? Bool == true)
-        #expect(record["window"] as? Bool == true, "窓で回した")
+        #expect(record["window"] as? Bool == true, "ウィンドウで回した")
         let steps = try #require(record["steps"] as? [[String: Any]])
         #expect(!steps.isEmpty)
         let last = try #require(record["last"] as? [String: Any], "最後に描いた枚が書かれている")

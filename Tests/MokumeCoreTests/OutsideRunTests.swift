@@ -10,7 +10,7 @@ import Testing
 /// 落とさず、口ごとに 1 度だけ警告して安全な既定へ倒す (ADR-0020 決定 5・#2265)。
 ///
 /// **控えは検査ごとに差し替える** (``OutsideRun/current``)。プロセスの控えは並んで走る
-/// 検査と共有なので、そのままでは「1 度だけ」を他の検査と数え合う。装置にも窓にも触らない
+/// 検査と共有なので、そのままでは「1 度だけ」を他の検査と数え合う。装置にもウィンドウにも触らない
 /// ので、この suite にゲートは付かない。
 @MainActor
 @Suite("走っている実行の外から呼んだ語彙")
@@ -155,7 +155,7 @@ struct OutsideRunTests {
         }
     }
 
-    @Test("走る前に画素を読むと、落ちずに大きさ 0 の窓が返る")
+    @Test("走る前に画素を読むと、落ちずに大きさ 0 のウィンドウが返る")
     func pixelsBeforeTheRunAreAnEmptyWindow() {
         let log = OutsideRun()
         OutsideRun.$current.withValue(log) {

@@ -7,7 +7,7 @@ import simd
 @testable import MokumeCore
 
 /// 角度の単位を直す口と、値を別の範囲へ写す口 ([#883])、間を取る口と締める口 ([#1281])、
-/// 範囲の中の割合を出す口と窓・締め・曲線を 1 本で済ませる口 ([#1283])。
+/// 範囲の中の割合を出す口とウィンドウ・締め・曲線を 1 本で済ませる口 ([#1283])。
 ///
 /// 見るのは 4 つ。**手本 (`smoothstep` は断片の式) と同じ答えを出すこと**、**端が端へ
 /// ちょうど戻ること** ([#1453]・[#1476])、**締めない口は範囲の外を丸めないこと**、そして
@@ -173,7 +173,7 @@ struct NumberSurfaceTests {
         }
 
         /// [#1283] の `Cast` が書いていた `Score.smooth(Score.window(local, 2.4, 5.4))` —
-        /// 窓・締め・曲線の 2 段を 1 本で。
+        /// ウィンドウ・締め・曲線の 2 段を 1 本で。
         ///
         /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
         static func entrance(at local: Float) -> Float { smoothstep(2.4, 5.4, local) }
@@ -200,7 +200,7 @@ struct NumberSurfaceTests {
 
         static func turn(from start: Float, to stop: Float) -> Float { lerpAngle(start, stop, 0.5) }
 
-        /// [#1283] の `Tempo` が書いていた `Ease.ramp(beat, from, to)` — 窓を 0…1 へ写して締める。
+        /// [#1283] の `Tempo` が書いていた `Ease.ramp(beat, from, to)` — 区間を 0…1 へ写して締める。
         ///
         /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
         static func ramp(_ beat: Float, from: Float, to: Float) -> Float {
@@ -788,9 +788,9 @@ struct NumberSurfaceTests {
         #expect(constrain(Float.nan, 10, 0) == 0)
     }
 
-    // MARK: - 窓を 0…1 へ写す
+    // MARK: - ウィンドウを 0…1 へ写す
 
-    @Test("窓の中の位置を 0…1 の割合で返し、端はちょうど 0 と 1 になる")
+    @Test("ウィンドウの中の位置を 0…1 の割合で返し、端はちょうど 0 と 1 になる")
     func normGivesTheProportion() {
         #expect(norm(20, 0, 80) == 0.25)
         #expect(norm(0, 0, 80) == 0)
@@ -827,7 +827,7 @@ struct NumberSurfaceTests {
         #expect(norm(Float.infinity, 0, 80) == 0)
     }
 
-    // MARK: - 窓・締め・曲線を 1 本で
+    // MARK: - ウィンドウ・締め・曲線を 1 本で
 
     /// 値は 2 進で閉じる点だけを選んであるので、完全一致で見る。
     @Test("断片 (MSL) の smoothstep と同じ式の値を返す")
@@ -837,7 +837,7 @@ struct NumberSurfaceTests {
         #expect(smoothstep(2, 6, 3) == 0.15625)
     }
 
-    @Test("窓の外と縁は締める")
+    @Test("ウィンドウの外と縁は締める")
     func smoothstepClampsOutsideTheWindow() {
         #expect(smoothstep(2, 6, 1) == 0)
         #expect(smoothstep(2, 6, 2) == 0)
@@ -845,9 +845,9 @@ struct NumberSurfaceTests {
         #expect(smoothstep(2, 6, 9) == 1)
     }
 
-    /// GLSL の仕様は逆向きの窓を未定義とするが、MSL のヘッダは場合分けせずに同じ式を
+    /// GLSL の仕様は逆向きのウィンドウを未定義とするが、MSL のヘッダは場合分けせずに同じ式を
     /// 書いている。参照スケッチの断片もそれに頼る (`BandAndPattern` の `smoothstep(1.0, 0.7, …)`)。
-    @Test("逆向きの窓は入れ替えず、下り坂になる")
+    @Test("逆向きのウィンドウは入れ替えず、下り坂になる")
     func aReversedWindowDescends() {
         #expect(smoothstep(6, 2, 3) == 0.84375)
         #expect(smoothstep(6, 2, 3) == 1 - smoothstep(2, 6, 3))
@@ -859,7 +859,7 @@ struct NumberSurfaceTests {
     /// 断片の `step(edge, x)` と同じ 1 にする ([#1283] の判断 A)。
     ///
     /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
-    @Test("幅 0 の窓は段になる — 縁より下は 0、縁から上は 1")
+    @Test("幅 0 のウィンドウは段になる — 縁より下は 0、縁から上は 1")
     func anEmptyWindowIsAStep() {
         #expect(smoothstep(3, 3, 2) == 0)
         #expect(smoothstep(3, 3, 3) == 1)
@@ -877,11 +877,11 @@ struct NumberSurfaceTests {
         #expect(smoothstep(-Float.infinity, 1, 0.5) == 0)
     }
 
-    /// 窓の幅 (`edge1 - edge0`) が `Float` で溢れると、そのまま割れば窓の中の値が 0 に潰れ、
+    /// ウィンドウの幅 (`edge1 - edge0`) が `Float` で溢れると、そのまま割ればウィンドウの中の値が 0 に潰れ、
     /// 縁では `∞ ÷ ∞` の NaN になる。`map` が塞いだのと同じ穴である ([#1476])。
     ///
     /// [#1476]: https://github.com/mokume-metal/mokume/issues/1476
-    @Test("幅が溢れる窓でも、真ん中は真ん中へ、縁は縁へ")
+    @Test("幅が溢れるウィンドウでも、真ん中は真ん中へ、縁は縁へ")
     func anOverflowingWindowKeepsItsShape() {
         #expect(smoothstep(-3e38, 3e38, 0) == 0.5)
         #expect(smoothstep(-3e38, 3e38, 3e38) == 1)
@@ -891,10 +891,10 @@ struct NumberSurfaceTests {
     }
 
     @Test(
-        "幅が溢れる窓でも、窓の中の値は 0…1 に収まる",
+        "幅が溢れるウィンドウでも、ウィンドウの中の値は 0…1 に収まる",
         arguments: RandomTests.overflowingSpans, unitAmounts)
     func anOverflowingWindowStaysInTheUnitRange(_ span: (low: Float, high: Float), _ amount: Float) {
-        // 窓の中の値。幅を作らずに両端から直に混ぜれば、幅が溢れる窓の中でも作れる
+        // ウィンドウの中の値。幅を作らずに両端から直に混ぜれば、幅が溢れるウィンドウの中でも作れる
         let inside = (1 - amount) * span.low + amount * span.high
         for (edge0, edge1) in [(span.low, span.high), (span.high, span.low)] {
             let eased = smoothstep(edge0, edge1, inside)
@@ -1029,7 +1029,7 @@ struct NumberValueWarningTests {
     /// ([#1283] の判断 A)。
     ///
     /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
-    @Test("smoothstep の幅 0 の窓は、注意を言わない")
+    @Test("smoothstep の幅 0 のウィンドウは、注意を言わない")
     func anEmptySmoothstepWindowStaysQuiet() {
         #expect(smoothstep(3, 3, 2) == 0)
         #expect(smoothstep(3, 3, 4) == 1)

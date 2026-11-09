@@ -17,8 +17,8 @@ import Testing
 /// ([#1386](https://github.com/mokume-metal/mokume/issues/1386))。
 ///
 /// 出来事は**外から送る区画** (`.mokume/input`、`Schemas/input-request.schema.json`) から
-/// 送る。窓からの実操作も同じ ``InputState`` を通るので、ここで配り分けが合っていれば
-/// 窓でも合っている。
+/// 送る。ウィンドウからの実操作も同じ ``InputState`` を通るので、ここで配り分けが合っていれば
+/// ウィンドウでも合っている。
 @Suite(
     "コールバックへの配り分け",
     .enabled(
@@ -303,8 +303,8 @@ struct CallbackDeliveryTests {
     }
 
     /// **`keyPressed()` は押した 1 回だけ呼ばれる** ([#2400](https://github.com/mokume-metal/mokume/issues/2400))。
-    /// 窓の実操作でも OS のキーリピートは同じ形 (`isRepeat`) で届くので、外から送った列で
-    /// 窓の振る舞いを見られる ([#1365](https://github.com/mokume-metal/mokume/issues/1365))。
+    /// ウィンドウの実操作でも OS のキーリピートは同じ形 (`isRepeat`) で届くので、外から送った列で
+    /// ウィンドウの振る舞いを見られる ([#1365](https://github.com/mokume-metal/mokume/issues/1365))。
     ///
     /// 止めた側も見るのは、止めている間は `draw()` が呼ばれず、前のフレームと比べる
     /// 形が使えないためである。コールバックだけで閉じていれば、そこでも同じに効く。

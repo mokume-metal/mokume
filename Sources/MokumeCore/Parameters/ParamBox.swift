@@ -6,9 +6,9 @@ import Observation
 
 /// 宣言した値の置き場。``Param(name:)`` の展開が作るもので、手で書くことはない。
 ///
-/// **値の実体はここ 1 つだけである** ([ADR-0013] 決定 3)。窓のつまみも、外からの
+/// **値の実体はここ 1 つだけである** ([ADR-0013] 決定 3)。ウィンドウのつまみも、外からの
 /// 書き込みも、保存からの復元も、この 1 つを読み書きする入口であって値の複製を
-/// 持たない。変更の追跡は Observation に載せる (同 決定 1) ので、窓の更新のために
+/// 持たない。変更の追跡は Observation に載せる (同 決定 1) ので、ウィンドウの更新のために
 /// 登録も通知も書かない。
 ///
 /// ## `@Observable` を手で展開している ([#1782])
@@ -23,7 +23,7 @@ import Observation
 /// **値が同じ再代入は通知しない** ([#2382](https://github.com/mokume-metal/mokume/issues/2382))。
 /// `Value` は `Equatable` を要求しないので、等しさは**面に出る表現** (`ParamValue`) で見る — 展開が
 /// `Equatable` な値にだけやる `shouldNotifyObservers` と同じ形である。通知しないだけで、値は置く
-/// (面に出ない部分を持つ自作の型の値や `-0.0` を落とさない)。通知は窓の更新・応答の書き直し
+/// (面に出ない部分を持つ自作の型の値や `-0.0` を落とさない)。通知はウィンドウの更新・応答の書き直し
 /// (`mokume watch` の下では毎フレーム)・保存の印のすべてを起こすので、`size = min(size, 100)` の
 /// ように値を保つ書き方は、これらを毎フレーム起こしていた。
 ///
@@ -75,7 +75,7 @@ public final class ParamBox<Value> {
     /// 1 度だけ標準エラーへ名乗る。置かなかったときは変化の通知も出さない (値が動いていない)。
     /// 有限の値は範囲の外でも素通しする ([ADR-0030] 決定 3)。
     ///
-    /// **面に出る表現が今と同じ値を書いたときも、変化の通知は出さない** (値は置く)。窓の更新・応答の
+    /// **面に出る表現が今と同じ値を書いたときも、変化の通知は出さない** (値は置く)。ウィンドウの更新・応答の
     /// 書き直し・保存を起こさない ([#2382](https://github.com/mokume-metal/mokume/issues/2382))。
     ///
     /// この関所が塞ぐのは、値が**変わる**入口 (setter・`_modify`・``write(_:)``) である。
@@ -161,10 +161,10 @@ public final class ParamBox<Value> {
     let bornValue: ParamValue
     /// 外からの書き込みを収める幅。**検めた後の値** — 片方の端だけが非有限の範囲 (`0...Double.infinity`)
     /// はそのまま持って有限の端へ収め、両端とも非有限なら収める相手が無いので `nil` になる。端が非有限の
-    /// 範囲は、どちらでも面 (応答の `min` / `max`・窓のつまみ) には出さない (``declaration``・
+    /// 範囲は、どちらでも面 (応答の `min` / `max`・ウィンドウのつまみ) には出さない (``declaration``・
     /// [#2475](https://github.com/mokume-metal/mokume/issues/2475))。
     public let range: ParamRange?
-    /// 書かれたが、端が非有限なので面に出さない範囲。窓がつまみを出さない理由を言い分けるのに渡す。
+    /// 書かれたが、端が非有限なので面に出さない範囲。ウィンドウがつまみを出さない理由を言い分けるのに渡す。
     private let unshownRange: ParamRange?
     /// 許した候補。
     public let choices: [String]?
@@ -306,7 +306,7 @@ extension ParamBox: DeclaredParam {
 
     /// 面から見えるいまの姿。
     public var declaration: ParamDeclaration {
-        // 端が非有限の範囲は面に出さない (収めには使う)。窓がつまみを出さない理由を言い分けられる
+        // 端が非有限の範囲は面に出さない (収めには使う)。ウィンドウがつまみを出さない理由を言い分けられる
         // よう、書かれた範囲は別に渡す
         ParamDeclaration(
             name: name, value: toParam(value), range: unshownRange == nil ? range : nil,
@@ -353,7 +353,7 @@ extension ParamBox: DeclaredParam {
 
     /// 範囲へ収める。範囲が意味を持たない型 (真偽・文字・色) と、範囲を書いていない値はそのまま。
     ///
-    /// **組は成分ごとに、宣言した 1 つの範囲へ独立に収める。** 窓の成分スライダーが
+    /// **組は成分ごとに、宣言した 1 つの範囲へ独立に収める。** ウィンドウの成分スライダーが
     /// 同じ 1 つの範囲で縛っているので、外から書ける幅をそれと揃える
     /// ([#859](https://github.com/mokume-metal/mokume/issues/859))。
     private func clamped(_ incoming: ParamValue) -> (ParamValue, ParamOutcome) {

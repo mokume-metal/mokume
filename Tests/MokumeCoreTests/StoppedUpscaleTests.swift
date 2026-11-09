@@ -16,7 +16,7 @@ import Testing
 ///
 /// 止まっている間のコールバックは、面の上では持ち越しの区間 (``Canvas/carriesOver``) である。
 /// ここではその印を立てて模す (出す先を読む口が頭で追い付く形)。ランタイムがコールバックを配った
-/// 直後に追い付く形と、窓・共有の面が読む出す先は `StoppedUpscaleOutletsTests`、ランタイムを通す
+/// 直後に追い付く形と、ウィンドウ・共有の面が読む出す先は `StoppedUpscaleOutletsTests`、ランタイムを通す
 /// `save()` は `EffectStoppedChangeTests` が見る。
 ///
 /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882

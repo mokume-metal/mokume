@@ -136,7 +136,7 @@ struct CameraTests {
             return try #require(centroid(of: pixels(of: canvas))?.y)
         }
 
-        // 窓を画面の下側 (+y) へずらす = 被写体は窓の中で上に来る
+        // ウィンドウを画面の下側 (+y) へずらす = 被写体はウィンドウの中で上に来る
         #expect(try centroidY(shift: 12) < centroidY(shift: 0) - 8)
         #expect(try centroidY(shift: -12) > centroidY(shift: 0) + 8)
     }

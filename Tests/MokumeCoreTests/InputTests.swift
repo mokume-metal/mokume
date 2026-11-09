@@ -225,7 +225,7 @@ struct InputCallbackTests {
 
     @Test("押下を伴わない解放は、クリックにならない")
     func doesNotClickWithoutAPress() {
-        // 窓の外で押して中で離した、溜める上限で押下だけ捨てられた、など
+        // ウィンドウの外で押して中で離した、溜める上限で押下だけ捨てられた、など
         #expect(callbacks(from: [.mouseUp(x: 10, y: 10, button: .left)]) == [.mouseReleased])
     }
 
@@ -265,7 +265,7 @@ struct InputCallbackTests {
     /// 読むと、1 フレームに 3 件届いたとき `a` + `(a+b)` + `(a+b+c)` = `3a + 2b + c` を
     /// 足し込む形になる。欲しいのは `a+b+c` である。
     ///
-    /// **フレームに 1 件しか届かない環境では、間違えた側も正しく動く** ので、窓を触って
+    /// **フレームに 1 件しか届かない環境では、間違えた側も正しく動く** ので、ウィンドウを触って
     /// 確かめている限り気付けない。外から送る経路では 1 回の要求がまとめて 1 フレームへ
     /// 入るので、そこで初めて出る。
     @Test("まとめて届いても、配られた量の合計は送った合計と一致する")
@@ -356,7 +356,7 @@ struct InputCallbackTests {
             ])
     }
 
-    /// **窓にしか無い情報を使っていない。** 窓は押している間の移動を `mouseDragged` と
+    /// **ウィンドウにしか無い情報を使っていない。** ウィンドウは押している間の移動を `mouseDragged` と
     /// して拾うが、合流点へ流れるのは `.mouseMoved` だけなので、外から送れるものと
     /// 同じ材料 (押下状態) で分けている。
     @Test("引きずりの判定は、外から送れる材料だけで決まる")
@@ -541,10 +541,10 @@ struct NonFiniteInputTests {
         #expect(state.warnings.hasWarned(.nonFiniteEvent))
     }
 
-    /// **押下と解放は捨てない** — 落とすのは位置だけで、釦の状態は残す (#935 の「どの種別も状態だけは
-    /// 残す」)。押下中に届いた解放を丸ごと捨てると、釦が押されたまま残り、後の移動が引きずりとして
+    /// **押下と解放は捨てない** — 落とすのは位置だけで、ボタンの状態は残す (#935 の「どの種別も状態だけは
+    /// 残す」)。押下中に届いた解放を丸ごと捨てると、ボタンが押されたまま残り、後の移動が引きずりとして
     /// 配られ足し込まれ続ける。
-    @Test("押下中に位置が有限でない解放が届いても、釦は離れ、位置だけが前のまま残る")
+    @Test("押下中に位置が有限でない解放が届いても、ボタンは離れ、位置だけが前のまま残る")
     func aReleaseWithANonFinitePositionStillReleasesTheButton() {
         let state = InputState()
         _ = run(state, [.mouseDown(x: 10, y: 20, button: .left)])
@@ -552,7 +552,7 @@ struct NonFiniteInputTests {
 
         let released = run(state, [.mouseUp(x: -.infinity, y: 0, button: .left)])
 
-        #expect(!state.isMouseDown, "釦が押されたまま残った")
+        #expect(!state.isMouseDown, "ボタンが押されたまま残った")
         #expect(state.x == 10 && state.y == 20, "有限でない位置が当たった")
         #expect(readersAreFinite(state))
         #expect(released == [.mouseReleased, .mouseClicked], "\(released)")
@@ -567,7 +567,7 @@ struct NonFiniteInputTests {
 
     /// 押下を丸ごと捨てると、後の有限の解放が `mouseReleased` だけを配り、押した・クリックしたことが
     /// どこにも残らない。
-    @Test("位置が有限でない押下も釦は押され、後の解放と組んでクリックになる")
+    @Test("位置が有限でない押下もボタンは押され、後の解放と組んでクリックになる")
     func aPressWithANonFinitePositionStillPresses() {
         let state = InputState()
         _ = run(state, [.mouseMoved(x: 10, y: 20)])
@@ -591,7 +591,7 @@ struct NonFiniteInputTests {
     }
 
     /// `MouseButton` は綴りを持たないので、出来事をそのまま埋めると `MouseButton(rawValue: 0)` と出る。
-    @Test("注意の文面は、釦を名前 (名前の無い番号は番号) で書く")
+    @Test("注意の文面は、ボタンを名前 (名前の無い番号は番号) で書く")
     func noticesSpellTheButton() {
         let state = InputState()
         _ = run(state, [.mouseDown(x: .nan, y: 0, button: .left)])
@@ -710,7 +710,7 @@ struct InputInboxTests {
         #expect(state.isMouseDown)
     }
 
-    /// 窓口から入力を送れる以上、作業ディレクトリに要求が残っているのが普通の状態で
+    /// MCP サーバから入力を送れる以上、作業ディレクトリに要求が残っているのが普通の状態で
     /// ある。`watch` は保存のたびにプロセスを差し替えるので、残った要求が流れ直すと
     /// **保存するたびに過去の入力が再生される** ([#1143](https://github.com/mokume-metal/mokume/issues/1143))。
     @Test("起動し直すたびに、応えた入力が流れ直さない")
@@ -802,7 +802,7 @@ struct InputInboxTests {
         #expect(report.ignored == 0)
         state.beginFrame()
         #expect(state.isMouseDown)
-        #expect(state.button == .left, "button の null は主釦")
+        #expect(state.button == .left, "button の null は主ボタン")
 
         // 量の null は 0 (欄を書かなかった 1 件と同じ量になる)
         let omitted = InputState()
@@ -887,7 +887,7 @@ struct InputInboxTests {
         let facet = try makeFacet()
         let inbox = InputInbox(directory: facet)
         let state = InputState()
-        // button は 0 (主釦 = 左)・dx dy は 0 (動かない)・characters は空・isRepeat は false
+        // button は 0 (主ボタン = 左)・dx dy は 0 (動かない)・characters は空・isRepeat は false
         try send(
             #"{"id":"a1","events":[{"type":"mouseDown","x":7,"y":9},{"type":"scrolled"},{"type":"keyDown","code":49}]}"#,
             to: facet)
@@ -1111,7 +1111,7 @@ struct SketchInputTests {
 
     /// 観測がまだ 1 枚も描いていないスケッチを叩いたときの 1 枚も、通常のフレームと
     /// 同じ手順で描かれる ([#808](https://github.com/mokume-metal/mokume/issues/808))。
-    /// **配布を片方の経路にだけ書くと、外から観測したときだけ飛ばない**という、窓では
+    /// **配布を片方の経路にだけ書くと、外から観測したときだけ飛ばない**という、ウィンドウでは
     /// 再現しない壊れ方になる。
     @Test("観測が最初に叩いた 1 枚でも、コールバックが飛ぶ")
     func deliversOnTheFirstObservedFrame() throws {

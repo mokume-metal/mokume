@@ -293,7 +293,7 @@ struct PixelsTests {
     // MARK: - 写し (#753)
 
     /// 完了条件「読まないスケッチは 1 バイトも払わない」。描画先は GPU 専用の面で、
-    /// 画素の窓はその写しである。写しは画素を頼まれたときにだけ作られる。
+    /// 画素のビューはその写しである。写しは画素を頼まれたときにだけ作られる。
     @Test("画素を触らない面は、何フレーム描いても写しを持たない")
     func aCanvasThatNeverReadsPixelsHasNoMirror() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
@@ -732,13 +732,13 @@ struct PixelsTests {
             viaRead = gpu.settleCalls - before
         }
         // 画素の数は 64 と 2304。待ちの頼みは、画素の数ではなく状態の変わり目の数で決まる
-        #expect(viaWindow <= 1, "窓の読み書きが画素ごとに決着を頼んでいる: \(viaWindow) 回 / \(size * size) 画素")
+        #expect(viaWindow <= 1, "ビューの読み書きが画素ごとに決着を頼んでいる: \(viaWindow) 回 / \(size * size) 画素")
         #expect(viaGetSet <= 1, "get / set が画素ごとに決着を頼んでいる: \(viaGetSet) 回 / \(size * size) 画素")
         #expect(viaRead <= 1, "読むだけの口が画素ごとに決着を頼んでいる: \(viaRead) 回 / \(size * size) 画素")
     }
 
     /// 決着を省く控えは、**新しい投入があれば捨てる**。投入を見落とすと、GPU がまだ書いている写しを
-    /// 読む (または古い絵を返す)。窓を取って読んだ後に描き足して読み直すと、新しい投入ぶんの決着が
+    /// 読む (または古い絵を返す)。ビューを取って読んだ後に描き足して読み直すと、新しい投入ぶんの決着が
     /// 頼まれ、描き足した絵が見える。
     @Test("読んだ後に描き足して読み直すと、新しい投入を待って新しい絵が見える")
     func aNewSubmissionIsWaitedForBeforeTheNextRead() throws {
@@ -765,8 +765,8 @@ struct PixelsTests {
     }
 
     /// 決着を省く控えは、**写しが最新でなくなったら捨てる**。GPU は終わっているのに写しが古い
-    /// (面を塗り直して決着を取った後) とき、前の窓をそのまま返すと塗り直す前の絵が読める。
-    @Test("面を塗り直して決着を取っても、窓を取り直すと塗り直した絵が読める")
+    /// (面を塗り直して決着を取った後) とき、前のビューをそのまま返すと塗り直す前の絵が読める。
+    @Test("面を塗り直して決着を取っても、ビューを取り直すと塗り直した絵が読める")
     func aStaleMirrorIsReadBackEvenWhenTheGPUIsAlreadySettled() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         try canvas.draw { canvas.background(red) }
@@ -783,9 +783,9 @@ struct PixelsTests {
         #expect(target.pixels[1, 1] == green, "決着が済んでいても、写しが古ければ読み戻して新しい絵を返す")
     }
 
-    /// 窓の許可は、控えた窓を返しても**書く時点**で見る (#1672)。区間の中で取った窓を、区間の外で
-    /// 書いても通らない。控えの窓が許可の答えまで持ち越さないことを、同じ窓の書き込みの前後で見る。
-    @Test("控えた窓でも、書く許可は書く時点で見る")
+    /// ビューの許可は、控えたビューを返しても**書く時点**で見る (#1672)。区間の中で取ったビューを、区間の外で
+    /// 書いても通らない。控えのビューが許可の答えまで持ち越さないことを、同じビューの書き込みの前後で見る。
+    @Test("控えたビューでも、書く許可は書く時点で見る")
     func aReusedWindowStillAsksWhetherWritingIsAllowedAtWriteTime() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         var window: Pixels?
@@ -794,7 +794,7 @@ struct PixelsTests {
             window = canvas.pixels
             window?[1, 1] = red
         }
-        // フレームの外。同じ面から取り直した窓も、取っておいた窓も、書けない
+        // フレームの外。同じ面から取り直したビューも、取っておいたビューも、書けない
         let late = canvas.pixels
         late[2, 2] = red
         window?[3, 3] = red
@@ -802,13 +802,13 @@ struct PixelsTests {
         try canvas.draw {
             #expect(canvas.pixels[1, 1] == red, "区間の中で書いた画素が載っていない")
             #expect(canvas.pixels[2, 2] == black, "区間の外で書いた画素が通った")
-            #expect(canvas.pixels[3, 3] == black, "取っておいた窓が、区間の外で書けた")
+            #expect(canvas.pixels[3, 3] == black, "取っておいたビューが、区間の外で書けた")
         }
     }
 
-    /// 窓は面より長く生きられる (写しを抱える) が、書く許可を尋ねる先の面は解放済みである。
+    /// ビューは面より長く生きられる (写しを抱える) が、書く許可を尋ねる先の面は解放済みである。
     /// 解放済みの面を触らず、何も許さない。
-    @Test("面が解放された後に、取っておいた窓へ書いても落ちず、書けない")
+    @Test("面が解放された後に、取っておいたビューへ書いても落ちず、書けない")
     func aWindowOutlivingItsCanvasRefusesToWrite() throws {
         var canvas: Canvas? = try makeCanvas(width: 8, height: 8)
         var window: Pixels?
@@ -820,6 +820,6 @@ struct PixelsTests {
 
         let kept = try #require(window)
         kept[1, 1] = red
-        #expect(kept[1, 1] == black, "解放された面の窓へ書けた")
+        #expect(kept[1, 1] == black, "解放された面のビューへ書けた")
     }
 }

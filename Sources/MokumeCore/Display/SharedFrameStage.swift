@@ -7,11 +7,11 @@ import Metal
 import MokumeDiagnostics
 import QuartzCore
 
-/// 別のプロセスが差し出している絵を、1 つの窓に出す台。
+/// 別のプロセスが差し出している絵を、1 つのウィンドウに出す台。
 ///
 /// ## なぜ台を分けるのか
 ///
-/// 道具は窓を 2 種類出す — 何も載せない**作品の窓** (``SharedFrameWindow``) と、制作を
+/// 道具はウィンドウを 2 種類出す — 何も載せない**作品のウィンドウ** (``SharedFrameWindow``) と、制作を
 /// 助けるものが載る**プレビュー** (``SharedFramePreview``)。両者の違いは**見た目だけ**で、
 /// 区画の見張り方も面の引き方も差し出し方も同じである ([ADR-0032] 決定 1)。
 ///
@@ -32,54 +32,54 @@ import QuartzCore
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
 final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
-    /// 窓の見た目。**台が決めないもの**をここへ集める。
+    /// ウィンドウの見た目。**台が決めないもの**をここへ集める。
     struct Look {
-        /// 窓の名前。
+        /// ウィンドウの名前。
         let title: String
-        /// 位置を覚えるときの名前。**窓ごとに別にする** — 同じ名前だと互いの位置を
+        /// 位置を覚えるときの名前。**ウィンドウごとに別にする** — 同じ名前だと互いの位置を
         /// 上書きし合い、2 枚が重なって開く。
         let autosaveName: String
         /// 覚えている枠が無いときの大きさ。
         let defaultSize: NSSize
         /// 覚えている枠が無いとき、中央からどれだけずらすか。
         ///
-        /// **2 枚が重なって開くのを避ける。** 作品の窓とプレビューは同じ大きさで中央へ
-        /// 出るので、ずらさないと**寸分違わず重なり**、窓が 1 つしか無いように見える (実測)。
+        /// **2 枚が重なって開くのを避ける。** 作品のウィンドウとプレビューは同じ大きさで中央へ
+        /// 出るので、ずらさないと**寸分違わず重なり**、ウィンドウが 1 つしか無いように見える (実測)。
         /// 一度動かせば以後は覚えた位置が使われるので、効くのは初めての 1 回だけである。
         var nudge: NSSize = .zero
-        /// 差し出し元が頼む窓の大きさ (描く大きさ × ``SketchSettings/windowScale``) に従うか。
+        /// 差し出し元が頼むウィンドウの大きさ (描く大きさ × ``SketchSettings/windowScale``) に従うか。
         ///
-        /// **作品の窓だけが従う。** 作品の窓の見え方は直に走らせたときと同じである
-        /// ([ADR-0032] 決定 1)。プレビューは手元に置く道具の窓で、作品の宣言に大きさを
+        /// **作品のウィンドウだけが従う。** 作品のウィンドウの見え方は直に走らせたときと同じである
+        /// ([ADR-0032] 決定 1)。プレビューは手元に置く道具のウィンドウで、作品の宣言に大きさを
         /// 決めさせる理由が無い。
         ///
         /// 従うのは指定が前と変わったときだけで、変わらなければ手で動かした大きさと位置が
         /// 残る (``WindowPlacement/honour(_:in:autosaveName:defaults:warn:)``)。
         ///
-        /// **全画面の頼み (``SketchSettings/fullScreen(_:)``) にも、同じ窓だけが同じ規律で従う**
+        /// **全画面の頼み (``SketchSettings/fullScreen(_:)``) にも、同じウィンドウだけが同じ規律で従う**
         /// (``SharedFrameStage/followRequestedFullScreen(of:)``・[#2188](https://github.com/mokume-metal/mokume/issues/2188))。
         var followsRequestedSize = false
-        /// 作品の窓が頼まれた大きさで置き直されたとき、その真下へ置き直すか。
+        /// 作品のウィンドウが頼まれた大きさで置き直されたとき、その真下へ置き直すか。
         ///
-        /// **プレビューだけが置き直す。** 作品の窓が描く大きさ × 倍率で開くので、既定の
-        /// 大きさを前提にした初めの位置 (``nudge``) のままだと、作品の窓が高いスケッチで
+        /// **プレビューだけが置き直す。** 作品のウィンドウが描く大きさ × 倍率で開くので、既定の
+        /// 大きさを前提にした初めの位置 (``nudge``) のままだと、作品のウィンドウが高いスケッチで
         /// 2 枚が重なる (``WindowPlacement/placeBeneathArtwork(_:window:autosaveName:defaults:)``)。
         var placesBeneathRequestedArtwork = false
-        /// スケッチがファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) を頼んだら、この窓が出すか。
+        /// スケッチがファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) を頼んだら、このウィンドウが出すか。
         ///
-        /// **作品の窓だけが出す** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。作品の窓とプレビューは
-        /// 同じ面の頼みを読むので、両方が出すとパネルが 2 枚出る。作品の窓は直に走らせた窓と同じ見え方で、
+        /// **作品のウィンドウだけが出す** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。作品のウィンドウとプレビューは
+        /// 同じ面の頼みを読むので、両方が出すとパネルが 2 枚出る。作品のウィンドウは直に走らせたウィンドウと同じ見え方で、
         /// ダイアログもそこに出る。
         var showsSelectionDialogs = false
     }
 
     /// × を押された人に問う言葉。
     ///
-    /// **台は言葉を決めない。** 何と言うかは窓を持つ側 (道具) の仕事で、ここは出し方だけを
+    /// **台は言葉を決めない。** 何と言うかはウィンドウを持つ側 (道具) の仕事で、ここは出し方だけを
     /// 持つ — 端末に出ている言葉と揃える必要があるからである
     /// (``SharedFramePreview/report(_:spinning:)`` と同じ規律)。
     ///
-    /// 実体は ``MokumeCore/CloseQuestion``。走っているスケッチ自身の窓
+    /// 実体は ``MokumeCore/CloseQuestion``。走っているスケッチ自身のウィンドウ
     /// (``SketchApplication``) も同じ問いを出すので、型と出し方はそちらが持つ。
     typealias CloseQuestion = MokumeCore.CloseQuestion
 
@@ -102,9 +102,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         let height: Int
         /// 番号ごとのテクスチャ。引けなかった面は入らない。
         let frames: [UInt32: Frame]
-        /// 窓を開く倍率。**名乗らない子 (古いライブラリ) なら `nil`** で、窓の大きさに触らない。
+        /// ウィンドウを開く倍率。**名乗らない子 (古いライブラリ) なら `nil`** で、ウィンドウの大きさに触らない。
         let windowScale: Float?
-        /// 作品の窓を全画面にするよう頼むディスプレイ。**頼まない子・名乗らない子 (古いライブラリ) なら `nil`**
+        /// 作品のウィンドウを全画面にするよう頼むディスプレイ。**頼まない子・名乗らない子 (古いライブラリ) なら `nil`**
         /// ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。
         let fullScreenDisplay: FullScreenDisplay?
         /// 目録を置いた子の番号。**名乗らない子 (古いライブラリ) なら `nil`** (#2982)。
@@ -121,30 +121,30 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         var screen: @MainActor (FullScreenDisplay) -> NSScreen? = { request in
             NSScreen.screens.first { $0.screenID == request.screenID }
         }
-        /// 窓がいる画面の識別子 (`CGDirectDisplayID`)。画面に出ていなければ `nil`。
+        /// ウィンドウがいる画面の識別子 (`CGDirectDisplayID`)。画面に出ていなければ `nil`。
         var windowScreenID: @MainActor (NSWindow) -> UInt32? = { $0.screen?.screenID }
-        /// 窓がいま全画面か。
+        /// ウィンドウがいま全画面か。
         var isFullScreen: @MainActor (NSWindow) -> Bool = { $0.styleMask.contains(.fullScreen) }
-        /// 窓を全画面にする。**窓が画面に出てから呼ぶ** (`toggleFullScreen` は出ている窓にしか効かない)。
+        /// ウィンドウを全画面にする。**ウィンドウが画面に出てから呼ぶ** (`toggleFullScreen` は出ているウィンドウにしか効かない)。
         var enter: @MainActor (NSWindow) -> Void = { $0.toggleFullScreen(nil) }
-        /// 全画面の窓を抜けさせる。抜け終わりは窓の delegate が受ける (``SharedFrameStage/didExitFullScreen()``)。
+        /// 全画面のウィンドウを抜けさせる。抜け終わりはウィンドウの delegate が受ける (``SharedFrameStage/didExitFullScreen()``)。
         var leave: @MainActor (NSWindow) -> Void = { $0.toggleFullScreen(nil) }
     }
 
     /// 全画面に触れる口。**検査から差し替える。**
     var fullScreen = FullScreenAccess()
-    /// 窓へ当てた全画面の頼み。**同じ頼みを 2 度当てないための覚えで、この台が生きている間 (見張り 1 回の
+    /// ウィンドウへ当てた全画面の頼み。**同じ頼みを 2 度当てないための覚えで、この台が生きている間 (見張り 1 回の
     /// 間) だけ持つ** ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。
     ///
     /// ``WindowPlacement/honour(_:in:autosaveName:defaults:warn:)`` と違い `UserDefaults` には残さない —
-    /// 全画面と置いた画面は窓の寿命に紐づく ([ADR-0032] 文脈) ので、見張りを止めて起こし直したら、また頼みどおりに
-    /// 出す。手で全画面を抜けた窓へ、同じ頼みの世代が来ても戻さないのは、この覚えが頼みそのものを持つからで、
-    /// 窓がいま全画面かは見ない。頼みが無い世代が来たら捨てる (あとで同じ頼みが戻ってきたら、変わったと読む)。
+    /// 全画面と置いた画面はウィンドウの寿命に紐づく ([ADR-0032] 文脈) ので、見張りを止めて起こし直したら、また頼みどおりに
+    /// 出す。手で全画面を抜けたウィンドウへ、同じ頼みの世代が来ても戻さないのは、この覚えが頼みそのものを持つからで、
+    /// ウィンドウがいま全画面かは見ない。頼みが無い世代が来たら捨てる (あとで同じ頼みが戻ってきたら、変わったと読む)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     private(set) var appliedFullScreen: FullScreenDisplay?
-    /// 全画面を抜け終えたら入り直す頼み。**別のディスプレイの全画面にいる窓を移すとき**だけ持つ
-    /// (全画面の窓は動かせないので、抜けてから移す)。
+    /// 全画面を抜け終えたら入り直す頼み。**別のディスプレイの全画面にいるウィンドウを移すとき**だけ持つ
+    /// (全画面のウィンドウは動かせないので、抜けてから移す)。
     private var pendingFullScreenEntry: FullScreenDisplay?
 
     private let gpu: RenderDevice
@@ -152,21 +152,21 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private let look: Look
     private let presenter: FramePresenter
 
-    /// 窓が拾った出来事の行き先。**渡ってくるのはそのまま子の標準入力へ書ける 1 行。**
+    /// ウィンドウが拾った出来事の行き先。**渡ってくるのはそのまま子の標準入力へ書ける 1 行。**
     ///
-    /// 窓を出した後に差し替えてもよい (見張りは子を入れ替えるので、書き先は変わる)。
+    /// ウィンドウを出した後に差し替えてもよい (見張りは子を入れ替えるので、書き先は変わる)。
     var onInput: ((String) -> Void)?
 
     /// 表示のリフレッシュごとに呼ばれる。**絵が来ていなくても呼ぶ** — 面を読み直す側は
     /// 絵の有無と関係なく進む必要がある。
     var onTick: (() -> Void)?
 
-    /// × を押されたときに問うこと。**無ければ素直に閉じる** — 窓を持つ側が終わり方を
+    /// × を押されたときに問うこと。**無ければ素直に閉じる** — ウィンドウを持つ側が終わり方を
     /// 決めていないなら、AppKit の既定を変える理由が無い。
     private var closeQuestion: CloseQuestion?
     /// 閉じてよいと確定したときの行き先。
     ///
-    /// **実際に窓を畳むのはここではない。** 見張りは子を止め、区画を片付けてから畳む
+    /// **実際にウィンドウを畳むのはここではない。** 見張りは子を止め、区画を片付けてから畳む
     /// 必要があるので、台が先に閉じると後始末の順が壊れる ([ADR-0032] 決定 1)。
     private var onCloseConfirmed: (() -> Void)?
     /// 閉じる問いのシートを出している間か。**付いているシートが問いのものか、ファイルを選ばせるものかを分ける**
@@ -198,7 +198,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 手放した世代が引いた回数。``surfaceLookups`` を世代の入れ替わりをまたいで数えるため。
     private var retiredLookups = 0
 
-    /// 問いの出し方。**検査から差し替える** — 既定は窓へシートを下ろすので、そのままでは
+    /// 問いの出し方。**検査から差し替える** — 既定はウィンドウへシートを下ろすので、そのままでは
     /// 「押した後どうなるか」を検められない (`WatchSession.Hooks` と同じ流儀)。
     var presentQuestion: @MainActor (CloseQuestion, NSWindow, @escaping (Bool) -> Void) -> Void =
         CloseQuestion.presentSheet
@@ -206,7 +206,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private(set) var window: NSWindow?
     private var view: SketchSurface?
 
-    /// 重ねる面を足す先。**窓が出ている間だけ在る。**
+    /// 重ねる面を足す先。**ウィンドウが出ている間だけ在る。**
     ///
     /// 後から差し替えられるようにしてあるのは、宣言の顔ぶれが変わったらつまみを
     /// 組み直すためである ([ADR-0032] 決定 5)。
@@ -276,7 +276,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **差し出しを投入した直後に記し、結末は後で見る** ([#2735])。投入を GPU が打ち切ったら、
     /// 結末が届いた後のリフレッシュで記しを戻し (``submissionSettled(_:dropped:)``)、同じ枚を
     /// 出し直す。戻さないと、書き手が書くのをやめたとき (子の終了・異常終了・詰まり・とても低い
-    /// フレームレート) は枚数が進まず、窓は打ち切られる前の絵のままになる。子は `noLoop()` や一時停止の
+    /// フレームレート) は枚数が進まず、ウィンドウは打ち切られる前の絵のままになる。子は `noLoop()` や一時停止の
     /// 間も毎リフレッシュ書いて枚数を進めるので、生きて書いている間は次の枚で上書きされる。
     ///
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
@@ -297,7 +297,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 出している世代のスケッチが、カーソルを捕まえるよう頼んでいるか。**面の属性から読む**
     /// (``SharedFrameSurface/pointerLockAttribute``・[#1144](https://github.com/mokume-metal/mokume/issues/1144))。
     ///
-    /// 読むのは新しい枚数が来たときだけで (速さと同じ)、渡すのは毎リフレッシュである — 窓が
+    /// 読むのは新しい枚数が来たときだけで (速さと同じ)、渡すのは毎リフレッシュである — ウィンドウが
     /// 前に出たか・ポインタが面の上かは、要求と関係なく変わる。**検査から読む。**
     private(set) var pointerLockRequested = false
     /// 出している世代のスケッチが、矢印のカーソルを隠すよう頼んでいるか。**面の属性から読む**
@@ -340,9 +340,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 続けて差し出せなかった数。**始まりと終わりだけ**言うために持つ。
     private var failures = FrameFailureLog()
 
-    /// 窓の出来事を、台を強く持たずに中継する。
+    /// ウィンドウの出来事を、台を強く持たずに中継する。
     ///
-    /// **窓の delegate に台を直に据えない。** AppKit は delegate を弱く持つが、呼ぶ前に
+    /// **ウィンドウの delegate に台を直に据えない。** AppKit は delegate を弱く持つが、呼ぶ前に
     /// 一時的な強い参照を作る (autorelease) ので、**手放した台の解放がプールの掃除まで
     /// 遅れる** — [#738] が入れた検査 (`close()` を呼ばずに手放したら解放される) は、直に
     /// 据えた版で実際に落ちた。駆動源が持ち主を弱く持つのも同じ理由である
@@ -383,8 +383,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **引いた面を常駐から退かせるのは、`close()` ではなくここである** ([#795])。
     /// 世代の差し替えでは外していたが、台そのものを手放したときは外していなかった。
-    /// `close()` に置かないのは、畳んだ窓をもう一度 `open()` できるからである — 畳んでも
-    /// 世代は捨てないので、そこで外すと開き直した窓が常駐していない面を読む。
+    /// `close()` に置かないのは、畳んだウィンドウをもう一度 `open()` できるからである — 畳んでも
+    /// 世代は捨てないので、そこで外すと開き直したウィンドウが常駐していない面を読む。
     ///
     /// [#795]: https://github.com/mokume-metal/mokume/issues/795
     isolated deinit {
@@ -394,13 +394,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         }
     }
 
-    /// 窓を出し、区画を見張り始める。
+    /// ウィンドウを出し、区画を見張り始める。
     ///
-    /// **覚えている位置があればそこへ戻す。** 覚え方は走っているスケッチの窓と同じ
-    /// (`WindowPlacement`) — 使う人から見れば同じ「スケッチの窓」なので、起こし方で
+    /// **覚えている位置があればそこへ戻す。** 覚え方は走っているスケッチのウィンドウと同じ
+    /// (`WindowPlacement`) — 使う人から見れば同じ「スケッチのウィンドウ」なので、起こし方で
     /// 置き場所が変わらないほうがよい。
     ///
-    /// - Parameter overlay: 絵に重ねる面。**無ければ何も足さない** — 作品の窓に道具の
+    /// - Parameter overlay: 絵に重ねる面。**無ければ何も足さない** — 作品のウィンドウに道具の
     ///   都合が 1 画素も出ないのは、ここに何も渡さないことで成り立っている
     ///   ([ADR-0032] 決定 1)。
     func open(overlay: NSView? = nil) {
@@ -410,7 +410,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             title: look.title, autosaveName: look.autosaveName,
             defaultSize: look.defaultSize, nudge: look.nudge)
 
-        // **面はスケッチの窓と同じものを使う。** 画素形式・色空間・EDR の既定を 1 か所に
+        // **面はスケッチのウィンドウと同じものを使う。** 画素形式・色空間・EDR の既定を 1 か所に
         // 保つためで、別に作ると片方だけが規範から外れる (ADR-0011)
         //
         // **渡す `InputState` は溜め置きでしかない** ([#2777])。出来事は `relay` の線で子へ渡り、
@@ -424,19 +424,19 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             device: gpu.device, input: InputState(), canvasSize: (1, 1))
         view.wantsLayer = true
         view.autoresizingMask = [.width, .height]
-        // **窓より先に繋ぐ。** 出してから繋ぐと、その隙間に触ったぶんが落ちる
+        // **ウィンドウより先に繋ぐ。** 出してから繋ぐと、その隙間に触ったぶんが落ちる
         view.relay = { [weak self] line in self?.onInput?(line) }
         window.contentView = view
-        // **絵の面へ足す。** 別の窓にしないのは、重ねるものが絵と一緒に動く必要が
+        // **絵の面へ足す。** 別のウィンドウにしないのは、重ねるものが絵と一緒に動く必要が
         // あるからで、経路そのものは絵と別のまま (AppKit の層) である
         if let overlay { view.addSubview(overlay) }
         // **閉じようとしたことを受け取る。** 繋がないと × は AppKit の既定で通り、絵の
-        // 出口だけが消えて誰も止まらない ([#826])。窓は delegate を弱く持つので環にならない
+        // 出口だけが消えて誰も止まらない ([#826])。ウィンドウは delegate を弱く持つので環にならない
         //
         // [#826]: https://github.com/mokume-metal/mokume/issues/826
         window.delegate = windowRelay
         window.makeKeyAndOrderFront(nil)
-        // **面を第一応答者に据える。** 据わっていない窓にはキーが 1 件も来ない —
+        // **面を第一応答者に据える。** 据わっていないウィンドウにはキーが 1 件も来ない —
         // 理由と、AppKit の自動選択に頼らない訳は `SketchSurface.acceptsFirstResponder`
         // が持つ
         window.makeFirstResponder(view)
@@ -452,7 +452,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// - Parameters:
     ///   - question: 問う言葉。
-    ///   - confirmed: 閉じてよいと確定したときに呼ばれる。**窓を畳むのは受け取った側**で、
+    ///   - confirmed: 閉じてよいと確定したときに呼ばれる。**ウィンドウを畳むのは受け取った側**で、
     ///     台はここでは何も畳まない。
     func askBeforeClosing(_ question: CloseQuestion, then confirmed: @escaping () -> Void) {
         closeQuestion = question
@@ -462,11 +462,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 畳む。
     func close() {
         screenLink.invalidate()
-        // **下りているシートを先に畳む。** 兄弟窓 (作品の窓とプレビュー) は独立に × を
-        // 押せるので、片方で確定した後始末が**もう片方のシートが出たままの窓**を閉じる
+        // **下りているシートを先に畳む。** 兄弟ウィンドウ (作品のウィンドウとプレビュー) は独立に × を
+        // 押せるので、片方で確定した後始末が**もう片方のシートが出たままのウィンドウ**を閉じる
         if let window, let sheet = window.attachedSheet { window.endSheet(sheet) }
         // **先に受け口を外す。** `close()` は問いを通らない経路 (delegate を経ずに閉じる)
-        // だが、繋いだまま手放すと閉じた窓から呼ばれうる余地を残す
+        // だが、繋いだまま手放すと閉じたウィンドウから呼ばれうる余地を残す
         window?.delegate = nil
         window?.close()
         window = nil
@@ -494,7 +494,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         onTick?()
         reloadSourceIfChanged()
         promoteIfReady()
-        // **絵が出せない回も渡す。** 要求を読む・読まないは絵の有無に依るが、窓が退いた・
+        // **絵が出せない回も渡す。** 要求を読む・読まないは絵の有無に依るが、ウィンドウが退いた・
         // 要求が消えたで放すのは、絵が来ていなくても効く必要がある (#1144)
         defer {
             self.view?.followPointerLock(requested: pointerLockRequested)
@@ -502,7 +502,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             self.followSelectionRequest()
         }
         guard let source, let newest = source.lookup.newest() else { return }
-        // **面に載ったもの (速さ・捕まえの要求) は、窓の有無と関係なく読む。** 絵を出す先が
+        // **面に載ったもの (速さ・捕まえの要求) は、ウィンドウの有無と関係なく読む。** 絵を出す先が
         // 無くても、走っている側が名乗ったことは変わらない
         readNumbers(from: newest, in: source.lookup)
         guard let view, let layer = view.metalLayer,
@@ -532,9 +532,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     // MARK: - ファイルを選ばせる
 
-    /// スケッチのファイルを選ばせる頼みを、この窓で出す ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    /// スケッチのファイルを選ばせる頼みを、このウィンドウで出す ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
     ///
-    /// **出すのは `showsSelectionDialogs` の窓だけで、同じ頼み (子の番号と通し番号の組) は 1 度だけ出す。**
+    /// **出すのは `showsSelectionDialogs` のウィンドウだけで、同じ頼み (子の番号と通し番号の組) は 1 度だけ出す。**
     /// 頼みが無くなった・別の頼みになったら、出しているダイアログは結果ごと捨てて閉じる。結果は入力の出来事を
     /// 1 行にして子へ渡す (``onInput``) — 子が結果で待ちを終える。**頼んだ世代が入れ替わった後に届いた結果は
     /// 子へ渡さない** (新しい子は待っていない)。
@@ -587,7 +587,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         sendSelectionAnswer(answer.path, pid: shown.pid, serial: shown.serial)
     }
 
-    /// 窓の × が押されたとき、**ファイルを選ばせるシートが付いているなら、それを取り消す。**
+    /// ウィンドウの × が押されたとき、**ファイルを選ばせるシートが付いているなら、それを取り消す。**
     ///
     /// シートが付いている間 `windowShouldClose` は閉じる問いを出さないので、黙って × が効かなくなる
     /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。取り消しは利用者がダイアログを取り消したのと
@@ -663,7 +663,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     /// この台が、どの世代の目録を採るかを決める関所 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// **目録は 1 枚で、最後に書いた子のもので上書きされる。** 試聴の間は、作品の窓が本番の目録だけを、プレビューが
+    /// **目録は 1 枚で、最後に書いた子のもので上書きされる。** 試聴の間は、作品のウィンドウが本番の目録だけを、プレビューが
     /// 試聴の子の目録だけを採りたい。引数は読んだ目録が名乗る子の番号 (``SharedFrameSurface/Manifest/pid``) で、
     /// **番号を名乗らない子 (古いライブラリ) は `nil`** — 世代を区別できないので、返す値は見張りが決める。
     /// 設定しなければ (既定) どの目録も採る。
@@ -692,7 +692,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     /// 押し出さずに覚えておく世代を決める ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// 試聴に入ったとき、本番の世代 (作品の窓が映す版。乗り換えを待つ間は 2 つ) の目録を留める。試聴の子が
+    /// 試聴に入ったとき、本番の世代 (作品のウィンドウが映す版。乗り換えを待つ間は 2 つ) の目録を留める。試聴の子が
     /// 何度入れ替わっても、出る (``returnToGeneration(pid:)``) ときの戻り先を失わない。空で外す。
     func holdGeneration(pids: [Int32]) {
         heldPIDs = Set(pids)
@@ -816,11 +816,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         onGenerationPromoted?(waiting.pid)
     }
 
-    /// 出す世代が頼む窓の大きさに合わせる (``Look/followsRequestedSize``)。プレビューなら、
-    /// その大きさで置き直された作品の窓の真下へ動く (``Look/placesBeneathRequestedArtwork``)。
+    /// 出す世代が頼むウィンドウの大きさに合わせる (``Look/followsRequestedSize``)。プレビューなら、
+    /// その大きさで置き直された作品のウィンドウの真下へ動く (``Look/placesBeneathRequestedArtwork``)。
     ///
     /// **乗り換えのたびに呼ぶが、当たるのは指定が変わったときだけである。** 保存のたびに
-    /// 窓が戻らないこと ([#679](https://github.com/mokume-metal/mokume/issues/679)) は
+    /// ウィンドウが戻らないこと ([#679](https://github.com/mokume-metal/mokume/issues/679)) は
     /// ``WindowPlacement/honour(_:in:autosaveName:defaults:warn:)`` が持つ。
     private func followRequestedSize(of generation: Source) {
         guard let scale = generation.windowScale, let window else { return }
@@ -835,15 +835,15 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         }
     }
 
-    /// 出す世代が頼む全画面を、作品の窓へ当てる ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。
+    /// 出す世代が頼む全画面を、作品のウィンドウへ当てる ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。
     ///
-    /// **当てるのは作品の窓だけで (``Look/followsRequestedSize``)、頼みが変わったときだけである**
-    /// (``appliedFullScreen``)。保存のたびに当てると、手で全画面を抜けた窓が戻る — 見張りから本番を回す窓で、
+    /// **当てるのは作品のウィンドウだけで (``Look/followsRequestedSize``)、頼みが変わったときだけである**
+    /// (``appliedFullScreen``)。保存のたびに当てると、手で全画面を抜けたウィンドウが戻る — 見張りから本番を回すウィンドウで、
     /// 保存で全画面が外れても戻ってもならない ([ADR-0032] 決定 1)。
     ///
     /// - 頼みが無い世代 (全画面を頼まない子・古いライブラリの子): 何もしない。いま全画面なら、そのままにする
-    /// - 頼まれた画面が引けない: 窓のままにして 1 行言う。**覚えない** — 次の世代で引けたら当てる
-    /// - 窓が別の画面の全画面にいる: 抜けてから移して入り直す (``didExitFullScreen()``)
+    /// - 頼まれた画面が引けない: ウィンドウのままにして 1 行言う。**覚えない** — 次の世代で引けたら当てる
+    /// - ウィンドウが別の画面の全画面にいる: 抜けてから移して入り直す (``didExitFullScreen()``)
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     private func followRequestedFullScreen(of generation: Source) {
@@ -863,7 +863,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         appliedFullScreen = request
         pendingFullScreenEntry = nil
         if fullScreen.isFullScreen(window) {
-            // 全画面の窓は動かせない。**同じ画面の全画面なら、そのまま** (頼みどおりである)
+            // 全画面のウィンドウは動かせない。**同じ画面の全画面なら、そのまま** (頼みどおりである)
             guard fullScreen.windowScreenID(window) != screen.screenID else { return }
             pendingFullScreenEntry = request
             fullScreen.leave(window)
@@ -872,9 +872,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         enterFullScreen(window, on: screen)
     }
 
-    /// 窓を頼まれた画面へ移して、全画面にする。
+    /// ウィンドウを頼まれた画面へ移して、全画面にする。
     private func enterFullScreen(_ window: NSWindow, on screen: NSScreen) {
-        // **全画面にできる窓であることを自分で言う。** 既定の動きに頼らない
+        // **全画面にできるウィンドウであることを自分で言う。** 既定の動きに頼らない
         window.collectionBehavior.insert(.fullScreenPrimary)
         if fullScreen.windowScreenID(window) != screen.screenID {
             WindowPlacement.move(window, onto: screen)
@@ -882,7 +882,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         fullScreen.enter(window)
     }
 
-    /// 全画面を抜け終えた (窓の delegate から)。**別の画面へ頼みが変わっていたなら、そこで入り直す。**
+    /// 全画面を抜け終えた (ウィンドウの delegate から)。**別の画面へ頼みが変わっていたなら、そこで入り直す。**
     ///
     /// 手で抜けたときは持っている頼みが無く、何もしない (戻さない)。
     func didExitFullScreen() {
@@ -921,7 +921,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **新しい世代の絵を受け取れないと知ったとき**に呼ぶ。見張りがその世代へ乗り換えたとみなして
     /// 前の世代を畳むと、前の世代はもう絵を書かないので、頼みを読み直す契機 (``readNumbers(from:in:)``
-    /// は新しい枚数のときだけ読む) が来ず、窓はカーソルを捕まえたまま・隠したままになる。
+    /// は新しい枚数のときだけ読む) が来ず、ウィンドウはカーソルを捕まえたまま・隠したままになる。
     ///
     /// **写しを空にするだけでは足りない** ([#2983])。止めるまでに前の世代が書く 1 枚 (止まらない子は
     /// 数秒書き続ける) で、同じ面から頼みを読み直して戻る。だから**手放した世代の面を覚え**
@@ -1004,7 +1004,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         superseded = nil
         // 死んだ世代の警告を捨てる。前の版の値は、次のリフレッシュが前の版の面から読み直す (#3087)
         warnings = nil
-        // 乗り換えと同じく、枚数の数え直しと窓の大きさの追随を、映し直した世代に対して行う。前の版は
+        // 乗り換えと同じく、枚数の数え直しとウィンドウの大きさの追随を、映し直した世代に対して行う。前の版は
         // もう 1 枚目を出している (出していなければ見張りは戻さない) ので、合図は鳴らし直さない
         lastFrame = 0
         lastSeenFrame = 0
@@ -1028,9 +1028,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 次の乗り換えまで読まない。**
     ///
     /// 受け取れない知らせ (``releaseInheritedRequests()``) の経路は台が自分で気付いたが、次の 3 つは
-    /// 台を通らない: 作り直した子が窓へ倒れた回・子が消えた回・乗り換えの合図が来ないまま次の保存が来て
+    /// 台を通らない: 作り直した子がウィンドウへ倒れた回・子が消えた回・乗り換えの合図が来ないまま次の保存が来て
     /// 映っている世代を畳んだ回。どれも畳まれた世代はもう絵を書かず、頼みを読み直す契機
-    /// (``readNumbers(from:in:)`` は新しい枚数のときだけ読む) が来ないので、窓がカーソルを捕まえたまま・
+    /// (``readNumbers(from:in:)`` は新しい枚数のときだけ読む) が来ないので、ウィンドウがカーソルを捕まえたまま・
     /// 隠したままになる。**最後の絵と入力の写しの寸法は残す** (ADR-0032 決定 6)。寸法を変える材料
     /// (新しい子の目録) が、この口には無い。
     ///
@@ -1060,7 +1060,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
     private func noteUnreadableManifest(_ failure: UnreadableRevision.Failure) {
-        // **作品の窓とプレビューは、それぞれ台を持ち、同じ目録を別々に読む**ので、同じ改訂は台ごとに
+        // **作品のウィンドウとプレビューは、それぞれ台を持ち、同じ目録を別々に読む**ので、同じ改訂は台ごとに
         // 1 度ずつ (高々 2 行) 名乗る。文面もそう言う (「1 度」と言い切ると、2 行出て偽になる)
         warn(
             UnreadableRevision.notice(
@@ -1094,24 +1094,24 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
 extension SharedFrameStage {
     /// × が通る。**`⌘W` はメインメニューを組んだ日に通る** — 割り当てを配るのは
-    /// メニューなので、道具が窓だけを出しているいまは配送されない。
+    /// メニューなので、道具がウィンドウだけを出しているいまは配送されない。
     ///
     /// **問いを持っているなら、ここでは閉じない。** 確かめてから知らせ、実際に畳むのは
     /// 受け取った側である — 見張りは子を止め、区画を片付けてから畳む必要がある
     /// ([#826](https://github.com/mokume-metal/mokume/issues/826))。
     ///
-    /// 持っていなければ `true`。**AppKit の既定を変えない** — 窓を持つ側が終わり方を
-    /// 決めていない場合に、閉じられない窓を作る理由が無い。
+    /// 持っていなければ `true`。**AppKit の既定を変えない** — ウィンドウを持つ側が終わり方を
+    /// 決めていない場合に、閉じられないウィンドウを作る理由が無い。
     ///
     /// `close()` はこの経路を通らない (delegate を経ずに閉じる) ので、後始末が問いを
     /// もう一度出すことはない。
     fileprivate func shouldClose(_ sender: NSWindow) -> Bool {
         guard let question = closeQuestion else { return true }
-        // **問いを二重に出さない。** 下りている間 AppKit は親窓の操作を吸うが、閉じるよう
+        // **問いを二重に出さない。** 下りている間 AppKit は親ウィンドウの操作を吸うが、閉じるよう
         // 頼む経路は残る (`performClose(_:)` など)
         //
         // **ただし付いているのがファイルを選ばせるシートなら、それを取り消して問いへ進む** — 黙って × が効かない
-        // 窓にしない (#3062)。問いのシートが付いている間は、今までどおり受け流す
+        // ウィンドウにしない (#3062)。問いのシートが付いている間は、今までどおり受け流す
         if sender.attachedSheet != nil {
             guard !isAskingToClose, cancelOpenSelectionDialog() else { return false }
         }
@@ -1124,11 +1124,11 @@ extension SharedFrameStage {
         return false
     }
 
-    /// 窓が閉じられた。**問いを繋いでいない窓でも、駆動はここで畳む。**
+    /// ウィンドウが閉じられた。**問いを繋いでいないウィンドウでも、駆動はここで畳む。**
     ///
-    /// 表示のリフレッシュは**画面**に紐づいているので、窓が消えても止まらない — 閉じた窓の
+    /// 表示のリフレッシュは**画面**に紐づいているので、ウィンドウが消えても止まらない — 閉じたウィンドウの
     /// 面へ差し出し続け、しかも見えない面への差し出しは待たされる。`close()` を通らずに
-    /// 閉じられる経路 (問いを繋がずに出した窓の ×) を、費用だけ払い続ける形にしない (#826)。
+    /// 閉じられる経路 (問いを繋がずに出したウィンドウの ×) を、費用だけ払い続ける形にしない (#826)。
     fileprivate func willClose() {
         screenLink.invalidate()
     }
@@ -1159,7 +1159,7 @@ extension SharedFrameStage: SettlementObserver {
     }
 }
 
-/// 道具の窓が新しい世代の絵を受け取れないと、道具だけが知る形 ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+/// 道具のウィンドウが新しい世代の絵を受け取れないと、道具だけが知る形 ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
 ///
 /// 乗り換えの合図が来ないので、知らせないと前の世代が残り、プレビューの「起こしている」が終わらない。
 /// **1 枚も焼かない形は含めない** — `setup()` が長いのと固まったのとは時計なしに見分けられず、

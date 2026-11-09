@@ -16,7 +16,7 @@ import QuartzCore
 /// 進め方が変わっても描かれる中身は変わらない。だから画面を持たない実行と画面に出す
 /// 実行が、別の実装に分かれない。
 ///
-/// 例外は 1 つで、**経路** (進め方ではない) で変わる。窓・共有面の経路では、保存した利用者の断片を
+/// 例外は 1 つで、**経路** (進め方ではない) で変わる。ウィンドウ・共有面の経路では、保存した利用者の断片を
 /// 裏で組み、組み上がった後のフレームから効かせる ([#2365]・[ADR-0025] 決定 1 の追補 2026-10-14)。
 /// 書き出しと、この型を直に作って回す場合は、保存の次のフレームから効く。どちらの経路でも、
 /// 叩き方 (main actor を譲るか) で届き方は変わらない。
@@ -62,7 +62,7 @@ public final class SketchRuntime {
     ///
     /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
     private(set) var setupFailure: RenderFailure?
-    /// ``setupFailure`` を、フレームを投げて受ける道 (``advance()``) の外で見つけたときに知らせる先。窓の経路
+    /// ``setupFailure`` を、フレームを投げて受ける道 (``advance()``) の外で見つけたときに知らせる先。ウィンドウの経路
     /// (``SketchApplication``) が差し、起動の失敗として終わらせる。名乗りのメニューが開いている間に別の駆動源が
     /// 進めた回 (``advanceForPresence()``) が使う。
     var setupFailureHandler: ((RenderFailure) -> Void)?
@@ -80,8 +80,8 @@ public final class SketchRuntime {
         didSet { timing.noteStill(isHeldStill) }
     }
     /// 拡大した字の焼きを、次のフレームへ送ってよい組み方か ([#2446](https://github.com/mokume-metal/mokume/issues/2446))。
-    /// **窓・共有面で走らせる `SketchApplication` だけが立てる。** 先送りした字は次のフレームが焼き直すまでぼけて
-    /// いるので、絵が窓へ出るだけで、そのフレームを次のフレームが描き直すと分かる走らせ方にしか許さない。
+    /// **ウィンドウ・共有面で走らせる `SketchApplication` だけが立てる。** 先送りした字は次のフレームが焼き直すまでぼけて
+    /// いるので、絵がウィンドウへ出るだけで、そのフレームを次のフレームが描き直すと分かる走らせ方にしか許さない。
     /// 組み込み (検査・外から `pause()`・画素を読む使い方) と書き出す経路は既定のまま、先送りせず焼き切る。
     var defersEnlargedGlyphBakes = false
     /// 1 枚だけ描いて書き出す口 (``renderFrame(to:)``) の最中か。**書き出す絵は残る**ので、拡大した字の焼きを
@@ -92,7 +92,7 @@ public final class SketchRuntime {
     private var frameIsObserved = false
     /// 止まっているか — 作者が `noLoop()` で止めた、または外から ``pause()`` されている。
     ///
-    /// 窓と出口は、止まっている間に絵が変わっていなければ出し直さない (``SketchApplication``・
+    /// ウィンドウと出口は、止まっている間に絵が変わっていなければ出し直さない (``SketchApplication``・
     /// [#2367](https://github.com/mokume-metal/mokume/issues/2367))。**走っている間は変わっていなくても
     /// 出す** — 道具が読む速さ・時刻は枚数が上がったときだけ更新されるので、何も描かない回まで飛ばすと
     /// 走っているのに止まって見える。
@@ -125,7 +125,7 @@ public final class SketchRuntime {
     /// 差込口を閉じたか (``closePlugins(_:)``)。**閉じた後に足したものは誰にも閉じられない**
     /// ので、足す頼みを断る。
     private var seamsClosed = false
-    /// 中で起こした `Task` の続きから、入り口を足すことを頼む窓口 (``SketchPart/requestSound(_:)`` など)。
+    /// 中で起こした `Task` の続きから、入り口を足すことを頼む受付 (``SketchPart/requestSound(_:)`` など)。
     /// フレームの頭で当てる (``serveAttachRequests()``)。
     let attachRequests = AttachRequests()
     /// 実行中に足した出口が、足されたフレーム。**それより前に描いた絵は渡さない。**
@@ -211,7 +211,7 @@ public final class SketchRuntime {
     /// 時計の刻み (``Clock/frameIndex(frameRate:)``) も 1 以上でなければ断る。**
     ///
     /// 黙って 1 fps へ丸めない ([ADR-0020] 決定 5 の 2 行目・[#1642])。`frameRate: 0` を
-    /// 「止める」の意味で書いた人は、1 秒に 1 枚だけ進む絵を見ることになる。窓の経路も
+    /// 「止める」の意味で書いた人は、1 秒に 1 枚だけ進む絵を見ることになる。ウィンドウの経路も
     /// 書き出しの経路もこの組み立てを通るので、**刻みを読む先 (`FrameTiming`・`FrameDriver`・
     /// `MovieFile`・画面の駆動源) へは、ここを越えた値しか届かない。**
     ///
@@ -226,16 +226,16 @@ public final class SketchRuntime {
         }
     }
 
-    /// 組み立てで検めた、窓を開く倍率 (``checkWindowScale(_:)`` を越えた値)。
+    /// 組み立てで検めた、ウィンドウを開く倍率 (``checkWindowScale(_:)`` を越えた値)。
     ///
-    /// **窓を開く側はこれを読む** (`SketchApplication`)。``declaredFrameRate`` と同じく、
+    /// **ウィンドウを開く側はこれを読む** (`SketchApplication`)。``declaredFrameRate`` と同じく、
     /// `settings` を読み直すと検めた値と使う値が別物になりうる。
     let windowScale: Float
 
-    /// 組み立てで窓を開く倍率を検める。**0 より大きい有限の数でなければ断る**
+    /// 組み立てでウィンドウを開く倍率を検める。**0 より大きい有限の数でなければ断る**
     /// ([ADR-0020] 決定 5 の 2 行目)。
     ///
-    /// 窓を開かない実行でも断る — 書き出しで通った作品が、窓を開く起こし方に移って初めて
+    /// ウィンドウを開かない実行でも断る — 書き出しで通った作品が、ウィンドウを開く起こし方に移って初めて
     /// 落ちる形にしない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -244,25 +244,25 @@ public final class SketchRuntime {
     }
 
     /// 全画面で出すディスプレイ。**組み立てのときに選ぶ** (``SketchSettings/fullScreenDisplay``)。
-    /// 窓で開くなら `nil`。
+    /// ウィンドウで開くなら `nil`。
     ///
-    /// **窓を開く側はこれを読む** (`SketchApplication`)。``windowScale`` と同じく、`settings` を
+    /// **ウィンドウを開く側はこれを読む** (`SketchApplication`)。``windowScale`` と同じく、`settings` を
     /// 読み直すと、選んだディスプレイと描く大きさが別物になりうる。
     let fullScreenDisplay: Display?
 
     /// ホストのアプリの中 (``SketchView``) で走るか。**組み立てのときに決まる。**
     ///
-    /// 窓・メニューバー・全画面はホストのもので、ここは持たない: 全画面のディスプレイを選ばず
+    /// ウィンドウ・メニューバー・全画面はホストのもので、ここは持たない: 全画面のディスプレイを選ばず
     /// (``embeddedStage(for:)``)、メニューバーの名乗り (``SketchPresence``) も出さない
     /// (``updatePresence()``)。
     let isEmbedded: Bool
 
     /// 描く大きさを決める。全画面ならディスプレイを選び、その全画面の大きさにする ([#2020])。
     ///
-    /// **窓で開くなら一覧を読まない** — 全画面を頼まないスケッチの起動は、ディスプレイの顔ぶれに
-    /// 何も依らない。選べなければ型のついたエラーで断る (``Display/choose(_:from:)``)。窓を
-    /// 開かない実行 (書き出し・窓を持たない `SketchRuntime`) でも同じに選ぶ — 書き出す絵は画面に
-    /// 出る絵と同じ大きさになり、窓を開く起こし方へ移って初めて落ちる形にもならない。
+    /// **ウィンドウで開くなら一覧を読まない** — 全画面を頼まないスケッチの起動は、ディスプレイの顔ぶれに
+    /// 何も依らない。選べなければ型のついたエラーで断る (``Display/choose(_:from:)``)。ウィンドウを
+    /// 開かない実行 (書き出し・ウィンドウを持たない `SketchRuntime`) でも同じに選ぶ — 書き出す絵は画面に
+    /// 出る絵と同じ大きさになり、ウィンドウを開く起こし方へ移って初めて落ちる形にもならない。
     ///
     /// - Parameter displays: ディスプレイの一覧の出どころ。**検査から差し替える。**
     ///
@@ -277,10 +277,10 @@ public final class SketchRuntime {
         return (display.width, display.height, display)
     }
 
-    /// ホストのアプリの中 (``SketchView``) で走るときの、描く大きさ。**全画面を読まない** — 窓はホストのもので、
-    /// ディスプレイの一覧も読まない。全画面を頼んでいたら、窓を変えずに 1 度だけ言う。
+    /// ホストのアプリの中 (``SketchView``) で走るときの、描く大きさ。**全画面を読まない** — ウィンドウはホストのもので、
+    /// ディスプレイの一覧も読まない。全画面を頼んでいたら、ウィンドウを変えずに 1 度だけ言う。
     ///
-    /// 描く大きさは設定の ``SketchSettings/width``・``SketchSettings/height`` (窓で開くときと同じ)。
+    /// 描く大きさは設定の ``SketchSettings/width``・``SketchSettings/height`` (ウィンドウで開くときと同じ)。
     static func embeddedStage(
         for settings: SketchSettings
     ) -> (width: Int, height: Int, display: Display?) {
@@ -412,13 +412,13 @@ public final class SketchRuntime {
     /// 塞がずに見に来る閉じ方が、届いていない結末を諦める時刻 (#2743)。最初に見に来たときに決める。
     private var closingOutcomesGiveUpAt: ContinuousClock.Instant?
 
-    /// 外から観測されるための窓口。区画が無ければ `nil` で、**そのときフレームループは
+    /// 外から観測されるための入口。区画が無ければ `nil` で、**そのときフレームループは
     /// 観測の存在を一切払わない** (ADR-0018 の面が満たすべき性質)。
     private let observer: FrameObserver?
     /// 外から送られる入力の受け口。区画が無ければ `nil`。
     private let inbox: InputInbox?
-    /// 道具の窓が拾った出来事の受け口。**窓を持つ道具に起こされた ``SketchApplication`` が
-    /// 渡したときだけ在る** (``relayToolInput(from:)``)。窓を持たない `SketchRuntime` は
+    /// 道具のウィンドウが拾った出来事の受け口。**ウィンドウを持つ道具に起こされた ``SketchApplication`` が
+    /// 渡したときだけ在る** (``relayToolInput(from:)``)。ウィンドウを持たない `SketchRuntime` は
     /// 共有面へ差し出さないので、標準入力に触らない
     /// ([#2024](https://github.com/mokume-metal/mokume/issues/2024))。
     private var relayed: StandardInputEvents?
@@ -427,11 +427,11 @@ public final class SketchRuntime {
     /// 合わせた値の保存。**区画とは無関係に既定で効く** (ADR-0030 決定 6)。
     /// 宣言された値の索引。**起動時に 1 度だけ引く。**
     ///
-    /// 窓 (``KnobOverlay``) もここから受け取る — それぞれが引き直すと、重複した宣言の
+    /// ウィンドウ (``KnobOverlay``) もここから受け取る — それぞれが引き直すと、重複した宣言の
     /// 警告が数えた回数だけ出る ([#994](https://github.com/mokume-metal/mokume/issues/994) の 13)。
     let paramRegistry: ParamRegistry
     private let paramStore: ParamStore?
-    /// 入力の合流点。窓からの操作も、外から送られたものもここへ集まる。
+    /// 入力の合流点。ウィンドウからの操作も、外から送られたものもここへ集まる。
     public let input = InputState()
     /// 実行を頭から終わりまで 1 本の記録にする係 ([#3570])。記録を頼まれていない実行は `nil` で、
     /// 記録点はどれも `nil` の判定だけで通り過ぎる。
@@ -440,15 +440,15 @@ public final class SketchRuntime {
     private(set) var replay: ReplayRecorder?
     /// カーソルを捕まえる要求 (``SketchPart/requestPointerLock()``)。``SketchPart/exitPointerLock()`` まで残る。
     ///
-    /// **読むのは窓である** — 直に走らせた窓は ``SketchApplication`` が毎リフレッシュ渡し、見張りの
-    /// 子は共有面の属性に載せて道具の窓へ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
-    /// 窓の無い実行 (書き出し・窓を持たない `SketchRuntime`) では誰も読まないので、何も起きない。
+    /// **読むのはウィンドウである** — 直に走らせたウィンドウは ``SketchApplication`` が毎リフレッシュ渡し、見張りの
+    /// 子は共有面の属性に載せて道具のウィンドウへ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+    /// ウィンドウの無い実行 (書き出し・ウィンドウを持たない `SketchRuntime`) では誰も読まないので、何も起きない。
     var pointerLockRequested = false
     /// 矢印のカーソルを隠す要求 (``SketchPart/noCursor()``)。``SketchPart/cursor()`` まで残る。
     ///
-    /// ``pointerLockRequested`` と同じく**読むのは窓である** — 直に走らせた窓は ``SketchApplication`` が
+    /// ``pointerLockRequested`` と同じく**読むのはウィンドウである** — 直に走らせたウィンドウは ``SketchApplication`` が
     /// 毎リフレッシュ渡し、見張りの子は共有面の属性 (``SharedFrameSurface/cursorHiddenAttribute``) に載せて
-    /// 道具の窓へ渡す ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。窓の無い実行では
+    /// 道具のウィンドウへ渡す ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。ウィンドウの無い実行では
     /// 誰も読まないので、何も起きない。絵には触れない。
     var cursorHidingRequested = false
     /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
@@ -522,13 +522,13 @@ public final class SketchRuntime {
     private var lastFrameAt: Double = -.infinity
     /// フレームの速さを数える、**ただ 1 つの集計器** ([ADR-0030] 決定 7)。
     ///
-    /// 窓に出る数字も観測の応答が返す数字もここから採る。**観測の有無に関わらず
-    /// 数える** — 窓は観測が無くても数字を出すので、観測が有効なときだけ数えると
-    /// 窓の側が自分で測り直す羽目になり、源が 2 つに割れる。
+    /// ウィンドウに出る数字も観測の応答が返す数字もここから採る。**観測の有無に関わらず
+    /// 数える** — ウィンドウは観測が無くても数字を出すので、観測が有効なときだけ数えると
+    /// ウィンドウの側が自分で測り直す羽目になり、源が 2 つに割れる。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     private var tempo = FrameTempo()
-    /// 1 フレームの予算を越えたフレームの控え ([#2601])。速さと同じく、窓に出る数字も観測の重さも
+    /// 1 フレームの予算を越えたフレームの控え ([#2601])。速さと同じく、ウィンドウに出る数字も観測の重さも
     /// ここから採る。
     ///
     /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
@@ -536,7 +536,7 @@ public final class SketchRuntime {
     /// いま描いているフレームの仕事を始めた時刻 (``budget`` が測る長さの起点)。`setup()` の後に置く。
     private var frameWorkBegan: Double?
 
-    /// 窓に出す数字。**観測の応答が返すものと同じ集計器から採る** (ADR-0030 決定 7)。
+    /// ウィンドウに出す数字。**観測の応答が返すものと同じ集計器から採る** (ADR-0030 決定 7)。
     var frameNumbers: FrameNumbers {
         let moment = now()
         let warnings = Diagnostics.warningSummary()
@@ -583,9 +583,9 @@ public final class SketchRuntime {
 
     /// 画面へ出しながら回しているか。**外の時間で動くもの (音の再生) は、これが真なら実際に鳴らす。**
     ///
-    /// 窓・共有面の経路 (`SketchApplication`) が組み立てで頼めば、時計によらず真 — 作品がフレームの
-    /// 時計を選んでいても鳴らす ([#2601])。時計だけを見て決めると、フレームの時計を選んだ窓が無音に
-    /// なる。頼まなければ時計から決まり、実時間の時計なら真、フレームの時計なら偽 (書き出しと、窓を
+    /// ウィンドウ・共有面の経路 (`SketchApplication`) が組み立てで頼めば、時計によらず真 — 作品がフレームの
+    /// 時計を選んでいても鳴らす ([#2601])。時計だけを見て決めると、フレームの時計を選んだウィンドウが無音に
+    /// なる。頼まなければ時計から決まり、実時間の時計なら真、フレームの時計なら偽 (書き出しと、ウィンドウを
     /// 持たずに直に回す実行) である。
     ///
     /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
@@ -599,7 +599,7 @@ public final class SketchRuntime {
     ///   - clock: 時刻の出どころ。省略すると設定のフレームレートから導く
     ///     **再現する時計**になる — 画面に出す経路が実時間を選ぶ。
     ///   - persistsParams: 合わせたつまみの値の保存 (`.mokume/state/params.json`) を持つか。
-    ///     既定は持つ — 起動で保存から値を戻し、変わった値を書く (窓の経路と同じ・
+    ///     既定は持つ — 起動で保存から値を戻し、変わった値を書く (ウィンドウの経路と同じ・
     ///     [ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 6)。
     ///     **`false` なら読みも書きもしない**。撮り直せば同じ絵になることを名乗る書き出し
     ///     (同じ番号のフレームを描く参照スケッチ・説明文の例の撮影) は、撮った人の手元にだけ在る
@@ -620,8 +620,8 @@ public final class SketchRuntime {
     ///
     /// - Parameters:
     ///   - displays: ディスプレイの一覧の出どころ (``stage(for:displays:)``)。既定は
-    ///     いま繋がっているもの。**検査と、窓を開く側 (`SketchApplication`) から渡す。**
-    ///   - onScreen: 画面へ出しながら回すか (``isOnScreen``)。**窓・共有面の経路だけが立てる。**
+    ///     いま繋がっているもの。**検査と、ウィンドウを開く側 (`SketchApplication`) から渡す。**
+    ///   - onScreen: 画面へ出しながら回すか (``isOnScreen``)。**ウィンドウ・共有面の経路だけが立てる。**
     ///     立てて `clock` を省くと、時計は作品の設定 (``SketchSettings/clock``) から決まる
     ///     (``Clock/launching(_:frameRate:)``)。設定はここで 1 度だけ読む ([#1642])。
     ///   - persistsParams: 保存を持つか。意味は公開の初期化子の同名の引数が正本。
@@ -692,10 +692,10 @@ public final class SketchRuntime {
         // (`ParamStore`) なので、下で戻る**
         self.observer = opensFacets ? FrameObserver.makeIfEnabled() : nil
         self.inbox = opensFacets ? InputInbox.makeIfEnabled() : nil
-        // **管はここで開かない。** 開いてよいかは出口で決まり、出口を決めるのは窓を持つ
+        // **管はここで開かない。** 開いてよいかは出口で決まり、出口を決めるのはウィンドウを持つ
         // 側である (``relayToolInput(from:)``・#2024)
         self.relayed = nil
-        // 索引は 1 度だけ引き、保存と面と窓が同じものを持ち回る
+        // 索引は 1 度だけ引き、保存と面とウィンドウが同じものを持ち回る
         let registry = ParamRegistry(of: sketch)
         self.paramRegistry = registry
         // **保存を持たない組み方では、読みも書きもしない** (`persistsParams`・#1832)
@@ -707,7 +707,7 @@ public final class SketchRuntime {
         SketchHomes.record(sketch, in: self)
     }
 
-    /// 観測の窓口を差し替えられる入口 (検査用)。
+    /// 観測の入口を差し替えられる組み立て口 (検査用)。
     init(
         sketch: any Sketch,
         gpu: RenderDevice,
@@ -893,7 +893,7 @@ public final class SketchRuntime {
         SketchHomes.forget(self)
         outletJoinedAt.removeAll()
         seamsClosed = true
-        // **記録は、最後に描いた枚まで書いて閉じる** (窓を閉じる・SIGTERM・Control + C はどれもここを通る・#3570)
+        // **記録は、最後に描いた枚まで書いて閉じる** (ウィンドウを閉じる・SIGTERM・Control + C はどれもここを通る・#3570)
         finishReplayRecording()
         // **終わった実行の `selectInput` は待たせない** — 結果を届ける合流点はもう配られず、待てば返らない
         input.selection.end()
@@ -936,7 +936,7 @@ public final class SketchRuntime {
 
     /// フレームを 1 つ進める。実時間の時計では、その枚の時刻を `displayTime` にする。
     ///
-    /// **窓・共有面の経路が、表示のリフレッシュが運んだ「その枚が表示される予定の時刻」を渡す口**である
+    /// **ウィンドウ・共有面の経路が、表示のリフレッシュが運んだ「その枚が表示される予定の時刻」を渡す口**である
     /// ([#2390])。コールバックが走った時刻は main が他の仕事で遅れたぶん揺れ、``SketchPart/deltaTime`` の
     /// 揺れとして作品に見える。予定の時刻は表示の刻みの間隔のまま並ぶ。フレームの時計・書き出し・観測の指定秒の
     /// 値は変わらない (``FrameTiming/advance(at:displayTime:)``)。
@@ -969,14 +969,14 @@ public final class SketchRuntime {
         let observation = capture == nil && settling == nil ? takeObservationRequest() : nil
         // **`setup()` が投げているなら、どの分岐にも入らず投げる** ([#2401])。時刻指定の観測・外の停止・作者の停止
         // (`setup()` で `noLoop()` を呼んでから投げる形はここ) のどれも、この失敗より先に動かない — 動くと、
-        // 入力が失敗したスケッチへ配られ、窓は終わらず、書き出しは空の絵を書く。観測の要求には失敗を載せて
+        // 入力が失敗したスケッチへ配られ、ウィンドウは終わらず、書き出しは空の絵を書く。観測の要求には失敗を載せて
         // 応える (ADR-0018 決定 3 の「失敗しても必ず応答する」)。
         //
         // **ここで見えるのは 2 枚目以降。** ``setupFailure`` が立つのは ``start()`` の中で、`start()` を呼ぶ最初の
         // 場所はこの先にある。最初のフレームで `setup()` を走らせる分岐は、走らせた直後に自分で見て投げる —
         // 通常の分岐は下の ``drawSketchFrame(deliveredInput:at:displayTime:)``、時刻指定の観測の分岐は
         // `start()` の直後、外から止められた分岐・作者が止めた分岐の観測の一枚描きは、応えた直後。見落とすと、
-        // 窓の経路は `presentFrame()` へ進み、共有の面は絵を 1 枚書く
+        // ウィンドウの経路は `presentFrame()` へ進み、共有の面は絵を 1 枚書く
         try throwSetupFailure(answering: observation)
         // **足してもらうのを待っている `Task` の頼みは、フレームの頭で当てる** (止めている間も、外から止めている間も
         // フレームは回るので待ちは終わる)。描く前で、巡回の外である
@@ -996,7 +996,7 @@ public final class SketchRuntime {
             if refusal == nil {
                 start() // setupが録画を始める場合も、指定の絵を描く前に断る。
                 // **`setup()` が投げたなら、断って返らず投げる** (#2401)。ここは最初のフレームでしか通らない
-                // 頭の検査の外なので、自分で見る。返ってしまうと、窓の経路は絵を出しに進む
+                // 頭の検査の外なので、自分で見る。返ってしまうと、ウィンドウの経路は絵を出しに進む
                 try throwSetupFailure(answering: observation)
                 if recorder?.isRecording == true {
                     refusal = "Cannot draw at a specified time while recording"
@@ -1052,7 +1052,7 @@ public final class SketchRuntime {
                     endReplayStep(drew: false)
                     // **配ったコールバックが描く先を変えたなら、ここで出す先を追い付かせる**
                     // (書いた画素を書き戻し、細かさを下げた面なら広げ直す・[#1882]・[#1906])。
-                    // 窓・共有の面・書き出し・観測・CPU の読み出しはどれも出す先を読むので、
+                    // ウィンドウ・共有の面・書き出し・観測・CPU の読み出しはどれも出す先を読むので、
                     // コールバックを配る 1 点で追い付けば、どの口も同じ 1 枚を受け取る。描き直す
                     // ときは、そのフレームの頭の書き戻しと終わりの拡大が済ませる。変えていなければ
                     // 何も積まない
@@ -1126,7 +1126,7 @@ public final class SketchRuntime {
     /// 通常のフレーム (``runFrame()``) と、観測がまだ 1 枚も描いていないスケッチを
     /// 叩いたときの 1 枚 (``serveObservationIfRequested(request:drawFailure:appliedTime:)``) が、同じここを
     /// 通る。**かつては 2 か所に書かれており、観測の側だけが腐っていた** — 入り口の
-    /// 供給と面への時刻の受け渡しが落ちていて、しかも窓で走らせている限り再現しな
+    /// 供給と面への時刻の受け渡しが落ちていて、しかもウィンドウで走らせている限り再現しな
     /// かった ([#808](https://github.com/mokume-metal/mokume/issues/808))。
     ///
     /// 段を足すときはここへ書けば、両方の経路に等しく効く。
@@ -1205,7 +1205,7 @@ public final class SketchRuntime {
                 // 作者の `draw()` の区間 (Instruments・#2378)
                 let drawInterval = FrameSignposts.beginDraw()
                 defer { FrameSignposts.endDraw(drawInterval) }
-                // `draw()` の外で頼まれた SVG は、この `draw()` を丸ごと書く。窓は `draw()` の間だけ開く (#3139)
+                // `draw()` の外で頼まれた SVG は、この `draw()` を丸ごと書く。ウィンドウは `draw()` の間だけ開く (#3139)
                 canvas.beginVectorWindow(pending: recorder?.takePendingVectors() ?? [])
                 // **`draw()` を始めた回数は、呼ぶ直前に進める** (``DrawProgress``)。ここまでに走る入力の
                 // コールバック・入り口の供給が頼んだ切り替えは、この `draw()` で効く
@@ -1217,8 +1217,8 @@ public final class SketchRuntime {
                 // `beginRecord()` で撮ると頼んだフレームは、描き直されずに残る。そのフレームで先送りした字は、
                 // フレームの終わりに払う (``Canvas/settleDeferredGlyphs(baking:)``・#2446)
                 canvas.framePersists = !isLooping || recorder?.isIdle == false
-                // **このフレームの音の窓は、`draw()` の後・次のフレームの供給の前に描く** ([#3125])。
-                // `draw()` が頼んだ操作は、この窓の先頭から効く
+                // **このフレームの音のウィンドウは、`draw()` の後・次のフレームの供給の前に描く** ([#3125])。
+                // `draw()` が頼んだ操作は、このウィンドウの先頭から効く
                 stepSoundTrack()
             }
         }
@@ -1268,8 +1268,8 @@ public final class SketchRuntime {
             return false
         }
         replay = recorder
-        // 窓へ出す経路は、拡大した字の焼きを次のフレームへ送る (``defersEnlargedGlyphBakes``)。記録している実行は
-        // 送らない — 窓なしで流す側と同じ手順で描くので、画素のハッシュが書き出しの道と食い違わない
+        // ウィンドウへ出す経路は、拡大した字の焼きを次のフレームへ送る (``defersEnlargedGlyphBakes``)。記録している実行は
+        // 送らない — ウィンドウなしで流す側と同じ手順で描くので、画素のハッシュが書き出しの道と食い違わない
         defersEnlargedGlyphBakes = false
         // 入力は届いた生の形で拾う。`setup()` の前に届いたものも、最初の回の束に入る
         input.enqueueObserver = { [weak recorder] event in recorder?.noteInput(event) }
@@ -1310,7 +1310,7 @@ public final class SketchRuntime {
         }
     }
 
-    /// 記録を最後に描いた枚まで書いて閉じる。``closePlugins(_:)`` が呼ぶので、窓を閉じる・SIGTERM・
+    /// 記録を最後に描いた枚まで書いて閉じる。``closePlugins(_:)`` が呼ぶので、ウィンドウを閉じる・SIGTERM・
     /// Control + C のどれでも通る。出口へ配る絵は閉じる前に決着している。
     ///
     /// **`setup()` が投げて終わった実行は、完成と呼ばない** — 1 枚も描いておらず、再生の土台にならない。
@@ -1337,8 +1337,8 @@ public final class SketchRuntime {
     ///
     /// - 外から値が届く入り口 (``Inlet/report`` を持つもの。ゲームパッド・MIDI・OSC / TCP / UDP / WebSocket・
     ///   シリアル・マイク・カメラ・動画) は、届いた値が `InputState.enqueue` を通らず、記録に載らない (#2603 の後段)
-    /// - 音を実際に鳴らす入り口 (``RealtimeSound``) は、窓では実時間で鳴り、窓なしで流すときは数で進む。窓で
-    ///   録った記録だけ名乗る (窓なしで録った記録は、流す側と同じ数え方である)
+    /// - 音を実際に鳴らす入り口 (``RealtimeSound``) は、ウィンドウでは実時間で鳴り、ウィンドウなしで流すときは数で進む。ウィンドウで
+    ///   録った記録だけ名乗る (ウィンドウなしで録った記録は、流す側と同じ数え方である)
     private func noteReplaySource(_ inlet: any Inlet) {
         guard let replay else { return }
         if let report = inlet.report {
@@ -1350,10 +1350,10 @@ public final class SketchRuntime {
 
     // MARK: - 音声トラック ([#3125])
 
-    /// 音声トラックの窓を、音源に描かせて録りへ書く。**`draw()` の直後に呼ぶ。**
+    /// 音声トラックのウィンドウを、音源に描かせて録りへ書く。**`draw()` の直後に呼ぶ。**
     ///
     /// 録りを頼まれたフレームの `draw()` が終わった時点で、載せるかを決める (``FrameRecorder/decideSound(hasSources:fixedClock:)``)。
-    /// 載せるなら、音源 (``SoundSource`` の入り口) の `beginTrack` を呼び、以後は毎フレーム、フレームの番号の窓へ
+    /// 載せるなら、音源 (``SoundSource`` の入り口) の `beginTrack` を呼び、以後は毎フレーム、フレームの番号のウィンドウへ
     /// すべての音源が足した和を書く。録りの途中で足された音源は、トラックがあれば載る (足された直後に
     /// `beginTrack` を呼ぶ)。録りが終われば `endTrack` を呼ぶ。
     ///
@@ -1403,7 +1403,7 @@ public final class SketchRuntime {
     /// と分かっているときだけ** — 近い段の画素で置いた字は、次のフレームが焼き直すまでぼけているので、
     /// 残る絵に載せてはいけない。
     ///
-    /// 許すのは、窓・共有面へ出しながら回している間 (``defersEnlargedGlyphBakes``) で、作者が止めておらず・外から止めて
+    /// 許すのは、ウィンドウ・共有面へ出しながら回している間 (``defersEnlargedGlyphBakes``) で、作者が止めておらず・外から止めて
     /// おらず・時刻を指しておらず・観測が撮らず・撮る係 (`save()`・`beginRecord()`・`mokume render`) が
     /// 頼まれておらず・1 枚の書き出しでもないフレームだけである。書き出す・撮る・止める絵と、
     /// `draw()` の中で後から `noLoop()`・`save()` を呼ぶ絵は、既定で許さない側に倒れる。
@@ -1429,7 +1429,7 @@ public final class SketchRuntime {
     /// フレームに出る。呼ばずに置き続けると、上限を付けずに溜まり続ける (作者が置き続けている
     /// からである・ADR-0021 決定 4 の追補 (2026-09-27))。**書いた画素は溜めない。** 同じ
     /// コールバックで `redraw()` を呼ばなければ、配った直後に面へ戻す (``runFrame()`` の追い付き・
-    /// [#1906])。窓に出した絵がそのまま残るので、後で描くフレームの描き切りが失敗しても消えない。
+    /// [#1906])。ウィンドウに出した絵がそのまま残るので、後で描くフレームの描き切りが失敗しても消えない。
     /// 同じコールバックで `redraw()` を呼べば、そのフレームの頭で戻し、描き切りが失敗すれば
     /// 置いた図形と一緒に捨てる。
     ///
@@ -1480,20 +1480,20 @@ public final class SketchRuntime {
     /// 同時にコールバックを配るので、配る先がランタイムの差さった描画の中である必要が
     /// ある。集めるほうにその制約は無い。
     private func collectInput() {
-        // **窓からのぶんを先に引き取る。** どちらも同じ待ち行列へ入るので、順は
+        // **ウィンドウからのぶんを先に引き取る。** どちらも同じ待ち行列へ入るので、順は
         // 「起きた順に近いほう」を選ぶ — 区画は要求 1 回ぶんをまとめて運ぶので、
-        // 窓の 1 件より古いことがある
+        // ウィンドウの 1 件より古いことがある
         relayed?.drain(into: input)
         inbox?.drain(into: input)
         params?.drain()
         paramStore?.tick()
     }
 
-    /// 道具の窓が拾った出来事を、管から受け始める。
+    /// 道具のウィンドウが拾った出来事を、管から受け始める。
     ///
-    /// **呼ぶのは、窓を持つ道具に起こされ、区画も在った ``SketchApplication`` だけである**
-    /// ([ADR-0032] 決定 1・4)。共有面を用意できずに窓へ倒れた回も呼ぶ — 道具が去ったことに
-    /// 気付く口はこの管しか無い。書き出す経路と窓を持たない `SketchRuntime` は呼ばない
+    /// **呼ぶのは、ウィンドウを持つ道具に起こされ、区画も在った ``SketchApplication`` だけである**
+    /// ([ADR-0032] 決定 1・4)。共有面を用意できずにウィンドウへ倒れた回も呼ぶ — 道具が去ったことに
+    /// 気付く口はこの管しか無い。書き出す経路とウィンドウを持たない `SketchRuntime` は呼ばない
     /// ので、標準入力に触らず、閉じていても終わらない (#2024・#2025)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
@@ -2005,7 +2005,7 @@ public final class SketchRuntime {
     ///
     /// **経過は「作者の時計 (``now``) での経過」と「実時間での経過」の小さいほうで数える** ([#3119])。
     /// ``now`` は検査が差し替えて進められる (`.wallClock` の週をまたぐ検査など)。それだけで名乗ると、
-    /// プロセス全体の状態 (活性化の方針・状態バー・出来事の取り出し) が変わり、同じプロセスで窓を
+    /// プロセス全体の状態 (活性化の方針・状態バー・出来事の取り出し) が変わり、同じプロセスでウィンドウを
     /// 開閉する検査の run loop が止まって `exit(0)` で要約を残さず終わる ([#1527])。逆に ``now`` を
     /// 止めた検査 (`now: { 0 }`) は、実時間だけで数えると混んだ機械で 30 秒を越えて名乗ってしまう
     /// (直す前は経過 0 で名乗らなかった)。**両方が猶予を越えたときだけ名乗る**。本番の ``now`` は
@@ -2039,11 +2039,11 @@ public final class SketchRuntime {
 
     /// 名乗りのメニューが開いている間、プレビューを動かすために呼ばれる。
     ///
-    /// **誰かが既に進めているなら何もしない。** 窓を開く経路の駆動源 (`CADisplayLink`) は
+    /// **誰かが既に進めているなら何もしない。** ウィンドウを開く経路の駆動源 (`CADisplayLink`) は
     /// `.common` モードに登録されているので、メニューを開いている間もフレームは進み続ける
     /// — そこで二重に進めると、**メニューを開けている間だけ倍の速さで動く**。
     ///
-    /// 逆に窓を開かない経路では、メニューを開いた時点で `advance()` が AppKit の追跡ループ
+    /// 逆にウィンドウを開かない経路では、メニューを開いた時点で `advance()` が AppKit の追跡ループ
     /// の中で止まっている。**そのままではプレビューが静止画になる**ので、ここが進める。
     ///
     /// **この回は表示の予定の時刻を持たず、現在時刻で進む** ([#2390])。時刻は前の枚より小さくならない
@@ -2060,7 +2060,7 @@ public final class SketchRuntime {
         do throws(RenderFailure) {
             try runFrame()
         } catch {
-            // **`setup()` が投げた失敗は捨てない** ([#2401])。直らない失敗なので、窓の経路へ知らせて終わらせる。
+            // **`setup()` が投げた失敗は捨てない** ([#2401])。直らない失敗なので、ウィンドウの経路へ知らせて終わらせる。
             // それ以外の失敗は、次の回でやり直す
             if case .setupFailed = error { setupFailureHandler?(error) }
         }
@@ -2105,8 +2105,8 @@ public final class SketchRuntime {
 
     /// フレームの頭で片付けること。
     private func beginFrame() {
-        // 速さは**いつでも**数える。窓は観測が無くても数字を出すためで、ここを
-        // 観測に紐づけると窓が自分で測り直すことになる (源が 2 つに割れる)
+        // 速さは**いつでも**数える。ウィンドウは観測が無くても数字を出すためで、ここを
+        // 観測に紐づけるとウィンドウが自分で測り直すことになる (源が 2 つに割れる)
         tempo.record(now: now())
         // GPU 時間を数えるフレームの区切り (#2378)。投入を待たず、番号を 1 つ控えるだけ
         target.gpu.markFrameStart()
@@ -2353,7 +2353,7 @@ public final class SketchRuntime {
     ///
     /// 読み直しを取るのは本体の面のフレームの頭 (``Canvas`` の `beginFrame()`) なので、描かない
     /// 間 (外から止めた間・作者の `noLoop()` で描き直しを頼まれていない間) は、main actor を
-    /// 譲らないループでは取る者がいなかった。窓なら積んだ `Task` が取るので、`failure` と観測の
+    /// 譲らないループでは取る者がいなかった。ウィンドウなら積んだ `Task` が取るので、`failure` と観測の
     /// 目録 (`canvas.shaderFailures`) が、叩き方で古いまま残るかどうかが割れた。ここは描いて
     /// いないので、組み直しても 1 つのフレームの中で断片が混ざることはない。
     ///

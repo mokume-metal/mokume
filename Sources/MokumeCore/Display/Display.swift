@@ -21,7 +21,7 @@ import AppKit
 ///
 /// ``width`` と ``height`` は、**そのディスプレイで全画面にしたときに描く大きさ** (画素) で
 /// ある。画面の点に画素密度 (Retina なら 2) を掛けた数なので、描いた 1 画素が画面の 1 画素に
-/// 載る。カメラの切り欠きのある画面では、macOS が全画面の窓をメニューバーの帯の下に置くので、
+/// 載る。カメラの切り欠きのある画面では、macOS が全画面のウィンドウをメニューバーの帯の下に置くので、
 /// その帯のぶん低い。
 ///
 /// **隔離しない値である** — 起動の失敗 (``RenderFailure/displayNotConnected(_:connected:)``) が
@@ -35,7 +35,7 @@ public nonisolated struct Display: Equatable, Sendable, CustomStringConvertible 
     public let width: Int
     /// 全画面にしたときに描く高さ (画素)。
     public let height: Int
-    /// OS がこのディスプレイに振った番号 (`CGDirectDisplayID`)。窓を出すときに、画面を
+    /// OS がこのディスプレイに振った番号 (`CGDirectDisplayID`)。ウィンドウを出すときに、画面を
     /// 引き直す鍵にする (`screen(for:among:)`)。**面には出さない** — 選ぶ形は番号の 1 本である。
     let screenID: UInt32
 
@@ -66,16 +66,16 @@ extension Display {
         var scale: CGFloat
     }
 
-    /// 全画面にした窓の中身の大きさ (点)。
+    /// 全画面にしたウィンドウの中身の大きさ (点)。
     ///
     /// **切り欠きの無い画面では枠そのもの** — メニューバーは全画面の間は隠れる。
     ///
-    /// **切り欠きのある画面では、メニューバーの帯の下まで。** macOS は全画面の窓を切り欠きの
+    /// **切り欠きのある画面では、メニューバーの帯の下まで。** macOS は全画面のウィンドウを切り欠きの
     /// 下に置く。実測 (#2020・1800×1169 点の内蔵画面・メニューバーを隠さない既定の設定) では
-    /// 全画面の窓は 1800×1130 点で、切り欠きの丈 (38) ではなく、使える範囲の上端 (1130 —
+    /// 全画面のウィンドウは 1800×1130 点で、切り欠きの丈 (38) ではなく、使える範囲の上端 (1130 —
     /// メニューバーの帯と、その下の 1 点の線を除いた所) で止まった。メニューバーを常に隠す設定
     /// では使える範囲が上まで伸びるので、切り欠きの丈の下で抑える。そちらは測っていない —
-    /// 食い違えば、窓を出す側が全画面に入った後に言う (`WindowPlacement.fullScreenMismatch`)。
+    /// 食い違えば、ウィンドウを出す側が全画面に入った後に言う (`WindowPlacement.fullScreenMismatch`)。
     static func fullScreenPoints(of reading: Reading) -> CGSize {
         guard reading.cameraHousing > 0 else { return reading.frame.size }
         let top = min(reading.visibleFrame.maxY, reading.frame.maxY - reading.cameraHousing)
@@ -109,7 +109,7 @@ extension Display {
     ///
     /// **見つからなければ型のついたエラーで断り、別の画面へは倒さない** ([ADR-0020] 決定 5 の
     /// 2 行目 — 起動の組み立てで呼ばれる)。展示でプロジェクタへ出すつもりの作品が、黙って手元の
-    /// 画面を全画面で塞ぐことになるからである。窓で開くほうへ倒したい作品は、``SketchPart/displays``
+    /// 画面を全画面で塞ぐことになるからである。ウィンドウで開くほうへ倒したい作品は、``SketchPart/displays``
     /// を読んで自分で選ぶ。
     ///
     /// - 1 を割る番号は ``RenderFailure/invalidDisplay(_:)`` (頼み方の誤り)

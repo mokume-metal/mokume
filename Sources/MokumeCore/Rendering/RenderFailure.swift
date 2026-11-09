@@ -137,10 +137,10 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
     case invalidFrameRate(Int)
 
-    /// 窓を開く倍率が正しくない (0 より大きい有限の数でなければならない)。
+    /// ウィンドウを開く倍率が正しくない (0 より大きい有限の数でなければならない)。
     ///
-    /// **組み立てで断る** ([ADR-0020] 決定 5 の 2 行目)。窓を開かない実行 (書き出し・
-    /// 窓を持たない `SketchRuntime`) でも断るのは、同じスケッチが窓を開く起こし方に
+    /// **組み立てで断る** ([ADR-0020] 決定 5 の 2 行目)。ウィンドウを開かない実行 (書き出し・
+    /// ウィンドウを持たない `SketchRuntime`) でも断るのは、同じスケッチがウィンドウを開く起こし方に
     /// 移ったときに初めて落ちる形にしないためである。画面に収まらない大きさは断らない
     /// (``SketchSettings/windowScale`` の「使える値」)。
     ///
@@ -158,7 +158,7 @@ public enum RenderFailure: Error, Equatable, Sendable {
     ///
     /// **組み立てで断り、別の画面へは倒さない** ([ADR-0020] 決定 5 の 2 行目)。展示でプロジェクタへ
     /// 出すつもりの作品が、黙って手元の画面を全画面で塞ぐことになるからである。繋がっていなければ
-    /// 窓で開く、としたい作品は ``SketchPart/displays`` を読んで自分で選ぶ
+    /// ウィンドウで開く、としたい作品は ``SketchPart/displays`` を読んで自分で選ぶ
     /// (``SketchSettings/fullScreen(_:)`` の例)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -214,9 +214,9 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 道具 (`mokume render`) が渡した書き出しの頼み (環境変数 `MOKUME_RENDER`) を、子が読めない、
     /// または書き出せない組だった。`value` は渡された値そのまま ([#2481])。
     ///
-    /// **窓へ倒さず、起動を断る。** 倒れた子は窓を開いて 0 で終わり、書き出しを頼んだ人は何も書かれて
+    /// **ウィンドウへ倒さず、起動を断る。** 倒れた子はウィンドウを開いて 0 で終わり、書き出しを頼んだ人は何も書かれて
     /// いないのに「書けた」と読まされた。形が違うのは、道具と依存の版がずれたときと、手で値を置いた
-    /// ときである。値が無い子はこの case に来ない (いつもの窓)。
+    /// ときである。値が無い子はこの case に来ない (いつものウィンドウ)。
     ///
     /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
     case unreadableRenderRequest(value: String)
@@ -224,7 +224,7 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// ``Sketch/setup()`` が投げたので、スケッチは `draw()` を 1 度も呼ばずに止まった ([#2401])。
     ///
     /// `reason` は投げた失敗の全文 (`loadImage` の失敗なら、何を読めなかったかと次にすること)。**どの経路で
-    /// 走らせても** — 窓・書き出し・`SketchRuntime` を直に回す検査 — 同じ失敗がここへ畳まれる。投げた型は
+    /// 走らせても** — ウィンドウ・書き出し・`SketchRuntime` を直に回す検査 — 同じ失敗がここへ畳まれる。投げた型は
     /// 問わないので、運ぶのは文面だけである。
     ///
     /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
@@ -315,7 +315,7 @@ extension RenderFailure: CustomStringConvertible {
             One frame is drawing too much — draw fewer things, or make the shader lighter.
             """
         case .workDropped(let reason):
-            // **1 行目に理由を入れる。** 窓の経路は `headline` の 1 行しか流さないので、
+            // **1 行目に理由を入れる。** ウィンドウの経路は `headline` の 1 行しか流さないので、
             // 2 行目へ回すと、読むべき理由が端末に 1 度も出ない (#1343)。**待ちが終わらなかったとは
             // 言い切らない** — 絵を返す口は、待ちが成り立った後にも打ち切りを見つけて投げる (#1932)
             """
@@ -460,7 +460,7 @@ extension RenderFailure: CustomStringConvertible {
 
     /// ``gpuNotResponding`` の文面。**最初に期限を越えた待ち** (`closure`) を 1 行目に添える (#2052)。
     ///
-    /// **1 行目に理由と、最初の待ちを入れる** (`workDropped` と同じ)。窓の経路は ``headline`` の 1 行
+    /// **1 行目に理由と、最初の待ちを入れる** (`workDropped` と同じ)。ウィンドウの経路は ``headline`` の 1 行
     /// しか流さない。検査では、印が立った後の GPU の検査がすべてこれで赤になる。最初に期限を越えた
     /// 待ちが土台を畳む時のもの (投げない) なら、原因の検査は緑のまま残る。だから、どの赤からも
     /// 原因の時刻と種類を読めるようにする。

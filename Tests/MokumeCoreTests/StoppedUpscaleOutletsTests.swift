@@ -10,14 +10,14 @@ import simd
 
 /// 止まっている間に変えた描く先が、**出す先を読むどの口にも**出る ([#1882])。
 ///
-/// 出す先を読む口は複数ある — 出力段 (`save()`・観測)・窓 (`FramePresenter`)・共有の面
+/// 出す先を読む口は複数ある — 出力段 (`save()`・観測)・ウィンドウ (`FramePresenter`)・共有の面
 /// (`SharedFrameSurface`)・CPU の読み出し。どれも同じ 1 枚を受け取る (ADR-0023 決定 2)。止まっている
 /// 間のコールバックを配る場所は `SketchRuntime.advance()` の 1 か所だけなので、**配った直後にそこで
-/// 追い付けば、どの口も同時に直る**。ここでは実ランタイムに止まっている間のキーを配り、窓と共有の面が
-/// 読む出す先のテクスチャを、窓を開かずに読む (`FramePresenter.draw(_:into:)`・`SharedFrameSurface`)。
+/// 追い付けば、どの口も同時に直る**。ここでは実ランタイムに止まっている間のキーを配り、ウィンドウと共有の面が
+/// 読む出す先のテクスチャを、ウィンドウを開かずに読む (`FramePresenter.draw(_:into:)`・`SharedFrameSurface`)。
 ///
 /// 細かさ 1 の面も同じ 1 点で追い付く ([#1906])。描く先が出す先そのものなので広げ直す手は無いが、
-/// 書いた画素は CPU の写しに載ったままで、窓と共有の面はテクスチャを直に読む。配った直後に写しを
+/// 書いた画素は CPU の写しに載ったままで、ウィンドウと共有の面はテクスチャを直に読む。配った直後に写しを
 /// 書き戻さないと、次に描くフレームか出力段を通すまで、書く前の絵が出たままになる。
 ///
 /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
@@ -206,7 +206,7 @@ struct StoppedUpscaleOutletsTests {
         red > 0.9 && green < 0.1 && blue < 0.1
     }
 
-    /// 窓が読む絵。窓を開かずに、差し出す経路を渡したテクスチャへ描いて読む。
+    /// ウィンドウが読む絵。ウィンドウを開かずに、差し出す経路を渡したテクスチャへ描いて読む。
     private static func windowPicture(of runtime: SketchRuntime, gpu: RenderDevice) throws -> PixelBuffer {
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         let window = try RenderTarget(gpu: gpu, width: 160, height: 160)
@@ -214,11 +214,11 @@ struct StoppedUpscaleOutletsTests {
         return try window.readPixels()
     }
 
-    // MARK: - 窓・共有の面・CPU
+    // MARK: - ウィンドウ・共有の面・CPU
 
-    /// 窓が読む出す先のテクスチャ。窓を開かずに、差し出す経路を渡したテクスチャへ描いて読む。
+    /// ウィンドウが読む出す先のテクスチャ。ウィンドウを開かずに、差し出す経路を渡したテクスチャへ描いて読む。
     @Test(
-        "止まっている間に変えたものは、窓が読む出す先に出る",
+        "止まっている間に変えたものは、ウィンドウが読む出す先に出る",
         arguments: Scenario.all)
     func theWindowShowsIt(scenario: Scenario) throws {
         try Self.withStoppedSketch(density: scenario.density, vignette: scenario.vignette) {
@@ -227,11 +227,11 @@ struct StoppedUpscaleOutletsTests {
 
             let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
 
-            #expect(Self.isRed(point.red, point.green, point.blue), "窓が読む絵に出ていない: \(point)")
+            #expect(Self.isRed(point.red, point.green, point.blue), "ウィンドウが読む絵に出ていない: \(point)")
         }
     }
 
-    /// 窓に出した後に描き直しても、書いた画素は残り、効果は次のフレームへ焼き込まれない ([#1906]
+    /// ウィンドウに出した後に描き直しても、書いた画素は残り、効果は次のフレームへ焼き込まれない ([#1906]
     /// 完了条件 3)。
     ///
     /// 配った直後の書き戻しは、効果を通す前の絵 (次のフレームの入り) へも同じ画素を写す。写さずに
@@ -240,7 +240,7 @@ struct StoppedUpscaleOutletsTests {
     ///
     /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
     @Test(
-        "窓に出した後に描き直しても、書いた画素は残り効果は焼き込まれない",
+        "ウィンドウに出した後に描き直しても、書いた画素は残り効果は焼き込まれない",
         arguments: [Float(1), 0.5])
     func writtenPixelsSurviveTheWindow(density: Float) throws {
         var plain: PixelBuffer?
@@ -253,7 +253,7 @@ struct StoppedUpscaleOutletsTests {
         try Self.withStoppedSketch(density: density, vignette: true) { runtime, gpu, press in
             try press("w")
             let shown = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
-            #expect(Self.isRed(shown.red, shown.green, shown.blue), "窓が読む絵に出ていない: \(shown)")
+            #expect(Self.isRed(shown.red, shown.green, shown.blue), "ウィンドウが読む絵に出ていない: \(shown)")
 
             try press("r")
             let second = try Self.windowPicture(of: runtime, gpu: gpu)
@@ -1456,7 +1456,7 @@ struct StoppedUpscaleOutletsTests {
     }
 
     /// 細かさ 1 の面で、配った直後の書き戻しが失敗しても `advance()` は投げない ([#1906])。書き込み待ちは
-    /// 残り、**出力段は古い絵を黙って返さず投げる**。直れば、次のリフレッシュが書き戻して窓に出る。
+    /// 残り、**出力段は古い絵を黙って返さず投げる**。直れば、次のリフレッシュが書き戻してウィンドウに出る。
     ///
     /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
     @Test(
@@ -1475,7 +1475,7 @@ struct StoppedUpscaleOutletsTests {
             try runtime.advance()
             #expect(!canvas.target.hasPendingPixelWrites, "直った後のリフレッシュが書き戻していない")
             let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
-            #expect(Self.isRed(point.red, point.green, point.blue), "やり直しで窓に出ていない: \(point)")
+            #expect(Self.isRed(point.red, point.green, point.blue), "やり直しでウィンドウに出ていない: \(point)")
         }
     }
 
@@ -1501,7 +1501,7 @@ struct StoppedUpscaleOutletsTests {
             #expect(!canvas.target.hasPendingPixelWrites, "止めている間のリフレッシュが書き戻していない")
             #expect(!canvas.needsOutputEnlargement, "止めている間のリフレッシュが広げ直していない")
             let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
-            #expect(Self.isRed(point.red, point.green, point.blue), "止めている間に窓に出ていない: \(point)")
+            #expect(Self.isRed(point.red, point.green, point.blue), "止めている間にウィンドウに出ていない: \(point)")
 
             let submissions = gpu.submissionCount
             try runtime.advance()
@@ -1513,7 +1513,7 @@ struct StoppedUpscaleOutletsTests {
     // MARK: - 後で描くフレームの描き切りが失敗したとき
 
     /// 止まっている間のコールバックで書いた画素は、配った直後に面へ戻したもので、後で描くフレームの
-    /// 描き切りが失敗しても消えない ([#1906]・ADR-0021 決定 4 の追補 (2026-10-02))。窓に一度出した
+    /// 描き切りが失敗しても消えない ([#1906]・ADR-0021 決定 4 の追補 (2026-10-02))。ウィンドウに一度出した
     /// 絵が、描けなかったフレームの後で消えないためである。捨てるのは、そのフレームへ持ち越した
     /// 図形だけ (緑の円)。**同じコールバックで書いて `redraw()` したときは、そのフレームの一部として
     /// 載るので、描き切りが失敗すれば一緒に捨てる。**

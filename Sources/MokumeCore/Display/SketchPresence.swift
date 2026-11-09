@@ -41,7 +41,7 @@ import Foundation
 ///
 /// ## 誰が run loop を回すかは経路で違う
 ///
-/// 窓を開く経路 (``SketchApplication``) では AppKit が `NSApp.run()` の中で回しているので、
+/// ウィンドウを開く経路 (``SketchApplication``) では AppKit が `NSApp.run()` の中で回しているので、
 /// **こちらから 1 度も触ってはならない** — 触れば AppKit の event loop へ再入する。
 /// オフスクリーンの経路には回す人が居ないので、自分で回す。見分けは `NSApp.isRunning`。
 ///
@@ -91,7 +91,7 @@ final class SketchPresence {
     /// 検査から本物の run loop や `NSApp` を動かしたくはない。
     ///
     /// 回すのは、**回す人が誰も居ないときだけ**である。居るのは 2 通り:
-    /// - `NSApp.run()` の中 (窓を開く経路・``SketchApplication``)。こちらから触れば AppKit の event loop へ再入する
+    /// - `NSApp.run()` の中 (ウィンドウを開く経路・``SketchApplication``)。こちらから触れば AppKit の event loop へ再入する
     /// - **main の run loop を別の誰かが回している** (async main の最上段で `CFRunLoopRun()` が回る
     ///   プロセス — 検査のプロセスと、`SketchRuntime` を async main の上で直に回す使い手・[#3120])。
     ///   そこで `nextEvent` を呼ぶと、以後は出来事が届くたびに AppKit が main の run loop を止めるブロックを
@@ -234,7 +234,7 @@ final class SketchPresence {
 
     /// 溜まった出来事を 1 回ぶん捌く。
     ///
-    /// **run loop を回すだけでは足りない。** 名乗りは出るが**押せない** — 窓口に届いた
+    /// **run loop を回すだけでは足りない。** 名乗りは出るが**押せない** — アプリに届いた
     /// マウスの出来事を取り出すのは `NSApplication.run()` の中の
     /// `nextEvent(matching:until:inMode:dequeue:)` であって run loop ではないので、
     /// `run()` を通らないこの経路では誰も取り出さない (実測: クリックしても何も起きなかった)。
@@ -257,7 +257,7 @@ final class SketchPresence {
     /// | 守り | 何を止めるか |
     /// | --- | --- |
     /// | `SketchRuntime.isAdvancingFrame` | フレームを描いている最中に入れ子で描き始めるのを止める |
-    /// | `SketchRuntime.presenceStallThreshold` | 窓の駆動源が進め続けているとき (`.common` モードなので追跡ループ中も止まらない) に、こちらが二重に進めるのを止める |
+    /// | `SketchRuntime.presenceStallThreshold` | ウィンドウの駆動源が進め続けているとき (`.common` モードなので追跡ループ中も止まらない) に、こちらが二重に進めるのを止める |
     ///
     /// **契約がこちらに書かれていなかった** ([#960](https://github.com/mokume-metal/mokume/issues/960) の 6)。
     /// 危ないのはこの行で、守っているのは別ファイルの 2 つの目印である — 片方を「使われて
@@ -275,16 +275,16 @@ final class SketchPresence {
     /// メニューバーへ出す。
     private func announce() {
         let app = NSApplication.shared
-        // **`.regular` を落とさない。** 窓を開く経路は既に `.regular` で、下げると Dock から
+        // **`.regular` を落とさない。** ウィンドウを開く経路は既に `.regular` で、下げると Dock から
         // 消える。バンドルを持たない実行ファイルの既定は `.prohibited` なので、そこだけ上げる
         if app.activationPolicy() == .prohibited {
             _ = app.setActivationPolicy(.accessory)
         }
         // **`finishLaunching()` は呼ばない。** 名乗りに要らないことを実測で確かめてある。
-        // 窓経路では AppKit が既に呼んでおり、二度目は
-        // `applicationDidFinishLaunching` をもう一度流して窓を 2 枚開かせうる
+        // ウィンドウ経路では AppKit が既に呼んでおり、二度目は
+        // `applicationDidFinishLaunching` をもう一度流してウィンドウを 2 枚開かせうる
         //
-        // **回す人が別に居るかは、名乗る前に読む** (``mainRunLoopIsRunning``)。窓を開かず async main の
+        // **回す人が別に居るかは、名乗る前に読む** (``mainRunLoopIsRunning``)。ウィンドウを開かず async main の
         // 上で直に回す形では、`nextEvent` で出来事を汲み出さない (#3120)
         let drivesRunLoop = Self.drivesRunLoopNow
 
@@ -357,7 +357,7 @@ final class SketchPresence {
     /// メニューが開いた。**プレビューを動かし始める。**
     ///
     /// 開くと `NSApp.sendEvent` の中で AppKit が自前の追跡ループへ入り、閉じるまで戻らない
-    /// — 窓を開かない経路ではその `sendEvent` が ``pump()`` の中、つまり `advance()` の
+    /// — ウィンドウを開かない経路ではその `sendEvent` が ``pump()`` の中、つまり `advance()` の
     /// 途中にあるので、**放っておくとプレビューはそこで止まった 1 枚になる**。
     ///
     /// だから追跡ループの中でも回る駆動源を置く。`.common` に登録するのが肝で、既定の
@@ -384,7 +384,7 @@ final class SketchPresence {
     /// 開いている間の 1 拍。絵と経過を新しくする。
     private func tick() {
         guard let source else { return }
-        // 誰も進めていなければ、ここが進める (窓を開かない経路)。進んでいれば何もしない
+        // 誰も進めていなければ、ここが進める (ウィンドウを開かない経路)。進んでいれば何もしない
         source.advanceForPresence()
 
         if let previewView {
@@ -423,7 +423,7 @@ final class SketchPresence {
             ])
     }
 
-    /// いま描いている絵。**これが「どの窓が誰のものか」に最も直接答える。**
+    /// いま描いている絵。**これが「どのウィンドウが誰のものか」に最も直接答える。**
     ///
     /// 幅はメニューに合わせて渡され、高さは絵の縦横比から出す。**絵の側の大きさに
     /// 合わせない** — スケッチごとに絵の大きさが違うので、合わせるとメニューの幅が

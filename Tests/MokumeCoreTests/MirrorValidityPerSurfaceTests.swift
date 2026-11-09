@@ -112,8 +112,8 @@ struct MirrorValidityPerSurfaceTests {
         #expect(pair.a.target.pixelMirrorsMade == mirrors, "写しを作り直した")
     }
 
-    /// 画素の窓 (`pixels`・#2956) も同じ式で決める。窓の取り直しが、別の面の投入で読み戻しを呼ばない。
-    @Test("別の面が動いても、窓越しに静止した面を読み戻し直さない")
+    /// 画素のビュー (`pixels`・#2956) も同じ式で決める。ビューの取り直しが、別の面の投入で読み戻しを呼ばない。
+    @Test("別の面が動いても、ウィンドウ越しに静止した面を読み戻し直さない")
     func theWindowIsNotRefilledWhileAnotherSurfaceMoves() throws {
         let pair = try makePair()
         try paintA(pair, red)
@@ -122,9 +122,9 @@ struct MirrorValidityPerSurfaceTests {
 
         for round in 0..<28 {
             try move(.draw, pair, round: round)
-            #expect(pair.a.target.pixels[3, 3] == red, "\(round) 回目: 窓が違う画素を返した")
+            #expect(pair.a.target.pixels[3, 3] == red, "\(round) 回目: ビューが違う画素を返した")
         }
-        #expect(pair.a.target.pixelReadbacksEncoded == readbacks, "窓の取り直しで読み戻し直した")
+        #expect(pair.a.target.pixelReadbacksEncoded == readbacks, "ウィンドウの取り直しで読み戻し直した")
     }
 
     // MARK: - 守る向き

@@ -446,7 +446,7 @@ struct ParameterNonFiniteTests {
         #expect(!box.warnings.hasWarned(.notFinite))
     }
 
-    /// 値が動いていないので、見ている側 (窓・保存) を起こさない。
+    /// 値が動いていないので、見ている側 (ウィンドウ・保存) を起こさない。
     @Test("拒んだ代入は、変化として通知しない")
     func aRefusalDoesNotNotify() {
         let sketch = Tuned()
@@ -491,7 +491,7 @@ struct ParameterNonFiniteTests {
         let surface = ParamSurface(directory: facet, sketch: sketch)
         surface.start()
         let box = try #require(ParamRegistry(of: sketch).knobs.first as? ParamBox<Float>)
-        // 譲るループ (窓) の形で回す。知らせは譲らなくても届く (#1704)
+        // 譲るループ (ウィンドウ) の形で回す。知らせは譲らなくても届く (#1704)
         await Task.yield()
         #expect(surface.drain() == nil)
 

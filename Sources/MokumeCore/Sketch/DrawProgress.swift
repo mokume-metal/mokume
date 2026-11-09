@@ -31,7 +31,7 @@ package struct DrawProgress: Sendable, Equatable {
     func advanced() -> DrawProgress { DrawProgress(run: run, draws: draws + 1) }
 }
 
-/// いまの ``DrawProgress`` を、走っている実行の外 (`Task` の中・走る前) からも読むための窓口。
+/// いまの ``DrawProgress`` を、走っている実行の外 (`Task` の中・走る前) からも読むための入口。
 ///
 /// ``runningSketch`` は `setup()`・`draw()`・入力のコールバックが返ると外れる。外れた後に読まれても、
 /// **最後に動いた実行の目盛り**を返す。実行は同時に 1 つなので、それが「いまの実行」である。

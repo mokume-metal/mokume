@@ -12,7 +12,7 @@ import Testing
 
 /// 宣言からつまみを決める規則。
 ///
-/// **窓を立てずに検められる形にしてある** ([ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 8)。
+/// **ウィンドウを立てずに検められる形にしてある** ([ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 8)。
 /// 対応を SwiftUI の中に埋めると、規則が正しいかどうかは画面を見るまで分からなくなる。
 @Suite("型ごとのつまみ")
 struct KnobKindTests {
@@ -61,7 +61,7 @@ struct KnobKindTests {
     }
 
     /// つまみが出ない値を並びから消すと、**書いたのに効かない**のか**出していないだけ**なのか
-    /// が窓からは区別できない。理由は次に何を書けばよいかまで言う。
+    /// がウィンドウからは区別できない。理由は次に何を書けばよいかまで言う。
     @Test("つまみを出さない理由は、次に何を書けばよいかまで言う")
     func reasonsSayWhatToWrite() {
         #expect(KnobKind.Reason.rangeNotDeclared.note.contains("declare a range"))
@@ -84,7 +84,7 @@ struct KnobTextTests {
         #expect(KnobText.value(of: .color(.linear(red: 1, green: 0, blue: 0))) == "#FF0000")
     }
 
-    @Test("窓の 16 進は、書いた色の綴りと一致する")
+    @Test("ウィンドウの 16 進は、書いた色の綴りと一致する")
     func hexMatchesTheColorAsWritten() {
         // **1.0 と 0.0 は線形でもエンコード値でも同じ**なので、上の検査だけでは
         // 転送関数を通し忘れても気付けなかった (#746)。中間調で見る
@@ -101,7 +101,7 @@ struct KnobTextTests {
 
     @Test("色域の外の色は、綴れる範囲へ寄せて出す")
     func hexClampsWhatItCannotSpell() {
-        // 24 bit の綴りに範囲外は書けない。**丸めるのは窓だけ**で、値は保たれている
+        // 24 bit の綴りに範囲外は書けない。**丸めるのはウィンドウだけ**で、値は保たれている
         #expect(KnobText.value(of: .color(color(510, -20, 0))) == "#FF0000")
     }
 
@@ -113,7 +113,7 @@ struct KnobTextTests {
 
 /// 色を選ぶ欄と作業空間のあいだの変換。
 ///
-/// **窓を立てずに検められる。** `ColorPicker` に載せる `Color` を組むのも、選ばれた
+/// **ウィンドウを立てずに検められる。** `ColorPicker` に載せる `Color` を組むのも、選ばれた
 /// `Color` を作業空間へ戻すのも純関数なので、画面を出さずに往復を見られる。
 @Suite("色を選ぶ欄との往復")
 struct KnobColorTests {
@@ -168,7 +168,7 @@ struct KnobColorTests {
 
 /// つまみの面が、値を勝手に書き換えないこと。
 ///
-/// **窓が値を持つと、触っていないフレームでも「変わった」と言い続ける。** 窓は正典を
+/// **ウィンドウが値を持つと、触っていないフレームでも「変わった」と言い続ける。** ウィンドウは正典を
 /// 読み、動かしたときだけ正典を書く — その性質は、面を何度組み直しても通知が 1 件も
 /// 出ないことで見える。
 @Suite("つまみは触らなければ黙っている")
@@ -202,7 +202,7 @@ struct KnobQuietTests {
 
         let panel = KnobOverlay.makeIfNeeded(for: ParamRegistry(of: sketch))
         #expect(panel != nil)
-        // **組み直すたびに本体が引き直る。** 窓が値を持っていれば、ここで書き戻しが起きる
+        // **組み直すたびに本体が引き直る。** ウィンドウが値を持っていれば、ここで書き戻しが起きる
         for _ in 0..<10 {
             _ = panel?.fittingSize
             panel?.layoutSubtreeIfNeeded()
@@ -234,7 +234,7 @@ struct KnobQuietTests {
 
 /// つまみの面の置き方。
 ///
-/// **宣言の数は作品が決める** ので、面は窓より高くなりうる。はみ出したまま置くと下の
+/// **宣言の数は作品が決める** ので、面はウィンドウより高くなりうる。はみ出したまま置くと下の
 /// つまみへ手が届かないので、収まるところまで詰めて中で巻き取る。
 @Suite("つまみの面の置き方")
 @MainActor
@@ -255,7 +255,7 @@ struct KnobOverlayLayoutTests {
         return (panel, host)
     }
 
-    @Test("窓に収まる丈なら、中身のままの高さで左上に置く")
+    @Test("ウィンドウに収まる丈なら、中身のままの高さで左上に置く")
     func fitsAsIsWhenTheWindowIsTall() throws {
         let (panel, host) = try place(inHostOfHeight: 2_000)
         #expect(panel.frame.minX == KnobOverlay.inset)
@@ -263,8 +263,8 @@ struct KnobOverlayLayoutTests {
         #expect(panel.frame.height > 100)
     }
 
-    /// 詰めても**上端は動かない**。上を動かすと、窓を縮めるたびにつまみの並びが上下する。
-    @Test("窓に収まらなければ丈を詰める。上端は動かさない")
+    /// 詰めても**上端は動かない**。上を動かすと、ウィンドウを縮めるたびにつまみの並びが上下する。
+    @Test("ウィンドウに収まらなければ丈を詰める。上端は動かさない")
     func shrinksToFitButKeepsTheTop() throws {
         let tall = try place(inHostOfHeight: 2_000).0.frame.height
         let (panel, host) = try place(inHostOfHeight: 200)
@@ -274,7 +274,7 @@ struct KnobOverlayLayoutTests {
     }
 
     /// **後から来た警告で欄が伸びたら、枠も伸びる** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
-    /// 枠の丈は置いたときに 1 度測るだけなので、測り直さないと欄は窓の下に切れて見えない。上端は動かさない。
+    /// 枠の丈は置いたときに 1 度測るだけなので、測り直さないと欄はウィンドウの下に切れて見えない。上端は動かさない。
     @Test("警告が後から来て欄が伸びたら、丈を測り直す。無くなれば元に戻り、上端は動かさない")
     func growsWhenTheWarningsArriveLater() throws {
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 2_000))
@@ -298,7 +298,7 @@ struct KnobOverlayLayoutTests {
         #expect(panel.frame.height == bare, "欄が消えたのに枠が縮んでいない")
     }
 
-    @Test("窓の大きさが変われば置き直す")
+    @Test("ウィンドウの大きさが変われば置き直す")
     func repositionsWhenTheWindowResizes() throws {
         let (panel, host) = try place(inHostOfHeight: 2_000)
         host.setFrameSize(NSSize(width: 400, height: 200))
@@ -310,7 +310,7 @@ struct KnobOverlayLayoutTests {
 /// **つまみの面が絵に混ざらないこと** ([ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 1)。
 ///
 /// 目で見ると「パネルが出ている絵」と「出ていない絵」は区別が付いてしまうので、
-/// **ここは目より機械が強い** — 同じフレームを、つまみを重ねた窓と重ねない窓で描き、
+/// **ここは目より機械が強い** — 同じフレームを、つまみを重ねたウィンドウと重ねないウィンドウで描き、
 /// 出力段を通した 8 bit の画素の sha256 が一致することを見る
 /// ([ADR-0019](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md) 決定 3 の量子化点・
 /// [ADR-0025](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md) 水準 3)。
@@ -345,7 +345,7 @@ struct KnobOverlayRenderingTests {
         let knobPixels: Int
     }
 
-    /// 窓を組み立てて 1 フレーム描く。`showingKnobs` だけが 2 つの経路の違いである。
+    /// ウィンドウを組み立てて 1 フレーム描く。`showingKnobs` だけが 2 つの経路の違いである。
     private func render(showingKnobs: Bool) throws -> Take {
         let sketch = Knobbed()
         let runtime = try SketchRuntime(
@@ -362,7 +362,7 @@ struct KnobOverlayRenderingTests {
 
         var knobPixels = 0
         if showingKnobs {
-            // 数字も一緒に出す。**窓に出す表示は、どれも描画の出力に入らない**
+            // 数字も一緒に出す。**ウィンドウに出す表示は、どれも描画の出力に入らない**
             // (#517 の全体に効く条件 1) — 数字が焼き付くと、撮り直すたびに違う絵になる
             let panel = try #require(
                 KnobOverlay.makeIfNeeded(for: ParamRegistry(of: sketch)) {

@@ -111,7 +111,7 @@ import MokumeDiagnostics
 
     /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(inBackground:prepare:adopt:)``)。
     ///
-    /// 窓の経路では裏で組む (``Shader/reload()`` と同じ)。
+    /// ウィンドウの経路では裏で組む (``Shader/reload()`` と同じ)。
     func reload() {
         box.reload(
             inBackground: gpu.shaderRebuildsRunInBackground,

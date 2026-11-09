@@ -729,7 +729,7 @@ struct RecordMovieTests {
         MovingSketch.body = body
         // **名乗りの実時間の時計は止める** (#3120)。閉じるのを最大 40 秒待つ検査は、公開の初期化子で組むと
         // 実時間が猶予 (30 秒) を越えて名乗りうる。名乗るとプロセス全体の状態が変わり、同じプロセスの
-        // 窓の検査の run loop を止める
+        // ウィンドウの検査の run loop を止める
         return try SketchRuntime(
             sketch: MovingSketch(), gpu: try RenderDevice(), clock: nil,
             now: { CACurrentMediaTime() }, presenceClock: { 0 })

@@ -66,7 +66,7 @@ final class ClockHandover {
         var seconds: Double
         /// 止めているか (``SketchPart/pauseTime()``)。
         var isHeld: Bool
-        /// 枚が止まっているか (``SketchPart/noLoop()`` で作者が止めた・外から止めた)。止まっている間、窓に出ているのは
+        /// 枚が止まっているか (``SketchPart/noLoop()`` で作者が止めた・外から止めた)。止まっている間、ウィンドウに出ているのは
         /// ``seconds`` の枚で、時計は進んで見えない。
         var isStill: Bool
         /// 止めていない間に、実時間 1 秒で進む作者の時計の秒。実時間の時計は 1、フレームの時計は測った値
@@ -87,7 +87,7 @@ final class ClockHandover {
         /// 新しい世代の最初の枚 (時刻 `moment`) が始める、作者の時計の秒と、止めているか。
         ///
         /// - 止めていれば、止めた秒のまま
-        /// - 枚が止まっていれば (``isStill``)、窓に出ている枚の秒のまま。止まっていた間の時間は足さない
+        /// - 枚が止まっていれば (``isStill``)、ウィンドウに出ている枚の秒のまま。止まっていた間の時間は足さない
         /// - 書き手がもう居なければ、書いた秒のまま (居ない間は進まない)。落ちた世代を、直した後に
         ///   消えていた時間ぶん先から始めない
         /// - 進み方がまだ測れていなければ (``rate`` が `nil`)、書いた秒のまま
@@ -130,7 +130,7 @@ final class ClockHandover {
     private var lastWritten: Snapshot?
     /// この世代の番号。**生まれた時刻**なので、読めたかによらず後の世代ほど大きい。
     let generation: Double
-    /// フレームの時計の進み方を測る窓の起点 (フレーム番号と時刻)。止めている間・種類が変わったときに捨てる。
+    /// フレームの時計の進み方を測るウィンドウの起点 (フレーム番号と時刻)。止めている間・種類が変わったときに捨てる。
     private var rateAnchor: (frames: Int, at: Double)?
     /// 測れた進み方。まだ測れていなければ `nil`。
     private var measuredRate: Double?

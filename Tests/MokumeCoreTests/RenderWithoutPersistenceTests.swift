@@ -112,7 +112,7 @@ struct RenderWithoutPersistenceTests {
         }
     }
 
-    /// 既定の組み方と窓 (`SketchApplication`) は、これまでどおり保存を持つ。上の検査が、保存に届く置き方で
+    /// 既定の組み方とウィンドウ (`SketchApplication`) は、これまでどおり保存を持つ。上の検査が、保存に届く置き方で
     /// 組まれていることの証拠も兼ねる (届かない置き方なら、読まないことを見ても何も言えない)。
     @Test(
         "既定の組み方・persistsParams: true は、これまでどおり保存から戻し、動かした値を書く",
