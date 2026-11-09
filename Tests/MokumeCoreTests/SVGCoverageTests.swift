@@ -176,14 +176,16 @@ struct SVGCoverageTests {
         let reference = try CoreSVGReference.render(svg: text, width: size, height: size).coverage
 
         let referenceShape = CoreSVGReference.halfTone(reference)
+        // 三角形の経路 (AA なし) は、参照の被覆が 0.5 の量子化の幅にある画素の白黒を決められない (#3868)
+        let ties = template.weightsReferenceByHalfTone ? CoreSVGReference.ties(reference) : nil
         let mismatches = CoreSVGReference.mismatches(
-            measured, reference, margin: CoreSVGReference.antialiasingError * template.opacity)
+            measured, reference, margin: CoreSVGReference.antialiasingError * template.opacity, ties: ties)
         let edge = max(1, CoreSVGReference.edgePixels(referenceShape, width: size))
         let rate = Double(mismatches) / Double(edge)
 
-        let measuredCentroid = CoreSVGReference.centroid(measured, width: size)
+        let measuredCentroid = CoreSVGReference.centroid(measured, width: size, excluding: ties)
         let referenceWeights = template.weightsReferenceByHalfTone ? referenceShape.map { $0 ? 1.0 : 0.0 } : reference
-        let referenceCentroid = CoreSVGReference.centroid(referenceWeights, width: size)
+        let referenceCentroid = CoreSVGReference.centroid(referenceWeights, width: size, excluding: ties)
         let shift: Double
         switch (measuredCentroid, referenceCentroid) {
         case (let a?, let b?): shift = simd_distance(a, b)
@@ -236,6 +238,18 @@ struct SVGCoverageTests {
         let report = try Self.run(
             "svg-primitives", templates: Self.primitiveTemplates, row: row,
             environment: ["MOKUME_PROBE_SEED": "0x1d8bb61aa528b27b"])
+        #expect(report.failure == nil, "\(report.failure ?? "")")
+        #expect(report.ran == 1, "seed の 1 件だけが走るはず: \(report.ran) 件")
+    }
+
+    /// 定期の検査で、星 (evenodd) が重心のずれ 0.253 画素 (許容 0.15) で赤になった置き方 (#3868)。辺が画素の中心を
+    /// 通り、11 画素の被覆が 127/255 (0.498) に量子化されて、mokume の 1.0 と同じ辺に沿って食い違った。
+    @Test("辺が画素の中心を通る置き方 (#3868: 星 evenodd・seed 0x71e2ab6c575a8b4e) が通る")
+    func edgeThroughPixelCentresIsNotAMismatch() throws {
+        let row = try CoverageTable.row(.svgPath, on: .triangles, comparing: .halfToneAndCentroid)
+        let report = try Self.run(
+            "svg-path", templates: Self.pathTemplates, row: row,
+            environment: ["MOKUME_PROBE_SEED": "0x71e2ab6c575a8b4e"])
         #expect(report.failure == nil, "\(report.failure ?? "")")
         #expect(report.ran == 1, "seed の 1 件だけが走るはず: \(report.ran) 件")
     }
