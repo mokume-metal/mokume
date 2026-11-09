@@ -125,11 +125,11 @@ final class NoiseAndSeed: Sketch {
             // 寄るので、広げてから使う
             let glow = constrain(map(noise(x * 0.02, y * 0.02, time * 0.8), 0.3, 0.7, 0, 1), 0, 1)
             fill(.display(red: lerp(0.45, 1, glow), green: lerp(0.3, 0.85, glow), blue: lerp(0.2, 0.5, glow)))
-            push()
-            translate(x, y)
-            rotate(slope)
-            ellipse(0, 0, size * 1.6, size * thickness)
-            pop()
+            push {
+                translate(x, y)
+                rotate(slope)
+                ellipse(0, 0, size * 1.6, size * thickness)
+            }
         }
     }
 

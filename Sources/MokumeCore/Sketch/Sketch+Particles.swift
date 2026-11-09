@@ -650,14 +650,14 @@ extension SketchPart {
     ///         emit(twice, from: .point(0, 0), rate: 300,
     ///              speed: 60...60, life: 1...1)
     ///         // 同じ群を 2 か所に置く。呼ぶたびに 1 刻み進む
-    ///         push()
-    ///         translate(290, 80)
-    ///         particles(twice)
-    ///         pop()
-    ///         push()
-    ///         translate(290, 220)
-    ///         particles(twice)
-    ///         pop()
+    ///         push {
+    ///             translate(290, 80)
+    ///             particles(twice)
+    ///         }
+    ///         push {
+    ///             translate(290, 220)
+    ///             particles(twice)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -706,24 +706,24 @@ extension SketchPart {
     ///         }
     ///         noFill()
     ///         stroke(89, 191, 242)
-    ///         push()
-    ///         translate(75, 150)
-    ///         rotate(0.6)
-    ///         square(-40, -40, 80)
-    ///         particles(dots)
-    ///         pop()
-    ///         push()
-    ///         translate(185, 150)
-    ///         rotateY(1.2)
-    ///         square(-40, -40, 80)
-    ///         particles(dots)
-    ///         pop()
-    ///         push()
-    ///         translate(305, 150)
-    ///         scale(2, 2)
-    ///         square(-40, -40, 80)
-    ///         particles(dots)
-    ///         pop()
+    ///         push {
+    ///             translate(75, 150)
+    ///             rotate(0.6)
+    ///             square(-40, -40, 80)
+    ///             particles(dots)
+    ///         }
+    ///         push {
+    ///             translate(185, 150)
+    ///             rotateY(1.2)
+    ///             square(-40, -40, 80)
+    ///             particles(dots)
+    ///         }
+    ///         push {
+    ///             translate(305, 150)
+    ///             scale(2, 2)
+    ///             square(-40, -40, 80)
+    ///             particles(dots)
+    ///         }
     ///     }
     ///     ```
     ///   }

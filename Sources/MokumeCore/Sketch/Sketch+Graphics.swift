@@ -505,18 +505,18 @@ extension SketchPart {
     ///
     ///         rect(20, 100, 100, 100)
     ///
-    ///         push()
-    ///         translate(200, 150, 0)
-    ///         rotateX(-0.5)
-    ///         rotateY(0.6)
-    ///         box(90)
-    ///         pop()
+    ///         push {
+    ///             translate(200, 150, 0)
+    ///             rotateX(-0.5)
+    ///             rotateY(0.6)
+    ///             box(90)
+    ///         }
     ///
-    ///         push()
-    ///         translate(330, 150, 0)
-    ///         rotateY(-0.6)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(330, 150, 0)
+    ///             rotateY(-0.6)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -645,12 +645,12 @@ extension SketchPart {
     ///
     ///         rect(30, 90, 120, 120)
     ///
-    ///         push()
-    ///         translate(290, 150, 0)
-    ///         rotateX(-0.5)
-    ///         rotateY(0.6)
-    ///         box(100)
-    ///         pop()
+    ///         push {
+    ///             translate(290, 150, 0)
+    ///             rotateX(-0.5)
+    ///             rotateY(0.6)
+    ///             box(100)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -747,9 +747,9 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 貼る絵は ``push(fileID:line:)`` / ``pop(fileID:line:)`` で積めるので、`push()` の中で呼んだ `noTexture()` は
-    /// `pop()` で元に戻る。下の絵は、貼ったまま 3 つ目の四角を置くとき、2 つ目だけを
-    /// `push()` と `pop()` で挟んで絵を外している。
+    /// 貼る絵はスタイルとして積まれるので、``push(_:)`` の閉包の中で呼んだ `noTexture()` は
+    /// 閉包を抜けると元に戻る (``push(fileID:line:)`` / ``pop(fileID:line:)`` の対でも同じ)。下の絵は、
+    /// 貼ったまま 3 つ目の四角を置くとき、2 つ目だけを `push { }` で包んで絵を外している。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -771,11 +771,11 @@ extension SketchPart {
     ///         texture(tile)
     ///         rect(20, 100, 100, 100)
     ///
-    ///         push()
-    ///         noTexture()
-    ///         fill(242, 115, 64)
-    ///         rect(150, 100, 100, 100)
-    ///         pop()
+    ///         push {
+    ///             noTexture()
+    ///             fill(242, 115, 64)
+    ///             rect(150, 100, 100, 100)
+    ///         }
     ///
     ///         rect(280, 100, 100, 100)
     ///     }

@@ -58,36 +58,36 @@ final class TexturedSurfaces: Sketch {
         texture(grain)
 
         // 箱は 6 面それぞれに 1 枚。陰影は残ったまま絵が乗る
-        push()
-        translate(300, 300, 0)
-        rotateX(0.4)
-        box(150)
-        pop()
+        push {
+            translate(300, 300, 0)
+            rotateX(0.4)
+            box(150)
+        }
 
         // 球は経度と緯度に巻く
-        push()
-        translate(510, 290, 0)
-        sphere(80)
-        pop()
+        push {
+            translate(510, 290, 0)
+            sphere(80)
+        }
 
         // 円柱は側面が一周・蓋が円
-        push()
-        translate(700, 300, 0)
-        rotateX(0.5)
-        cylinder(60, 160)
-        pop()
+        push {
+            translate(700, 300, 0)
+            rotateX(0.5)
+            cylinder(60, 160)
+        }
 
         // 自分で並べた面には、読み取り位置を書いて貼れる
-        push()
-        translate(480, 450, 0)
-        rotateX(Float.pi / 2)
-        beginShape()
-        vertex(-260, -120, 0, 0, 0)
-        vertex(260, -120, 0, Float(grain.width), 0)
-        vertex(260, 120, 0, Float(grain.width), Float(grain.height))
-        vertex(-260, 120, 0, 0, Float(grain.height))
-        endShape(.close)
-        pop()
+        push {
+            translate(480, 450, 0)
+            rotateX(Float.pi / 2)
+            beginShape()
+            vertex(-260, -120, 0, 0, 0)
+            vertex(260, -120, 0, Float(grain.width), 0)
+            vertex(260, 120, 0, Float(grain.width), Float(grain.height))
+            vertex(-260, 120, 0, 0, Float(grain.height))
+            endShape(.close)
+        }
 
         // MARK: 平面にも同じように効く
         //

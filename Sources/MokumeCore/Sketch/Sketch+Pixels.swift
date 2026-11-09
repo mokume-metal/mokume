@@ -215,17 +215,17 @@ extension SketchPart {
     ///     noStroke()
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     // 床の後に loadPixels() を呼ばない
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -245,17 +245,17 @@ extension SketchPart {
     ///     noStroke()
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     loadPixels()   // 床はここで描き切られる
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {

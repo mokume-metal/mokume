@@ -14,15 +14,15 @@ extension SketchPart {
     ///     shadows(true)
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
-    ///     push()
-    ///     translate(width / 2, height * 0.8, 0)
-    ///     box(400, 10, 400)
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height * 0.8, 0)
+    ///         box(400, 10, 400)
+    ///     }
     ///     castShadow(true)
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     sphere(80)
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height / 2, 0)
+    ///         sphere(80)
+    ///     }
     /// }
     /// ```
     ///
@@ -71,16 +71,16 @@ extension SketchPart {
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -124,16 +124,16 @@ extension SketchPart {
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -178,16 +178,16 @@ extension SketchPart {
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -225,16 +225,16 @@ extension SketchPart {
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -270,18 +270,18 @@ extension SketchPart {
     ///     noStroke()
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     // 左の球だけが影を落とす
     ///     fill(242, 115, 64)
     ///     for (index, casts) in [true, false].enumerated() {
     ///         castShadow(casts)
-    ///         push()
-    ///         translate(130 + Float(index) * 145, 120, 20)
-    ///         sphere(60)
-    ///         pop()
+    ///         push {
+    ///             translate(130 + Float(index) * 145, 120, 20)
+    ///             sphere(60)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -314,20 +314,20 @@ extension SketchPart {
     ///     fill(191, 191, 199)
     ///     for (index, receives) in [true, false].enumerated() {
     ///         receiveShadow(receives)
-    ///         push()
-    ///         translate(102 + Float(index) * 196, 250, -20)
-    ///         box(188, 8, 300)
-    ///         pop()
+    ///         push {
+    ///             translate(102 + Float(index) * 196, 250, -20)
+    ///             box(188, 8, 300)
+    ///         }
     ///     }
     ///     receiveShadow(true)
     ///     // 球は 2 つとも同じように落とす
     ///     castShadow(true)
     ///     fill(242, 115, 64)
     ///     for index in 0..<2 {
-    ///         push()
-    ///         translate(135 + Float(index) * 145, 120, 20)
-    ///         sphere(60)
-    ///         pop()
+    ///         push {
+    ///             translate(135 + Float(index) * 145, 120, 20)
+    ///             sphere(60)
+    ///         }
     ///     }
     ///     ```
     ///   }

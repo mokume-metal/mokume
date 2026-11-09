@@ -27,10 +27,10 @@ extension SketchPart {
     ///     for (index, level) in [Float(0.15), 0.4, 0.9].enumerated() {
     ///         noLights()
     ///         ambientLight(.linear(red: level, green: level, blue: level))
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -74,10 +74,10 @@ extension SketchPart {
     ///         noLights()
     ///         ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///         directionalLight(.linear(red: 0.95, green: 0.95, blue: 0.95), way.0, way.1, way.2)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -118,10 +118,10 @@ extension SketchPart {
     ///     ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///     // 面より手前 (z = 160) の、左上に置く
     ///     pointLight(.linear(red: 1.1, green: 1.1, blue: 1.1), 110, 90, 160)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -176,10 +176,10 @@ extension SketchPart {
     ///         160, 120, 200,
     ///         0, 0, -1,
     ///         angle: Float.pi / 12)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -202,10 +202,10 @@ extension SketchPart {
     ///         160, 120, 200,
     ///         0, 0, -1,
     ///         angle: Float.pi / 7)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -249,24 +249,24 @@ extension SketchPart {
     ///     fill(242, 115, 64)
     ///     // ① 底上げの光だけ
     ///     ambientLight(.linear(red: 0.35, green: 0.35, blue: 0.35))
-    ///     push()
-    ///     translate(70, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(70, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     // ② 斜め上から差す光だけ
     ///     noLights()
     ///     directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.35, 0.75, -0.55)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     // ③ lights() = ① と ②
     ///     noLights()
     ///     lights()
-    ///     push()
-    ///     translate(330, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(330, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -304,16 +304,16 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     lights()
-    ///     push()
-    ///     translate(120, 150, 0)
-    ///     sphere(70)
-    ///     pop()
+    ///     push {
+    ///         translate(120, 150, 0)
+    ///         sphere(70)
+    ///     }
     ///     // ここから先は塗り 1 色になる
     ///     noLights()
-    ///     push()
-    ///     translate(280, 150, 0)
-    ///     sphere(70)
-    ///     pop()
+    ///     push {
+    ///         translate(280, 150, 0)
+    ///         sphere(70)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {

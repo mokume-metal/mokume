@@ -220,12 +220,12 @@ extension SketchPart {
     ///         shader(stripes)
     ///         rect(30, 90, 120, 120)
     ///         // 立体では、光を通した後の色が in.color に入る
-    ///         push()
-    ///         translate(280, 150, 0)
-    ///         rotateX(-0.5)
-    ///         rotateY(0.6)
-    ///         box(120)
-    ///         pop()
+    ///         push {
+    ///             translate(280, 150, 0)
+    ///             rotateX(-0.5)
+    ///             rotateY(0.6)
+    ///             box(120)
+    ///         }
     ///     }
     ///     ```
     ///   }

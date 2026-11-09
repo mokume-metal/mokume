@@ -149,33 +149,33 @@ final class ShapesAndStyle: Sketch {
 
         // 斜め変形・行列を直接掛ける・変換を捨てる
         noStroke()
-        push()
-        translate(630, 585)
-        shearX(radians(25))
-        fill(102, 217, 128)
-        rect(0, 0, 50, 70)
-        pop()
-        push()
-        translate(700, 575)
-        shearY(radians(20))
-        fill(230, 102, 153)
-        rect(0, 0, 50, 60)
-        pop()
-        push()
-        translate(800, 650)
-        var step = Transform.identity
-        step.translate(x: 34, y: -22)
-        step.rotate(by: radians(18))
-        step.scale(x: 0.85, y: 0.85)
-        for index in 0..<5 {
-            fill(89 + index * 30, 191 - index * 20, 242)
-            square(-20, -20, 40)
-            applyMatrix(step)
+        push {
+            translate(630, 585)
+            shearX(radians(25))
+            fill(102, 217, 128)
+            rect(0, 0, 50, 70)
         }
-        // どれだけ重ねていても 1 回で素の座標へ戻る — 右下の隅に、傾かずに出る
-        resetMatrix()
-        fill(242, 217, 89)
-        square(900, 660, 36)
-        pop()
+        push {
+            translate(700, 575)
+            shearY(radians(20))
+            fill(230, 102, 153)
+            rect(0, 0, 50, 60)
+        }
+        push {
+            translate(800, 650)
+            var step = Transform.identity
+            step.translate(x: 34, y: -22)
+            step.rotate(by: radians(18))
+            step.scale(x: 0.85, y: 0.85)
+            for index in 0..<5 {
+                fill(89 + index * 30, 191 - index * 20, 242)
+                square(-20, -20, 40)
+                applyMatrix(step)
+            }
+            // どれだけ重ねていても 1 回で素の座標へ戻る — 右下の隅に、傾かずに出る
+            resetMatrix()
+            fill(242, 217, 89)
+            square(900, 660, 36)
+        }
     }
 }

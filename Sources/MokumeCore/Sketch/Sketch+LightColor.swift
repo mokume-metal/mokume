@@ -20,10 +20,10 @@ extension SketchPart {
     ///     for (index, red) in [40, 140, 255].enumerated() {
     ///         noLights()
     ///         ambientLight(red, 90, 90)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -45,22 +45,22 @@ extension SketchPart {
     ///     fill(242, 115, 64)
     ///     noLights()
     ///     ambientLight(0.52, 0.52, 0.53)
-    ///     push()
-    ///     translate(70, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(70, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     noLights()
     ///     ambientLight(133, 133, 135)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     noLights()
     ///     ambientLight(.display(red: 0.52, green: 0.52, blue: 0.53))
-    ///     push()
-    ///     translate(330, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(330, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -94,10 +94,10 @@ extension SketchPart {
     ///     for (index, gray) in [40, 110, 230].enumerated() {
     ///         noLights()
     ///         ambientLight(gray)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -134,10 +134,10 @@ extension SketchPart {
     ///         noLights()
     ///         ambientLight(30)
     ///         directionalLight(255, 255, blue, 0.4, 0.5, -0.6)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -191,10 +191,10 @@ extension SketchPart {
     ///         noLights()
     ///         ambientLight(30)
     ///         pointLight(level, level, level, x - 50, 90, 120)
-    ///         push()
-    ///         translate(x, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(x, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -233,10 +233,10 @@ extension SketchPart {
     ///     fill(242, 115, 64)
     ///     ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///     spotLight(255, 255, 255, 160, 120, 200, 0, 0, -1, angle: Float.pi / 12)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -254,10 +254,10 @@ extension SketchPart {
     ///     fill(242, 115, 64)
     ///     ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///     spotLight(120, 120, 120, 160, 120, 200, 0, 0, -1, angle: Float.pi / 12)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -295,10 +295,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, red) in [255, 128, 25].enumerated() {
     ///         ambient(red, 255, 255)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -328,10 +328,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, gray) in [255, 128, 25].enumerated() {
     ///         ambient(gray)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -363,10 +363,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, blue) in [0, 60, 160].enumerated() {
     ///         emissive(0, 0, blue)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -396,10 +396,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, glow) in [0, 110, 200].enumerated() {
     ///         emissive(glow)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }

@@ -15,10 +15,10 @@ extension SketchPart {
     ///     background(.sky)        // 背景にも出す (置くのと描くのは別)
     ///     metalness(1)
     ///     shininess(90)
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     sphere(120)
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height / 2, 0)
+    ///         sphere(120)
+    ///     }
     /// }
     /// ```
     ///
@@ -39,10 +39,10 @@ extension SketchPart {
     ///     shininess(90)
     ///     for (index, around) in [Surroundings.sky, .studio, .sunset].enumerated() {
     ///         surroundings(around)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -87,10 +87,10 @@ extension SketchPart {
     ///     fill(230, 230, 230)
     ///     metalness(1)
     ///     shininess(90)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     sphere(105)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         sphere(105)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {

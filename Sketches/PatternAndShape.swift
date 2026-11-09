@@ -47,31 +47,31 @@ final class PatternAndShape: Sketch {
         strokeWeight(3)
         circle(150 + sin(time * 1.3) * 40, 150, 150)
         noStroke()
-        push()
-        translate(390, 150)
-        rotate(time * 0.6)
-        rect(-80, -55, 160, 110, 18)
-        pop()
+        push {
+            translate(390, 150)
+            rotate(time * 0.6)
+            rect(-80, -55, 160, 110, 18)
+        }
         ellipse(620, 150, 170, 110)
-        push()
-        translate(830, 160)
-        rotate(-time * 0.8)
-        triangle(-75, 60, 0, -75, 75, 60)
-        pop()
+        push {
+            translate(830, 160)
+            rotate(-time * 0.8)
+            triangle(-75, 60, 0, -75, 75, 60)
+        }
 
         // 下の段: 立体。それぞれ回る
         for (index, x) in [Float(150), 390, 620, 830].enumerated() {
-            push()
-            translate(x, 390, 0)
-            rotateX(0.5 + time * 0.4)
-            rotateY(0.6 + time * 0.5 + Float(index))
-            switch index {
-            case 0: box(110)
-            case 1: sphere(72)
-            case 2: cylinder(55, 120)
-            default: torus(58, 22)
+            push {
+                translate(x, 390, 0)
+                rotateX(0.5 + time * 0.4)
+                rotateY(0.6 + time * 0.5 + Float(index))
+                switch index {
+                case 0: box(110)
+                case 1: sphere(72)
+                case 2: cylinder(55, 120)
+                default: torus(58, 22)
+                }
             }
-            pop()
         }
         resetShader()
     }

@@ -19,11 +19,11 @@ extension SketchPart {
     ///     background(23, 26, 31)
     ///     guard let logo else { return }
     ///     shape(logo, 40, 40)
-    ///     push()
-    ///     translate(200, 40)
-    ///     scale(3, 3)
-    ///     shape(logo)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 40)
+    ///         scale(3, 3)
+    ///         shape(logo)
+    ///     }
     ///     shape(logo, at: [Placement(x: 40, y: 220, fill: color(255, 140, 60))])
     /// }
     /// ```
@@ -152,11 +152,11 @@ extension SketchPart {
     ///     func draw() {
     ///         background(23, 26, 31)
     ///         guard let mark else { return }
-    ///         push()
-    ///         translate(40, 40)
-    ///         scale(3, 3)
-    ///         shape(mark)
-    ///         pop()
+    ///         push {
+    ///             translate(40, 40)
+    ///             scale(3, 3)
+    ///             shape(mark)
+    ///         }
     ///     }
     ///     ```
     ///   }

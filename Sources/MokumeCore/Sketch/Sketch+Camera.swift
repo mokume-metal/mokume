@@ -28,10 +28,10 @@ extension SketchPart {
     ///     lights()
     ///     noStroke()
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(120, 100, 0)
-    ///     plane(120, 120)
-    ///     pop()
+    ///     push {
+    ///         translate(120, 100, 0)
+    ///         plane(120, 120)
+    ///     }
     ///     // 同じ座標に描いた平面の図形も、同じ視点を通る
     ///     noFill()
     ///     stroke(89, 191, 242)
@@ -81,12 +81,12 @@ extension SketchPart {
     ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
     ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
-    ///         push()
-    ///         translate(x, 150, z)
-    ///         rotateY(0.6)
-    ///         rotateX(0.35)
-    ///         box(48)
-    ///         pop()
+    ///         push {
+    ///             translate(x, 150, z)
+    ///             rotateY(0.6)
+    ///             rotateX(0.35)
+    ///             box(48)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -148,10 +148,10 @@ extension SketchPart {
     ///         lights()
     ///         noStroke()
     ///         fill(242, 115, 64)
-    ///         push()
-    ///         translate(200, 150, 0)
-    ///         box(110)
-    ///         pop()
+    ///         push {
+    ///             translate(200, 150, 0)
+    ///             box(110)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -185,18 +185,18 @@ extension SketchPart {
     ///     // 場面は斜めから見る
     ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     rotateY(0.6)
-    ///     box(120)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         rotateY(0.6)
+    ///         box(120)
+    ///     }
     ///     // 目盛りだけ既定の視点へ戻して描く
     ///     setCamera(front)
     ///     fill(89, 191, 242)
-    ///     push()
-    ///     translate(60, 250, 0)
-    ///     plane(80, 24)
-    ///     pop()
+    ///     push {
+    ///         translate(60, 250, 0)
+    ///         plane(80, 24)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -235,12 +235,12 @@ extension SketchPart {
     ///     perspective()
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
     ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
-    ///         push()
-    ///         translate(x, 150, z)
-    ///         rotateY(0.6)
-    ///         rotateX(0.35)
-    ///         box(48)
-    ///         pop()
+    ///         push {
+    ///             translate(x, 150, z)
+    ///             rotateY(0.6)
+    ///             rotateX(0.35)
+    ///             box(48)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -270,12 +270,12 @@ extension SketchPart {
     ///     perspective(1.6, width / height, 26, 2600)
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
     ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
-    ///         push()
-    ///         translate(x, 150, z)
-    ///         rotateY(0.6)
-    ///         rotateX(0.35)
-    ///         box(48)
-    ///         pop()
+    ///         push {
+    ///             translate(x, 150, z)
+    ///             rotateY(0.6)
+    ///             rotateX(0.35)
+    ///             box(48)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -297,12 +297,12 @@ extension SketchPart {
     ///     perspective(Float.pi / 3, width / height, 26, 300)
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
     ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
-    ///         push()
-    ///         translate(x, 150, z)
-    ///         rotateY(0.6)
-    ///         rotateX(0.35)
-    ///         box(48)
-    ///         pop()
+    ///         push {
+    ///             translate(x, 150, z)
+    ///             rotateY(0.6)
+    ///             rotateX(0.35)
+    ///             box(48)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -356,12 +356,12 @@ extension SketchPart {
     ///     ortho()
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
     ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
-    ///         push()
-    ///         translate(x, 150, z)
-    ///         rotateY(0.6)
-    ///         rotateX(0.35)
-    ///         box(48)
-    ///         pop()
+    ///         push {
+    ///             translate(x, 150, z)
+    ///             rotateY(0.6)
+    ///             rotateX(0.35)
+    ///             box(48)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -399,12 +399,12 @@ extension SketchPart {
     ///     ortho(-300, 300, 225, -225, 60, 2600)
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
     ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
-    ///         push()
-    ///         translate(x, 150, z)
-    ///         rotateY(0.6)
-    ///         rotateX(0.35)
-    ///         box(48)
-    ///         pop()
+    ///         push {
+    ///             translate(x, 150, z)
+    ///             rotateY(0.6)
+    ///             rotateX(0.35)
+    ///             box(48)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -463,10 +463,10 @@ extension SketchPart {
     ///     lights()
     ///     noStroke()
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(260, 120, -60)
-    ///     box(50)
-    ///     pop()
+    ///     push {
+    ///         translate(260, 120, -60)
+    ///         box(50)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {

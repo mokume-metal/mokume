@@ -295,10 +295,10 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     for (index, depth) in [Float(-110), 0, 80].enumerated() {
-    ///         push()
-    ///         translate(90 + Float(index) * 105, 150, depth)
-    ///         sphere(28)
-    ///         pop()
+    ///         push {
+    ///             translate(90 + Float(index) * 105, 150, depth)
+    ///             sphere(28)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -331,11 +331,11 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     for (index, angle) in [Float(0), 0.6, 1.2].enumerated() {
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         rotateX(angle)
-    ///         box(100, 44, 8)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             rotateX(angle)
+    ///             box(100, 44, 8)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -368,11 +368,11 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     for (index, angle) in [Float(0), 0.6, 1.2].enumerated() {
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         rotateY(angle)
-    ///         box(100, 44, 8)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             rotateY(angle)
+    ///             box(100, 44, 8)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -403,11 +403,11 @@ extension SketchPart {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     for (index, angle) in [Float(0), 0.6, 1.2].enumerated() {
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         rotateZ(angle)
-    ///         box(100, 44, 8)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             rotateZ(angle)
+    ///             box(100, 44, 8)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -439,23 +439,23 @@ extension SketchPart {
     ///     lights()
     ///     noStroke()
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(200, 55, 0)
-    ///     rotateY(0.35)
-    ///     box(50)
-    ///     pop()
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     rotateY(0.35)
-    ///     scale(2, 1, 1)
-    ///     box(50)
-    ///     pop()
-    ///     push()
-    ///     translate(200, 245, 0)
-    ///     rotateY(0.35)
-    ///     scale(1, 1, 2)
-    ///     box(50)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 55, 0)
+    ///         rotateY(0.35)
+    ///         box(50)
+    ///     }
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         rotateY(0.35)
+    ///         scale(2, 1, 1)
+    ///         box(50)
+    ///     }
+    ///     push {
+    ///         translate(200, 245, 0)
+    ///         rotateY(0.35)
+    ///         scale(1, 1, 2)
+    ///         box(50)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {

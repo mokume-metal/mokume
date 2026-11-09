@@ -181,11 +181,11 @@ final class KnobsAndValues: Sketch {
                 let x = stepX * Float(column + 1) + drift.x * stepX * 0.5
                 let y = stepY * Float(row + 1) + drift.y * stepY * 0.5
                 let jitter = jitters[row * columns + column]
-                push()
-                translate(x, y)
-                rotate(angle + jitter * 2)
-                place(size: Float(size) * (0.7 + jitter))
-                pop()
+                push {
+                    translate(x, y)
+                    rotate(angle + jitter * 2)
+                    place(size: Float(size) * (0.7 + jitter))
+                }
             }
         }
 

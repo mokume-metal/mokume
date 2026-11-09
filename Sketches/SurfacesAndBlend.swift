@@ -105,29 +105,29 @@ final class SurfacesAndBlend: Sketch {
         // **同じ姿勢で 2 枚**。時計はフレーム番号から導かれるので、何度撮っても同じ動き
         let spin = time * 0.55
         for (index, painted) in [plain, blended].enumerated() {
-            push()
-            translate(width * 0.28 + Float(index) * width * 0.44, height * 0.52, 0)
-            rotateX(-0.45)
-            rotateY(spin)
-            if let painted { shader(painted) }
-            // 断片は `in.color` を掛けて使う。白で塗っておくと、そこに光の強さだけが載る
-            fill(255, 255, 255)
-            box(Self.board.width, 18, Self.board.depth)
-            resetShader()
-            pop()
+            push {
+                translate(width * 0.28 + Float(index) * width * 0.44, height * 0.52, 0)
+                rotateX(-0.45)
+                rotateY(spin)
+                if let painted { shader(painted) }
+                // 断片は `in.color` を掛けて使う。白で塗っておくと、そこに光の強さだけが載る
+                fill(255, 255, 255)
+                box(Self.board.width, 18, Self.board.depth)
+                resetShader()
+            }
         }
 
         // 同じ面を、断片を使わずに貼る。**貼る絵はフレームを越える**ので、置いたら外す
         if let current = candidates[showing] {
-            push()
-            translate(width / 2, height * 0.2, 0)
-            rotateX(-0.5)
-            rotateY(spin * 1.3)
-            fill(255, 255, 255)
-            texture(current)
-            box(64)
-            noTexture()
-            pop()
+            push {
+                translate(width / 2, height * 0.2, 0)
+                rotateX(-0.5)
+                rotateY(spin * 1.3)
+                fill(255, 255, 255)
+                texture(current)
+                box(64)
+                noTexture()
+            }
         }
 
         // 差し替える候補。**描いた面をそのまま絵として置き**、いま掛けているほうに枠を付ける

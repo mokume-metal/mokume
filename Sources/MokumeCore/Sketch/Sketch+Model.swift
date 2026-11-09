@@ -12,11 +12,11 @@ extension SketchPart {
     /// }
     /// func draw() {
     ///     lights()
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     rotateY(time * 0.5)
-    ///     if let head { model(head) }
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height / 2, 0)
+    ///         rotateY(time * 0.5)
+    ///         if let head { model(head) }
+    ///     }
     /// }
     /// ```
     ///
@@ -102,11 +102,11 @@ extension SketchPart {
     ///         noStroke()
     ///         fill(242, 115, 64)
     ///         for (index, pyramid) in pyramids.enumerated() {
-    ///             push()
-    ///             translate(110 + index * 180, 150, 0)
-    ///             rotateY(0.6)
-    ///             model(pyramid)
-    ///             pop()
+    ///             push {
+    ///                 translate(110 + index * 180, 150, 0)
+    ///                 rotateY(0.6)
+    ///                 model(pyramid)
+    ///             }
     ///         }
     ///     }
     ///     ```
@@ -153,11 +153,11 @@ extension SketchPart {
     ///         noStroke()
     ///         fill(242, 115, 64)
     ///         for (index, pyramid) in pyramids.enumerated() {
-    ///             push()
-    ///             translate(110 + index * 180, 150, 0)
-    ///             rotateY(0.6)
-    ///             model(pyramid)
-    ///             pop()
+    ///             push {
+    ///                 translate(110 + index * 180, 150, 0)
+    ///                 rotateY(0.6)
+    ///                 model(pyramid)
+    ///             }
     ///         }
     ///     }
     ///     ```
@@ -291,15 +291,15 @@ extension SketchPart {
     ///         lights()
     ///         strokeWeight(2)
     ///         for column in 0..<3 {
-    ///             push()
-    ///             translate(75 + column * 125, 150, 0)
-    ///             rotateY(0.6)
-    ///             rotateX(0.6)
-    ///             scale(0.5, 0.5, 0.5)
-    ///             if column == 2 { noFill() } else { fill(242, 115, 64) }
-    ///             if column == 0 { noStroke() } else { stroke(255) }
-    ///             model(pyramid)
-    ///             pop()
+    ///             push {
+    ///                 translate(75 + column * 125, 150, 0)
+    ///                 rotateY(0.6)
+    ///                 rotateX(0.6)
+    ///                 scale(0.5, 0.5, 0.5)
+    ///                 if column == 2 { noFill() } else { fill(242, 115, 64) }
+    ///                 if column == 0 { noStroke() } else { stroke(255) }
+    ///                 model(pyramid)
+    ///             }
     ///         }
     ///     }
     ///     ```

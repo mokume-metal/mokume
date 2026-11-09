@@ -81,30 +81,30 @@ final class MaterialsAndSurroundings: Sketch {
         for (row, knob) in knobs.enumerated() {
             for column in 0..<columns {
                 let amount = Float(column) / Float(columns - 1)
-                push()
-                // 4 つとも既定へ戻してから 1 つだけ動かす — 混ざると何が効いたか読めない
-                shininess(0)
-                metalness(0)
-                emissive(0, 0, 0)
-                ambient(255, 255, 255)
-                fill(184, 178, 173)
-                knob.apply(self, amount)
-                translate(200 + column * 140, 130 + row * 100, 0)
-                sphere(42)
-                pop()
+                push {
+                    // 4 つとも既定へ戻してから 1 つだけ動かす — 混ざると何が効いたか読めない
+                    shininess(0)
+                    metalness(0)
+                    emissive(0, 0, 0)
+                    ambient(255, 255, 255)
+                    fill(184, 178, 173)
+                    knob.apply(self, amount)
+                    translate(200 + column * 140, 130 + row * 100, 0)
+                    sphere(42)
+                }
             }
         }
 
         // 下の段。**置き直しは後の形にだけ効く** — 上の格子は置いた時点の光と周囲で描かれている
         for (slot, variant) in variants.enumerated() {
             variant.apply(self, place.surroundings)
-            push()
-            shininess(90)
-            metalness(0.6)
-            fill(184, 178, 173)
-            translate(200 + slot * 140, 580, 0)
-            sphere(42)
-            pop()
+            push {
+                shininess(90)
+                metalness(0.6)
+                fill(184, 178, 173)
+                translate(200 + slot * 140, 580, 0)
+                sphere(42)
+            }
         }
 
         // 見出し。**2D の文字はそのまま重ねられる**

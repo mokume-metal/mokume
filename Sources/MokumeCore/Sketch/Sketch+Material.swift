@@ -13,10 +13,10 @@ extension SketchPart {
     ///     lights()
     ///     fill(230, 217, 204)
     ///     shininess(64)        // 磨いた面
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     sphere(120)
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height / 2, 0)
+    ///         sphere(120)
+    ///     }
     /// }
     /// ```
     ///
@@ -32,10 +32,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, amount) in [Float(0), 16, 128].enumerated() {
     ///         shininess(amount)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -80,10 +80,10 @@ extension SketchPart {
     ///     shininess(90)
     ///     for (index, amount) in [Float(0), 0.5, 1].enumerated() {
     ///         metalness(amount)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -131,10 +131,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, level) in [Float(1), 0.5, 0.1].enumerated() {
     ///         ambient(.display(red: level, green: level, blue: level))
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -175,10 +175,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, glow) in [Float(0), 0.15, 0.4].enumerated() {
     ///         emissive(.display(red: glow, green: glow, blue: glow))
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
