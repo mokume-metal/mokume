@@ -472,10 +472,16 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
 ///
 /// 語彙 (``SketchPart``) が使う ``SketchPart/liveCanvas(_:_:)`` と同じ扱いである。値型は
 /// `SketchPart` を名乗らないので、同じ控えへ自分の名前で言う。
+///
+/// **呼ぶ所へ展開し、外から呼ばれたときの警告は展開しない関数に任せる** ([#3082])。``SketchPart/liveCanvas(_:_:)`` と
+/// 同じく、関数の境界を越えて返すと実行の保持と解放 (参照数の遅い道) が 1 対増える。
+///
+/// [#3082]: https://github.com/mokume-metal/mokume/issues/3082
 @MainActor
+@inline(__always)
 func shapeValueCanvas(_ call: String) -> Canvas? {
     guard let runtime = activeRun(for: .act) else {
-        OutsideRun.log.warn(call, .act)
+        warnOutsideRun(call, .act)
         return nil
     }
     return runtime.activeCanvas
