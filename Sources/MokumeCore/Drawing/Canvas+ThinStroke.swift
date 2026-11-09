@@ -29,6 +29,9 @@ extension Canvas {
     /// **畳む雛形も同じ広げ方である** ([#3733])。広げ方が向きで変わるので、雛形は向きごとに畳む
     /// (``ThinFold``)。相似な置き場所の矩形だけは、雛形に半幅の微分を持たせて頂点段で置き場所ごとに広げ直し、
     /// 回した置き場所も 1 つの雛形に畳む (``appendWidenedTemplateStroke(_:)``・``FlatFrame/thinStroke``)。
+    /// 丸い周 (描く画素で短い径 8 以上・縦横比 0.5 以上の楕円と一周の弧) は、畳むかどうかによらず線に垂直に広げて、
+    /// 回した置き場所も 1 つの雛形に畳む (``isRoundThinRing(radii:drawn:)``・#3863)。周に沿って向きが変わるので、
+    /// 45° の振れは均されて ±25% (#3859) に収まる。
     ///
     /// 被覆は頂点の色ではなく別の値で運ぶ (`ShapeFragmentIn.coverage`) ので、利用者の断片が
     /// `in.color` を掛けずに色を返しても、`in.color.a` を読んでも、`stroke()` で渡した値のまま届く。
@@ -328,8 +331,12 @@ extension Canvas {
     ///
     /// `snapped` は、組んだ片が `matrix` で置かれて線の半画素の寄せを受けるか (畳む雛形は偽)。真なら描く画素の
     /// 絶対座標 (``ThinOutline/origin``) を持たせ、開いた端を列 (行) の境目で切る (#3745)。
+    ///
+    /// `acrossTheLine` なら、帯を整数 n の幅ではなく線に垂直に 1 へ広げる (#1637 の広げ方)。丸い周が使う
+    /// (``isRoundThinRing(radii:drawn:)``・#3863)。
     func thinOutline(
-        _ outline: Outline, weight: Float, placedBy matrix: simd_float4x4, snapped: Bool = false
+        _ outline: Outline, weight: Float, placedBy matrix: simd_float4x4, snapped: Bool = false,
+        acrossTheLine: Bool = false
     ) -> ThinOutline? {
         let linear = drawnLinear(matrix)
         let determinant = simd_determinant(linear)
@@ -359,10 +366,11 @@ extension Canvas {
             bandHalf[index] = drawn / 2
             guard let thin = ThinStroke(drawnWeight: drawn, isPoint: false) else { continue }
             any = true
-            // 描く画素での帯の向き。長さ 0 の線分 (向きが決まらない) は線に垂直に広げる
+            // 描く画素での帯の向き。長さ 0 の線分 (向きが決まらない) と、丸い周 (``isRoundThinRing(radii:drawn:)``・
+            // #3863) は線に垂直に広げる
             let along = linear * direction
             let length = simd_length(along)
-            guard length > 0, length.isFinite else {
+            guard !acrossTheLine, length > 0, length.isFinite else {
                 bandHalf[index] = 0.5
                 bandCoverage[index] = thin.coverage
                 continue

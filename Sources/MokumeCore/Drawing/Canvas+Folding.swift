@@ -427,9 +427,11 @@ extension Canvas {
     /// 畳みの鍵 (``FlatKey/strokeLinear``) に入る。線を持たない図形と、どの向きでも細く
     /// ならない線は `nil` で、これまでどおり変換の違う置き場所も同じ雛形に畳む。
     ///
-    /// **回転だけが違う置き場所を 1 つに畳むのは、額縁の片で組める矩形だけ** (``ThinFold/widensInVertexStage``・
-    /// ``framesThinRect(width:height:weight:join:drawn:)``・#3733)。ほかの形 (楕円・弧・角丸・丸い角・相似でない
-    /// 置き場所) は鍵を 2x2 そのものにし、向きごとに畳む (2026-11-03 の決定) — 帯の向きが周に沿って変わり、
+    /// **回転だけが違う置き場所を 1 つに畳むのは、額縁の片で組める矩形と丸い周だけ**。矩形は頂点段で置き場所ごとに
+    /// 広げ直す (``ThinFold/widensInVertexStage``・``framesThinRect(width:height:weight:join:drawn:)``・#3733)。丸い周
+    /// (``foldsThinRingAcrossTurns(_:drawn:)``) は雛形を線に垂直に広げ、回して置いても広げ方を変えない
+    /// (``ThinFold/widensAcrossTheLine``・#3863)。ほかの形 (扇・弦・角丸・丸い角・細長い楕円・小さい楕円・相似でない
+    /// 置き場所の矩形) は鍵を 2x2 そのものにし、向きごとに畳む (2026-11-03 の決定) — 帯の向きが周に沿って変わり、
     /// 広げ方が帯ごとに違うので、1 つの雛形から置き場所ごとに広げ直せない。
     private func thinStrokeLinear(form: FlatForm) -> ThinFold? {
         guard style.hasStroke, style.strokeWeight > 0 else { return nil }
@@ -444,10 +446,63 @@ extension Canvas {
         {
             return ThinFold(key: Self.rotationFreeKey(drawn), linear: linear, widensInVertexStage: true)
         }
+        if Self.foldsThinRingAcrossTurns(form, drawn: drawn) {
+            return ThinFold(key: Self.rotationFreeKey(drawn), linear: linear, widensAcrossTheLine: true)
+        }
         return ThinFold(
             key: SIMD4(drawn.columns.0.x, drawn.columns.0.y, drawn.columns.1.x, drawn.columns.1.y),
             linear: linear)
     }
+
+    /// 細い輪郭を、回転だけが違う置き場所でも 1 つの雛形に畳む丸い周か (#3863)。楕円と一周の弧で、描く画素での
+    /// 短い径と長い径の比が ``ringFoldMinimumAspect`` 以上、短い径 (直径) が ``ringFoldMinimumDiameter`` 以上のもの
+    /// (``isRoundThinRing(radii:drawn:)``)。
+    static func foldsThinRingAcrossTurns(_ form: FlatForm, drawn: simd_float2x2) -> Bool {
+        switch form {
+        case .ellipse(let radiusX, let radiusY):
+            isRoundThinRing(radii: SIMD2(radiusX, radiusY), drawn: drawn)
+        case .arc(let radiusX, let radiusY, _, let sweep, _) where abs(sweep) >= 2 * .pi:
+            isRoundThinRing(radii: SIMD2(radiusX, radiusY), drawn: drawn)
+        default: false
+        }
+    }
+
+    /// 細い輪郭を線に垂直に広げる丸い周か (#3863)。楕円・一周の弧の周 (`ring`) で、半径 `radii` を描く画素へ写す 2x2
+    /// `drawn` で写した楕円の短い径と長い径の比が ``ringFoldMinimumAspect`` 以上、短い径 (直径) が
+    /// ``ringFoldMinimumDiameter`` 以上のもの。
+    ///
+    /// **丸い周は、畳むかどうかによらず線に垂直に広げる** (``thinOutline(_:weight:placedBy:snapped:acrossTheLine:)``)。
+    /// 線に垂直な広げ方は向きによらないので、雛形を回して置いても広げ方が変わらず、回転だけが違う置き場所を 1 つの雛形に
+    /// 畳める (``foldsThinRingAcrossTurns(_:drawn:)``)。畳む道と畳まない道で絵も変わらない (#3555 の許容 0)。
+    ///
+    /// 線に垂直に広げた帯は、45° で置く位置により光の量が ×0.71〜×1.41 振れる (#2172)。周に沿って向きが変わる丸い周は
+    /// その振れが均されて ±25% (#3859) に収まるが、直線に近い部分が長い形 (細長い楕円・扇の半径・角丸の辺) と、描く画素で
+    /// 小さい円は均されない。境目の根拠は ``ringFoldMinimumAspect``・``ringFoldMinimumDiameter`` の注釈。
+    static func isRoundThinRing(radii: SIMD2<Float>, drawn: simd_float2x2) -> Bool {
+        // 描く画素での楕円の半径は、2x2 に径を掛けた行列の特異値
+        let shape = drawn * simd_float2x2(diagonal: radii)
+        let gram = shape.transpose * shape
+        let half = (gram.columns.0.x + gram.columns.1.y) / 2
+        let determinant = gram.columns.0.x * gram.columns.1.y - gram.columns.1.x * gram.columns.0.y
+        let spread = max(0, half * half - determinant).squareRoot()
+        let major = (half + spread).squareRoot()
+        let minor = max(0, half - spread).squareRoot()
+        guard major > 0, major.isFinite else { return false }
+        return minor >= ringFoldMinimumAspect * major && 2 * minor >= ringFoldMinimumDiameter
+    }
+
+    /// 回転をまたいで畳む楕円の、描く画素での短い径と長い径の比の下限 (#3863)。
+    ///
+    /// 境目は実測で決めた。雛形を線に垂直に広げ、1 つ目を [0, π/2) の乱数の向き、2 つ目を 3 回に 1 回は 45°・残りは乱数の
+    /// 向きに回して置き、光の量 / 期待 (周 × 太さ) を測った (太さ 0.07〜1・細かさ 0.25〜1・ずらし [0, 2)²)。短い径が
+    /// 描く画素で 8 以上なら、縦横比 0.2〜1 のどれも ×0.85〜×1.21 に収まる (各 120〜800 件)。比を 0.5 に置いたのは、
+    /// 比が小さいほど直線に近い長い辺が 45° で格子に揃い、#2172 の振れ (×0.71〜×1.41) に近づくからで、測った範囲より
+    /// 内側に余裕を取った。境目の内側の最悪は ×0.848・×1.193 (縦横比 0.5〜1・短い径 8〜9 の 4,800 件)
+    static let ringFoldMinimumAspect: Float = 0.5
+    /// 回転をまたいで畳む楕円の、描く画素での短い径 (直径) の下限 (#3863)。測り方は ``ringFoldMinimumAspect`` と同じ。
+    /// 短い径 4 の円は ×0.795〜×1.273 で ±25% を越え (向きごとに畳むいまの作りは ×0.84〜×1.07)、6 で ×0.826〜×1.170、
+    /// 8 以上で ×0.85〜×1.19 だった。小さい周は帯の数が少なく、45° の振れが均されない
+    static let ringFoldMinimumDiameter: Float = 8
 
     /// 2x2 が回転 (と鏡映) と一様な拡大だけか。列 2 本が直交して同じ長さなら真 (相対 1/10000 の揺れは許す)。
     static func isSimilarity(_ linear: simd_float2x2) -> Bool {

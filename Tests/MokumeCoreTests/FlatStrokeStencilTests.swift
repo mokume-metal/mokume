@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import simd
 import Testing
 
 @testable import MokumeCore
@@ -426,9 +427,10 @@ struct FlatStrokeStencilTests {
         #expect(abs(rects - quads) <= quads * 0.01, "rect \(rects)・quad \(quads)")
     }
 
-    /// 矩形以外の畳める形 (楕円・円・弧) は向きごとに畳む (#3733)。同じ向きで 2 つ置くと 2 つ目は雛形から置かれ、
-    /// 1 つだけ直に置いた同じ円と同じ光の量で出る。違う向きの 2 つ目は別の雛形になる。
-    @Test("回した細い輪郭の円は、畳んだ 2 つ目も直に置いた 1 つ目と同じ光の量で出て、違う向きでは別の雛形になる")
+    /// 丸い周 (描く画素で短い径 8 以上・縦横比 0.5 以上の楕円) は、回転だけが違う置き場所も 1 つの雛形に畳む (#3863)。
+    /// 同じ向きの 2 つ目は直に置いた同じ楕円と同じ光の量で出て、違う向きの 2 つ目も同じ雛形から置かれる。境目の外の
+    /// 楕円 (短い径が描く画素で 4) は、これまでどおり向きごとに畳む (#3733)。
+    @Test("回した細い輪郭の丸い楕円は、違う向きでも 1 つの雛形に畳み、境目の外の細長い楕円は向きごとに畳む")
     func foldedRotatedThinCircleMatchesDirect() throws {
         func light(_ body: (Canvas) -> Void) throws -> (Float, Int) {
             let gpu = try RenderDevice()
@@ -450,27 +452,68 @@ struct FlatStrokeStencilTests {
             for y in 0..<pixels.height { for x in 0..<pixels.width { sum += pixels[x, y].red } }
             return (sum, instances)
         }
-        func circle(_ canvas: Canvas, _ x: Float, _ turn: Float) {
-            canvas.pushMatrix()
-            canvas.translate(x, 80)
-            canvas.rotate(turn)
-            canvas.ellipse(0, 0, 50, 30)
-            canvas.popMatrix()
+        // 描く画素で 25×15 (境目の内側) と 25×4 (短い径が境目の外)
+        for (height, folds) in [(Float(30), true), (8, false)] {
+            func ellipse(_ canvas: Canvas, _ x: Float, _ turn: Float) {
+                canvas.pushMatrix()
+                canvas.translate(x, 80)
+                canvas.rotate(turn)
+                canvas.ellipse(0, 0, 50, height)
+                canvas.popMatrix()
+            }
+            // 置き場所の並びは、何も動かさない置き場所 (添字 0) から始まる。直に置いた回の数を基準にする
+            let (direct, baseInstances) = try light { ellipse($0, 110, 0.7) }
+            let (folded, foldedInstances) = try light { canvas in
+                ellipse(canvas, 400, 0.7)  // 面の外の 1 つ目
+                ellipse(canvas, 110, 0.7)
+            }
+            let (turnedDirect, _) = try light { ellipse($0, 110, 0.3) }
+            let (turned, turnedInstances) = try light { canvas in
+                ellipse(canvas, 400, 0.7)  // 面の外の 1 つ目 (雛形はこの向きで組む)
+                ellipse(canvas, 110, 0.3)
+            }
+            #expect(foldedInstances == baseInstances + 2, "高さ \(height): 同じ向きの 2 つ目が畳まれていない: \(foldedInstances)")
+            #expect(direct > 0)
+            #expect(abs(folded - direct) <= direct * 0.01, "高さ \(height): 畳んだ \(folded)・直に置いた \(direct)")
+            if folds {
+                #expect(turnedInstances == baseInstances + 2, "違う向きの 2 つ目が同じ雛形に畳まれていない: \(turnedInstances)")
+                // 雛形は線に垂直に広げるので、1 つ目 (雛形を組む置き場所) の向きによらず 2 つ目の絵は同じ
+                let (otherFirst, _) = try light { canvas in
+                    ellipse(canvas, 400, 1.2)
+                    ellipse(canvas, 110, 0.3)
+                }
+                #expect(otherFirst == turned, "1 つ目の向きで 2 つ目の光の量が変わった: \(otherFirst)・\(turned)")
+                // 違う向きの雛形から置いても、光の量は直に置いた同じ向きの楕円の ±25% に収まる (#3859)
+                #expect(abs(turned - turnedDirect) <= turnedDirect * 0.25, "回して畳んだ \(turned)・直に置いた \(turnedDirect)")
+            } else {
+                #expect(turnedInstances == baseInstances, "境目の外の楕円が違う向きの雛形に畳まれた: \(turnedInstances)")
+            }
         }
-        // 置き場所の並びは、何も動かさない置き場所 (添字 0) から始まる。直に置いた回の数を基準にする
-        let (direct, baseInstances) = try light { circle($0, 110, 0.7) }
-        let (folded, foldedInstances) = try light { canvas in
-            circle(canvas, 400, 0.7)  // 面の外の 1 つ目
-            circle(canvas, 110, 0.7)
+    }
+
+    /// 回転をまたいで畳む丸い周の境目 (#3863)。描く画素で短い径 (直径) 8・縦横比 0.5 の両側を踏む。境目は
+    /// ``Canvas/ringFoldMinimumDiameter``・``Canvas/ringFoldMinimumAspect`` の注釈の実測から決めた。
+    @Test("回転をまたいで畳む丸い周は、描く画素で短い径 8 以上・縦横比 0.5 以上の楕円と一周の弧だけ")
+    func ringFoldBoundary() {
+        func folds(_ form: Canvas.FlatForm, scale: SIMD2<Float> = SIMD2(1, 1), turn: Float = 0.6) -> Bool {
+            let rotation = simd_float2x2(SIMD2(cos(turn), sin(turn)), SIMD2(-sin(turn), cos(turn)))
+            return Canvas.foldsThinRingAcrossTurns(form, drawn: rotation * simd_float2x2(diagonal: scale))
         }
-        let (_, turnedInstances) = try light { canvas in
-            circle(canvas, 40, 0.7)
-            circle(canvas, 110, 0.3)
-        }
-        #expect(foldedInstances == baseInstances + 2, "同じ向きの 2 つ目が畳まれていない: \(foldedInstances)")
-        #expect(turnedInstances == baseInstances, "違う向きの 2 つ目が同じ雛形に畳まれた: \(turnedInstances)")
-        #expect(direct > 0)
-        #expect(abs(folded - direct) <= direct * 0.01, "畳んだ \(folded)・直に置いた \(direct)")
+        // 径は半径で渡す。直径 8 と 7.9
+        #expect(folds(.ellipse(radiusX: 4, radiusY: 4)))
+        #expect(!folds(.ellipse(radiusX: 3.95, radiusY: 3.95)))
+        // 縦横比 0.5 と 0.49 (短い径はどちらも 10)
+        #expect(folds(.ellipse(radiusX: 10, radiusY: 5)))
+        #expect(!folds(.ellipse(radiusX: 10.2, radiusY: 5)))
+        // 置き場所の倍率も径に効く: 半径 10 の円を縦に 0.45 倍すると縦横比 0.45
+        #expect(folds(.ellipse(radiusX: 10, radiusY: 10), scale: SIMD2(1, 0.5)))
+        #expect(!folds(.ellipse(radiusX: 10, radiusY: 10), scale: SIMD2(1, 0.45)))
+        // 一周の弧は畳む。扇・弦 (半径や弦の直線を持つ) と矩形・角丸は畳まない
+        #expect(folds(.arc(radiusX: 10, radiusY: 10, start: 0, sweep: 2 * .pi, closure: .pie)))
+        #expect(!folds(.arc(radiusX: 10, radiusY: 10, start: 0, sweep: .pi, closure: .pie)))
+        #expect(!folds(.arc(radiusX: 10, radiusY: 10, start: 0, sweep: 1.5 * .pi, closure: .chord)))
+        #expect(!folds(.rect(width: 20, height: 20)))
+        #expect(!folds(.roundedRect(width: 20, height: 20, radius: 9)))
     }
 
     // MARK: - 保持した形と道 (#3580)

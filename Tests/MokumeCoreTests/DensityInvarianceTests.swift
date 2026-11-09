@@ -114,6 +114,9 @@ struct DensityInvarianceTests {
         case diagonalRetained = "rotate(θ) で置く保持した形の輪郭 (三角形の経路)"
         // 回した細い輪郭の雛形 (#3733)。相似な置き場所の矩形は、回した置き場所も 1 つの雛形に畳み、頂点段で広げ直す
         case diagonalFoldedRect = "rotate(θ) の shader() の rect の輪郭を畳んだ雛形 (三角形の経路)"
+        /// 回転をまたいで 1 つの雛形に畳む丸い周 (#3863)。64×40 の楕円は、生成する細かさ (0.25〜1) のどれでも描く画素で
+        /// 短い径 10 以上・縦横比 0.625 で、畳む境目 (``Canvas/foldsThinRingAcrossTurns(_:drawn:)``) の内側にある
+        case diagonalFoldedRing = "rotate(θ) の shader() の ellipse の輪郭を回転をまたいで畳んだ雛形 (三角形の経路)"
         // 回した細い立体の線 (#3734)。帯ごとに画面の向きで、列 (行) が帯を切る長さを整数にして広げる
         case diagonalSolidLine = "rotate(θ) の奥行きを持つ 2 点の beginShape (立体の線)"
         case diagonalRetainedSolid = "rotate(θ) で置く、奥行きを持つ 2 点を記録した保持した形 (立体の線)"
@@ -244,7 +247,7 @@ struct DensityInvarianceTests {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
                 .rotatedShaderPoint, .rotatedFill, .rotatedEllipse, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect,
-                .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
+                .diagonalFoldedRing, .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 true
             case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
                 true
@@ -301,7 +304,7 @@ struct DensityInvarianceTests {
         var offsets: [Float] {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
-                .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect, .diagonalSolidLine,
+                .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect, .diagonalFoldedRing, .diagonalSolidLine,
                 .diagonalRetainedSolid, .diagonalBox:
                 [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]
             case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
@@ -332,6 +335,8 @@ struct DensityInvarianceTests {
                 40
             // 40×20 の矩形の輪郭 (留め継ぎの角)。額縁の面積は周の長さ 120 × 太さ
             case .diagonalFoldedRect: 120
+            // 64×40 の楕円の周 (Ramanujan の近似)。凸な形の輪郭の面積は周 × 太さ
+            case .diagonalFoldedRing: Double.pi * (3 * 52 - ((3 * 32 + 20) * (32 + 3 * 20.0)).squareRoot())
             case .diagonalEllipseAcross, .diagonalEllipseAlong: Double.pi / 4 * 40
             default: nil
             }
@@ -414,6 +419,17 @@ struct DensityInvarianceTests {
                     canvas.translate(anchor.x, anchor.y)
                     canvas.rotate(turn)
                     canvas.rect(-20, -10, 40, 20)
+                    canvas.popMatrix()
+                }
+            case .diagonalFoldedRing:
+                // 1 つ目は面の外へ**回さずに**置き、見るのは雛形から回して置いた 2 つ目である (``diagonalFoldedRect`` と
+                // 同じ)。雛形は線に垂直に広げてあるので、回して置いても広げ方は変わらない (#3863)
+                canvas.shader(try Self.plainShader(canvas))
+                for (anchor, turn) in [(SIMD2<Float>(64, 64 + offset - 400), Float(0)), (SIMD2(64, 64 + offset), angle)] {
+                    canvas.pushMatrix()
+                    canvas.translate(anchor.x, anchor.y)
+                    canvas.rotate(turn)
+                    canvas.ellipse(0, 0, 64, 40)
                     canvas.popMatrix()
                 }
             case .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
@@ -809,6 +825,7 @@ struct DensityInvarianceTests {
                 FixedPose(mouth: .diagonalShaderLine, angle: .pi / 4, squash: 1, issue: 2172),
                 FixedPose(mouth: .diagonalRetained, angle: .pi / 4, squash: 1, issue: 2172),
                 FixedPose(mouth: .diagonalFoldedRect, angle: .pi / 4, squash: 1, issue: 3733),
+                FixedPose(mouth: .diagonalFoldedRing, angle: .pi / 4, squash: 1, issue: 3863),
                 FixedPose(mouth: .diagonalSolidLine, angle: .pi / 4, squash: 1, issue: 3734),
                 FixedPose(mouth: .diagonalRetainedSolid, angle: .pi / 4, squash: 1, issue: 3734),
                 FixedPose(mouth: .diagonalBox, angle: .pi / 4, squash: 1, issue: 3734),

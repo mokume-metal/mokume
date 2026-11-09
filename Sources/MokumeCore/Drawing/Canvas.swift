@@ -408,7 +408,8 @@ public final class Canvas {
     ///
     /// **細い線の帯は、列 (行) が帯を切る長さを整数にして広げる** (#2172) ので、広げ方が向きで変わる。
     /// 回転だけが違う置き場所を 1 つの雛形に畳めるのは、頂点段で置き場所ごとに広げ直せる形
-    /// (``widensInVertexStage``) だけで、ほかの形は ``key`` に 2x2 そのものを入れて向きごとに畳む (#3733)。
+    /// (``widensInVertexStage``) と、線に垂直に広げる丸い周 (``widensAcrossTheLine``・#3863) だけで、ほかの形は ``key``
+    /// に 2x2 そのものを入れて向きごとに畳む (#3733)。
     struct ThinFold: Equatable {
         var key: SIMD4<Float>
         var linear: SIMD4<Float>
@@ -417,9 +418,13 @@ public final class Canvas {
         /// 被覆を持ち、額縁の頂点は角の形も含めて「雛形の位置 + h × 微分」になる (``FlatFrame/thinStroke``)。
         /// 偽なら ``key`` は 2x2 そのもの。
         var widensInVertexStage = false
+        /// 線に垂直に広げる丸い周の雛形で、回転だけが違う置き場所を 1 つの雛形に畳むか (#3863)。
+        /// ``Canvas/foldsThinRingAcrossTurns(_:drawn:)`` だけが立てる。真なら ``key`` は回転に依らない部分。
+        var widensAcrossTheLine = false
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.key == rhs.key && lhs.widensInVertexStage == rhs.widensInVertexStage
+                && lhs.widensAcrossTheLine == rhs.widensAcrossTheLine
         }
     }
 
