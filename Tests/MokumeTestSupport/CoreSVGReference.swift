@@ -134,8 +134,9 @@ public nonisolated enum CoreSVGReference {
         return count
     }
 
-    /// 白黒の形の縁の画素の数 (真で、4 近傍に偽か面の外を持つ画素)。一致しない画素の許容を、縁の長さで割るための物差し。
-    public static func edgePixels(_ shape: [Bool], width: Int) -> Int {
+    /// 白黒の形の縁の画素の数 (真で、4 近傍に偽か面の外を持つ画素)。`ties` が真の画素は数えない (``ties(_:margin:)``。
+    /// 白黒の食い違いの数から外した画素を、割る側からも外して揃える)。一致しない画素の許容を、縁の長さで割るための物差し。
+    public static func edgePixels(_ shape: [Bool], width: Int, excluding ties: [Bool]? = nil) -> Int {
         let height = shape.count / width
         func filled(_ x: Int, _ y: Int) -> Bool {
             guard x >= 0, y >= 0, x < width, y < height else { return false }
@@ -143,7 +144,7 @@ public nonisolated enum CoreSVGReference {
         }
         var count = 0
         for y in 0..<height {
-            for x in 0..<width where shape[y * width + x] {
+            for x in 0..<width where shape[y * width + x] && !(ties?[y * width + x] ?? false) {
                 // 4 近傍のどれかが偽 (面の外も偽) なら縁
                 if !filled(x - 1, y) || !filled(x + 1, y) || !filled(x, y - 1) || !filled(x, y + 1) {
                     count += 1
