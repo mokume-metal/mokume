@@ -10,7 +10,7 @@ import Testing
 /// 口ごとのヘルプ (`<口> --help`・`-h`・`help <口>`) と、誤りの短い案内 (#3425)。
 ///
 /// **口のヘルプは `usageEntry` から作る。** 新しい説明は書かない — 全体の使い方と同じ値から出る。
-/// どの口でも、ヘルプを頼まれたら口を走らせずに 0 で終わる (ビルド・診断・窓口の待ち受け・
+/// どの口でも、ヘルプを頼まれたら口を走らせずに 0 で終わる (ビルド・診断・MCP サーバの待ち受け・
 /// ファイルの作成をしない)。
 @Suite("口ごとのヘルプと短い誤りの案内")
 struct VerbHelpTests {
@@ -67,7 +67,7 @@ struct VerbHelpTests {
     // ------------------------------------------------------------ 走らせずに 0 で終わる
 
     /// `--help` / `-h` / `help <口>` は、どの口でも投げずに戻る。**口を走らせない**
-    /// (走らせれば、スケッチの無い場所で別の誤りになるか、窓口が標準入力を待つ)。
+    /// (走らせれば、スケッチの無い場所で別の誤りになるか、MCP サーバが標準入力を待つ)。
     @Test("どの口も、--help と -h と help <口> で、走らせずに戻る")
     func everyVerbAnswersHelpWithoutRunning() throws {
         for verb in Self.verbsWithOwnHelp {
@@ -103,7 +103,7 @@ struct VerbHelpTests {
         #expect(text.contains("Ignored arguments doctor does not take: --fast"))
     }
 
-    @Test("mcp --help は、窓口を回さずに戻る")
+    @Test("mcp --help は、MCP サーバを回さずに戻る")
     func mcpHelpDoesNotServe() throws {
         let scratch = try TestScratch.directory("mokume-help-mcp")
         defer { try? FileManager.default.removeItem(at: scratch) }

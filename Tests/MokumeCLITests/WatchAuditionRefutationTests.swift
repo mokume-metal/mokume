@@ -10,7 +10,7 @@ import mokume
 
 /// `mokume watch` の試聴 (#3565) の、反証で見つかった穴を塞いだ約束。台本と見張りは ``WatchAuditionTests`` と同じ。
 ///
-/// **GPU も窓も使わない。** 台の側の約束は `WatchAuditionStageTests` と `SharedFrameStageTests` が見る。
+/// **GPU もウィンドウも使わない。** 台の側の約束は `WatchAuditionStageTests` と `SharedFrameStageTests` が見る。
 @Suite("試聴の反証で見つかった穴は、塞がっている", .signalStateKept)
 @MainActor
 struct WatchAuditionRefutationTests {
@@ -56,7 +56,7 @@ struct WatchAuditionRefutationTests {
         #expect(harness.gens.count == again)
     }
 
-    @Test("乗り換えを待つ新しい本番が 1 枚目の前に落ちたら、前の本番へ戻り、保留していた試聴の子を起こす。作品の窓は凍らない")
+    @Test("乗り換えを待つ新しい本番が 1 枚目の前に落ちたら、前の本番へ戻り、保留していた試聴の子を起こす。作品のウィンドウは凍らない")
     func theNewProductionFailingBeforeItsFirstFrameFallsBackToThePreviousOne() async throws {
         let harness = try Harness()
         harness.autoPromote = false
@@ -70,7 +70,7 @@ struct WatchAuditionRefutationTests {
         harness.previewLines.removeAll()
         await harness.beat()
 
-        #expect(harness.session.child === previous && previous.isRunning, "前の本番へ戻れず、作品の窓が凍る")
+        #expect(harness.session.child === previous && previous.isRunning, "前の本番へ戻れず、作品のウィンドウが凍る")
         #expect(harness.session.waitingGeneration == nil)
         let audition = try #require(harness.session.auditionChild, "戻った後に、保留していた試聴の子を起こさない")
         #expect(audition.isRunning && harness.alive().count == 2)
@@ -96,7 +96,7 @@ struct WatchAuditionRefutationTests {
 
     // MARK: - 出る要求の戻り先
 
-    @Test("乗り換えを待つ間に出る要求は、作品の窓が最終的に映す新しい側へ戻す。戻れなければ前の世代へ")
+    @Test("乗り換えを待つ間に出る要求は、作品のウィンドウが最終的に映す新しい側へ戻す。戻れなければ前の世代へ")
     func leavingWhileProductionAwaitsPromotionReturnsToTheNewerSide() async throws {
         let harness = try Harness()
         harness.autoPromote = false
@@ -197,7 +197,7 @@ struct WatchAuditionRefutationTests {
 
     // MARK: - 番号を名乗らない子
 
-    @Test("本番の子が番号を名乗らないなら、入る要求は断る。映っていない窓でも断る")
+    @Test("本番の子が番号を名乗らないなら、入る要求は断る。映っていないウィンドウでも断る")
     func auditionIsRefusedWhenTheWindowShowsNoIdentifiedGeneration() async throws {
         let harness = try Harness()
         _ = await harness.save()
@@ -213,18 +213,18 @@ struct WatchAuditionRefutationTests {
         #expect(entered["accepted"] as? Bool == true)
     }
 
-    @Test("試聴の子が番号を名乗らなかったら、どちらの窓も採らず、巡回が試聴の子を止めて名乗る。本番は走り続ける")
+    @Test("試聴の子が番号を名乗らなかったら、どちらのウィンドウも採らず、巡回が試聴の子を止めて名乗る。本番は走り続ける")
     func anUnidentifiedAuditionIsStoppedAndNamed() async throws {
         let harness = try Harness()
         let production = try #require(await harness.save())
         let session = harness.session
-        // 試聴に入っていなければ、番号を名乗らない目録は、これまでどおりどちらの窓も採る
+        // 試聴に入っていなければ、番号を名乗らない目録は、これまでどおりどちらのウィンドウも採る
         #expect(session.windowAccepts(pid: nil) && session.previewAccepts(pid: nil))
         #expect(!session.auditionIsUnidentified)
 
         _ = try await harness.ask("audition")
         let audition = try #require(await harness.save())
-        #expect(!session.windowAccepts(pid: nil), "試聴の間、作品の窓が番号を名乗らない目録を採る")
+        #expect(!session.windowAccepts(pid: nil), "試聴の間、作品のウィンドウが番号を名乗らない目録を採る")
         #expect(!session.previewAccepts(pid: nil), "プレビューが番号を名乗らない目録を採る")
         #expect(session.auditionIsUnidentified)
 
@@ -340,7 +340,7 @@ struct WatchAuditionRefutationTests {
 
     // MARK: - 書き残した入力
 
-    @Test("書き残した続きは子ごとに持つ: 片方の窓の途中の行は、もう片方への入力で捨てられない")
+    @Test("書き残した続きは子ごとに持つ: 片方のウィンドウの途中の行は、もう片方への入力で捨てられない")
     func unsentInputIsKeptPerChild() async throws {
         // 標準入力を読まない子: 管が埋まって、大きな行は途中で短く書ける
         let harness = try Harness(script: "exec sleep 30")
@@ -357,9 +357,9 @@ struct WatchAuditionRefutationTests {
         let held = session.unsentInputBytes(for: audition)
         #expect(held > 0 && held < big.utf8.count, "短く書けて残りを持つはずが \(held) バイト")
 
-        // 作品の窓 (本番) への入力で、プレビューの途中の行が捨てられない
+        // 作品のウィンドウ (本番) への入力で、プレビューの途中の行が捨てられない
         session.send("touch\n")
-        #expect(session.unsentInputBytes(for: audition) == held, "別の窓への入力で、途中の行が捨てられた")
+        #expect(session.unsentInputBytes(for: audition) == held, "別のウィンドウへの入力で、途中の行が捨てられた")
         // 本番にも途中の行ができても、お互いに残る。書き残している間に来た同じ子への行は割り込ませない
         session.send(big)
         let productionHeld = session.unsentInputBytes(for: production)
@@ -380,7 +380,7 @@ struct WatchAuditionRefutationTests {
 
     // MARK: - 出た後の本番と記録 (2 回目の反証)
 
-    @Test("本番は居るがプレビューを戻せなかった回は、出た時点のソースを作り直して両方の窓に出す (保留しない)")
+    @Test("本番は居るがプレビューを戻せなかった回は、出た時点のソースを作り直して両方のウィンドウに出す (保留しない)")
     func leavingWithoutBeingAbleToReturnRebuildsTheSource() async throws {
         let harness = try Harness()
         let production = try #require(await harness.save())

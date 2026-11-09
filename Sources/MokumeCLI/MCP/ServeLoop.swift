@@ -3,7 +3,7 @@
 
 import Foundation
 
-// 窓口の読みと実行の分け方 ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。
+// MCP サーバの読みと実行の分け方 ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。
 //
 // 読み取りの手 (``Inbox/feed(readLine:writer:)``) と、道具を走らせる手 (``MCPServer/serve()``) が
 // 触るものを、ここに集める。**どれも `nonisolated`** — `MokumeCLI` は main actor 既定だが、読み取りの
@@ -133,7 +133,7 @@ nonisolated final class Inbox: @unchecked Sendable {
 
 /// 取り消して、区画に置いたままにした要求。区画ごとに最後の 1 件だけを覚える。
 ///
-/// 取り消しは窓口の待ちを切るだけで、スケッチには届かない ([#3030](https://github.com/mokume-metal/mokume/issues/3030))。
+/// 取り消しは MCP サーバの待ちを切るだけで、スケッチには届かない ([#3030](https://github.com/mokume-metal/mokume/issues/3030))。
 /// 続けて撮る観測は撮り終えるまで区画を塞ぐので、その間に置いた次の要求が時間切れになったとき、
 /// 「応えない」と取り違えずに、前に取り消した要求をまだ撮っていると案内するための記憶である。
 /// **道具を走らせる手だけが触る** (読み取りの手は触らない) ので、鍵は持たない。

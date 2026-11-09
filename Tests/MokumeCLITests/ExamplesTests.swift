@@ -326,7 +326,7 @@ struct NewFromExampleTests {
         }
         let sketch = try #require(withExample.first { $0.0 == sketchPath }).1
         #expect(sketch.contains("@main\nfinal class MyShape: Sketch {"))
-        #expect(sketch.contains(#"title: "my-shape""#), "窓の題に名前が入っていない")
+        #expect(sketch.contains(#"title: "my-shape""#), "ウィンドウの題に名前が入っていない")
         #expect(sketch.contains("triangle(200, 50, 330, 250, 70, 250)"))
         #expect(!sketch.contains("{{"), "差し込みが残っている")
     }

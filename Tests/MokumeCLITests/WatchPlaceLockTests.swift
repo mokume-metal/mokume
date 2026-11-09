@@ -12,8 +12,8 @@ import mokume
 
 /// 同じ場所の 2 本目の見張りは断る ([#2093](https://github.com/mokume-metal/mokume/issues/2093))。
 ///
-/// 見張りは場所の区画を自分 1 本のものとして作り直し・畳むので、2 本が並ぶと 1 本目の窓が 2 本目の
-/// 子を映し、止めると 1 本目の次の世代が自分の窓を開いた。場所の錠 (`flock`) を先に取れた 1 本だけが
+/// 見張りは場所の区画を自分 1 本のものとして作り直し・畳むので、2 本が並ぶと 1 本目のウィンドウが 2 本目の
+/// 子を映し、止めると 1 本目の次の世代が自分のウィンドウを開いた。場所の錠 (`flock`) を先に取れた 1 本だけが
 /// 見張る。錠は**開いた記述ごと**なので、検査が錠ファイルを自分で開いて掛ければ、同じプロセスの中でも
 /// 「別の見張りが持っている」を作れる。
 @Suite("同じ場所の 2 本目の見張り", .signalStateKept)
@@ -95,7 +95,7 @@ struct WatchPlaceLockTests {
 
     // MARK: - 持たれているかを読む (#3169)
 
-    /// 窓口が、見張りの残した記録を「いまの話」として読んでよいかを決める。
+    /// MCP サーバが、見張りの残した記録を「いまの話」として読んでよいかを決める。
     @Test("見張りが持っている間は持たれていると読み、手放せば持たれていないと読む")
     func isHeldFollowsTheHolder() throws {
         let base = try makeSketch()
@@ -129,8 +129,8 @@ struct WatchPlaceLockTests {
         #expect(!WatchPlaceLock.isHeld(under: base))
     }
 
-    /// **窓口の共有の探りと重なっても、実在しない先客で断られない** (反証 2 回目の指摘 2)。探りはすぐ離す。
-    @Test("窓口の共有の探りと重なっても、先客が居なければ見張りは断られず、錠が取れる")
+    /// **MCP サーバの共有の探りと重なっても、実在しない先客で断られない** (反証 2 回目の指摘 2)。探りはすぐ離す。
+    @Test("MCP サーバの共有の探りと重なっても、先客が居なければ見張りは断られず、錠が取れる")
     func aSharedProbeDoesNotRefuseAClaim() throws {
         let base = try makeSketch()
         try FileManager.default.createDirectory(
@@ -240,7 +240,7 @@ struct WatchPlaceLockTests {
 
     // MARK: - 見張りの口
 
-    /// **断った回は、場所に何も触れない。** 区画 `viewport` を消さず (1 本目の窓が指す目録のまま)、窓口が
+    /// **断った回は、場所に何も触れない。** 区画 `viewport` を消さず (1 本目のウィンドウが指す目録のまま)、MCP サーバが
     /// 使う区画も足さず、巡回にも入らない。
     @Test("同じ場所で見張りが走っていれば、2 本目は場所に触れずに断る")
     func aSecondWatchRefusesWithoutTouchingThePlace() throws {
@@ -249,7 +249,7 @@ struct WatchPlaceLockTests {
         let root = try makeSketch()
         let other = try OtherWatch(holding: root)
         defer { other.leave() }
-        // 1 本目が置いていったもの: 目録と、窓口が使う区画の 1 つ
+        // 1 本目が置いていったもの: 目録と、MCP サーバが使う区画の 1 つ
         let viewport = WorkDirectory.facet(StartupReads.viewport.key, under: root)
         try FileManager.default.createDirectory(at: viewport, withIntermediateDirectories: true)
         let manifest = viewport.appendingPathComponent(SharedFrameSurface.manifestName)

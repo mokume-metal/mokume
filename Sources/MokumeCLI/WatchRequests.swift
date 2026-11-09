@@ -43,7 +43,7 @@ struct WatchReport: Encodable, Equatable {
     let detail: String?
     /// 試聴に入っているか。
     let auditioning: Bool
-    /// 本番の世代 (作品の窓が映す版)。居なければ省く。
+    /// 本番の世代 (作品のウィンドウが映す版)。居なければ省く。
     let production: Generation?
     /// 試聴の世代 (プレビューが映す版)。居なければ省く。
     let audition: Generation?
@@ -54,12 +54,12 @@ struct WatchReport: Encodable, Equatable {
         case notAuditioning
         /// 既に試聴に入っている。
         case alreadyAuditioning
-        /// プレビューが無い (窓を出せなかった見張り)。試聴の相手が居ない。
+        /// プレビューが無い (ウィンドウを出せなかった見張り)。試聴の相手が居ない。
         case noPreview
         /// 走っている本番が無い。試聴は本番を守るためのもので、守る相手が居ない。
         case noProduction
-        /// 作品の窓が映している本番の子が、目録で自分の番号を名乗らない (古いライブラリ)。試聴の版と本番を、番号で
-        /// 区別して別の窓に出し分けられない。入ると、試聴の版が作品の窓にも出て、窓の入力は本番へ届く。
+        /// 作品のウィンドウが映している本番の子が、目録で自分の番号を名乗らない (古いライブラリ)。試聴の版と本番を、番号で
+        /// 区別して別のウィンドウに出し分けられない。入ると、試聴の版が作品のウィンドウにも出て、ウィンドウの入力は本番へ届く。
         case unidentifiedGeneration
         /// 知らない動作。
         case unknownAction

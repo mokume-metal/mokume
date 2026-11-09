@@ -912,12 +912,12 @@ struct RunCommandTests {
 
     /// **合図を渡すのは `run` だけである** ([#1120](https://github.com/mokume-metal/mokume/issues/1120))。
     ///
-    /// 見張り (`watch`) は渡さない — 子は窓を持たず、確認は道具の側が出している
+    /// 見張り (`watch`) は渡さない — 子はウィンドウを持たず、確認は道具の側が出している
     /// ([ADR-0032] 決定 1)。渡さなければ載らないので、受け取る側は「無ければ確かめない」
     /// だけで済む。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-    @Test("窓の × を確かめさせる合図は、渡したときだけ子の環境に載る")
+    @Test("ウィンドウの × を確かめさせる合図は、渡したときだけ子の環境に載る")
     func theCloseSignalLandsOnlyWhenGiven() {
         #expect(RunCommand.childEnvironment([:])[StartupReads.closeConfirmation.key] == nil)
         #expect(
@@ -1227,7 +1227,7 @@ struct RunCommandTests {
         #expect(!message.contains("Package.swift"), "道具立ての失敗なのに宣言を疑わせている: \(message)")
         #expect(message.contains("swift build --show-bin-path -c Release"), "何を打ったかを名乗っていない")
         #expect(message.contains("64"), "終了コードを名乗っていない")
-        // **見張りはこの文面を記録に載せ、窓口の読み手には端末の「上」が無い** (反証の指摘)。
+        // **見張りはこの文面を記録に載せ、MCP サーバの読み手には端末の「上」が無い** (反証の指摘)。
         // 理由が流れた先と、それをもう一度読む手を言う
         #expect(!message.contains("above"), "記録の読み手に無い「上」を指している: \(message)")
         #expect(message.contains("standard error"), "理由の行き先を名乗っていない: \(message)")
@@ -1409,8 +1409,8 @@ struct RunCommandTests {
         //
         // **印は組み込みのリダイレクトで置き、`touch` を呼ばない。** `/bin/sh` (bash) は前面の子を
         // 待つ間に SIGINT を受けても、子が普通に終われば「子が処理した」とみなして続きを実行する。
-        // `touch` が終わってから刈り取るまでの窓に撃つと `exec sleep 30` まで進んで眠り切り、
-        // 待ちの期限と同時に赤くなった — 負荷の下ほど窓は広い (#1166)。子を待たなければ窓は無い
+        // `touch` が終わってから刈り取るまでのウィンドウに撃つと `exec sleep 30` まで進んで眠り切り、
+        // 待ちの期限と同時に赤くなった — 負荷の下ほどウィンドウは広い (#1166)。子を待たなければウィンドウは無い
         Thread.detachNewThread {
             defer { outcome.done.signal() }
             let process = Process()

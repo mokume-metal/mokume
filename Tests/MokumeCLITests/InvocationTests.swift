@@ -247,8 +247,8 @@ struct InvocationTests {
 
     /// `run` が見る区画と `watch` が置く区画が別々に組まれていて、`MOKUME_WORK_DIR` の
     /// 下で割れていた ([#791](https://github.com/mokume-metal/mokume/issues/791))。
-    /// **黙って窓が出ない**のに、そう言うための名乗りだけが基準を取り違えていた。いまも
-    /// 古いライブラリのスケッチは区画が在ると窓を開かないので、名乗りは要る (#2028)。
+    /// **黙ってウィンドウが出ない**のに、そう言うための名乗りだけが基準を取り違えていた。いまも
+    /// 古いライブラリのスケッチは区画が在るとウィンドウを開かないので、名乗りは要る (#2028)。
     @MainActor
     @Test("基準を与えても、run は watch が置いた区画を見つけて名乗る")
     func runLooksWhereWatchPlacesTheViewport() throws {
@@ -262,7 +262,7 @@ struct InvocationTests {
         let given = WorkDirectory.given(environment: [StartupReads.workDirectory.key: work.path])
         let invocation = Invocation(place: sketch.path)
 
-        // 見張りが置く先 (WatchCommand が窓を出せたときに作る区画)
+        // 見張りが置く先 (WatchCommand がウィンドウを出せたときに作る区画)
         let session = WatchSession(
             directory: sketch, context: testContext(), facetBase: try invocation.facetBase(workDirectory: given))
         let placed = WatchCommand.viewportFacet(for: session)
@@ -274,8 +274,8 @@ struct InvocationTests {
             WatchCommand.viewportFacet(under: try invocation.facetBase(workDirectory: nil))
                 == WorkDirectory.facet(StartupReads.viewport.key, under: sketch))
 
-        // **run も同じ場所を見て名乗る** — 古いライブラリのスケッチは区画が在ると窓を開かず、
-        // 自分では何も言わない (#2028)。名乗りが基準を取り違えると、黙って窓が出ない (#791)
+        // **run も同じ場所を見て名乗る** — 古いライブラリのスケッチは区画が在るとウィンドウを開かず、
+        // 自分では何も言わない (#2028)。名乗りが基準を取り違えると、黙ってウィンドウが出ない (#791)
         try FileManager.default.createDirectory(at: placed, withIntermediateDirectories: true)
         let notice = try RunCommand.sharedSurfaceNotice(for: invocation, workDirectory: given)
         #expect(notice?.contains(placed.path) == true, "見張りが置いた区画を run が見つけられていない")

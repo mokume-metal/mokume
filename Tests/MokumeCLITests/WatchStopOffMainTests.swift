@@ -12,7 +12,7 @@ import mokume
 /// ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
 ///
 /// 止める待ちは、頼んでから期限 (3 秒) まで・強制終了してから消えるまで (0.5 秒) で、最悪は
-/// 3.5 秒続く。main の上で眠って待つと、そのあいだ道具の窓の描き直し・× の問い・巡回が
+/// 3.5 秒続く。main の上で眠って待つと、そのあいだ道具のウィンドウの描き直し・× の問い・巡回が
 /// まとめて止まる (#2518 が世代の取得で直したのと同じ形)。
 ///
 /// **見ているのは時間ではなく順序である** (``WatchOffMainTests`` と同じ)。応えない子へ
@@ -120,7 +120,7 @@ struct WatchStopOffMainTests {
 
     // MARK: - 差し替え
 
-    /// 窓を持たない見張りは、止めてから起こす。**止める待ちの最中も main が働けること。**
+    /// ウィンドウを持たない見張りは、止めてから起こす。**止める待ちの最中も main が働けること。**
     @Test("差し替えで応えない子を止めている最中も、main actor は別の仕事を進められる")
     func theMainActorIsFreeWhileASwapStopsTheChild() async throws {
         let (stubborn, _) = try makeStubborn()
@@ -149,7 +149,7 @@ struct WatchStopOffMainTests {
 
     // MARK: - 退役
 
-    /// 窓が新しい世代へ入れ替わった合図で、前の世代を止める。**合図は窓から main に来る。**
+    /// ウィンドウが新しい世代へ入れ替わった合図で、前の世代を止める。**合図はウィンドウから main に来る。**
     @Test("入れ替わりの合図で前の世代を止めている最中も、main actor は別の仕事を進められる")
     func theMainActorIsFreeWhileTheOutgoingChildRetires() async throws {
         let (stubborn, _) = try makeStubborn()
@@ -246,7 +246,7 @@ struct WatchStopOffMainTests {
         #expect(told == 0, "止めている間に台が乗り換えたのに、映っている世代を手放させた")
     }
 
-    /// **合図は窓ごとに来て、2 度呼ばれる。** 止めている最中に 2 度目が来ても、同じ子を
+    /// **合図はウィンドウごとに来て、2 度呼ばれる。** 止めている最中に 2 度目が来ても、同じ子を
     /// 重ねて止めない — 名乗りも 1 度である。
     @Test("退役の合図が重なっても、同じ子を 1 度しか止めない")
     func aSecondSignalDuringRetirementJoinsTheFirst() async throws {
@@ -277,7 +277,7 @@ struct WatchStopOffMainTests {
 
     // MARK: - 終える
 
-    /// 終えるときは窓が開いたまま待つ (撮っていた動画を閉じ終えるまで最大 38 秒)。
+    /// 終えるときはウィンドウが開いたまま待つ (撮っていた動画を閉じ終えるまで最大 38 秒)。
     @Test("終えるときに子を止めている最中も、main actor は別の仕事を進められる")
     func theMainActorIsFreeWhileTheEndStopsTheChild() async throws {
         let (stubborn, _) = try makeStubborn()
@@ -323,7 +323,7 @@ struct WatchStopOffMainTests {
         #expect(session.child == nil)
     }
 
-    /// **退役の途中の子も、終えるときは置いていかない。** 退役を始めたのは窓の合図で、終える
+    /// **退役の途中の子も、終えるときは置いていかない。** 退役を始めたのはウィンドウの合図で、終える
     /// 手続きとは別の口である — 外していない子 (まだ消えていない) を待たずに戻ると、止める者が
     /// 居ない子を残す (#454)。
     @Test("終えるときは、退役の途中の子が止め終わるまで戻らない")
@@ -518,7 +518,7 @@ struct WatchStopOffMainTests {
         #expect(!child.isRunning)
     }
 
-    /// 通常の終わり方は窓を開いたまま済むので、道具立てが終わる直前の後始末は取りこぼしを拾うだけ。
+    /// 通常の終わり方はウィンドウを開いたまま済むので、道具立てが終わる直前の後始末は取りこぼしを拾うだけ。
     /// **済んでいれば何もしない / 済んでいなければ、同じ手順で止める** (置いていかない)。
     @Test("プロセスが終わる直前の後始末は、済んでいれば何もせず、残っていれば同じ手順で止める")
     func theBlockingFinishOnlyCatchesWhatIsLeft() async throws {
@@ -645,7 +645,7 @@ struct WatchStopOffMainTests {
 
     /// `terminate(_:)` が main actor の仕事から呼ばれると、`Task` の続きは永久に来ず、終わりが
     /// 保留されたまま固まる (実測・`SketchApplicationDelegate.shouldTerminate` の作法)。**止める仕事は
-    /// 窓の × と同じ印で既にある道に任せ、済んだかは Timer から見に来る。**
+    /// ウィンドウの × と同じ印で既にある道に任せ、済んだかは Timer から見に来る。**
     @Test("終了の問いは、終われの印を立てて保留し、止め終えたら 1 度だけ返す")
     func terminationIsDeferredUntilTheChildIsStopped() {
         var stops = 0

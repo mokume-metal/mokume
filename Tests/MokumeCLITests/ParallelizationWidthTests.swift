@@ -45,7 +45,7 @@ struct ParallelizationWidthTests {
     /// 値 (16 → 同時の発行口は 12 本) を区別できるだけあればよい。
     nonisolated static let cases = 12
 
-    /// 各ケースが眠る長さ。重なりを観測するための窓で、幅が外れていれば全ケースがこの
+    /// 各ケースが眠る長さ。重なりを観測するためのウィンドウで、幅が外れていれば全ケースがこの
     /// 間に起動する。
     static let napMilliseconds = 50
 

@@ -253,7 +253,7 @@ struct NewCommandTests {
         #expect(!guidance.contains("\(Command.name) run"))
     }
 
-    @Test("作られるのは 7 つ — 定義・スケッチ・無視の指定・資材の置き場・案内 2 枚・窓口の登録")
+    @Test("作られるのは 7 つ — 定義・スケッチ・無視の指定・資材の置き場・案内 2 枚・MCP サーバの登録")
     func writesThePackageTheSketchTheIgnoreFileTheAssetsDirectoryAndTheGuides() throws {
         let files = try NewCommand.files(for: .init(name: "my-sketch"))
         #expect(
@@ -263,10 +263,10 @@ struct NewCommandTests {
             ])
     }
 
-    /// **案内に書くだけでは届かない。** 窓口は呼ぶ側が起動する前に登録されているものしか
+    /// **案内に書くだけでは届かない。** MCP サーバは呼ぶ側が起動する前に登録されているものしか
     /// 使えないので、作った後で打っても、そのとき動いているエージェントからは呼べない
     /// ([#683](https://github.com/mokume-metal/mokume/issues/683))。
-    @Test("窓口の登録が置かれ、道具の名前と mcp の呼び方だけを持つ")
+    @Test("MCP サーバの登録が置かれ、道具の名前と mcp の呼び方だけを持つ")
     func writesTheWindowRegistration() throws {
         let files = try NewCommand.files(for: .init(name: "my-sketch"))
         let text = try #require(files.first { $0.0 == ".mcp.json" }?.1)
@@ -278,8 +278,8 @@ struct NewCommandTests {
         #expect(entry["args"] as? [String] == ["mcp", "."])
     }
 
-    /// **案内と実際の手順を食い違わせない。** 登録が置かれた後は、人が窓口を打つ必要は無い。
-    @Test("案内は、人が打つものとして窓口を挙げない")
+    /// **案内と実際の手順を食い違わせない。** 登録が置かれた後は、人が MCP サーバを打つ必要は無い。
+    @Test("案内は、人が打つものとして MCP サーバを挙げない")
     func theGuideDoesNotAskThePersonToStartTheWindow() throws {
         let text = try guide("AGENTS.md")
         #expect(!text.contains("mokume mcp ."))

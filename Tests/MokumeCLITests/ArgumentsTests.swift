@@ -273,7 +273,7 @@ struct ArgumentsTests {
         }
         let bundle = try #require(usageMessage { _ = try BundleCommand.parse(["--out=out"]) })
         #expect(bundle.hasPrefix("--out=out is not accepted: separate the value from --out"))
-        // 選択肢を宣言しない口 (窓口) には、案内する綴りが無い。いまどおり知らない選択肢
+        // 選択肢を宣言しない口 (MCP サーバ) には、案内する綴りが無い。いまどおり知らない選択肢
         #expect(
             usageMessage {
                 _ = try MCPCommand.directories(

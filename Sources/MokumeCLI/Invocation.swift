@@ -78,7 +78,7 @@ nonisolated struct Invocation: Equatable {
     ///
     /// 走らせるスケッチは `MOKUME_WORK_DIR` に従って区画を読み書きするので、道具も同じ
     /// 側を見ないと**両者が別の区画を指す** (#331)。同じ判断が `run` / `watch` / `doctor` /
-    /// 窓口の 4 箇所に写されていて、そのうち 2 箇所が黙って別の値を使っていた
+    /// MCP サーバの 4 箇所に写されていて、そのうち 2 箇所が黙って別の値を使っていた
     /// ([#791](https://github.com/mokume-metal/mokume/issues/791)・
     /// [#730](https://github.com/mokume-metal/mokume/issues/730))。**写しを作らない。**
     ///
@@ -87,7 +87,7 @@ nonisolated struct Invocation: Equatable {
     /// それに自分の既定値を当てるだけでよい。
     ///
     /// - Parameter directory: 環境変数が基準を与えていないときに使う既定値。道具ごとに
-    ///   違う (スケッチの場所・窓口へ渡された場所) ので、呼ぶ側が持つ。
+    ///   違う (スケッチの場所・MCP サーバへ渡された場所) ので、呼ぶ側が持つ。
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     static func facetBase(under directory: URL, workDirectory: URL? = WorkDirectory.given) -> URL {

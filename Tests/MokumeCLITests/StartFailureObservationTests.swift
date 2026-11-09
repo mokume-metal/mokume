@@ -12,7 +12,7 @@ import mokume
 /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
 ///
 /// 理由は子の標準エラーにしか無く、`observe` は型どおりの「応えない」の案内に落ちていた。見張りが
-/// 作り直しの記録 (`.mokume/build/status.json`) に起動できなかった回として書くので、窓口はそれを読んで答える。
+/// 作り直しの記録 (`.mokume/build/status.json`) に起動できなかった回として書くので、MCP サーバはそれを読んで答える。
 @Suite("起動できなかった子の後の観測")
 struct StartFailureObservationTests {
     private func makeFacets() -> (Facets, URL) {
@@ -110,7 +110,7 @@ struct StartFailureObservationTests {
         let (facets, directory) = makeFacets()
         defer { try? FileManager.default.removeItem(at: directory) }
         try putStatus(in: directory, launched: false, reason: Self.head + "\n" + Self.sketchLine)
-        // 見張りは居ない。窓口の区画 (observe) も、この呼び出しが作る (existed == false)
+        // 見張りは居ない。MCP サーバの区画 (observe) も、この呼び出しが作る (existed == false)
         #expect(!FileManager.default.fileExists(atPath: facets.observeFacet.path))
 
         let text = Tools(facets: facets, makeID: { "H" }).call("observe", arguments: [:]).text

@@ -104,7 +104,7 @@ struct BuildReportTests {
         #expect(text.contains("\"buildMs\" : 2"))
     }
 
-    /// 道の区切りが `\/` に化けない (窓口も切り分けの口も、この文字列を人へ見せる)。
+    /// 道の区切りが `\/` に化けない (MCP サーバも切り分けの口も、この文字列を人へ見せる)。
     @Test("出力の中の道は、そのままの形で載る")
     func pathsAreNotEscaped() throws {
         let text = try encoded(

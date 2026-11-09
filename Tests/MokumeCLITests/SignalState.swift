@@ -17,7 +17,7 @@ import Testing
 /// 控えるのは、受け口 (道具と子が置くもの・見張りが無視にする SIGPIPE) と、道具の印
 /// (`runChildPID`・`runStopSignal`・`watchStopRequested`・`WatchCommand.teardownDone`)、子の旗
 /// (`sketchStopRequested`) である。`teardownDone` は一度立つと下りない印で、残すと後に走る
-/// 見張りの後始末が冒頭で抜ける (窓を閉じず、駆動源が実行ループに残る)。
+/// 見張りの後始末が冒頭で抜ける (ウィンドウを閉じず、駆動源が実行ループに残る)。
 ///
 /// 戻し忘れは ``SignalStateKept`` (suite に付ける trait) が赤にする。本体の検査
 /// (`MokumeCoreTests`) にも同じ名前の型があり、受け口の控え方と比べ方は

@@ -11,8 +11,8 @@ import mokume
 ///
 /// 見張りは、場所の区画を**自分 1 本のものとして**扱う。作り直し (`openViewer`) は区画 `viewport` を
 /// 「前の見張りが残した、死んだ面を指すもの」とみなして消し、後始末も区画を消す。同じ場所に 2 本目が
-/// 居ると、2 本目が 1 本目の区画を作り直してその子が目録を書き、1 本目の窓が 2 本目の子を映し、2 本目を
-/// 止めると 1 本目の次の世代が自分の窓を開いて、前の世代が並んで生き続けた (#2095 の実測)。
+/// 居ると、2 本目が 1 本目の区画を作り直してその子が目録を書き、1 本目のウィンドウが 2 本目の子を映し、2 本目を
+/// 止めると 1 本目の次の世代が自分のウィンドウを開いて、前の世代が並んで生き続けた (#2095 の実測)。
 /// 合図 (`MOKUME_VIEWPORT_OWNER`) は「見張りに起こされたか」は伝えるが、**どの見張りか**は区別しない。
 ///
 /// ## 何をするのか
@@ -72,7 +72,7 @@ nonisolated final class WatchPlaceLock {
             guard opened >= 0 else { return WatchPlaceLock(descriptor: -1) }
             var locked = flock(opened, LOCK_EX | LOCK_NB) == 0
             var reason = locked ? 0 : errno
-            // **先客が居ないと読めるのに断られたなら、窓口の共有の探り (``isHeld(under:)``) と重なっただけかもしれない。**
+            // **先客が居ないと読めるのに断られたなら、MCP サーバの共有の探り (``isHeld(under:)``) と重なっただけかもしれない。**
             // 探りはすぐ離すので、短く取り直す。先客が生きていれば (pid が居る) 待たずに断る
             var waited = 0
             while !locked, reason == EWOULDBLOCK, waited < contendedRetries, !holderIsAlive(lock) {
@@ -127,7 +127,7 @@ nonisolated final class WatchPlaceLock {
 
     /// その場所を、いま見張りが持っているか ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
     ///
-    /// **窓口 (MCP) が、見張りの残した記録 (`build/status.json`) を「いまの話」として読んでよいかを見る。**
+    /// **MCP サーバ (MCP) が、見張りの残した記録 (`build/status.json`) を「いまの話」として読んでよいかを見る。**
     /// 記録は見張りが終わっても残るので、見張りを止めた後に手で起こし直した作品の件に、止まる前の
     /// 「起動できなかった」を答えてしまう。錠はプロセスの終わりにカーネルが外すので、`SIGKILL` で消えた
     /// 見張りは持っていないと読める (pid の生死を当てにしない)。
@@ -137,7 +137,7 @@ nonisolated final class WatchPlaceLock {
     ///   その一瞬に別の見張りが `claim(under:)` を打つと、`claim` は先客が居ないと読める間 (pid が無い・居ない)
     ///   は短く取り直すので、実在しない先客で断らない。
     /// - **確かめられなければ、持たれていないと読む** (錠ファイルが無い・開けない・`flock` が使えない場所)。
-    ///   窓口はそのとき、記録を使わず元の案内に倒れる。
+    ///   MCP サーバはそのとき、記録を使わず元の案内に倒れる。
     static func isHeld(under base: URL) -> Bool {
         let lock = lockURL(under: base)
         if let pid = holder(of: lock), pid > 0, kill(pid, 0) != 0, errno == ESRCH { return false }
