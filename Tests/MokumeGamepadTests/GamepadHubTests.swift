@@ -12,7 +12,7 @@ import Testing
 /// 本物のパッドは要らない。
 ///
 /// 仮の機材は接続の知らせを出さないので、係 (``GamepadHub``) の抜き差しの口を直に呼ぶ。
-/// 値は本物と同じく、釦とスティックの handler を通って届く。係は検査ごとに作り、プロセスの
+/// 値は本物と同じく、ボタンとスティックの handler を通って届く。係は検査ごとに作り、プロセスの
 /// 係 (``GamepadHub/shared``) には触れない。
 @Suite("ゲームパッドの実機の配線 (仮の機材)", .serialized)
 struct GamepadHubTests {
@@ -35,7 +35,7 @@ struct GamepadHubTests {
         return pad
     }
 
-    @Test("繋がった機材の釦とスティックが、handler を通って入り口へ届く。縦軸は下向きになる")
+    @Test("繋がった機材のボタンとスティックが、handler を通って入り口へ届く。縦軸は下向きになる")
     func valuesFlowThroughHandlers() async throws {
         let hub = GamepadHub(watches: false)
         let controller = GCController.withExtendedGamepad()
@@ -54,7 +54,7 @@ struct GamepadHubTests {
         #expect(await settle(pad) { !pad.isPressed(.a) })
     }
 
-    @Test("抜くと切断を名乗り、押していた釦は離れる。挿し直すと同じ識別子の同じ入り口が戻る")
+    @Test("抜くと切断を名乗り、押していたボタンは離れる。挿し直すと同じ識別子の同じ入り口が戻る")
     func unplugAndReplug() async throws {
         let hub = GamepadHub(watches: false)
         let first = GCController.withExtendedGamepad()
@@ -81,7 +81,7 @@ struct GamepadHubTests {
         #expect(await settle(pad) { pad.isPressed(.b) })
     }
 
-    @Test("挿したとき・挿し直したときに押していた釦は、知らせを待たずに押されていると読める")
+    @Test("挿したとき・挿し直したときに押していたボタンは、知らせを待たずに押されていると読める")
     func heldWhenPluggedIn() async throws {
         let hub = GamepadHub(watches: false)
         let controller = GCController.withExtendedGamepad()
@@ -133,7 +133,7 @@ struct GamepadHubTests {
         let id = try #require(hub.slots.known.first)
 
         // 実機 (Xbox360 互換) の挿し直し: 抜かれた直後に別名の汎用 HID が通知され、すぐ消え、
-        // 本来のパッドが新しい機材として届く。汎用 HID は左スティックも釦も読めない
+        // 本来のパッドが新しい機材として届く。汎用 HID は左スティックもボタンも読めない
         hub.disconnected(first)
         let generic = GCController.withMicroGamepad()
         #expect(generic.extendedGamepad == nil)

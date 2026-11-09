@@ -129,7 +129,7 @@ let package = Package(
         // 入口: SwiftUI に埋め込む人 (ADR-0048 決定 1・2)。アンブレラは再エクスポートしない — スケッチを
         // 書くファイルに `SketchView` を、埋め込むファイルにスケッチ用の型を、互いに持ち込まない
         .target(name: "MokumeUI", dependencies: ["MokumeCore"], swiftSettings: .mokume),
-        // 入口: 道具・外のパッケージ (ADR-0048 決定 1・3)。窓を出さずにスケッチを走らせる口だけを持つ。
+        // 入口: 道具・外のパッケージ (ADR-0048 決定 1・3)。ウィンドウを出さずにスケッチを走らせる口だけを持つ。
         // アンブレラは再エクスポートしない — スケッチを書く人の補完に、実行の口を並べない
         .target(name: "MokumeHost", dependencies: ["MokumeCore"], swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
@@ -166,7 +166,7 @@ let package = Package(
         .testTarget(
             name: "MokumeCLITests", dependencies: ["MokumeCLI", "MokumeProbe", "MokumeTestSupport"],
             swiftSettings: .mokumeTests),
-        // 計測の道具の引数の解き方 (#2490)。道具の最上位は走らせると窓を開くので、
+        // 計測の道具の引数の解き方 (#2490)。道具の最上位は走らせるとウィンドウを開くので、
         // 解き方だけを ProbeArguments.swift に出して、ここから呼ぶ
         .testTarget(
             name: "FrameRateProbeTests", dependencies: ["frame-rate-probe"],
@@ -200,7 +200,7 @@ let package = Package(
         .testTarget(
             name: "MokumeUITests", dependencies: ["MokumeUI", "mokume"],
             swiftSettings: .mokumeTests),
-        // 窓なしで走らせる口が `import MokumeHost` だけのファイルで使えることを、組んで確かめる (#3870)。
+        // ウィンドウなしで走らせる口が `import MokumeHost` だけのファイルで使えることを、組んで確かめる (#3870)。
         // スケッチは別のファイルで `import mokume` して書く — 外のパッケージの書き方そのもの
         .testTarget(
             name: "MokumeHostTests", dependencies: ["MokumeHost", "mokume"],

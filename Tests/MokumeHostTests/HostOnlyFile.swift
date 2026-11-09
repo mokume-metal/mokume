@@ -3,7 +3,7 @@
 
 // 道具・外のパッケージが書くファイルそのもの (#3870)。**import は Foundation と MokumeHost だけにする** —
 // ここに `import mokume` や `import MokumeCore` を足すと、確かめたいこと (`import MokumeHost` だけで
-// 窓なしの実行を使い切れる) を確かめなくなる。スケッチ (`HostProbeSketch`) は別のファイルで `import mokume`
+// ウィンドウなしの実行を使い切れる) を確かめなくなる。スケッチ (`HostProbeSketch`) は別のファイルで `import mokume`
 // して書く。
 //
 // `MokumeHost` の名指しの一覧 (`Sources/MokumeHost/Exports.swift`) が `HeadlessRun` の署名に要る型を
@@ -22,7 +22,7 @@ struct HostReading {
     let pngBytes: Int
 }
 
-/// 窓なしで 2 枚進め、スペースを押してもう 1 枚進め、押す前と後の絵を読む。
+/// ウィンドウなしで 2 枚進め、スペースを押してもう 1 枚進め、押す前と後の絵を読む。
 func readAroundSpace(_ sketch: some Sketch, gpu: RenderDevice? = nil) throws -> HostReading {
     try HeadlessRun.with(sketch, gpu: gpu) { run in
         try run.advance(frames: 2)

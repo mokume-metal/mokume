@@ -48,7 +48,7 @@
 
 - `index.tsv` — 1 行 1 本。`綴り<TAB>ファイル名<TAB>1 行の説明`
 - `NNNN.swift.template` — `@main` を持つスケッチ 1 本。`{{TYPE}}` (クラスの名前) と
-  `{{NAME}}` (窓の題) は `mokume new` が差し込む
+  `{{NAME}}` (ウィンドウの題) は `mokume new` が差し込む
 - `NNNN.assets/` — その例に添えた資材 (`資材` の印)。中は `assets/` から下のパスのままで、
   `mokume new` がスケッチの `Sources/<target>/assets/` へ写す。資材の無い例には置かない。
   **索引は変えない** — 置き場の名前はスケッチの名前から決まる (`.swift.template` を `.assets` に)
@@ -248,7 +248,7 @@ BANNER = "// Example from the mokume reference: {heading}"
 
 
 def size_table(root: pathlib.Path) -> dict[tuple, tuple[int, int]]:
-    """絵の囲みを持つ例の大きさ。**撮る側が撮るときの大きさ**で、窓を同じ大きさにする。"""
+    """絵の囲みを持つ例の大きさ。**撮る側が撮るときの大きさ**で、ウィンドウを同じ大きさにする。"""
     table: dict[tuple, tuple[int, int]] = {}
     for shot in example_shots.collect(root):
         table.setdefault((str(shot.path), tuple(shot.snippet), tuple(shot.context)), (shot.width, shot.height))

@@ -512,7 +512,7 @@ FOREIGN_ALLOWLIST = {
     "WorkDirectory.reportURL(under:)": "区画の中の応答ファイルの在処 (WorkDirectory.requestURL と同じ理由)",
     "WorkDirectory.directoryExists(at:)": "見に行く場所の指定。返すのではなく受けるだけなので PNGFile.write(_:to:) と同じ向きで、在処の正典は標準ライブラリの外にある",
     "SharedFrameWindow.init(gpu:facet:title:)": "見張っているスケッチ側の区画を指す。道具は自分の作業場所ではなくそこへ置くので、場所を渡す口が要る (WorkDirectory.facet と同じ理由)",
-    "SharedFramePreview.init(gpu:facet:params:title:)": "作品の窓と同じ区画を独立に見るプレビューと、つまみの区画 (SharedFrameWindow.init と同じ理由)",
+    "SharedFramePreview.init(gpu:facet:params:title:)": "作品のウィンドウと同じ区画を独立に見るプレビューと、つまみの区画 (SharedFrameWindow.init と同じ理由)",
 }
 
 
@@ -995,7 +995,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "keyboard": READING,
     "get": READING,
     "loadPixels": READING,
-    "pixels": (READING, "画素の窓を返す。窓からの書き込みは set と同じく #1603 の R3 が扱う"),
+    "pixels": (READING, "画素のビューを返す。ビューからの書き込みは set と同じく #1603 の R3 が扱う"),
     "read": READING,
     "noise": READING,
     "random": (READING, "値を返す。種は randomSeed が持つ"),
@@ -1111,10 +1111,10 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "mouseDragged": ASSEMBLY,
     "mouseWheel": ASSEMBLY,
     "fileDropped": ASSEMBLY,
-    "selectInput": (ASSEMBLY, "窓へファイルを選ばせるダイアログを頼み、結果を待つ。絵にもフレームの状態にも触れない (結果は入力の出来事として届く・#3062)"),
-    "requestPointerLock": (ASSEMBLY, "窓へカーソルを捕まえるよう頼む。絵にもフレームの状態にも触れず、窓の無い実行では何もしない (#1144)"),
+    "selectInput": (ASSEMBLY, "ウィンドウへファイルを選ばせるダイアログを頼み、結果を待つ。絵にもフレームの状態にも触れない (結果は入力の出来事として届く・#3062)"),
+    "requestPointerLock": (ASSEMBLY, "ウィンドウへカーソルを捕まえるよう頼む。絵にもフレームの状態にも触れず、ウィンドウの無い実行では何もしない (#1144)"),
     "exitPointerLock": (ASSEMBLY, "requestPointerLock と同じ理由 (頼みを取り下げる)"),
-    "noCursor": (ASSEMBLY, "窓へ矢印のカーソルを隠すよう頼む。絵にもフレームの状態にも触れず、窓の無い実行では何もしない (#2439)"),
+    "noCursor": (ASSEMBLY, "ウィンドウへ矢印のカーソルを隠すよう頼む。絵にもフレームの状態にも触れず、ウィンドウの無い実行では何もしない (#2439)"),
     "cursor": (ASSEMBLY, "noCursor と同じ理由 (頼みを取り下げる)"),
     "save": (ASSEMBLY, "フレームの絵を外へ書き出す"),
     "saveTable": (ASSEMBLY, "表を外へ書き出す。絵にもフレームの状態にも触れない"),
@@ -1161,8 +1161,8 @@ VECTOR_EXEMPT: dict[str, str] = {
 # ここで名指す。口の呼び出しは関数でなく値の使い方 (`canvas.pixels.fill(…)`) でもよい。
 VECTOR_ALSO: dict[str, str] = {
     "pixels": (
-        "「読み取り」の口だが、返す窓 (Pixels) への書き込み (添字・fill・update) は画素を置くことに含まれる (#1603)。"
-        "窓から書いても、set と同じく SVG に書けないものとして名乗る"
+        "「読み取り」の口だが、返すビュー (Pixels) への書き込み (添字・fill・update) は画素を置くことに含まれる (#1603)。"
+        "ビューから書いても、set と同じく SVG に書けないものとして名乗る"
     ),
 }
 
@@ -1251,7 +1251,7 @@ def check_vector_ports(
     `sketch.` に続く `名前(`) だけを数え、**多重定義の数だけ呼び出しを求める**。外す口は理由つきで
     `VECTOR_EXEMPT` に書き、表に残った古い名前も上げる。
 
-    **「図形」でない種類の口が図形や画素を置くとき** (`pixels` の窓への書き込み) は、`VECTOR_ALSO` へ理由つきで
+    **「図形」でない種類の口が図形や画素を置くとき** (`pixels` のビューへの書き込み) は、`VECTOR_ALSO` へ理由つきで
     載せる。種類は 1 つの口に 1 つしか付けられず、種類で絞ると、別の種類の口は黙って見られなくなる (#3139 の反証)。
     """
     code = re.sub(r"/\*.*?\*/", "", vector_test, flags=re.DOTALL)

@@ -21,7 +21,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 - **描く大きさとウィンドウの大きさは別の数である。** `width`・`height` は起動のときに決まり、ウィンドウを広げても変わらない ([ADR-0015](../decisions/0015-metalfx-role.md))。Processing の `windowResize()` は描く面の大きさを変えるので、API の意味がそのままでは写らない
 - **設定は呼ばずに `settings` で返す。** `size()`・`frameRate()`・`fullScreen()` は、起動のときに読む `Sketch.settings` の値にする
 - **コールバックは、押した 1 回・離した 1 回・動いた 1 件ごとに呼ばれる。** `mouseDragged()` ほかの API ごとの違いは下の行に書く。`func mouseWheel()` のように引数を省くと、コンパイルは通るが一度も呼ばれない API がある (`mouseWheel(deltaX:deltaY:)`・`fileDropped(_:)`)
-- **キーと釦は数ではなく型で指す** ([ADR-0034](../decisions/0034-input-surface-units.md) 決定 1)。`keyCode == UP` は `keyCode == .arrowUp`、`mouseButton == LEFT` は `mouseButton == .left`
+- **キーとボタンは数ではなく型で指す** ([ADR-0034](../decisions/0034-input-surface-units.md) 決定 1)。`keyCode == UP` は `keyCode == .arrowUp`、`mouseButton == LEFT` は `mouseButton == .left`
 - **読めない・書けないときは投げる。** Processing は `null` を返す。mokume は `DataFailure` を投げ、`setup() throws` の `try` か `try?` で受ける
 
 ## 入れるの束
@@ -55,7 +55,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 | `cursor()` | `cursor()` | 同等 | 隠したカーソルを作品の面の上でも見せる。無い形: 形を選ぶ `cursor(HAND)` と画像を渡す `cursor(img, x, y)` (作例が来るまで作らないと決めた) | [#2439] |
 | `noCursor()` | `noCursor()` | 同等 | ウィンドウが前にあってポインタが作品の面の上にあるあいだ隠す。`cursor()` を呼ぶまで残る | [#2439] |
 | `smooth()`・`noSmooth()` (2 件) | — | 作例待ち | 縁の滑らかさは経路ごとに違う (基本図形は解析的な被覆率、三角形の経路の縁には AA が無い — [ADR-0039](../decisions/0039-pixel-grid-and-edge-antialiasing.md) 決定 3)。切る対象が全経路か基本図形の被覆率だけかが割れ、段階を渡す `smooth(4)` の意味も決まっていない。縁を滑らかにする側 (4x MSAA) は実需を待つと決めてある | — |
-| `focused` | — | 入れる | ウィンドウが前にあるかの真偽。ウィンドウが前から退いたときの扱い (押していたキーと釦を離した扱いにする。[#2443]) は既にあり、状態は持っている。ウィンドウの無い実行・`SketchView` での答えは `Feature` が決める | [#3709] |
+| `focused` | — | 入れる | ウィンドウが前にあるかの真偽。ウィンドウが前から退いたときの扱い (押していたキーとボタンを離した扱いにする。[#2443]) は既にあり、状態は持っている。ウィンドウの無い実行・`SketchView` での答えは `Feature` が決める | [#3709] |
 | `windowTitle()` | — (`SketchSettings.title` は起動のときだけ) | 入れる | 題名の変更は、`noCursor()` と同じく頼みを絵と一緒に道具のウィンドウへ渡せる。ウィンドウの無い実行では何も起きない | [#3709] |
 | `windowMove()`・`windowMoved()` (2 件) | — | 作例待ち | 座標の原点と単位が割れる (Processing は主画面の左上からの画素。mokume のウィンドウは点で、ディスプレイは番号で選び、閉じたときの位置を覚えて戻す)。ウィンドウは道具やホストが持つ場面もある。画面を選ぶだけなら `fullScreen(_:)` で済む | — |
 | `windowResize()`・`windowResized()`・`windowResizable()`・`windowRatio()` (4 件) | — | 作例待ち | Processing は描く面の大きさを変えるが、mokume の `width`・`height` は起動のときに決まり、ウィンドウの大きさは `windowScale` と手で広げた大きさで別に決まる。API を足すなら、ウィンドウだけを動かすのか描く面を替えるのか、広げたウィンドウの中でどう収めるかを先に決める | — |
@@ -80,7 +80,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 | --- | --- | --- | --- | --- |
 | `mouseX`・`mouseY`・`pmouseX`・`pmouseY` (4 件) | `mouseX`・`mouseY`・`pmouseX`・`pmouseY` | 同等 | 単位は描く解像度の画素で、ウィンドウの大きさによらない。ウィンドウと縦横比が合わない帯の上では面の外の値になる (丸めない) | [ADR-0034](../decisions/0034-input-surface-units.md) |
 | `mouseButton` | `mouseButton` | 同等 | `MouseButton?`。`mouseButton == .left` と書く。押しても離しても入れ替わる。数との比較はコンパイルで止まる | [#1555] |
-| `mousePressed` | `isMousePressed` | 同等 | 変数 `mousePressed` は関数 `mousePressed()` と並べて置けない。p5.js の `mouseIsPressed` の語順にして `keyboard.isPressed` と合わせた。釦ごとに数え、ウィンドウが前から退くと離した扱いになる | [ADR-0020](../decisions/0020-api-naming-and-surface.md) |
+| `mousePressed` | `isMousePressed` | 同等 | 変数 `mousePressed` は関数 `mousePressed()` と並べて置けない。p5.js の `mouseIsPressed` の語順にして `keyboard.isPressed` と合わせた。ボタンごとに数え、ウィンドウが前から退くと離した扱いになる | [ADR-0020](../decisions/0020-api-naming-and-surface.md) |
 | `mousePressed()`・`mouseReleased()`・`mouseClicked()`・`mouseMoved()` (4 件) | `mousePressed()`・`mouseReleased()`・`mouseClicked()`・`mouseMoved()` | 同等 | 1 フレームに押して離しても両方呼ばれる。`mouseClicked()` は `mouseReleased()` の直後に続く。動いた量が要るなら `mouseMoved(deltaX:deltaY:)` | [#723]・[#2443] |
 | `mouseDragged()` | `mouseDragged()` | 同等 | 引数なしでも呼ばれる (`mouseMoved()` と同じ)。動いた量が要るなら `mouseDragged(deltaX:deltaY:)`。中で `dragX` を読むと部分累計になる | [#3258]・[ADR-0034](../decisions/0034-input-surface-units.md) |
 | `mouseWheel()` | `mouseWheel(deltaX:deltaY:)` | 同等 | 回した量は `event` ではなく引数で受ける。**引数なしの `func mouseWheel()` と書くと、通るが一度も呼ばれない。** 量は点で、慣性の続きも届く | [ADR-0034](../decisions/0034-input-surface-units.md) |

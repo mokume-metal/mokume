@@ -95,8 +95,8 @@ unset _bot_hand_type _bot_hand_writer _bot_hand_writers
 
 # --- 人の手を新しい順に集める (#2660) ------------------------------------------
 #
-# bot の追記が積もると、コメントの窓 (`comments(last: N)`) は bot の手で埋まり、人の手が
-# 窓の外へ押し出される。窓を広げるのではなく、**人の手が要るだけ集まるまでページを新しい順に
+# bot の追記が積もると、コメントのウィンドウ (`comments(last: N)`) は bot の手で埋まり、人の手が
+# ウィンドウの外へ押し出される。ウィンドウを広げるのではなく、**人の手が要るだけ集まるまでページを新しい順に
 # 遡る**。ほとんどの宛先は最初の 1 ページで足りる。
 #
 # **遡るのには上限がある** — ページ数 (BOT_HAND_MAX_PAGES・既定 5) と秒数
@@ -153,7 +153,7 @@ recent_comments() { # $1=owner/repo $2=番号 $3=集める人の手の件数 $4=
     deadline=$BOT_HAND_DEADLINE
   fi
   while :; do
-    # 最初のページは必ず引く (従来の窓と同じ)。2 ページ目からが上限の対象
+    # 最初のページは必ず引く (従来のウィンドウと同じ)。2 ページ目からが上限の対象
     if [ "$pages" -gt 0 ] && { [ "$pages" -ge "$max_pages" ] || [ "$SECONDS" -ge "$deadline" ]; }; then
       printf '{"end":"capped","pages":%d}\n' "$pages"
       return 0

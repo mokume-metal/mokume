@@ -36,7 +36,7 @@ final class SerialAndKnob: Sketch {
     func setup() {
         if let first = serialPorts().first {
             opened = first.id
-            // 実機が無くても窓を見られる例なので、開けない場合も状態と理由を出して続ける。
+            // 実機が無くてもウィンドウを見られる例なので、開けない場合も状態と理由を出して続ける。
             do {
                 port = try createSerial(first, baudRate: 9600)
             } catch {

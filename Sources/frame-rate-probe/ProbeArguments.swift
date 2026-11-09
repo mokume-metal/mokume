@@ -8,7 +8,7 @@
 // 黙って既定のまま走っていた (#2490)。`--seconds nan` は測り終える条件が永遠に偽になり、
 // プロセスが終わらない。
 //
-// main.swift の最上位は走らせると窓を開いてしまうので、解き方だけをここへ出して
+// main.swift の最上位は走らせるとウィンドウを開いてしまうので、解き方だけをここへ出して
 // 検査から呼べるようにしてある (FrameRateProbeTests)。
 
 import Foundation
@@ -17,7 +17,7 @@ import Foundation
 struct ProbeArguments: Equatable {
     /// 測る秒数。有限の正の数。**測りは 1 秒刻みで、秒数は切り上がる** (6.5 なら 7 秒で終わる)。
     var seconds = 6.0
-    /// 窓を畳むまでの秒数。畳まないときは `nil`。有限の 0 以上の数。
+    /// ウィンドウを畳むまでの秒数。畳まないときは `nil`。有限の 0 以上の数。
     var minimizeAfter: Double?
     /// 画面のスリープを断らない (画面が消えることそのものを測るときだけ立てる)。
     var allowsDisplaySleep = false
@@ -36,8 +36,8 @@ struct ProbeArguments: Equatable {
                 parsed.seconds = try number(
                     after: argument, in: &rest, requirement: "有限の正の数 (測りは 1 秒刻みで、秒数は切り上がる)") { $0 > 0 }
             case "--minimize-after":
-                // **自分で畳む。** よそのプロセスの窓を osascript から畳むにはアクセシビリティの
-                // 許可が要り、許可の無い環境では「検査が落ちた」と「窓を畳めなかった」を
+                // **自分で畳む。** よそのプロセスのウィンドウを osascript から畳むにはアクセシビリティの
+                // 許可が要り、許可の無い環境では「検査が落ちた」と「ウィンドウを畳めなかった」を
                 // 区別できない (#223)
                 parsed.minimizeAfter = try number(
                     after: argument, in: &rest, requirement: "有限の 0 以上の数") { $0 >= 0 }

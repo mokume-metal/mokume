@@ -193,7 +193,7 @@ nonisolated struct FrameConverterTests {
 
     /// 縮めた行の、光の量の平均。
     ///
-    /// **画素ごとではなく行の平均で見る。** 縮める窓 (Lanczos) は縞の周期で揺れ (1 画素ずつ ±0.07 ほど)、
+    /// **画素ごとではなく行の平均で見る。** 縮めるときの窓関数 (Lanczos) は縞の周期で揺れ (1 画素ずつ ±0.07 ほど)、
     /// その揺れは平均の取り方と関係が無い。エンコードした値のまま平均すると、行の平均は 0.23 になる
     /// (縞が 128 前後に並ぶ)。光の量で平均すれば 0.5 になる。
     private func rowLight(_ picture: DisplayImage, _ y: Int, channel: Int = 0) -> Double {

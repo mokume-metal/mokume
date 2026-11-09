@@ -226,7 +226,7 @@ $(sed -n '1,5s/^/  /p' <<<"$mentioned")
       python3 scripts/example-shots.py --snippet repro.swift --size 160x120 --zoom 4 --upload \\
         --token-command "\$MOKUME_GYAZO_TOKEN_CMD"
     (1 画素の継ぎ目・透けは --zoom で最近傍に拡大する。動きは --frames)
-  - 窓・GUI を見せるなら .claude/skills/visual-evidence/SKILL.md の経路 B
+  - ウィンドウ・GUI を見せるなら .claude/skills/visual-evidence/SKILL.md の経路 B
 
 絵にしようがない (クラッシュ・数値の取り扱い・コードを読んだだけで再現の形が未定 など) なら、
 本文に 1 行を足して通します:
@@ -283,7 +283,7 @@ if jq -e --arg l "$ESCAPE_LABEL" '.labels[]? | select(.name == $l)' >/dev/null <
   say "$ESCAPE_LABEL による例外 PR (絵は変わらないという申告)"
   # 絵は求めない。ただ「変わらない」は「見せるものが無い」ではないので促す (#2195)
   if ! jq -r '.body // ""' <<<"$pr_json" | has_evidence; then
-    say "絵が変わらなくても、見て分かるもの (窓の振る舞い・出力・いまの絵) があれば本文に載せると伝わりやすい"
+    say "絵が変わらなくても、見て分かるもの (ウィンドウの振る舞い・出力・いまの絵) があれば本文に載せると伝わりやすい"
   fi
   exit 0
 fi

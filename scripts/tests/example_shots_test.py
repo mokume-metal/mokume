@@ -130,7 +130,7 @@ SETTINGS_SOURCE = """\
 // SPDX-License-Identifier: MIT
 
 extension Sketch {
-    /// 窓の大きさを例が自分で決める。
+    /// ウィンドウの大きさを例が自分で決める。
     ///
     /// ```swift
     /// var settings: SketchSettings { SketchSettings(width: 400, height: 300) }

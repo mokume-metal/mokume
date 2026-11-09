@@ -20,7 +20,7 @@ import mokume
 /// **刻んでいる数と出している数が違うことを、絵の中で名乗る** — 字そのものも 480×270 で
 /// 刻まれるので、拡大の粗さは字の縁にも出る (効果より前に置くので、色ずれも字に掛かる)。
 final class GlowAndDetail: Sketch {
-    // 描く細かさは半分。**出す細かさは変えない**ので、座標も窓の大きさもそのまま
+    // 描く細かさは半分。**出す細かさは変えない**ので、座標もウィンドウの大きさもそのまま
     var settings: SketchSettings {
         SketchSettings(
             width: 960, height: 540, title: "glow and detail", pixelDensity: 0.5)

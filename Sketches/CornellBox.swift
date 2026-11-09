@@ -26,7 +26,7 @@ final class CornellBox: Sketch {
         SketchSettings(width: 640, height: 640, title: "cornell box")
     }
 
-    /// 部屋の一辺。中心は窓の真ん中にあり、壁は中心から半辺ずつ離れる。
+    /// 部屋の一辺。中心はウィンドウの真ん中にあり、壁は中心から半辺ずつ離れる。
     private let side: Float = 300
 
     /// 白い面の色。奥・床・天井と 2 つの箱で同じものを使う。
@@ -38,7 +38,7 @@ final class CornellBox: Sketch {
         let center = (x: width / 2, y: height / 2)
         let half = side / 2
 
-        // 開いた手前の面から正面に覗く。画角は部屋が窓の 7 割ほどに収まる大きさ
+        // 開いた手前の面から正面に覗く。画角は部屋がウィンドウの 7 割ほどに収まる大きさ
         camera(center.x, center.y, 760, center.x, center.y, 0, 0, 1, 0)
         perspective(Float.pi / 4.6, width / height, 10, 3000)
 
