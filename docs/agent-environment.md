@@ -142,7 +142,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    `gh pr create --draft --label no-issue` で作る (ラベルは作成と同時に付ける)。本文の先頭に
    「使い捨て。マージしない・auto-merge を掛けない」と書く (#1922)。Ready にしない・
    `gh pr merge --auto` を実行しない。入れると、計測のワークフローや検証用のコミットが main へ
-   入る。AGENTS.md「マージ」の「queue に入れる」は、この PR には当てはまらない。
+   入る。AGENTS.md「マージ」の「queue に入れてよい」は、この PR には当てはまらない。
 2. **起動した `render-pr` と `CI` を、作った直後と push のたびに取り消す。** hosted の `CI`
    (macOS の `ci-check`) は Draft でも起動する。`Render` の `render-pr` は
    Draft では skipped だが (render.yml の `!github.event.pull_request.draft`)、Ready の間は
