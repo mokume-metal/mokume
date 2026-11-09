@@ -1029,14 +1029,18 @@ extension Canvas {
         // 細い帯は列 (行) が帯を切る長さで広げる (#2172) ので、向きごとに形が違う。点 1 つの周も描く
         // 画素の軸に沿って置く。鍵は 2x2 そのもの — 回して置き続ける形は、向きごとに組み直す
         //
-        // **開いた四角い端を持つ輪郭は、副画素の位相も鍵に足す** (#3745 の決定 A)。端を描く画素の
+        // **開いた端を持つ輪郭は、副画素の位相も鍵に足す** (#3745 の決定 A)。端を描く画素の
         // 列 (行) の境目で切る (``ThinEndCut``) ので、置き場所の平行移動の端数で片が変わる。整数の画素だけずれた
-        // 置き場所は同じ片になる。閉じた輪郭は、これまでどおり 2x2 だけで使い回す。**丸い端は足さない** (#3864)。
-        // 平らな延長の片は平行移動しても面積が変わらず、光の量は位相によらない。位相ごとに組み直すと、100 個の
-        // 形を副画素ずつ動かす場面で毎フレーム 100 回組み直して 5.9 ms、使い回せば 1.0 ms (release)。代償は、
-        // 端の画素の濃さがその場で引いた線と最大 0.2 ほど違うこと
+        // 置き場所は同じ片になる。閉じた輪郭は、これまでどおり 2x2 だけで使い回す。
+        //
+        // **十分に長い丸い端の線は足さない** (#3864・``ThinStrokeRecipe/endsAreFreeOfPhase(drawnBy:)``)。平らな延長の片は
+        // 平行移動しても面積が変わらず、光の量は位相によらない。位相ごとに組み直すと、100 個の形を副画素ずつ動かす場面で
+        // 毎フレーム 100 回組み直して 5.5 ms、使い回せば 0.9 ms (release)。代償は、端の画素の濃さがその場で引いた線と最大 0.2
+        // ほど違い、端が列の境目ごとに 1 画素跳ねること。**境目を丸い端に引いたのは、#3864 が #3748 の決定 A (丸い端も
+        // 位相ごとに組み直す) を戻す件だからである。** `.square`・`.project` は平らな延長で同じ理屈が当てはまるが、その
+        // 「その場で引いた線と同じ絵」は #3745 の決定 A の約束で、手放すかは別の判断になる (#3903)
         var phase = SIMD2<Float>(0, 0)
-        if recipe.cutsEndsAtColumns && recipe.cap != .round {
+        if recipe.cutsEndsAtColumns && !(recipe.cap == .round && recipe.endsAreFreeOfPhase(drawnBy: linear)) {
             let origin = drawnOrigin(of: combined)
             phase = origin - origin.rounded(.down)
         }
@@ -1136,6 +1140,31 @@ struct ThinStrokeRecipe {
     var cutsEndsAtColumns: Bool {
         !outline.isClosed && !outline.isDashPiece && outline.points.count >= 2
     }
+
+    /// 丸い端の片が、置き場所の副画素の位相で変わらないとみなせるか (#3864)。**端を切るかどうか** (``Canvas/thinEnds(_:outline:thin:offset:)``
+    /// の、端の列の中で線が曲がるか・両端の片が重なるか) は位相で変わるが、変わっても動くのは端の 1〜2 画素の光の量なので、
+    /// 線が描く画素で十分に長ければ全体の ±25% に響かない。**短い線と、端点が近い (ほぼ閉じた) 線は、位相ごとに組み直す**。
+    /// 短い折れ線 (描く画素で 1.8 の線分 2 本・約 100° の曲がり) は、控えを使い回すと光の量がその場で組んだ値の ×1.26〜×1.30 になった。
+    ///
+    /// `linear` は置き場所の描く画素へ写す 2x2。丸くない端は平らな延長でも位相ごとに組み直す (#3745 の決定 A) ので、この判断は
+    /// 丸い端にだけ使う。
+    func endsAreFreeOfPhase(drawnBy linear: simd_float2x2) -> Bool {
+        let points = outline.points
+        guard points.count >= 2 else { return false }
+        guard simd_length(linear * (points[points.count - 1] - points[0])) >= Self.phaseFreeMinimumGap else { return false }
+        // 置くたびに呼ぶので、長さが足りた所で数えるのをやめる
+        var length: Float = 0
+        for index in 1..<points.count {
+            length += simd_length(linear * (points[index] - points[index - 1]))
+            if length >= Self.phaseFreeMinimumLength { return true }
+        }
+        return false
+    }
+
+    /// 位相ごとに組み直さなくてよい線の長さ (描く画素)。端 1 画素の光の量の動きが、全体の ±25% の内に収まる長さ。
+    static let phaseFreeMinimumLength: Float = 16
+    /// 両端の距離 (描く画素)。これより近いと、両端の片が重なるかどうかが位相で変わる。
+    static let phaseFreeMinimumGap: Float = 4
 
     /// 置いた後の拡大で刻み直す余地があるか。周が楕円・弧の周か、円板を置く輪郭。
     var mayRescale: Bool { outline.ring != nil || discSegments > 0 }

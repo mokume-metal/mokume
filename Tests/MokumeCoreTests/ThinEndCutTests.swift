@@ -287,14 +287,12 @@ struct ThinEndCutRenderTests {
         #expect(try place(closed, dy: 0.37).rebuilt == 0)
     }
 
-    /// 丸い端の保持した形は、位相の違う置き場所でも控えた片を使い回す (#3864)。#3748 の決定 A は丸い端も位相ごとに
-    /// 組み直したが、#3859 の決定 (光の量の許容 ±25%) の下で戻した。平らな延長の片は平行移動しても面積が変わらないので、
-    /// 光の量はその場で引いた線と 0.5% 以内で変わらない。代償: 端の画素の濃さは、その場で引いた線と最大 0.2 ほど違う
-    /// (片を作った位相の列の境目で切ったままなので)。
-    @Test("丸い端の保持した形は、位相が変わっても組み直さず、光の量はその場で引いた線と変わらない (#3864)")
-    func retainedRoundEndsReuseAcrossPhases() throws {
-        let density: Float = 0.25
-        let canvas = try Self.makeCanvas(density: density)
+    /// 丸い端の保持した形の、控えの使い回しの実測 (#3864)。`points` は開いた線の頂点 (出す画素)。
+    /// 置き場所 (`placements` の x・y のずらしと向き `angle`) ごとに置き、組み直しの回数と、その場で引いた線との光の量の比を返す。
+    private static func roundRetained(
+        _ points: [SIMD2<Float>], density: Float, placements: [(dx: Float, dy: Float, angle: Float)]
+    ) throws -> (rebuilt: Int, worstRatio: Double) {
+        let canvas = try makeCanvas(density: density)
         var line: Shape?
         try canvas.draw {
             canvas.noFill()
@@ -303,8 +301,7 @@ struct ThinEndCutRenderTests {
             canvas.strokeCap(.round)
             line = canvas.createShape {
                 canvas.beginShape()
-                canvas.vertex(-20, 0)
-                canvas.vertex(20, 0)
+                for point in points { canvas.vertex(point.x, point.y) }
                 canvas.endShape()
             }
         }
@@ -316,13 +313,13 @@ struct ThinEndCutRenderTests {
             return sum
         }
         var rebuilt = 0
-        var broken: [String] = []
-        for dy: Float in [0, 0.125, 0.5, 1.5, 2.375, 3.1, 0.125] {
+        var worst = 1.0
+        for (dx, dy, angle) in placements {
             let before = canvas.thinStrokesRebuilt
             try canvas.draw {
                 canvas.background(0)
-                canvas.translate(64, 64 + dy)
-                canvas.rotate(0.81)
+                canvas.translate(64 + dx, 64 + dy)
+                canvas.rotate(angle)
                 canvas.shape(shape)
             }
             rebuilt += canvas.thinStrokesRebuilt - before
@@ -334,18 +331,52 @@ struct ThinEndCutRenderTests {
                 canvas.strokeWeight(1)
                 canvas.strokeCap(.round)
                 canvas.shader(shader)
-                canvas.translate(64, 64 + dy)
-                canvas.rotate(0.81)
+                canvas.translate(64 + dx, 64 + dy)
+                canvas.rotate(angle)
                 canvas.beginShape()
-                canvas.vertex(-20, 0)
-                canvas.vertex(20, 0)
+                for point in points { canvas.vertex(point.x, point.y) }
                 canvas.endShape()
             }
-            let direct = total(try canvas.target.readPixels())
-            if abs(placed - direct) > 0.005 * direct { broken.append("dy \(dy): \(placed) (その場で \(direct))") }
+            let ratio = placed / total(try canvas.target.readPixels())
+            if abs(ratio - 1) > abs(worst - 1) { worst = ratio }
         }
-        #expect(rebuilt == 1, "組み直した回数: \(rebuilt)")
-        #expect(broken.isEmpty, Comment(rawValue: broken.joined(separator: " / ")))
+        return (rebuilt, worst)
+    }
+
+    /// 丸い端の保持した形は、十分に長ければ位相の違う置き場所でも控えた片を使い回す (#3864)。#3748 の決定 A は丸い端も
+    /// 位相ごとに組み直したが、#3859 の決定 (光の量の許容 ±25%) の下で戻した。平らな延長の片は平行移動しても面積が
+    /// 変わらないので、光の量はその場で引いた線と、直線で 0.5%・折れ線で 3% 以内で変わらない (測った値は ±0.1% と ×0.984。許容の ±25% とは別)。代償: 端の
+    /// 画素の濃さは、その場で引いた線と最大 0.2 ほど違う (片を作った位相の列の境目で切ったままなので)。
+    @Test("丸い端の保持した形は、位相・向きが変わっても組み直さず、光の量はその場で引いた線と変わらない (#3864)", arguments: [false, true])
+    func retainedRoundEndsReuseAcrossPhases(bent: Bool) throws {
+        // 描く画素で長さ 40 (``ThinStrokeRecipe/phaseFreeMinimumLength`` 以上)
+        let placements: [(dx: Float, dy: Float, angle: Float)] = [
+            (0, 0, 0.81), (0.125, 0.5, 0.81), (0.5, 1.5, 0.81), (1.375, 2.375, 0.81), (0.3, 3.1, 0.81), (0.125, 0.5, 0.81),
+            (0.2, 0.7, 0.3), (0.9, 0.1, 1.2), (0.45, 0.45, 2.4),
+        ]
+        let points: [SIMD2<Float>] = bent ? [SIMD2(-40, 0), SIMD2(0, 10), SIMD2(40, 0)] : [SIMD2(-40, 0), SIMD2(40, 0)]
+        let (rebuilt, worst) = try Self.roundRetained(points, density: 0.5, placements: placements)
+        // 向きが違う置き場所 (2x2 が違う) は組み直す。向き 4 通りで 4 回、同じ向きの位相違いでは組み直さない
+        #expect(rebuilt == 4, "組み直した回数: \(rebuilt)")
+        // 測った値: 直線は ±0.1%、折れ線は ×0.984 (端を切るかどうかの判定が位相で変わる分)。許容の ±25% とは別に、これを越えたら知らせる
+        #expect(abs(worst - 1) <= (bent ? 0.03 : 0.005), "光の量の比 \(worst)")
+    }
+
+    /// 短い丸い端の線 (描く画素で ``ThinStrokeRecipe/phaseFreeMinimumLength`` より短い) と、両端が近い線 (描く画素で
+    /// ``ThinStrokeRecipe/phaseFreeMinimumGap`` より近い) は、位相ごとに組み直す (#3864)。端を切るかどうか (端の列の中で
+    /// 曲がるか・両端の片が重なるか) が位相で変わり、控えを使い回すと短い折れ線の光の量がその場で組んだ値の ×1.26〜×1.30 になった。
+    @Test(
+        "短い丸い端の線と両端が近い線は、位相が変わると組み直す (#3864)",
+        arguments: [
+            // 描く画素で長さ 3 ほどの折れ線
+            [SIMD2<Float>(-3, 0), SIMD2(0, 0.75), SIMD2(3, 0)],
+            // 長さは足りるが、両端が描く画素で 1 しか離れていない開いた周
+            [SIMD2<Float>(-10, 2), SIMD2(-10, 10), SIMD2(10, 10), SIMD2(10, -10), SIMD2(-10, -10), SIMD2(-10, 0)],
+        ])
+    func retainedShortRoundEndsRebuildByPhase(points: [SIMD2<Float>]) throws {
+        let placements: [(dx: Float, dy: Float, angle: Float)] = [(0, 0, 0.81), (0.125, 0.5, 0.81), (0.5, 1.5, 0.81)]
+        let (rebuilt, _) = try Self.roundRetained(points, density: 0.5, placements: placements)
+        #expect(rebuilt == 3, "組み直した回数: \(rebuilt)")
     }
 
     /// 切るかどうかの選び方 (平面)。端点の重なる開いた周 (A → B → C → A) は、両端の列の片が同じ列を 2 度数えるので
