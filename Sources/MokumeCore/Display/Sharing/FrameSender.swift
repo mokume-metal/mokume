@@ -3,7 +3,7 @@
 
 import CoreGraphics
 import Darwin
-import Dispatch
+import Foundation
 import IOSurface
 import Metal
 import MokumeDiagnostics
