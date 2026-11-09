@@ -390,6 +390,48 @@ struct FoldedPlacementTests {
         }
     }
 
+    // MARK: - 額縁の頂点の数
+
+    /// 細い矩形の輪郭の額縁は、留め継ぎ (`miter`) で 24・面取り (`bevel`) で 60 頂点を積む (#3733 の片)。帯を縁の写しの
+    /// 平行四辺形と両端の片に割ると 120・156 頂点になり、回した輪郭つきの `rect` を 5,000 個描く 1 フレームの CPU 時間が
+    /// 28 ms から 37 ms に増えた (#3862)。直に描く 1 つ目 (``Canvas/appendThinRectFrame(_:)``) と、2 つ目が来て積み直す
+    /// 雛形 (``Canvas/appendWidenedTemplateStroke(_:)``) の両方を数える。3 つ目からは置き場所を足すだけで頂点を積まない。
+    @Test(
+        "細い矩形の輪郭の額縁は、直に描いても雛形でも miter で 24・bevel で 60 頂点を積む",
+        arguments: [(StrokeJoin.miter, 24), (.bevel, 60)] as [(StrokeJoin, Int)])
+    func thinRectFrameKeepsItsVertexCount(join: StrokeJoin, expected: Int) throws {
+        let canvas = try Self.makeCanvas(density: 0.5)
+        let shader = try canvas.makeShader(Self.plain)
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.strokeWeight(1)
+            canvas.strokeJoin(join)
+            canvas.shader(shader)
+            // 描く画素で 12×8・太さ 0.5 の相似な置き場所なので、どれも額縁で組む
+            @MainActor func place(_ x: Float, _ turn: Float) {
+                canvas.pushMatrix()
+                canvas.translate(x, 64)
+                canvas.rotate(turn)
+                canvas.rect(-12, -8, 24, 16)
+                canvas.popMatrix()
+            }
+            let start = canvas.vertices.count
+            let instances = canvas.flatInstances.count
+            place(30, 0.3)
+            #expect(canvas.openFlat == nil, "\(join): 1 つ目で雛形が開いた")
+            #expect(canvas.vertices.count - start == expected, "\(join): 直に描く 1 つ目の頂点 \(canvas.vertices.count - start)")
+            // 2 つ目で 1 つ目の頂点を抜き、雛形を積み直す
+            place(70, .pi / 4)
+            #expect(canvas.openFlat?.thinStrokeParams != nil, "\(join): 雛形が頂点段で広げ直す形で積まれていない")
+            #expect(canvas.vertices.count - start == expected, "\(join): 雛形の頂点 \(canvas.vertices.count - start)")
+            place(100, 1.1)
+            #expect(canvas.vertices.count - start == expected, "\(join): 3 つ目で頂点が増えた (\(canvas.vertices.count - start))")
+            #expect(canvas.flatInstances.count - instances == 3, "\(join): 置き場所 \(canvas.flatInstances.count - instances)")
+        }
+    }
+
     // MARK: - 頂点段の出力を読み戻す
 
     /// 頂点段の置き方 (`mokume_flatMove` → `mokume_flatPlace`)・貼る絵の読み取り位置 (`mokume_flatFillUV`)・額縁の
