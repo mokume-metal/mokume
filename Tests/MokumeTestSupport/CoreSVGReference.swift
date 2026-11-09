@@ -88,14 +88,28 @@ public nonisolated enum CoreSVGReference {
     }
 
     /// 被覆 (線形の重み) で重みを付けた重心 (画素の座標・画素の中心を +0.5 とする)。被覆の総和が 0 なら `nil`。
-    public static func centroid(_ coverage: [Double], width: Int) -> SIMD2<Double>? {
+    /// `ties` が真の画素は重みを 0 として外す (``ties(_:)``)。
+    public static func centroid(_ coverage: [Double], width: Int, excluding ties: [Bool]? = nil) -> SIMD2<Double>? {
         var total = 0.0
         var sum = SIMD2<Double>(0, 0)
-        for (index, weight) in coverage.enumerated() where weight > 0 {
+        for (index, weight) in coverage.enumerated() where weight > 0 && !(ties?[index] ?? false) {
             total += weight
             sum += SIMD2(Double(index % width) + 0.5, Double(index / width) + 0.5) * weight
         }
         return total > 0 ? sum / total : nil
+    }
+
+    /// 参照の被覆の 8 ビットの量子化が決める、50% の白黒の決め手にならない幅 (1/255)。
+    ///
+    /// 参照は被覆を 8 ビット (0〜255) で返す。辺が画素の中心をちょうど通る画素の真の被覆は 0.5 で、量子化で
+    /// 127/255 (0.498) か 128/255 (0.502) に落ち、白黒は丸めの向きだけで決まる。AA なしの側 (三角形の経路) は
+    /// 0 か 1 に倒れ、同じ辺に並ぶ画素が同じ向きに食い違うと重心が辺に沿って動く (#3868: 11 画素で 0.25 画素)。
+    public static let quantisationTie = 1.0 / 255
+
+    /// 参照の被覆が 0.5 から ``quantisationTie`` 以内で、白黒が決め手にならない画素。
+    /// 0.5 から離れた画素 (本当の塗り欠け・塗りすぎ) は含まれない。
+    public static func ties(_ reference: [Double], margin: Double = quantisationTie) -> [Bool] {
+        reference.map { abs($0 - 0.5) <= margin + 1e-9 }
     }
 
     /// CoreGraphics の AA が、被覆 1 の円の縁で画素ごとに外れる最大 (#3217 の実測)。不透明度 a で塗った縁では、
@@ -106,17 +120,23 @@ public nonisolated enum CoreSVGReference {
     ///
     /// 差が `margin` 以内の画素は、境目のすぐ両側に分かれただけで、参照の AA の誤差と見分けられない。そうした画素は
     /// 縁に沿って同じ向きに並びうるので、数えると誤差の内の差が赤になる (#3725: 0.50 と 0.49 の画素が 11)。
+    /// `ties` が真の画素 (``ties(_:margin:)``) は数えない。
     public static func mismatches(
-        _ measured: [Double], _ reference: [Double], margin: Double
+        _ measured: [Double], _ reference: [Double], margin: Double, ties: [Bool]? = nil
     ) -> Int {
         precondition(measured.count == reference.count, "被覆の大きさが違う")
-        return zip(measured, reference).reduce(0) {
-            $0 + (($1.0 >= 0.5) != ($1.1 >= 0.5) && abs($1.0 - $1.1) > margin ? 1 : 0)
+        var count = 0
+        for index in measured.indices where !(ties?[index] ?? false) {
+            if (measured[index] >= 0.5) != (reference[index] >= 0.5), abs(measured[index] - reference[index]) > margin {
+                count += 1
+            }
         }
+        return count
     }
 
-    /// 白黒の形の縁の画素の数 (真で、4 近傍に偽か面の外を持つ画素)。一致しない画素の許容を、縁の長さで割るための物差し。
-    public static func edgePixels(_ shape: [Bool], width: Int) -> Int {
+    /// 白黒の形の縁の画素の数 (真で、4 近傍に偽か面の外を持つ画素)。`ties` が真の画素は数えない (``ties(_:margin:)``。
+    /// 白黒の食い違いの数から外した画素を、割る側からも外して揃える)。一致しない画素の許容を、縁の長さで割るための物差し。
+    public static func edgePixels(_ shape: [Bool], width: Int, excluding ties: [Bool]? = nil) -> Int {
         let height = shape.count / width
         func filled(_ x: Int, _ y: Int) -> Bool {
             guard x >= 0, y >= 0, x < width, y < height else { return false }
@@ -124,7 +144,7 @@ public nonisolated enum CoreSVGReference {
         }
         var count = 0
         for y in 0..<height {
-            for x in 0..<width where shape[y * width + x] {
+            for x in 0..<width where shape[y * width + x] && !(ties?[y * width + x] ?? false) {
                 // 4 近傍のどれかが偽 (面の外も偽) なら縁
                 if !filled(x - 1, y) || !filled(x + 1, y) || !filled(x, y - 1) || !filled(x, y + 1) {
                     count += 1

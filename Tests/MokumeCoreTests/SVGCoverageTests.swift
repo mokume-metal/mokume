@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
-import MokumeProbe
+@testable import MokumeProbe
 import MokumeTestSupport
 import Testing
 import simd
@@ -21,6 +21,10 @@ import simd
 ///   閾値は不透明度に依らず 0.5 で、群の `opacity` を掛け忘れた絵をここで捕まえる (子が同じ倍率で薄まるので、
 ///   重心は動かない)。そのため見本の不透明度は 0.5 を越える (``templatesDeclareTheirOpacity()``)
 /// - **線形の被覆で重みを付けた重心** (ずれの画素数)
+///
+/// 三角形の経路 (AA なし) の見本では、**参照の被覆が 0.5 から 1/255 以内の画素**(``CoreSVGReference/ties(_:margin:)``。
+/// 辺が画素の中心を通り、参照の 8 ビットの量子化で白黒が丸めの向きだけで決まる) を、白黒の食い違いの数・その割合の
+/// 分母 (縁の画素)・両側の重心から外す (#3868)。0.5 から離れた画素の食い違いは外さない。
 ///
 /// だけを比べる (``CoverageTable`` の「50% の白黒と重心」の行)。許容と根拠は表が持つ。
 ///
@@ -159,7 +163,8 @@ struct SVGCoverageTests {
 
     /// 1 件を描いて、参照と比べる。
     static func outcome(
-        _ template: Template, _ input: ProbeInput, row: CoverageTable.Row, sketch: Loaded, runtime: SketchRuntime
+        _ template: Template, _ input: ProbeInput, row: CoverageTable.Row, sketch: Loaded, runtime: SketchRuntime,
+        excludingTies: Bool = true
     ) throws -> Probe.Outcome {
         let text = document(
             template, tx: input["tx"], ty: input["ty"], scale: input["scale"], degrees: input["degrees"])
@@ -176,14 +181,16 @@ struct SVGCoverageTests {
         let reference = try CoreSVGReference.render(svg: text, width: size, height: size).coverage
 
         let referenceShape = CoreSVGReference.halfTone(reference)
+        // 三角形の経路 (AA なし) は、参照の被覆が 0.5 の量子化の幅にある画素の白黒を決められない (#3868)
+        let ties = template.weightsReferenceByHalfTone && excludingTies ? CoreSVGReference.ties(reference) : nil
         let mismatches = CoreSVGReference.mismatches(
-            measured, reference, margin: CoreSVGReference.antialiasingError * template.opacity)
-        let edge = max(1, CoreSVGReference.edgePixels(referenceShape, width: size))
+            measured, reference, margin: CoreSVGReference.antialiasingError * template.opacity, ties: ties)
+        let edge = max(1, CoreSVGReference.edgePixels(referenceShape, width: size, excluding: ties))
         let rate = Double(mismatches) / Double(edge)
 
-        let measuredCentroid = CoreSVGReference.centroid(measured, width: size)
+        let measuredCentroid = CoreSVGReference.centroid(measured, width: size, excluding: ties)
         let referenceWeights = template.weightsReferenceByHalfTone ? referenceShape.map { $0 ? 1.0 : 0.0 } : reference
-        let referenceCentroid = CoreSVGReference.centroid(referenceWeights, width: size)
+        let referenceCentroid = CoreSVGReference.centroid(referenceWeights, width: size, excluding: ties)
         let shift: Double
         switch (measuredCentroid, referenceCentroid) {
         case (let a?, let b?): shift = simd_distance(a, b)
@@ -236,6 +243,43 @@ struct SVGCoverageTests {
         let report = try Self.run(
             "svg-primitives", templates: Self.primitiveTemplates, row: row,
             environment: ["MOKUME_PROBE_SEED": "0x1d8bb61aa528b27b"])
+        #expect(report.failure == nil, "\(report.failure ?? "")")
+        #expect(report.ran == 1, "seed の 1 件だけが走るはず: \(report.ran) 件")
+    }
+
+    /// 定期の検査で赤になった置き方 (#3868)。辺が画素の中心を通り、参照の被覆が 127/255 (0.498) に量子化された 11 画素が
+    /// 同じ辺に沿って mokume の 1.0 と食い違い、重心が動いた。
+    ///
+    /// seed `0x71e2ab6c575a8b4e` が作るのは縮める前の star-nonzero (0.153) で、Probe が縮めた先の star-evenodd (0.253)
+    /// は seed では作れない。そこで、**両方の入力を値で直に与え**、除外なしで赤・除外ありで緑を固定する。
+    @Test("辺が画素の中心を通る置き方 (#3868: star-nonzero と、縮めた先の star-evenodd) は、除外なしでは赤・除外ありでは緑")
+    func edgeThroughPixelCentresIsNotAMismatch() throws {
+        let row = try CoverageTable.row(.svgPath, on: .triangles, comparing: .halfToneAndCentroid)
+        let sketch = Loaded()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        let axes = Self.axes(Self.pathTemplates.count)
+        let inputs: [(name: String, values: [Double])] = [
+            ("star-nonzero (縮める前・0.153)", [1.0, 66.94672625041626, 69.07797931938602, 1.0094402039827333, 242.5744403773169]),
+            ("star-evenodd (縮めた先・0.253)", [0.0, 66.95, 69.08, 1.0091451976082728, 242.57]),
+        ]
+        for (name, values) in inputs {
+            let input = ProbeInput(axes: axes, values: values)
+            let template = Self.pathTemplates[Int(input["template"])]
+            let without = try Self.outcome(
+                template, input, row: row, sketch: sketch, runtime: runtime, excludingTies: false)
+            let with = try Self.outcome(template, input, row: row, sketch: sketch, runtime: runtime)
+            if case .fail = without {} else { Issue.record("\(name): 除外なしで赤になるはず: \(without)") }
+            #expect(with == .pass, "\(name): 除外ありで緑のはず: \(with)")
+        }
+    }
+
+    /// seed からの再現 (縮める前の star-nonzero)。Probe が seed から同じ入力を作ることも固定する。
+    @Test("定期の検査の seed 0x71e2ab6c575a8b4e は、1 件だけ走って緑になる")
+    func scheduledSeedRuns() throws {
+        let row = try CoverageTable.row(.svgPath, on: .triangles, comparing: .halfToneAndCentroid)
+        let report = try Self.run(
+            "svg-path", templates: Self.pathTemplates, row: row,
+            environment: ["MOKUME_PROBE_SEED": "0x71e2ab6c575a8b4e"])
         #expect(report.failure == nil, "\(report.failure ?? "")")
         #expect(report.ran == 1, "seed の 1 件だけが走るはず: \(report.ran) 件")
     }

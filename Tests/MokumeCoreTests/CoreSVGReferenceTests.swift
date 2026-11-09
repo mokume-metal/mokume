@@ -114,4 +114,23 @@ struct CoreSVGReferenceTests {
         // margin が 0 なら、白黒の食い違いをすべて数える
         #expect(CoreSVGReference.mismatches([0.5, 0.5, 0.75], [0.25, 0.125, 0.5], margin: 0) == 2)
     }
+
+    @Test("ties は参照の被覆が 0.5 から 1/255 以内の画素だけ。127/255 と 128/255 は入り、0.5 から離れた画素 (本当の塗り欠け) は入らない (#3868)")
+    func quantisationTies() {
+        let reference = [127.0 / 255, 128.0 / 255, 0.5, 126.0 / 255, 129.0 / 255, 0.4, 0.6, 0, 1]
+        #expect(CoreSVGReference.ties(reference) == [true, true, true, false, false, false, false, false, false])
+    }
+
+    @Test("ties の画素は mismatches の数と centroid から外れ、外れない画素の食い違いは今までどおり数える (#3868)")
+    func tiesAreExcludedButRealMismatchesAreNot() {
+        // 画素 0 は参照 127/255 で mokume が 1 (タイ)・画素 1 は参照 0.4 で mokume が 1 (0.5 から離れた本当の食い違い)
+        let measured = [1.0, 1.0, 0.0, 0.0]
+        let reference = [127.0 / 255, 0.4, 0.0, 0.0]
+        #expect(CoreSVGReference.mismatches(measured, reference, margin: 0) == 2)
+        let ties = CoreSVGReference.ties(reference)
+        #expect(CoreSVGReference.mismatches(measured, reference, margin: 0, ties: ties) == 1)
+        // 重心: 画素 0 を外すと、画素 1 だけの (1.5, 0.5)
+        let centroid = CoreSVGReference.centroid(measured, width: 4, excluding: ties)
+        #expect(centroid == SIMD2(1.5, 0.5))
+    }
 }
