@@ -97,7 +97,18 @@ public nonisolated struct SoundWindow: Sendable, Equatable {
 ///   現れない。** 終了コードに現れるのは動画へ書けなかったときで、音源が無音で返したウィンドウは書けたウィンドウである。描けなかった
 ///   ことは、診断に 1 度だけ出る。外の音源が同じことを知らせたいときも、診断に出す
 ///
+/// ## 外のパッケージの音の入り口が守ること
+///
+/// 組み込みの音の入り口が使う目印と音の時計は、外のパッケージに開いていない ([ADR-0042] 決定 3 の改訂)。外の入り口は、代わりに
+/// 次の 2 つを守る。
+///
+/// - **ウィンドウで実時間に音を鳴らすなら、``Inlet/report`` を返す。** 返した入り口を使った記録は、再現できないと名乗る。
+///   返さないと、絵が実時間の音に依っていても、記録は再現できると誤って約束する
+/// - **音声トラックの標本の位置は、``SoundWindow/start`` と ``SoundWindow/count`` で数える。** 単精度の `authorTime` から
+///   数えると、長く回したときにウィンドウの継ぎ目がずれる
+///
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+/// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 public protocol SoundSource: AnyObject {
     /// 音声トラックが始まる。最初のウィンドウ (``SoundWindow/frame``) の直前に 1 度呼ばれる。録りの途中で足された
     /// 音源には、足された直後に呼ばれる。`frameRate` は録りの fps。
