@@ -11,8 +11,8 @@
 # ## ここは何も打たない
 #
 # 呼ぶのは `gh issue list` / `gh pr list` / `git worktree list` の 3 つで、ラベルも付けず
-# auto-merge も掛けない。読み取りが増えるのは 3 つの場合だけである — 自分に証拠の無い
-# 着手印があるときは、その
+# auto-merge も掛けない (前提 — blocked by — も `gh issue list` の同じ応答で読む。#3936)。
+# 読み取りが増えるのは 3 つの場合だけである — 自分に証拠の無い着手印があるときは、その
 # 家族を読む `gh api graphql` が 1 回加わる (下の「落ちて見えるか」)。最近動いた着手印か
 # 家族があるときは、その手が人か bot かを読む `gh api graphql` が 1 回ずつ (最大 2 回) 加わる
 # (下の「bot の追記は数えない」)。open な Bug・ready の候補・stock の候補があるときは、その親と
@@ -32,9 +32,10 @@
 # (知らずに着手した Bug が review-gate で落ちた — #1998)。Type の無い Issue は `[-]` と出す
 # (空にすると欄がずれる。parents の列と同じ作法)。**先頭の 2 語 (番号・分類) の位置は動かさ
 # ない** — Type は説明の側に入るので、番号と分類だけを読む側は影響を受けない。dropped・busy・
-# decide は Type を出さない (着手の前に見るのは ready と stock だけ)。
+# decide は Type を出さない (着手の前に見るのは ready と stock だけ)。unblocked は Type を出す
+# (印を付けるのが誰かは型で決まる — Feature はメンテナ、それ以外は起票者)。
 #
-# 分類は 5 つで、この順に出す:
+# 分類は 6 つで、この順に出す:
 #
 #   ready    verify: triaged が付き、着手中でもなく、紐づく open PR も無く、開いた根の子でもない
 #   stock    **B-1 の対象** — エージェントが起票したのに無印で、型が Bug / Task / Docs
@@ -46,6 +47,34 @@
 #            本体を閉じた後に parent-guard (bot) が開き直した、子を持つ親 (自分の仕事を持たず、
 #            残りは子が持つ — 「子 #N を待つ」。子がすべて閉じたら「閉じてよい」。stock・decide にも出さない)
 #   decide   **人が決める行** — 無印の Design で、open な Bug の子を持つもの。子の多い順
+#   unblocked **印を付けられるかを人が見る行** — 無印で着手中でもなく、前提 (GitHub の blocked by)
+#            を 1 本以上持ち、それがすべて閉じたもの (下の「前提が閉じた無印の段」)
+#
+# ## 前提が閉じた無印の段 (#3936)
+#
+# 「印は前の段 (#N) の merge の後に付ける」と本文に書いた無印の段は、前の段が閉じてもどこにも
+# 出てこなかった。2026-11-10 の棚卸し (#3933) では、前提が閉じた段 11 本が 10 日間無印のまま残り、
+# ready に並ぶ印ありの親 9 本は単独では着手できなかった。前提は起票のときに GitHub の依存関係
+# (blocked by) で繋ぎ (`scripts/sub-issue.sh` の `--blocked-by`)、ここはそれだけを読む。
+#
+#   読むもの      `gh issue list` の `blockedBy` (番号と state)。**本文の「印は #N の merge の後」
+#                 の文は読まない** — 書き方が段ごとに違い、読めば書き方を揃える仕事が増える
+#   出すもの      無印・open・着手印も紐づく open PR も無い Issue のうち、前提が 1 本以上あって
+#                 すべて CLOSED のもの。前提が 1 本でも open なら出さない
+#   出さないもの  印ありの Issue (前提が open でも ready の行は変えない)・着手中の Issue (busy に出ている)
+#
+# **この行は「印を付けられる状態になった」と知らせるだけで、印は付けない。** 付けるのは引き続き
+# メンテナ (Feature) か起票者で、この行を理由に機械が付けることはしない。終了コードにも数えない
+# (decide と同じ — 打てる仕事ではなく、印を付ける人の仕事)。
+#
+# **既存の 5 分類の行は 1 行も変えない。** unblocked は既存の出力の後ろに足すので、前提を持つ Issue が
+# 無ければ出力は以前と同じである。stock にも当たる Issue は**両方に出る** — stock は「調べて完了条件を
+# 書く対象」、unblocked は「前提が閉じた」で、別のことを言っている (片方に寄せると stock の行が変わる)。
+#
+# **限界**: 閉じ方 (completed / not planned) は見ない — `gh issue list` の `blockedBy` は state しか
+# 持たない。not planned で閉じた前提は「この段をどうするか」を見る契機なので、行の文面は「印を付け
+# られるかを見る」にとどめる。前提を数え切れなかった Issue (totalCount が載った件数より多い) は出さず、
+# 標準エラーにそう名乗る (読めていない前提が open かもしれない)。
 #
 # ## 根と判断 (#1661)
 #
@@ -191,7 +220,8 @@
 # 同じ理由である (ADR-0036 決定 5 — 出すのは 0 円だが、拾うには実害が要る)。
 #
 # 未トリアージのうち stock に当たらないもの (人が起票したもの・型が Design / Feature の
-# もの) は**出さない**。判断が要る側なので、機械が並べても着手には繋がらない。
+# もの) は**出さない**。判断が要る側なので、機械が並べても着手には繋がらない。出るのは、前提を
+# 繋いであってそれが閉じたときだけである (unblocked — 上の「前提が閉じた無印の段」)。
 #
 # ## 終了コード
 #
@@ -256,7 +286,7 @@ seen_locally() { # $1=番号
 # --- 材料 -------------------------------------------------------------------
 
 issues_json=$(gh issue list --repo "$REPO" --state open --limit "$ISSUE_LIMIT" \
-  --json number,title,body,labels,issueType,updatedAt) || {
+  --json number,title,body,labels,issueType,updatedAt,blockedBy) || {
   echo "open な Issue の一覧を読めなかった" >&2
   exit 2
 }
@@ -348,7 +378,9 @@ done < <(git worktree list --porcelain 2>/dev/null |
 
 # --- 走査 -------------------------------------------------------------------
 
-ready='' stock='' dropped='' busy='' decide='' ready_count=0 decide_count=0
+ready='' stock='' dropped='' busy='' decide='' unblocked='' ready_count=0 decide_count=0
+# 前提を数え切れなかった無印の Issue (「#<番号> 」の並び)。unblocked に出さず、最後にそう名乗る (#3936)
+uncounted=''
 # 自分に証拠の無い着手印。「<番号> <タイトル>」の並びで、家族を読んでから分ける
 candidates=''
 # updatedAt だけが新しい着手印。「<番号> <updatedAt> <タイトル>」の並びで、人の手を読んでから分ける
@@ -386,6 +418,25 @@ while IFS= read -r row; do
     ready_rows+="$n ${type:--} $title"$'\n'
     continue
   fi
+
+  # 無印の段の前提 (#3936)。1 本以上あって、すべて閉じていれば unblocked。1 本でも open なら
+  # 何も出さない。**CLOSED と読めたものだけを閉じたと数える** — 知らない state は open の側に倒す。
+  # totalCount が載った件数より多いときは、読めていない前提が open かもしれないので出さない
+  blockers=$(jq -r '
+    (.blockedBy.nodes // []) as $b
+    | (.blockedBy.totalCount // ($b | length)) as $total
+    | if $total == 0 then empty
+      elif $total > ($b | length) then "uncounted"
+      elif all($b[]; .state == "CLOSED") then
+        "closed " + ($b | sort_by(.number) | map("#\(.number)") | join("・"))
+      else empty end' <<<"$row")
+  case $blockers in
+    closed\ *)
+      unblocked+="$n unblocked [${type:--}] 前提 ${blockers#closed } が閉じた"
+      unblocked+=" — 印を付けられるかを見る ($title)"$'\n'
+      ;;
+    uncounted) uncounted+="#$n " ;;
+  esac
 
   # 未トリアージの Design は、子の Bug を数えてから decide に出すかを決める (#1661)
   [ "$type" != Design ] || designs+="$n $title"$'\n'
@@ -722,15 +773,20 @@ done < <(
   done <<<"$designs" | sort -k1,1nr -k2,2n
 )
 
-printf '%s' "$ready$stock$dropped$busy$decide"
+# unblocked は最後に足す。既存の 5 分類の行は、前置きとして 1 行も変わらない (#3936)
+printf '%s' "$ready$stock$dropped$busy$decide$unblocked"
+
+[ -z "$uncounted" ] ||
+  echo "前提 (blocked by) を数え切れなかった: ${uncounted% } — unblocked に出していない" >&2
 
 # 件数は標準エラーへ出す。**標準出力は 1 行 1 件のまま**にしておく (読む側が機械なので)
-printf 'ready %s / stock %s / dropped %s / busy %s / decide %s\n' \
+printf 'ready %s / stock %s / dropped %s / busy %s / decide %s / unblocked %s\n' \
   "$ready_count" \
   "$(grep -c . <<<"$stock" || true)" \
   "$(grep -c . <<<"$dropped" || true)" \
   "$(grep -c . <<<"$busy" || true)" \
-  "$decide_count" >&2
+  "$decide_count" \
+  "$(grep -c . <<<"$unblocked" || true)" >&2
 
 # 一部を読めないまま完走したときだけ。件数の行の後ろに 1 行 (読む側は行頭の `incomplete: ` で拾う)
 [ -z "$INCOMPLETE" ] || printf 'incomplete: %s\n' "${INCOMPLETE% }" >&2

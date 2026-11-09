@@ -90,6 +90,8 @@ gh issue edit <番号> -R mokume-metal/mokume --type <型>
 **起票時の記述がずれていたら、消さずに直す。** ADR の改訂と同じ作法で「**当初は〜と書かれていた**」
 を残す — 何が変わったのかが読めなくなると、次に同じ調査をやり直すことになる。
 
+**前提のある段は blocked by で繋ぐ。** 「印は #N の merge の後に付ける」と本文に書くだけでは、前提が閉じても誰の目にも入らない ([#3936](https://github.com/mokume-metal/mokume/issues/3936))。`bash scripts/sub-issue.sh <番号> --blocked-by <前提>` で繋ぐと、`ready-queue.sh` が前提のすべて閉じた無印の段を `unblocked` の行に出す (知らせるだけで、ラベルは付けない)。
+
 **具体例を最低 1 つ置く。** 入力・操作 → 現在の結果 → 期待する結果 → 必要な対処や代償を
 短いコード・出力・操作例で示す。見た目や動きが関わるなら、その Issue 自体に実物の画像・動画を
 添える。再現を draw() の本体に書けるなら `python3 scripts/example-shots.py --snippet <ファイル>

@@ -9,7 +9,8 @@ sub-issue.sh は「作成 + 親への紐づけ + 親の分類の継承」を 1 �
 固定するのは継承の三態 (継ぐ / 上書きする / 継ぐものが無い) と、使い捨て検証用の
 --test の雛形。紐づけ (sub_issues API) は script の存在理由そのものなので併せて見る。
 既に在る Issue を繋ぐ --attach (#1661) は、作らないこと・型を継がないこと・既に親の居る
-Issue を付け替えないことを見る。
+Issue を付け替えないことを見る。前提を繋ぐ --blocked-by (#3936) は、作る口と繋ぐだけの口の
+両方で前提ごとに繋ぐこと・断られたら止まって名乗ること・番号の形を作る前に見ることを見る。
 
 gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワークも認証も要らない。
 実行は make ci-check (CI もこれを呼ぶ)。
@@ -32,16 +33,25 @@ AGENT_ENV = [
 ]
 SIGNATURE = "<sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code)</sub>"
 
-# 偽 gh。sub-issue.sh が呼ぶのは 4 つ:
+# 偽 gh。sub-issue.sh が呼ぶのは 5 つ:
 #   gh issue view <親> -R <repo> --json issueType --jq ... → 親の型
 #   gh issue create ...                                    → 作成した URL
 #   gh api repos/<repo>/issues/<番号> --jq .id             → 子の node id
 #   gh api -X POST repos/<repo>/issues/<親>/sub_issues ... → 紐づけ
+#   gh issue edit <番号> -R <repo> --add-blocked-by <前提>  → 前提の紐づけ (#3936)
 FAKE_GH = """#!/bin/sh
 printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
 case "$*" in
   *"issue view"*)   printf '%s' "$FAKE_PARENT_TYPE" ;;
   *"issue create"*) printf 'https://github.com/mokume-metal/mokume/issues/99\\n' ;;
+  # 前提の紐づけ (#3936)。FAKE_BLOCK_REFUSE の番号だけ断る。綴りは同じ組をもう一度繋いだときの
+  # 本物の gh の出力 (2026-11-10 に #3567 ← #3566 で確かめた)
+  *"issue edit"*)
+    case "$*" in
+      *"--add-blocked-by ${FAKE_BLOCK_REFUSE:-none}")
+        printf '%s\\n' "GraphQL: Validation failed: Target issue has already been taken (addBlockedBy)" >&2
+        exit 1 ;;
+    esac ;;
   # 紐づけを断らせる (#1661)。綴りは既に親を持つ子を繋ごうとしたときの GitHub の応答
   *"api -X POST"*)
     if [ -n "${FAKE_LINK_ERROR:-}" ]; then
@@ -68,7 +78,7 @@ class SubIssueTest(unittest.TestCase):
         self.log = Path(self.tmp.name) / "gh.log"
         self.log.touch()
 
-    def env(self, parent_type="", link_error="", link_body="", **agent):
+    def env(self, parent_type="", link_error="", link_body="", block_refuse="", **agent):
         # 検査自体がエージェントのセッションから走るので、署名に効く env は消してから
         # 要るものだけ立てる (既定は人の実行)
         env = {k: v for k, v in os.environ.items() if k not in AGENT_ENV}
@@ -78,10 +88,13 @@ class SubIssueTest(unittest.TestCase):
         env["FAKE_PARENT_TYPE"] = parent_type
         env["FAKE_LINK_ERROR"] = link_error
         env["FAKE_LINK_BODY"] = link_body
+        env["FAKE_BLOCK_REFUSE"] = block_refuse
         return env
 
-    def run_sub_issue(self, *args, parent_type="", link_error="", link_body="", **agent):
-        env = self.env(parent_type, link_error, link_body, **agent)
+    def run_sub_issue(
+        self, *args, parent_type="", link_error="", link_body="", block_refuse="", **agent
+    ):
+        env = self.env(parent_type, link_error, link_body, block_refuse, **agent)
         proc = subprocess.run(
             ["/bin/bash", str(SCRIPT), "74", *args],
             capture_output=True,
@@ -275,6 +288,75 @@ class SubIssueTest(unittest.TestCase):
                 self.assertEqual(proc.returncode, 64, proc.stderr)
                 self.assertIn("--attach <番号>", proc.stderr)
                 self.assertNotIn("api ", calls, "使い方の誤りなのに GitHub を叩いている")
+
+    # --- 前提を繋ぐ (#3936) ---------------------------------------------------
+    # 前提を持つ無印の段は、前提が閉じても見えなかった。繋いでおけば ready-queue が unblocked に出す
+
+    BLOCK = "issue edit {} -R mokume-metal/mokume --add-blocked-by {}"
+
+    def test_created_step_is_linked_to_each_blocker(self):
+        proc, calls = self.run_sub_issue(
+            "feat: 次の段", "--blocked-by", "70", "--blocked-by", "71", parent_type="Feature"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        lines = calls.splitlines()
+        # 作った Issue (#99) を、前提ごとに 1 回ずつ繋ぐ。親への紐づけの後
+        self.assertIn(self.BLOCK.format(99, 70), lines)
+        self.assertIn(self.BLOCK.format(99, 71), lines)
+        parent_link = next(i for i, line in enumerate(lines) if "sub_issues" in line)
+        self.assertLess(parent_link, lines.index(self.BLOCK.format(99, 70)))
+        self.assertIn("#99 を前提 #70 #71 に繋いだ", proc.stdout)
+        # 前提を渡さなければ繋がない
+        self.log.write_text("", encoding="utf-8")
+        proc, calls = self.run_sub_issue("feat: 前提の無い段")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("issue edit", calls)
+
+    def test_blocked_by_alone_links_existing_issues_without_creating_one(self):
+        proc, calls = self.run_sub_issue("--blocked-by", "70", "--blocked-by", "71")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # 先頭の番号 (74) は親ではなく、待つ側の Issue
+        self.assertEqual(
+            calls.splitlines(), [self.BLOCK.format(74, 70), self.BLOCK.format(74, 71)],
+            "繋ぐだけの口が、作成・親の型・親への紐づけまで打っている",
+        )
+        self.assertIn("#74 を前提 #70 #71 に繋いだ", proc.stdout)
+
+    def test_refused_blocker_stops_and_names_it(self):
+        proc, calls = self.run_sub_issue(
+            "--blocked-by", "70", "--blocked-by", "71", "--blocked-by", "72", block_refuse="71"
+        )
+        self.assertEqual(proc.returncode, 1, "断られたのに成功を返している")
+        self.assertIn("#74 を前提 #71 に繋げなかった", proc.stderr)
+        self.assertIn("already been taken", proc.stderr, "GitHub の理由を隠している")
+        self.assertNotIn(self.BLOCK.format(74, 72), calls, "断られた後も続けている")
+        self.assertNotIn("繋いだ", proc.stdout)
+
+    def test_refused_blocker_after_creating_names_the_created_issue(self):
+        proc, calls = self.run_sub_issue("feat: 次の段", "--blocked-by", "70", block_refuse="70")
+        self.assertEqual(proc.returncode, 1, "前提を繋げなかったのに成功を返している")
+        # Issue は作られて親にも繋がっている。作り直させず、繋ぐだけの口へ渡す
+        self.assertIn("sub-issue #99 を #74 の下に作成した", proc.stdout)
+        self.assertIn("作り直さず", proc.stderr)
+        self.assertIn("sub-issue.sh 99 --blocked-by", proc.stderr)
+        self.assertEqual(calls.count("issue create"), 1)
+
+    def test_blocked_by_without_a_number_is_a_usage_error_before_anything_is_created(self):
+        cases = (
+            ("--blocked-by",),
+            ("--blocked-by", "abc"),
+            ("--blocked-by", "70", "--type", "Bug"),
+            ("--blocked-by", "70", "--blocked-by"),
+            ("feat: 次の段", "--blocked-by", "#70"),
+            ("feat: 次の段", "--blocked-by"),
+        )
+        for args in cases:
+            with self.subTest(args=args):
+                self.log.write_text("", encoding="utf-8")
+                proc, calls = self.run_sub_issue(*args)
+                self.assertEqual(proc.returncode, 64, proc.stderr)
+                self.assertIn("--blocked-by", proc.stderr)
+                self.assertEqual(calls, "", "使い方の誤りなのに gh を呼んでいる")
 
     def test_dash_leading_positional_is_a_usage_error_without_calling_gh(self):
         # 慣習の `--help` を題や親番号として読むと、「--help」という題の Issue が立つ (#3047)

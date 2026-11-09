@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/ready-queue.sh の検査 (#1028)。
 
-固定したいのは十。
+固定したいのは十二。
 
 1. **何も打たない。** 判定を手元で打っただけでラベルが付いたり auto-merge が掛かったり
    すると、判定と実行を分けた意味が消える (ADR-0036 決定 1)
@@ -39,6 +39,10 @@
    open な家族は、ウィンドウの中の timeline に人の手があるかを読む。Bot のコメントと参照だけなら静か。
    人の手・作者の分からない項目・本文の編集・ウィンドウに収まらない項目は動いているとみなす。読むのは
    そういう着手印 / 家族があるときだけで、読めなければ従来どおり updatedAt で測ってそう名乗る
+12. **前提 (blocked by) がすべて閉じた無印の段は unblocked に出る** (#3936)。1 本でも open なら
+   出ない。印あり・着手中・前提なしは出さず、既存の 5 分類の行は 1 行も変えない (unblocked は後ろに
+   足す)。読むのは `gh issue list` の同じ応答で、呼び出しは増やさない。終了コードにも数えない —
+   **知らせるだけで、印は付けない**
 
 gh と git は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む。親の印 (labels) は本物と同じく問い合わせが欄を求めたときだけ
@@ -175,8 +179,15 @@ SIGNATURE = "🤖 Assisted by [Claude Code](https://claude.com/claude-code)"
 LONG_AGO = "2020-01-01T00:00:00Z"
 
 
-def issue(number, *, title="なにか", body="", labels=(), type_=None, updated=LONG_AGO):
-    return {
+def issue(
+    number, *, title="なにか", body="", labels=(), type_=None, updated=LONG_AGO, blocked_by=None, beyond=0
+):
+    """open な Issue 1 件。`gh issue list --json` と同じ形。
+
+    blocked_by は前提 (#3936) で、{番号: "OPEN" か "CLOSED"}。渡さなければ欄ごと載せない (欄を
+    求めない古い問い合わせの応答の形)。beyond は応答に載らなかった前提の数 (totalCount にだけ数える)
+    """
+    row = {
         "number": number,
         "title": title,
         "body": body,
@@ -184,6 +195,12 @@ def issue(number, *, title="なにか", body="", labels=(), type_=None, updated=
         "issueType": None if type_ is None else {"name": type_},
         "updatedAt": updated,
     }
+    if blocked_by is not None:
+        row["blockedBy"] = {
+            "nodes": [{"number": n, "state": state} for n, state in blocked_by.items()],
+            "totalCount": len(blocked_by) + beyond,
+        }
+    return row
 
 
 def closing_pr(number, *, closes=(), repo="mokume-metal/mokume", body=""):
@@ -1637,6 +1654,140 @@ class ReadyQueueTest(unittest.TestCase):
         # 開き直された親も、読めなければ ready に戻る。黙ると済んだ仕事が出ている理由が分からない (#3036)
         self.assertIn("開き直された親", done.stderr)
         self.assertIn("ready と stock に出し", done.stderr, "stock にも戻ることを名乗っていない")
+
+    # 12. 前提がすべて閉じた無印の段 (#3936)
+    def unblocked_lines(self, stdout):
+        """unblocked の行だけを {番号: 説明} で返す (stock にも出る番号があるので、分類で選ぶ)。"""
+        out = {}
+        for line in stdout.splitlines():
+            number, kind, rest = line.split(" ", 2)
+            if kind == "unblocked":
+                out[int(number)] = rest
+        return out
+
+    def test_steps_whose_blockers_all_closed_are_unblocked(self):
+        """2026-11-10 の朝の状態を写したフィクスチャ。前提が閉じた段 7 本が出て、待っている段は出ない。"""
+        done, _ = self.run_queue(
+            [
+                # 単独では着手しない印ありの親。ready に出るのは変わらない
+                issue(2071, labels=["verify: triaged"], type_="Feature", title="記録と再生"),
+                issue(3571, type_="Feature", title="全速で流す", blocked_by={3570: "CLOSED", 3474: "CLOSED"}),
+                issue(3573, type_="Feature", blocked_by={3568: "CLOSED"}),
+                issue(3576, type_="Feature", blocked_by={3568: "CLOSED"}),
+                issue(3582, type_="Feature", blocked_by={3581: "CLOSED"}),
+                issue(3589, type_="Feature", blocked_by={3588: "CLOSED"}),
+                issue(3590, type_="Feature", blocked_by={3588: "CLOSED"}),
+                issue(3564, type_="Feature", blocked_by={3560: "CLOSED"}),
+                # #3571 待ち。前提が open なので出ない
+                issue(3572, type_="Feature", blocked_by={3571: "OPEN"}),
+                # 閉じた前提と open の前提が混ざる。1 本でも open なら出ない
+                issue(3566, type_="Feature", blocked_by={3565: "CLOSED", 3796: "OPEN"}),
+            ]
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        seen = self.unblocked_lines(done.stdout)
+        self.assertEqual(
+            sorted(seen), [3564, 3571, 3573, 3576, 3582, 3589, 3590], done.stdout
+        )
+        # 型を名乗り (印を付けるのが誰かは型で決まる)、閉じた前提を番号の小さい順に並べる
+        self.assertEqual(
+            seen[3571], "[Feature] 前提 #3474・#3570 が閉じた — 印を付けられるかを見る (全速で流す)"
+        )
+        self.assertIn("/ unblocked 7", done.stderr)
+        # ready は ready のまま。無印の段は、前提が閉じても ready には出ない
+        self.assertEqual(self.lines_by_number(done.stdout)[2071][0], "ready")
+        self.assertIn("ready 1 /", done.stderr)
+
+    def test_unblocked_leaves_the_other_rows_as_they_were(self):
+        """前提を足しても、既存の 5 分類の行は 1 行も変わらない。unblocked は後ろに足すだけ。"""
+
+        def rows(with_blockers):
+            def blocked(spec):
+                return spec if with_blockers else None
+
+            return [
+                issue(1, labels=["verify: triaged"], type_="Bug", blocked_by=blocked({9: "CLOSED"})),
+                issue(2, labels=["verify: triaged"], type_="Task", blocked_by=blocked({1: "OPEN"})),
+                # stock にも当たる無印の段。stock の行はそのままで、unblocked にも出る
+                issue(3, type_="Task", body=SIGNATURE, title="調べる", blocked_by=blocked({9: "CLOSED"})),
+                issue(4, type_="Feature", title="段", blocked_by=blocked({9: "CLOSED"})),
+                # 着手中。busy に出ているので unblocked には出さない
+                issue(5, labels=["status: in progress"], blocked_by=blocked({9: "CLOSED"})),
+                # 無印だが、閉じる PR が出ている。これも busy
+                issue(6, type_="Feature", blocked_by=blocked({9: "CLOSED"})),
+                issue(7, labels=["status: in progress"], blocked_by=blocked({9: "CLOSED"})),
+                # 根本の判断を待つ無印の Design と、その子の Bug
+                issue(300, type_="Design", title="根本", blocked_by=blocked({9: "CLOSED"})),
+                issue(101, labels=["verify: triaged"], type_="Bug"),
+            ]
+
+        kwargs = dict(
+            prs=[closing_pr(50, closes=[5]), closing_pr(51, closes=[6])],
+            families={7: {}},
+            parents={101: parent(300, type_="Design")},
+        )
+        before, _ = self.run_queue(rows(False), **kwargs)
+        after, _ = self.run_queue(rows(True), **kwargs)
+        kinds = {line.split(" ", 2)[1] for line in before.stdout.splitlines()}
+        self.assertEqual(
+            kinds, {"ready", "stock", "dropped", "busy", "decide"}, "5 分類が揃っていない"
+        )
+        self.assertTrue(
+            after.stdout.startswith(before.stdout), "既存の行が変わったか、unblocked が後ろに無い"
+        )
+        added = after.stdout[len(before.stdout):].splitlines()
+        self.assertEqual(
+            [line.split(" ", 2)[:2] for line in added],
+            [["3", "unblocked"], ["4", "unblocked"], ["300", "unblocked"]],
+            "印あり (1・2)・着手中 (5・7)・PR の出ている無印 (6) まで unblocked に出している",
+        )
+        self.assertEqual(before.returncode, after.returncode)
+
+    def test_unblocked_needs_at_least_one_blocker_and_only_closed_ones(self):
+        done, _ = self.run_queue(
+            [
+                issue(1, type_="Feature"),  # 欄が無い
+                issue(2, type_="Feature", blocked_by={}),  # 前提が 0 本
+                issue(3, type_="Feature", blocked_by={9: "OPEN"}),
+                # 知らない state は open の側に倒す (CLOSED と読めたものだけを閉じたと数える)
+                issue(4, type_="Feature", blocked_by={9: "CLOSED", 8: "LOCKED"}),
+                issue(5, blocked_by={9: "CLOSED"}),  # 型が無い
+            ]
+        )
+        seen = self.unblocked_lines(done.stdout)
+        self.assertEqual(sorted(seen), [5], done.stdout)
+        self.assertTrue(seen[5].startswith("[-] 前提 #9 が閉じた"), seen[5])
+
+    def test_unblocked_is_not_work_to_start(self):
+        """知らせるだけの行。打てる仕事には数えず、印も付けない。"""
+        done, log = self.run_queue([issue(4, type_="Feature", blocked_by={9: "CLOSED"})])
+        self.assertEqual(done.returncode, 1, "unblocked を打てる仕事に数えている")
+        self.assertIn("ready 0 /", done.stderr)
+        self.assertIn(4, self.unblocked_lines(done.stdout))
+        for verb in ("issue edit", "--add-label", "issue comment", "issue close"):
+            self.assertNotIn(verb, log, f"判定が {verb} を打っている:\n{log}")
+
+    def test_unblocked_reads_blockers_from_the_same_issue_list(self):
+        """前提は open な一覧と同じ 1 回の応答で読む。呼び出しは増やさない。"""
+        done, log = self.run_queue([issue(4, type_="Feature", blocked_by={9: "CLOSED"})])
+        calls = log.splitlines()
+        self.assertEqual(len(calls), 2, f"前提を読むために呼び出しを増やしている:\n{log}")
+        listing = next(line for line in calls if line.startswith("issue list"))
+        self.assertIn("blockedBy", listing, "一覧に前提の欄を求めていない")
+
+    def test_uncounted_blockers_are_not_unblocked_and_said_so(self):
+        """応答に載らなかった前提があれば出さない。読めていない前提が open かもしれない。"""
+        done, _ = self.run_queue(
+            [
+                issue(4, type_="Feature", blocked_by={9: "CLOSED"}, beyond=1),
+                issue(5, type_="Feature", blocked_by={9: "CLOSED"}),
+            ]
+        )
+        self.assertEqual(sorted(self.unblocked_lines(done.stdout)), [5], done.stdout)
+        self.assertIn("数え切れなかった: #4", done.stderr)
+        # 数え切れた回は名乗らない
+        done, _ = self.run_queue([issue(5, type_="Feature", blocked_by={9: "CLOSED"})])
+        self.assertNotIn("数え切れなかった", done.stderr)
 
 
 if __name__ == "__main__":
