@@ -361,6 +361,10 @@ final class SharedFrameSurface {
     private var heldCursor = 0
     /// 読み手が掴んでいるかもしれない面に当たって、焼きを見送った回数 (作ってから通算)。**検査から読む。**
     private(set) var burnsDeferred = 0
+
+    /// 道具へ渡す名乗りの中身 (``frameShareAttribute``)。**`nil` なら断っている** (道具は名乗らない)。
+    /// 書き手が出口を共有面に決めたときに据える。
+    var frameShare: FrameShare?
     /// GPU が打ち切った焼きを、名乗らずに捨てた回数 (作ってから通算)。
     ///
     /// 呼び手 (``SketchApplication``) が、止まっている間に同じ絵を焼き直さない代わりに、捨てた焼きを
@@ -712,6 +716,7 @@ final class SharedFrameSurface {
         Self.publishPointerLock(burn.pointerLock, to: slot.surface)
         Self.publishCursorHidden(burn.cursorHidden, to: slot.surface)
         Self.publishSelection(burn.selection, to: slot.surface)
+        Self.publishFrameShare(frameShare, to: slot.surface)
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
     }
@@ -797,6 +802,39 @@ final class SharedFrameSurface {
     /// 引いた面が名乗っている矢印を隠す要求。載っていなければ `false`。
     static func cursorHiddenRequested(on surface: IOSurfaceRef) -> Bool {
         number(cursorHiddenAttribute, on: surface)?.intValue == 1
+    }
+
+    /// 子が「別のプロセスの画面への受け渡しを断っていない」ことと、一覧に見せる題を載せる属性の名前
+    /// ([ADR-0049] 決定 2・[#3919](https://github.com/mokume-metal/mokume/issues/3919))。
+    ///
+    /// **見張りの下で名乗るのは道具である。** 断る口 (#3921) を持つのは子の設定なので、子が断っていないことを
+    /// 道具へ伝える。``pointerLockAttribute`` と同じく絵と同じ面に載せ、通信路を増やさない ([ADR-0032] 決定 3)。
+    /// 値は作品名と題を持つ辞書 (``FrameShare``)。**載っていなければ断っている** — 古いライブラリの子も載せないので、
+    /// 道具は名乗らない (ADR-0049 の影響の「版のずれ」)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
+    static let frameShareAttribute = "mokume.frameShare"
+
+    /// 名乗りの中身を面へ載せる。**断っていれば (`nil`) 属性ごと消す** — 面は使い回されるので、消さなければ前に
+    /// 載せた中身が残る (``publishPointerLock(_:to:)`` と同じ)。
+    static func publishFrameShare(_ share: FrameShare?, to surface: IOSurfaceRef) {
+        guard let share else {
+            IOSurfaceRemoveValue(surface, frameShareAttribute as CFString)
+            return
+        }
+        IOSurfaceSetValue(
+            surface, frameShareAttribute as CFString,
+            [FrameShare.sketchKey: share.sketch, FrameShare.titleKey: share.title] as CFDictionary)
+    }
+
+    /// 引いた面が載せている名乗りの中身。**載っていない・形の違う値は `nil`** (断っている)。
+    static func frameShare(on surface: IOSurfaceRef) -> FrameShare? {
+        guard let value = IOSurfaceCopyValue(surface, frameShareAttribute as CFString) as? [String: Any],
+            let sketch = value[FrameShare.sketchKey] as? String,
+            let title = value[FrameShare.titleKey] as? String
+        else { return nil }
+        return FrameShare(sketch: sketch, title: title)
     }
 
     /// ファイルを選ばせる頼みを面へ載せる。**頼んでいなければ属性ごと消す** — 面は使い回されるので、消さなければ
