@@ -5933,7 +5933,7 @@ public final class Canvas {
                 let eraseState, let batchState
             {
                 let markDepth = flat ? pipeline.flatStrokeMarkDepthState : pipeline.strokeMarkDepthState
-                // 切り抜きのある列の消し描きは、切り抜きの中だけを戻す。外まで戻すと、立体の線はウィンドウの外に見えない
+                // 切り抜きのある列の消し描きは、切り抜きの中だけを戻す。外まで戻すと、立体の線は切り抜きの外に見えない
                 // 線の奥行きを残し、後に置く立体を隠す
                 let eraseDepth =
                     flat

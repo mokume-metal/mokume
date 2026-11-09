@@ -171,7 +171,7 @@ struct FrameProbeTests {
         }
     }
 
-    /// 同じ円 2,000 個を、切り抜きの仕方だけ変えて描く場面 (#2431)。`switching` はウィンドウつきの部品 1,000 個で、
+    /// 同じ円 2,000 個を、切り抜きの仕方だけ変えて描く場面 (#2431)。`switching` は切り抜きつきの部品 1,000 個で、
     /// 部品ごとに型板を描き直す (段を足して外す) 最悪の場面。
     final class Clipped: Sketch {
         enum Mode { case none, rect, circle, nested2, switching }
