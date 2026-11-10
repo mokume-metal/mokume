@@ -392,6 +392,7 @@ extension ShapeExit {
             "exportsOneFrame": "1 枚の書き出しの最中の印 (#2446)。拡大した字の焼きを次へ送らないために読む実行の制御で、形に焼き付く値を生まない",
             "frameIsObserved": "観測が撮るフレームの印 (#2446)。拡大した字の焼きを次へ送らないために読む実行の制御で、形に焼き付く値を生まない",
             "presence": control,
+            "presenceReceivers": "絵を渡している相手の名前 (#3921)。メニューバーの名乗りが読む実行の制御で、形に焼き付く値を生まない",
             "outlets": seam, "inlets": seam, "seamVisitDepth": seam, "deferredSeamChanges": seam,
             "seamsClosed": seam, "outletJoinedAt": seam,
             "recorder": recording, "closingRecorder": recording, "recordingFailed": recording,

@@ -33,6 +33,22 @@ struct SketchPresenceTests {
         #expect(SketchPresence.shouldAnnounce(runningFor: SketchPresence.grace * 100))
     }
 
+    /// **絵を渡している間は猶予を待たない** (ADR-0049 決定 6・[#3921](https://github.com/mokume-metal/mokume/issues/3921))。
+    /// 起動から 5 秒で受け手が繋げば、その時点で名乗る。繋がっていない間は、これまでどおり猶予を待つ。
+    @Test("絵を渡している間は猶予を待たずに名乗り、渡していなければ猶予を待つ")
+    func announcesAtOnceWhileConnected() {
+        #expect(SketchPresence.shouldAnnounce(runningFor: 5, connected: true))
+        #expect(SketchPresence.shouldAnnounce(runningFor: 0, connected: true))
+        #expect(!SketchPresence.shouldAnnounce(runningFor: 5, connected: false))
+    }
+
+    @Test("渡している相手の行は、相手が居るときだけ組み、名前を繋いだ順に並べる")
+    func receiversLineNamesTheReceivers() {
+        #expect(SketchPresence.receiversLine([]) == nil)
+        #expect(SketchPresence.receiversLine(["mokumesh"]) == "Frames to mokumesh")
+        #expect(SketchPresence.receiversLine(["mokumesh", "recorder"]) == "Frames to mokumesh, recorder")
+    }
+
     // 「既に名乗っていたら二度と名乗らない」の検査はここに**無い**。
     //
     // かつては `shouldAnnounce` に `announced` を渡して確かめていたが、本番からそこへ渡る

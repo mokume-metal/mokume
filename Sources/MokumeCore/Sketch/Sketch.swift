@@ -498,6 +498,32 @@ public struct SketchSettings: Equatable, Sendable {
     /// 書き方と、全画面のときに何が変わるかは ``fullScreen(_:)`` にある。**起動のときに読む。**
     public var fullScreenDisplay: Int?
 
+    /// 走っている間、別のアプリ (マッパー・録画の道具など) の一覧に名乗り、繋いできたアプリへ絵を渡すか。**既定は `true`。**
+    ///
+    /// 何も書かなければ、ウィンドウを持って走る作品は別のアプリの一覧に出て、繋がれたらそのアプリが用意した面へ、画面と同じ
+    /// 値の絵を毎フレーム渡す。渡している間は、メニューバーの名乗りに相手が出る。作品のコードにも起動の仕方にも何も足さずに、
+    /// 制作中の作品も配った `.app` も、そのまま外の画面へ出せるようにするためである。
+    ///
+    /// 渡したくない作品は `false` にする。`fullScreenDisplay` と同じく、返った設定へ代入して書く:
+    ///
+    /// ```swift
+    /// var settings: SketchSettings {
+    ///     var settings = SketchSettings.size(640, 360)
+    ///     settings.sharesFrames = false
+    ///     return settings
+    /// }
+    /// ```
+    ///
+    /// `false` の作品は、どの起こし方 (直に走らせる・`mokume run`・束ねた `.app`・`mokume watch`) でも一覧に出ず、
+    /// 繋ぐための名前も登録しない。
+    ///
+    /// **渡すことを考え直したほうがよい作品**: カメラ・マイク・入力監視の許可で受けるキー・書類やデスクトップなど守られた
+    /// 場所から選んだファイルを描く作品。これらは画面収録の許可の外で守られているが、作品が描いた絵は、その許可を持たない
+    /// 同じ利用者のアプリにも渡る。
+    ///
+    /// **起動のときに読む。** 実行中に代入しても変わらない。
+    public var sharesFrames: Bool
+
     public init(
         width: Int = 960, height: Int = 540, frameRate: Int = 60, title: String = "mokume",
         pixelDensity: Float = 1, upscale: Upscale = .spatial, windowScale: Float = 0.5,
@@ -512,6 +538,7 @@ public struct SketchSettings: Equatable, Sendable {
         self.upscale = upscale
         self.windowScale = windowScale
         self.fullScreenDisplay = nil
+        self.sharesFrames = true
     }
 
     /// ウィンドウの大きさ (画素) を書いて作る。`SketchSettings(width:height:)` と同じ設定を、型の名前を

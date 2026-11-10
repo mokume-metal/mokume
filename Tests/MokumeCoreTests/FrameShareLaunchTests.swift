@@ -76,6 +76,16 @@ struct FrameShareLaunchTests {
         func draw() { background(0) }
     }
 
+    /// 名乗りを断った作品 (``SketchSettings/sharesFrames``・#3921)。
+    private final class Private: Sketch {
+        var settings: SketchSettings {
+            var settings = SketchSettings(width: 32, height: 16, frameRate: 60, title: "Private work")
+            settings.sharesFrames = false
+            return settings
+        }
+        func draw() { background(0) }
+    }
+
     private func makeApplication(
         render: RenderRequest? = nil, listed: @escaping (String) -> Void
     ) throws -> SketchApplication {
@@ -145,8 +155,11 @@ struct FrameShareLaunchTests {
 
         let receiver = ModelReceiver(width: 32, height: 16, count: 3)
         defer { receiver.die() }
+        receiver.name = "mapper"
         receiver.connect(to: service)
         sender.drain()
+        // 繋がった相手はメニューバーの名乗りへ渡る (次のフレームで猶予を待たずに名乗る・#3921)
+        #expect(application.presenceReceivers == ["mapper"])
         var counts: [Int64] = []
         for _ in 0..<120 where counts.count < 3 {
             application.displayLinkFired()
@@ -180,15 +193,20 @@ struct FrameShareLaunchTests {
         #expect(application.sharedSurface?.frameShare == expected)
 
         // 焼いた面に載る (子は焼きの結末を見てから名乗る・#2735)。駆動は `PointerLockSketchTests` と同じく拍を直に打つ。
-        // 冷えた初回 (パイプラインの用意) は数拍では名乗りが届かないことがあるので、回数に上限を持って打ち続ける
+        // **待つのは実時間の期限で** — 作品は実時間の時計で進むので、拍を速く叩くだけでは経過が足りず、名乗る 2 枚目まで
+        // 進まない回がある (回数の上限で待っていた頃、ときどき赤になった)。拍の間に 2 ms 置き、10 秒で諦める
         let manifest = try #require(SharedFrameSurface.readManifest(at: facet))
         var newest: (id: UInt32, frame: Int)?
-        for _ in 0..<120 where newest == nil {
+        let deadline = Date().addingTimeInterval(10)
+        var beats = 0
+        while newest == nil, Date() < deadline {
             application.displayLinkFired()
             _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
             newest = SharedFrameSurface.newest(among: manifest.ids)
+            beats += 1
+            if newest == nil { usleep(2_000) }
         }
-        let named = try #require(newest, "120 拍打っても名乗った面が無い")
+        let named = try #require(newest, "10 秒 (\(beats) 拍) 打っても名乗った面が無い")
         let surface = try #require(IOSurfaceLookup(named.id))
         #expect(SharedFrameSurface.frameShare(on: surface) == expected)
     }
@@ -213,6 +231,58 @@ struct FrameShareLaunchTests {
         defer { application.window?.close() }
         #expect(application.window != nil, "検査の前提: 自分のウィンドウへ倒れていない")
         #expect(titles == ["Titled work"])
+    }
+
+    @Test("既定は名乗る。断った作品は、自分のウィンドウを開いても名乗らない")
+    func aRefusingSketchDoesNotAnnounce() throws {
+        #expect(SketchSettings().sharesFrames, "既定が断っている")
+        let missing = TestScratch.path("mokume-viewport", isDirectory: true)
+        var titles: [String] = []
+        let application = try SketchApplication(sketch: Private(), gpu: RenderDevice())
+        application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
+        application.announce = { _ in }
+        application.listFrames = { title in
+            titles.append(title)
+            return nil
+        }
+        application.resolveOutlet(at: missing, owner: nil)
+        application.didFinishLaunching()
+        defer {
+            application.window?.close()
+            application.willTerminate()
+        }
+        #expect(application.window != nil, "検査の前提: 自分のウィンドウを開いていない")
+        #expect(titles.isEmpty, "断った作品が名乗った")
+    }
+
+    @Test("断った見張りの子は、共有面に名乗りの中身を載せない (道具は名乗らない)")
+    func aRefusingChildLeavesNothingForTheTool() throws {
+        let facet = try TestScratch.directory("mokume-viewport")
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let pipe = Pipe()
+        defer { try? pipe.fileHandleForWriting.close() }
+        let application = try SketchApplication(sketch: Private(), gpu: RenderDevice())
+        application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
+        application.announce = { _ in }
+        application.toolInput = pipe.fileHandleForReading.fileDescriptor
+        defer { application.willTerminate() }
+        application.resolveOutlet(at: facet, owner: "mokume watch")
+        let shared = try #require(application.sharedSurface, "共有面の経路になっていない")
+        #expect(shared.frameShare == nil, "断った子が名乗りの中身を載せた")
+    }
+
+    /// **見張りでは、相手はプレビューの題に出す** (ADR-0049 決定 6・#3921)。作り直しの行に上書きされない。
+    @Test("プレビューの題に渡している相手を添え、相手が居なくなれば元の題に戻す")
+    func thePreviewTitleNamesTheReceivers() throws {
+        let facet = try TestScratch.directory("mokume-viewport")
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let preview = try SharedFramePreview(gpu: RenderDevice(), facet: facet, title: "Bricks — Preview")
+        preview.open()
+        defer { preview.close() }
+        preview.showReceivers(["mapper", "recorder"])
+        #expect(preview.stage.window?.title == "Bricks — Preview — Frames to mapper, recorder")
+        preview.showReceivers([])
+        #expect(preview.stage.window?.title == "Bricks — Preview")
     }
 
     @Test("書き出す経路は名乗らない")

@@ -498,6 +498,16 @@ public final class SketchRuntime {
     /// メニューバーで名乗る係。**組み立てのときには何も出さない** — 出すのは
     /// ``SketchPresence/grace`` 秒ぶん進み続けてからである。
     private lazy var presence = SketchPresence(source: self)
+    /// 絵を渡している相手 (受け手が名乗った名前)。メニューバーの名乗りに載り、空でなければ猶予を待たずに名乗る
+    /// ([ADR-0049] 決定 6・[#3921](https://github.com/mokume-metal/mokume/issues/3921))。
+    ///
+    /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
+    var presenceReceivers: [String] = [] {
+        didSet {
+            guard !isEmbedded, presenceReceivers != oldValue else { return }
+            presence.receivers = presenceReceivers
+        }
+    }
     /// 最初に ``advance()`` が呼ばれた時刻。名乗りの経過はここを起点に測る。
     private var firstAdvanceAt: Double?
     /// 名乗りが読む実時間の出どころ。**既定は実時間の単調な時計で、internal の初期化子だけが差し替える**

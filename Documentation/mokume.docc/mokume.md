@@ -549,6 +549,10 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/displays``
 - ``Display``
 
+### 別のアプリへ絵を渡す
+
+- ``SketchSettings/sharesFrames``
+
 ### 背景と色
 
 - ``SketchPart/background(_:)-9jeha``

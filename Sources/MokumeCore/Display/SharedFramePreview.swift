@@ -44,6 +44,8 @@ public final class SharedFramePreview {
 
     /// 検査が拍を打つために見える (`displayLinkFired()`)。
     let stage: SharedFrameStage
+    /// 作ったときの題。相手を添えた題から戻す先 (``showReceivers(_:)``)。
+    private let baseTitle: String
     private let notice = NoticeOverlay()
     /// 面越しのつまみ。区画を渡されたときだけ在る。
     private let params: RemoteParams?
@@ -58,6 +60,7 @@ public final class SharedFramePreview {
         throws(RenderFailure)
     {
         self.params = params.map { RemoteParams(directory: $0) }
+        self.baseTitle = title
         self.stage = try SharedFrameStage(
             gpu: gpu, facet: facet,
             look: SharedFrameStage.Look(
@@ -246,6 +249,18 @@ public final class SharedFramePreview {
         // **警告は拍ごとに押し込む** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。欄が出入りすると
         // 面の丈が変わるので、顔ぶれが変わらなくても枠を置き直す必要がある (面が作り直されたときも、ここで載る)
         knobs?.show(warnings: stage.warnings)
+    }
+
+    /// 題に、絵を渡している相手を添える ([ADR-0049] 決定 6・[#3921])。相手が居なければ元の題に戻す。
+    ///
+    /// **見張りの下で受け手と繋がっているのは道具**なので、相手は子のメニューバーの名乗りではなくここに出す。題は常に見えて
+    /// いて、作り直しの行 (``report(_:spinning:)``) に上書きされない。
+    ///
+    /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
+    /// [#3921]: https://github.com/mokume-metal/mokume/issues/3921
+    package func showReceivers(_ names: [String]) {
+        let line = SketchPresence.receiversLine(names)
+        stage.window?.title = line.map { "\(baseTitle) — \($0)" } ?? baseTitle
     }
 
     /// 重ねる 1 行を差し替える。
