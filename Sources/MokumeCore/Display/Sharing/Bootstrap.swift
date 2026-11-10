@@ -62,7 +62,7 @@ package nonisolated enum Bootstrap {
     /// 名前を引いて、送信の権利を得る。**引けなければ `nil`** (登録されていない・別の名前空間)。
     ///
     /// 得た送信の権利は、呼んだ側が ``releaseSend(_:)`` で手放す。
-    static func lookUp(_ name: String) -> mach_port_t? {
+    package static func lookUp(_ name: String) -> mach_port_t? {
         guard let calls else { return nil }
         var send: mach_port_t = 0
         let code = name.withCString { calls.lookUp(port, $0, &send) }
@@ -76,7 +76,7 @@ package nonisolated enum Bootstrap {
     }
 
     /// 送信の権利を手放す。
-    static func releaseSend(_ port: mach_port_t) {
+    package static func releaseSend(_ port: mach_port_t) {
         mach_port_deallocate(mach_task_self_, port)
     }
 }

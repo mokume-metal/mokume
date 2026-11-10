@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/frame-listing.schema.json",
+  "title": "One entry of the list of running sketches that hand their frames to other apps",
+  "description": "Written by a running sketch that owns a window (run directly, through `mokume run`, or as a bundled .app), or by `mokume watch` on behalf of the sketch it watches, so that another app on the same machine can pick it and receive its frames (ADR-0049). Nothing has to be added to the sketch: a sketch lists itself unless it sets SketchSettings.sharesFrames to false. Embedded sketches (SketchView), `mokume render` and runs without a window never list themselves.\n\nWhere: one file per entry, named `<serviceName>.json`, in `~/Library/Application Support/mokume/frames/` (only the user can write there; the directory is created with mode 0700). Inside mokume's own tests the directory is `$TMPDIR/mokume-frames-test-<pid of the test process>/` instead, so that tests never show up in a developer's list.\n\nHow it is written: the writer registers `serviceName` in the bootstrap namespace (`bootstrap_check_in`) first, and only then places the file, by renaming a temporary file into place. It removes the file when it stops. A receiver only reads the directory and never writes to it.\n\nHow a receiver notices changes: watch the directory itself (kqueue NOTE_WRITE, or a file-system-object dispatch source on it). Placing and removing an entry both change the directory, so the notification always fires. No clock is involved.\n\nWhich entries are alive: an entry whose `serviceName` can be looked up (`bootstrap_look_up`) belongs to a sender that is running in the receiver's bootstrap namespace. An entry that cannot be looked up may still be alive in another namespace (an ssh session, another login session) and must not be removed by a receiver. Dead entries are removed by the next sketch that lists itself: only those whose `pid` is gone or whose `pid` now belongs to a process started at a different time than `startedAt`.\n\nSeveral entries may share `sketch` and `window` (two copies of the same work). A receiver shows them side by side with their pid, and reconnects on its own to a sketch that went away and came back only when `sketch`, `window` and `identity` single out one entry.\n\nHow to connect and what the surfaces carry is described next to this file, in frame-link.md.\n\nVersion skew: a sketch built against a mokume older than this list does not list itself when run directly, while `mokume watch` lists it if the tool is new enough. A receiver cannot tell an old version from a sketch that is not running (ADR-0018 decision 6).",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "sketch",
+    "window",
+    "identity",
+    "title",
+    "pid",
+    "startedAt",
+    "serviceName"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "The version of this format and of the hand-over described in frame-link.md. How it is raised is ADR-0018 decision 5."
+    },
+    "sketch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The name of the work: the sketch's executable (the SwiftPM product name). It stays the same for a bundled .app (the executable inside keeps the product name) and across the sketches `mokume watch` swaps in on save."
+    },
+    "window": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Which window of the work this entry hands over. A sketch has one window today, named `main`. Kept apart from `sketch` so that more windows do not need a new version."
+    },
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What tells this work apart from an unrelated work with the same `sketch`: the bundle identifier for a bundled .app, otherwise the package directory with symbolic links resolved (realpath)."
+    },
+    "title": {
+      "type": "string",
+      "description": "The name to show in a list (SketchSettings.title). Not an identifier: many sketches keep the default `mokume`, and authors change it."
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The process that listed itself. Under `mokume watch` this is the tool, not the sketch."
+    },
+    "startedAt": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "When that process started, in microseconds since 1970 (the kernel's process start time). Tells a reused pid apart."
+    },
+    "serviceName": {
+      "type": "string",
+      "pattern": "^org\\.mokume\\.frames\\.[0-9]+\\.[0-9a-f]+\\.[^.]+$",
+      "description": "The name to look up in the bootstrap namespace (`bootstrap_look_up`) and send the connect message to. Unique per run: `org.mokume.frames.<pid>.<hex chosen at launch>.<window>`."
+    }
+  }
+}
