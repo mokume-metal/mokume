@@ -923,6 +923,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/saveJSONArray(_:_:)``
 - ``SketchPart/loadXML(_:)``
 - ``SketchPart/requestXML(_:)``
+- ``SketchPart/parseXML(_:)``
 - ``JSONObject``
 - ``JSONArray``
 - ``XML``
