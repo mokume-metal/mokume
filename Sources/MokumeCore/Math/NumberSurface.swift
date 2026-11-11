@@ -51,6 +51,8 @@ nonisolated enum NumberValues {
             case mod
             case bezierPoint
             case bezierTangent
+            case curvePoint
+            case curveTangent
             case phase
         }
     }

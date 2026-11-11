@@ -629,6 +629,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/line(_:_:)-(Vector2,_)``
 - ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
 - ``SketchPart/bezier(from:control1:control2:to:)``
+- ``SketchPart/curve(_:_:_:_:_:_:_:_:)``
+- ``SketchPart/curve(from:control1:control2:to:)``
 
 ### 座標の読み方
 
@@ -666,6 +668,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/curveTightness(_:)``
 - ``bezierPoint(_:_:_:_:_:)``
 - ``bezierTangent(_:_:_:_:_:)``
+- ``SketchPart/curvePoint(_:_:_:_:_:)``
+- ``SketchPart/curveTangent(_:_:_:_:_:)``
 - ``SketchPart/beginContour()``
 - ``SketchPart/endContour()``
 - ``SketchPart/endShape(_:)``
