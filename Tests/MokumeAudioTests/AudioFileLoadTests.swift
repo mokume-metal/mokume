@@ -117,11 +117,10 @@ struct AudioFileLoadTests {
     func truncatedFileReturnsWhatWasRead(_ pathExtension: String) throws {
         let url = try write(channels: 1, frames: 100_000, pathExtension: pathExtension) { _, frame in Float(frame) }
         defer { try? FileManager.default.removeItem(at: url) }
-        // 終わりの 200,000 バイト (50,000 標本) を削る。CAF は見出しに長さ 100,000 を残したままで、残りより多く
-        // 求めた read の返し方が OS で違う: macOS 27 では求めた数より少ない 50,000 標本を返し、次の read が終わりの
-        // 誤りを投げる。macOS 26 では標本を返さずにいきなり誤りを投げる (CI で unreadable になった。手元の OS では
-        // 再現しないので、その返し方は下の `truncatedReaders` で差し替えた読み手を使って確かめる)。WAV は長さを残りから
-        // 50,000 と数え直すが、1 回目の read は 49,152 標本しか返さず (macOS 27)、続きは次の read で届く
+        // 終わりの 200,000 バイト (50,000 標本) を削る。CAF は見出しに長さ 100,000 を残したままで、1 回目の read が
+        // 求めた数より少ない 50,000 標本を返し、次の read が終わりの誤りを投げる。WAV は長さを残りから 50,000 と
+        // 数え直すが、1 回目の read は 49,152 標本しか返さず、続きは次の read で届く。返す数は macOS 26 と 27 で
+        // 同じで、違うのは CAF の終わりで投げる誤りの形 (27 は -39、26 は中身の無い誤り。2026-11-12 に CI で実測)
         let handle = try FileHandle(forUpdating: url)
         let size = try handle.seekToEnd()
         try handle.truncate(atOffset: size - 200_000)
@@ -129,127 +128,66 @@ struct AudioFileLoadTests {
         if pathExtension == "caf" {
             #expect(try AVAudioFile(forReading: url).length == 100_000, "見出しの長さが残っていない")
         }
-        probeReads(url, tag: pathExtension)
         let buffer = try AudioFile.load(url, path: "cut.\(pathExtension)")
         #expect(buffer.frameLength == 50_000)
         let data = UnsafeBufferPointer(start: try #require(buffer.floatChannelData)[0], count: 50_000)
         #expect(data.elementsEqual((0..<50_000).map(Float.init)))
 
-        // 直す前の読み方 (1 回の read) で読めていた標本は、すべて同じ値で読める。macOS 26 の CAF は 1 回の read が
-        // 誤りを投げる (直す前も unreadable だった) ので、読めていた標本は 0 で、比べるものが無い
+        // 直す前の読み方 (1 回の read) で読めていた標本は、すべて同じ値で読める
         let file = try AVAudioFile(forReading: url)
         let once = try #require(
             AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
-        let before: Int
-        do {
-            try file.read(into: once)
-            before = Int(once.frameLength)
-        } catch {
-            before = 0
-        }
-        #expect(before <= 50_000, "1 回の read で読めた数: \(before)")
+        try file.read(into: once)
+        let before = Int(once.frameLength)
+        #expect(before > 0 && before <= 50_000, "1 回の read で読めた数: \(before)")
         let onceData = UnsafeBufferPointer(start: try #require(once.floatChannelData)[0], count: before)
         #expect(onceData.elementsEqual(data.prefix(before)))
     }
 
-    /// 削ったファイルの `read` の返し方を記録に出す (下限の OS の確かめ。検査の成否には関わらない)。
-    private func probeReads(_ url: URL, tag: String) {
-        let prefix = "PROBE[\(tag)]"
-        let file: AVAudioFile
-        do {
-            file = try AVAudioFile(forReading: url)
-        } catch {
-            let error = error as NSError
-            print("\(prefix) open threw domain=\(error.domain) code=\(error.code) \(error.localizedDescription)")
-            return
-        }
-        print("\(prefix) length=\(file.length)")
-        print("\(prefix) fileFormat=\(file.fileFormat)")
-        print("\(prefix) processingFormat=\(file.processingFormat)")
-        guard let piece = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 100_000) else {
-            print("\(prefix) buffer failed")
-            return
-        }
-        func rewind() {
-            let before = file.framePosition
-            file.framePosition = 0
-            print("\(prefix) rewind framePosition \(before) -> \(file.framePosition)")
-        }
-        @discardableResult
-        func attempt(_ count: AVAudioFrameCount) -> Bool {
-            piece.frameLength = 0
-            do {
-                try file.read(into: piece, frameCount: count)
-                print(
-                    "\(prefix) read(\(count)) ok frameLength=\(piece.frameLength) framePosition=\(file.framePosition)")
-                return piece.frameLength > 0
-            } catch {
-                let error = error as NSError
-                print(
-                    "\(prefix) read(\(count)) threw domain=\(error.domain) code=\(error.code) "
-                        + "\(error.localizedDescription) frameLength=\(piece.frameLength) "
-                        + "framePosition=\(file.framePosition)")
-                return false
-            }
-        }
-        attempt(100_000)
-        for count: AVAudioFrameCount in [50_000, 49_152] {
-            rewind()
-            attempt(count)
-        }
-        rewind()
-        var steps = 0
-        while attempt(4_096), steps < 40 { steps += 1 }
-        rewind()
-        attempt(1)
-    }
-
     /// `read` の返し方を差し替えた読み手。見出しの長さは 100,000 で、実際にあるのは `actual` 標本。標本の値は番号。
-    /// 誤りを投げた後は位置をでたらめ (実際の終わり) に動かすので、読み直す側が位置を戻さないと値がずれる。
+    /// 求めた数が残りより多ければ残りを返し (macOS 26・27 とも実測どおり)、終わりで投げる誤りの形を差し替える。
     final class FakeReader {
         enum Style: Sendable {
-            /// macOS 26: 残りより多く求めると、標本を返さずに終わりの誤りを投げる
-            case throwsWhenAskedPastEnd
-            /// macOS 27: 残りより多く求めると読めた分を返し、残りが 0 のときだけ終わりの誤りを投げる
-            case returnsShortThenThrows
-            /// いつも終わりの誤りを投げる
-            case alwaysThrows
-            /// `actual` の所から先は、終わり以外の誤りを投げる (途中で壊れたファイル)
+            /// 終わりで `kAudioFileEndOfFileError` (-39) を投げる (macOS 27)
+            case endOfFileError
+            /// 終わりで中身の無い誤り (`Foundation._GenericObjCError`) を投げる (macOS 26)
+            case emptyError
+            /// 1 標本も返さず、いつも中身の無い誤りを投げる
+            case alwaysEmptyError
+            /// `actual` の所から先は、中身のある誤り (`kAudioFileInvalidFileError`) を投げる (途中で壊れたファイル)
             case brokenAfterActual
         }
 
         let style: Style
         let actual: Int
         var position = 0
-        var reads = 0
 
         init(_ style: Style, actual: Int) {
             self.style = style
             self.actual = actual
         }
 
-        static let endOfFile = NSError(domain: NSOSStatusErrorDomain, code: Int(kAudioFileEndOfFileError))
-        static let broken = NSError(domain: NSOSStatusErrorDomain, code: Int(kAudioFileInvalidFileError))
-
-        func seek(_ to: AVAudioFramePosition) { position = Int(to) }
+        /// macOS 26 の CI の記録 (2026-11-12) に出た形のまま。`domain=Foundation._GenericObjCError code=0`。
+        /// 型 (`_GenericObjCError`) は Swift から名指せないので、`NSError` で作る。本体の定数を使わずに書き写すので、
+        /// 本体の見分けの文字列が記録とずれれば、この検査が赤になる
+        static let emptyError = NSError(domain: "Foundation._GenericObjCError", code: 0)
 
         func read(into piece: AVAudioPCMBuffer, count: AVAudioFrameCount) throws {
-            reads += 1
             let remaining = actual - position
-            let wanted = Int(count)
-            let failure: NSError? =
+            let failure: (any Error)? =
                 switch style {
-                case .throwsWhenAskedPastEnd: wanted > remaining ? Self.endOfFile : nil
-                case .returnsShortThenThrows: remaining <= 0 ? Self.endOfFile : nil
-                case .alwaysThrows: Self.endOfFile
-                case .brokenAfterActual: wanted > remaining ? Self.broken : nil
+                case .endOfFileError:
+                    remaining <= 0 ? NSError(domain: NSOSStatusErrorDomain, code: Int(kAudioFileEndOfFileError)) : nil
+                case .emptyError: remaining <= 0 ? Self.emptyError : nil
+                case .alwaysEmptyError: Self.emptyError
+                case .brokenAfterActual:
+                    remaining <= 0 ? NSError(domain: NSOSStatusErrorDomain, code: Int(kAudioFileInvalidFileError)) : nil
                 }
             if let failure {
                 piece.frameLength = 0
-                position = actual
                 throw failure
             }
-            let given = min(wanted, remaining)
+            let given = min(Int(count), remaining)
             let data = piece.floatChannelData![0]
             for frame in 0..<given { data[frame] = Float(position + frame) }
             piece.frameLength = AVAudioFrameCount(given)
@@ -260,32 +198,28 @@ struct AudioFileLoadTests {
     private func readWith(_ reader: FakeReader) throws -> (ok: Bool, buffer: AVAudioPCMBuffer) {
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 100_000))
-        let ok = AudioFile.readAll(
-            length: 100_000, into: buffer, seek: reader.seek, read: { try reader.read(into: $0, count: $1) })
+        let ok = AudioFile.readAll(length: 100_000, into: buffer) { try reader.read(into: $0, count: $1) }
         return (ok, buffer)
     }
 
     @Test(
-        "見出しより短いファイルは、read が終わりの手前をどう返しても (OS ごとの返し方)、読めた所までを書いた値で返す",
-        arguments: [FakeReader.Style.throwsWhenAskedPastEnd, .returnsShortThenThrows], [50_000, 1, 99_999])
+        "見出しより短いファイルは、終わりの誤りが -39 (macOS 27) でも中身の無い誤り (macOS 26) でも、読めた所までを書いた値で返す",
+        arguments: [FakeReader.Style.endOfFileError, .emptyError], [50_000, 1])
     func truncatedReaders(_ style: FakeReader.Style, _ actual: Int) throws {
-        let reader = FakeReader(style, actual: actual)
-        let (ok, buffer) = try readWith(reader)
+        let (ok, buffer) = try readWith(FakeReader(style, actual: actual))
         #expect(ok)
         #expect(Int(buffer.frameLength) == actual)
         let data = UnsafeBufferPointer(start: try #require(buffer.floatChannelData)[0], count: Int(buffer.frameLength))
         #expect(data.elementsEqual((0..<actual).map(Float.init)))
-        // 半分ずつ詰めるので、read の回数は長さの桁 (2 を底に) の数倍に収まる
-        #expect(reader.reads < 80, "read の回数: \(reader.reads)")
     }
 
-    @Test("1 標本も読めずに終わりの誤りを投げ続ける読み手は、読めない (unreadable)")
+    @Test("1 標本も読めずに誤りを投げる読み手は、終わりの合図の形でも読めない (unreadable)")
     func alwaysThrowingReaderIsUnreadable() throws {
-        let (ok, _) = try readWith(FakeReader(.alwaysThrows, actual: 50_000))
+        let (ok, _) = try readWith(FakeReader(.alwaysEmptyError, actual: 50_000))
         #expect(!ok)
     }
 
-    @Test("途中から終わり以外の誤りを投げる読み手は、1 標本ずつにしても読めなければ、読めた所があっても unreadable")
+    @Test("途中から中身のある (終わりの合図でない) 誤りを投げる読み手は、読めた所があっても unreadable")
     func brokenReaderIsUnreadable() throws {
         let (ok, _) = try readWith(FakeReader(.brokenAfterActual, actual: 50_000))
         #expect(!ok)
