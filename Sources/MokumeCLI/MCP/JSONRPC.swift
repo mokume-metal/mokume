@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 /// 標準入出力でやりとりする JSON-RPC の 1 往復。
 ///
@@ -68,17 +69,13 @@ nonisolated enum JSONRPC {
     /// `JSONSerialization` は桁の多い数を `NSDecimalNumber` で渡す。`as? Int` は端数を捨て
     /// (`12345678901234567.5` → 12345678901234567)、`doubleValue` は端数を丸めて消す
     /// (`1.00000000000000000000001` → 1.0) ので、どちらで決めても端数のある数を整数と読む。
-    /// 10 進の値は 10 進のまま、浮動小数は浮動小数のまま (2 進の値はどれも正確) 見る。
+    /// 10 進の値は 10 進のまま (撮る側が `observe-request` を読むときと同じ ``WholeDecimal``)、浮動小数は
+    /// 浮動小数のまま (2 進の値はどれも正確) 見る。**10 進の値が正確なのは仮数の 38 桁まで**で、39 桁以上の
+    /// 綴りは `JSONSerialization` が `NSDecimalNumber` にする段で丸める (45 桁の `1.000…0001` は 1 として
+    /// 届き、整数と読む)。
     static func wholeNumber(_ number: NSNumber) -> Int? {
         if let decimal = number as? NSDecimalNumber {
-            var value = decimal.decimalValue
-            guard !value.isNaN else { return nil }
-            var rounded = Decimal()
-            NSDecimalRound(&rounded, &value, 0, .plain)
-            guard rounded == value else { return nil }
-            if value > Decimal(Int.max) { return .max }
-            if value < Decimal(Int.min) { return .min }
-            return Int(NSDecimalNumber(decimal: value).stringValue)
+            return WholeDecimal.integer(decimal.decimalValue)
         }
         if CFNumberIsFloatType(number) {
             let double = number.doubleValue
