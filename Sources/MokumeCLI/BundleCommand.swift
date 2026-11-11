@@ -240,7 +240,7 @@ enum BundleCommand {
         }
     }
 
-    /// 組み立ての一時の置き場。`--out` の直下の `.mokume-bundle-<印>-<pid>-<UUID>/` で、中に `<name>.app` と
+    /// 組み立ての一時の置き場。`--out` の直下の `.mokume-bundle-<作品の印>-<機械の印>-<pid>-<乱数>/` で、中に `<name>.app` と
     /// (仕上げの後は) 紙を持つ。**`--out` の中に置くのは、公開を同じボリュームの中の rename で済ませる
     /// ため** (別のボリュームからは 1 手で入れ替えられない)。
     ///
@@ -522,7 +522,7 @@ enum BundleCommand {
 
     // MARK: - 前の出力を退ける
 
-    /// 一時の置き場の名前の頭 (`.mokume-bundle-<印>-<pid>-<UUID>`)。
+    /// 一時の置き場の名前の頭 (`.mokume-bundle-<作品の印>-<機械の印>-<pid>-<乱数>`)。
     static let stagingPrefix = ".mokume-bundle-"
 
     /// 入れ替えの相手 (``Staging/incoming``) の名前の尻。
@@ -531,16 +531,54 @@ enum BundleCommand {
     /// 入れ替えを持たないボリュームで前の版を退けておく場所 (``Staging/previous``) の名前の尻。
     static let previousSuffix = ".previous"
 
-    /// 置き場の名前に入れる、作品名の短い印 (名前の UTF-8 の SHA-256 の頭 8 バイトを 16 進で)。作品名
+    /// 置き場の名前に入れる、作品名の短い印 (名前の UTF-8 の SHA-256 の頭 4 バイトを 16 進で)。作品名
     /// そのものを入れるとファイル名の上限を越えうるので、プロセスをまたいで同じになる短い印で代える。
+    /// 同じ `--out` の別の作品と印が重なる見込みは 2^-32 で、重なっても置き場そのものは中身
+    /// (``isOwnRemnant(_:name:)``) も見る。
     static func remnantMark(for identity: AppIdentity) -> String {
-        SHA256.hash(data: Data(identity.name.utf8)).prefix(8)
+        SHA256.hash(data: Data(identity.name.utf8)).prefix(4)
             .map { String(format: "%02x", $0) }.joined()
     }
 
-    /// 一時の置き場の名前。
-    static func stagingName(for identity: AppIdentity, owner: pid_t, id: UUID = UUID()) -> String {
-        "\(stagingPrefix)\(remnantMark(for: identity))-\(owner)-\(id.uuidString)"
+    /// この機械の短い印。**pid の生死はその機械の中でしか引けない** — 共有ボリューム (SMB・NFS) の `--out` には
+    /// 別の機械の `mokume bundle` の作業中の置き場が並びうるので、片付けは自分の機械の印を持つものだけを見る。
+    ///
+    /// 元はホスト名ではなく機械の UUID (`gethostuuid`)。macOS のホスト名はつなぐネットワークで変わりうるので、
+    /// 変わると自分の残り (戻すべき前の版も) を別の機械のものとみなして放っておくことになる。UUID を
+    /// 引けなければホスト名に倒す。
+    static let machineMark: String = {
+        var raw = [UInt8](repeating: 0, count: 16)
+        var wait = timespec(tv_sec: 0, tv_nsec: 0)
+        let source: Data
+        if gethostuuid(&raw, &wait) == 0 {
+            source = Data(raw)
+        } else {
+            source = Data(ProcessInfo.processInfo.hostName.utf8)
+        }
+        return SHA256.hash(data: source).prefix(4).map { String(format: "%02x", $0) }.joined()
+    }()
+
+    /// 一時の置き場の名前 (`.mokume-bundle-<作品の印>-<機械の印>-<pid>-<乱数>`)。
+    ///
+    /// **短く保つ。** 置き場の中の `<name>.app/Contents/…` は `--out` の直下より置き場の名前の分だけ深く、
+    /// 長い名前 (上限まで使った多バイトの名前) ではパス長の上限 (1024 バイト) に近い。印はどれも 8 桁の
+    /// 16 進で、同じプロセスの中の置き場は乱数の 8 桁で分ける。
+    static func stagingName(
+        for identity: AppIdentity, owner: pid_t, machine: String = machineMark,
+        id: UInt32 = .random(in: .min ... .max)
+    ) -> String {
+        "\(stagingPrefix)\(remnantMark(for: identity))-\(machine)-\(owner)-\(hex(id))"
+    }
+
+    /// 8 桁の 16 進 (小文字)。
+    private static func hex(_ value: UInt32) -> String {
+        let digits = String(value, radix: 16)
+        return String(repeating: "0", count: 8 - digits.count) + digits
+    }
+
+    /// 印の形 (8 桁の小文字の 16 進) か。
+    private static func isMark(_ text: Substring) -> Bool {
+        text.count == 8 && text.allSatisfy { $0.isHexDigit && !$0.isUppercase }
     }
 
     /// 残りの役。
@@ -553,8 +591,10 @@ enum BundleCommand {
         case previous
     }
 
-    /// 名前が、**この作品の**一時の置き場 (か、その兄弟) の形なら、役と持ち主の pid。形が外れれば `nil`。
-    static func remnant(_ fileName: String, identity: AppIdentity) -> (role: RemnantRole, owner: pid_t)? {
+    /// 名前が、**この作品の**一時の置き場 (か、その兄弟) の形なら、役と持ち主 (機械の印と pid)。形が外れれば `nil`。
+    static func remnant(_ fileName: String, identity: AppIdentity)
+        -> (role: RemnantRole, machine: String, owner: pid_t)?
+    {
         let head = "\(stagingPrefix)\(remnantMark(for: identity))-"
         guard fileName.hasPrefix(head) else { return nil }
         var rest = Substring(fileName.dropFirst(head.count))
@@ -566,12 +606,12 @@ enum BundleCommand {
             role = .previous
             rest = rest.dropLast(previousSuffix.count)
         }
-        let parts = rest.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
-        guard parts.count == 2, !parts[0].isEmpty,
-            parts[0].allSatisfy({ $0.isASCII && $0.isNumber }),
-            let owner = pid_t(parts[0]), owner > 0, UUID(uuidString: String(parts[1])) != nil
+        let parts = rest.split(separator: "-", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count == 3, isMark(parts[0]),
+            !parts[1].isEmpty, parts[1].allSatisfy({ $0.isASCII && $0.isNumber }),
+            let owner = pid_t(parts[1]), owner > 0, isMark(parts[2])
         else { return nil }
-        return (role, owner)
+        return (role, String(parts[0]), owner)
     }
 
     /// 前の版が前の出力を消すのに使っていた一時の名前の形 (`.<name>.app.removing-<UUID>`)。
@@ -589,7 +629,7 @@ enum BundleCommand {
     /// 残った一時の置き場 (か、その兄弟) のうち、**この作品のもの**か。片付けてよいのはこれだけ
     /// (#2500・#3054 の持ち主の確かめと同じ考え方)。持ち主の生死は見ない (``sweepRemnants(in:identity:me:)`` が見る)。
     ///
-    /// 名前が ``remnant(_:identity:)`` の形 (作品名の印が合い、pid と UUID が読める) の実体のディレクトリで
+    /// 名前が ``remnant(_:identity:)`` の形 (作品名の印が合い、機械の印・pid・乱数が読める) の実体のディレクトリで
     /// あること。置き場そのものは、中身が空か、`<name>.app`・`How to open <name>.txt` だけであることも見る。
     /// 別の作品が同じ `--out` に残したものは、印が違うので触れない。リンクは辿らずに断る。
     static func isOwnRemnant(_ url: URL, name identity: AppIdentity) -> Bool {
@@ -608,7 +648,8 @@ enum BundleCommand {
     /// **持ち主のプロセスがもう居ないと言い切れるものだけ** (``AtomicFile/isRunning(_:)``。確かめられなければ
     /// 居ることにする。pid が使い回されていれば、そのプロセスが終わるまで残す — ``AtomicFile`` の先例どおり)。
     /// 同じ `--out` へ同時に走っている別の `mokume bundle` の作業中のものには触れない。自分の pid のものも
-    /// 片付けない。
+    /// 片付けない。**別の機械の印 (``machineMark``) を持つものは、生死を引けないので生きているとみなす**
+    /// (共有ボリュームの `--out`)。
     ///
     /// **先に、退けたまま止まった前の版を戻す。** 入れ替えを持たないボリュームでは前の版を ``Staging/previous``
     /// へ退けてから新しい版を置く (2 手) ので、その間に止められると `<name>.app` が無い。`<name>.app` が無く、
@@ -624,8 +665,9 @@ enum BundleCommand {
                 try? FileManager.default.removeItem(at: url)
                 continue
             }
-            guard let remnant = remnant(entry, identity: identity), remnant.owner != me,
-                !AtomicFile.isRunning(remnant.owner), isOwnRemnant(url, name: identity)
+            guard let remnant = remnant(entry, identity: identity), remnant.machine == machineMark,
+                remnant.owner != me, !AtomicFile.isRunning(remnant.owner),
+                isOwnRemnant(url, name: identity)
             else { continue }
             found.append((url, remnant.role))
         }
@@ -637,7 +679,8 @@ enum BundleCommand {
             }
         }
         for (url, role) in found where role != .previous {
-            // 入れ替えの相手は、`<name>.app` が在るときだけ要らない (無ければ唯一の版かもしれない)
+            // 入れ替えの相手は、`<name>.app` が在るときだけ消す。無ければ残すだけで、`<name>.app` へは戻さない
+            // (中身が前の版か、検めを通った新しい版かを名前で見分けられない)。次に `<name>.app` が置かれた回に片付く
             if role == .incoming, kind(of: app) == nil { continue }
             try? FileManager.default.removeItem(at: url)
         }
@@ -711,6 +754,8 @@ enum BundleCommand {
         let stagedNote = staging.directory.appendingPathComponent(noteFileName(for: identity))
         // 1 で、前に何も無かった場所へ置いた紙 (初回に `.app` を置けなければ片付ける)
         var placedNote: URL?
+        // 1 で置いた紙
+        var publishedNote: URL?
         if kind(of: stagedNote) != nil {
             let note = try replaceableNote(for: identity, in: out)
             let existed = kind(of: note) != nil
@@ -719,6 +764,7 @@ enum BundleCommand {
             } catch {
                 throw .cannotCreate(path: note.path, reason: Diagnostics.failureText(error))
             }
+            publishedNote = note
             if !existed { placedNote = note }
         }
         do {
@@ -733,10 +779,16 @@ enum BundleCommand {
                 }
             }
         } catch {
-            if !replacing, let placedNote { steps.remove(placedNote) }
+            // **`<name>.app` がいまも無いときだけ。** 同時に走った別の初回の公開が先に `.app` を置いていれば、
+            // この紙はその隣の紙 (中身は同じ文) になっている
+            if !replacing, let placedNote, kind(of: app) == nil { steps.remove(placedNote) }
             if let failure = error as? CommandFailure { throw failure }
             throw .cannotCreate(path: app.path, reason: Diagnostics.failureText(error))
         }
+        // **綴りを頼んだ名前に揃える。** 大文字小文字を区別しないボリュームで名前の大文字小文字だけを変えて
+        // 束ね直すと (`Grain` → `grain`)、入れ替えは中身だけを替え、名前は前の綴り (`Grain.app`) のまま残る
+        respell(app, steps: steps)
+        if let publishedNote { respell(publishedNote, steps: steps) }
         for leftover in [staging.incoming, staging.previous] where kind(of: leftover) != nil {
             steps.remove(leftover)
         }
@@ -761,11 +813,27 @@ enum BundleCommand {
                 throw CommandFailure.cannotCreate(
                     path: app.path,
                     reason: "\(Diagnostics.failureText(failure))\nThe previous version was moved aside to"
-                        + " \(staging.previous.path) and could not be put back. It is kept there: running"
-                        + " this again puts it back, or move it back to \(app.path) by hand")
+                        + " \(staging.previous.path) and could not be put back, so it is kept there."
+                        + " While nothing is at \(app.path), running this again puts it back."
+                        + " Do not put anything there before moving it back by hand: once something is"
+                        + " there, the next run removes the version kept aside as a leftover")
             }
             throw failure
         }
+    }
+
+    /// `url` の場所に在るものの名前の綴りが `url` の最後の部品と違えば (大文字小文字を区別しないボリュームで、
+    /// 大文字小文字だけが違う)、頼んだ綴りへ付け替える。付け替えられなくても投げない (中身は公開できている)。
+    private static func respell(_ url: URL, steps: PublishSteps) {
+        let wanted = url.lastPathComponent
+        let parent = url.deletingLastPathComponent()
+        guard let listing = try? FileManager.default.contentsOfDirectory(atPath: parent.path),
+            !listing.contains(wanted),
+            let actual = listing.first(where: {
+                $0.compare(wanted, options: .caseInsensitive) == .orderedSame
+            })
+        else { return }
+        try? steps.replace(parent.appendingPathComponent(actual), url)
     }
 
     /// `from` を `to` へ動かす。**行き先に在れば断る** (`RENAME_EXCL`)。ボリュームが `RENAME_EXCL` を
@@ -1039,7 +1107,10 @@ enum BundleCommand {
         // 作り直した `.app` が残る。ここは、前に済んだ確かめから書くまでに変わった分の守り
         let url = try replaceableNote(for: identity, in: app.deletingLastPathComponent())
         do {
-            try openingNote(for: identity).write(to: url, atomically: true, encoding: .utf8)
+            // **一時ファイルを経ずに書く** (#3981)。書く先は一時の置き場の中で、`--out` への公開は rename で
+            // 行うので、ここで原子的に書く必要が無い。経由すると、書く途中で強制終了されたときに置き場の中へ
+            // 知らない名前が残り、その置き場は片付けの対象から外れる (``isOwnRemnant(_:name:)``)
+            try Data(openingNote(for: identity).utf8).write(to: url)
         } catch {
             // 行き先がディレクトリのときは確かめで先に断る (#3054)。ここへ来るのは書けなかった事情
             // (置き場が無い・権限が無いなど) で、OS の文面で名乗る (#2839)

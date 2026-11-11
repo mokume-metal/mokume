@@ -45,13 +45,15 @@ struct BundleRepublishTests {
         return try Data(contentsOf: published.note)
     }
 
-    /// 終わって回収した子の pid (= もう居ない持ち主。落ちた `mokume bundle` の代わり)。
+    /// もう居ない持ち主の pid (落ちた `mokume bundle` の代わり)。**使い回されない番号を使う** — 終わった子の
+    /// pid は、並行して走る検査が起こす子に使い回されうる (そうなると残りを生きている持ち主のものとみなし、
+    /// 検査が時々落ちる)。macOS の pid の上限 (99999) を越える番号は、どのプロセスも持たない。
     private func goneOwner() throws -> pid_t {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
-        try process.run()
-        process.waitUntilExit()
-        return process.processIdentifier
+        let pid: pid_t = 99_999_999
+        let probed = kill(pid, 0)
+        let missing = errno
+        #expect(probed == -1 && missing == ESRCH, "居ないはずの pid が居る")
+        return pid
     }
 
     /// 生きている子 (= 同じ `--out` へ同時に走っている別の `mokume bundle` の代わり)。呼び元が止める。
@@ -522,6 +524,85 @@ struct BundleRepublishTests {
         #expect(look(at: out).version == "3.0")
     }
 
+    /// **別の機械の印を持つ残りは、生死を引けないので片付けない** (共有ボリュームの `--out` で、別の機械が
+    /// 作業中かもしれない)。同じ pid の番号でも、自分の機械の印のものは片付ける。
+    @Test("別の機械の印を持つ残りは片付けず、自分の機械の落ちた持ち主のものだけ片付ける")
+    func anotherMachinesLeftoversAreKept() throws {
+        let (root, executable, out) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try publishOld(executable, into: out)
+        let gone = try goneOwner()
+        let elsewhere = BundleCommand.machineMark == "00000000" ? "11111111" : "00000000"
+        let theirs = [
+            try place(
+                BundleCommand.stagingName(for: old, owner: gone, machine: elsewhere), holding: ["Grain.app"],
+                in: out),
+            try place(
+                BundleCommand.stagingName(for: old, owner: gone, machine: elsewhere)
+                    + BundleCommand.previousSuffix, holding: ["Contents"], in: out),
+        ]
+        let ours = try place(remnantName(owner: gone), holding: ["Grain.app"], in: out)
+
+        _ = try BundleCommand.distribute(
+            executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
+            bundles: [], signing: realSigning)
+
+        for directory in theirs {
+            #expect(FileManager.default.fileExists(atPath: directory.path), "別の機械の残りが消えた")
+        }
+        #expect(!FileManager.default.fileExists(atPath: ours.path), "自分の機械の残りが残った")
+    }
+
+    /// **名前の大文字小文字だけを変えて束ね直すと、`.app` と紙の綴りが新しい名前に揃う** (前の作りと同じ)。
+    /// 入れ替えは中身だけを替えるので、綴りを付け替えないと `Grain.app` のまま中身が `grain` になる。
+    /// 大文字小文字を区別するボリュームでは別の名前なので、区別しないボリュームのときだけ見る。
+    @Test("名前の大文字小文字だけを変えて束ね直すと、.app と紙の綴りが新しい名前に揃う")
+    func aCaseOnlyRenameRespellsTheApp() throws {
+        let (root, executable, out) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try publishOld(executable, into: out)
+        guard FileManager.default.fileExists(atPath: out.appendingPathComponent("GRAIN.app").path) else {
+            return  // 大文字小文字を区別するボリューム
+        }
+        let lower = AppIdentity(name: "grain", identifier: "org.example.grain", version: "3.0")
+
+        let published = try BundleCommand.distribute(
+            executable: executable, identity: lower, minimumSystemVersion: "26.0", into: out, excluding: [],
+            bundles: [], signing: realSigning)
+
+        let names = try FileManager.default.contentsOfDirectory(atPath: out.path).sorted()
+        #expect(names == ["How to open grain.txt", "grain.app"])
+        #expect(version(of: published.app) == "3.0" && verifies(published.app))
+    }
+
+    /// **同時に走った初回の公開の片方が `.app` を置けなくても、もう片方が置いた `.app` の隣の紙を消さない。**
+    /// 紙を片付けるのは、`<name>.app` がいまも無いときだけ。
+    @Test("初回に Grain.app を置けなくても、別の公開が先に置いていれば紙を消さない")
+    func aLostFirstPublishKeepsTheWinnersNote() throws {
+        let (root, executable, out) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = out.appendingPathComponent("Grain.app", isDirectory: true)
+        let note = out.appendingPathComponent(BundleCommand.noteFileName(for: new))
+        let live = BundleCommand.PublishSteps.live
+        // 置こうとした瞬間に、別の公開が先に `Grain.app` を置いた
+        let steps = BundleCommand.PublishSteps(
+            replace: live.replace, swap: live.swap,
+            move: { from, to in
+                guard to.lastPathComponent == app.lastPathComponent else { return try live.move(from, to) }
+                try FileManager.default.createDirectory(at: to, withIntermediateDirectories: true)
+                try live.move(from, to)
+            },
+            remove: live.remove)
+
+        #expect(throws: CommandFailure.self) {
+            try BundleCommand.distribute(
+                executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
+                bundles: [], signing: realSigning, steps: steps)
+        }
+        #expect(FileManager.default.fileExists(atPath: app.path))
+        #expect(FileManager.default.fileExists(atPath: note.path), "先に置かれた Grain.app の隣の紙が消えた")
+    }
+
     /// **退けたまま止まった前の版は、ビルドの前に戻す。** ビルドが通った後だけにすると、コンパイルの誤りで
     /// 止まる回が続くあいだ、前の版が隠れたまま残る。中身の無い `Package.swift` なので、ビルドへ進めば
     /// `dump-package` で止まる — 止まった後に戻っていれば、戻したのはビルドの前である。
@@ -558,6 +639,9 @@ struct BundleRepublishTests {
         #expect(name.hasPrefix(BundleCommand.stagingPrefix))
         #expect(!name.contains("Grain"))
         #expect(BundleCommand.remnant(name, identity: old)?.owner == getpid())
+        #expect(BundleCommand.remnant(name, identity: old)?.machine == BundleCommand.machineMark)
+        // 置き場の名前のぶん、`<name>.app/Contents/…` が深くなる。前の作り (`.mokume-bundle-<UUID>`) より長くしない
+        #expect(name.utf8.count <= ".mokume-bundle-\(UUID().uuidString)".utf8.count)
         #expect(BundleCommand.remnant(name, identity: old)?.role == .staging)
         #expect(BundleCommand.remnant(name, identity: AppIdentity(name: "Other", identifier: "o", version: "1")) == nil)
         #expect(staging.app.lastPathComponent == "Grain.app")
