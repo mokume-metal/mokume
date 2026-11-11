@@ -87,11 +87,14 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     static func isRecordFile(_ path: String) -> Bool {
         let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else { return false }
-        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { close(descriptor) }
         var status = stat()
         guard fstat(descriptor, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else { return false }
-        let head = (try? handle.read(upToCount: 32)) ?? Data()
-        return head.starts(with: Data("{\"schemaVersion\":".utf8))
+        // 通常ファイルは 1 度の read で頭の 32 バイト (短ければ全部) が返る
+        var head = [UInt8](repeating: 0, count: 32)
+        let count = head.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
+        guard count > 0 else { return false }
+        return head[..<count].starts(with: Array("{\"schemaVersion\":".utf8))
     }
 
     /// 起動の口。**記録しない実行 (ホストのアプリの中の ``SketchView``・書き出しの子) でも、合図は読まずに環境
