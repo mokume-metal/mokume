@@ -159,6 +159,219 @@ public struct Table: Equatable, Sendable {
         write(row, index, value, call: "setString")
     }
 
+    /// セルに整数を書く。`row` は 0 から数えた行の番号、`column` は列の名前。
+    ///
+    /// <!-- example: 文脈 var hits = Table(columns: ["frame", "count"]) -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     hits.addRow([Float(frameCount), 0])
+    ///     hits.setInt(hits.rowCount - 1, "count", 3)
+    /// }
+    /// ```
+    ///
+    /// 整数の綴りで書く (`3` は `"3"`。``setFloat(_:_:_:)-(_,String,_)`` は `"3.0"`)。``getInt(_:_:)-(_,String)``
+    /// で読み直すと同じ整数に戻る。
+    ///
+    /// 無い列・表の外の行の扱いは ``setFloat(_:_:_:)-(_,String,_)`` と同じ (書かずに、初回だけ知らせる)。
+    public mutating func setInt(_ row: Int, _ column: String, _ value: Int) {
+        let index = TableValues.column(named: column, in: titles, call: "setInt")
+        write(row, index, String(value), call: "setInt")
+    }
+
+    /// セルに整数を書く。`column` は 0 から数えた列の番号。見出しの無い表はこちらで書く。
+    ///
+    /// <!-- example: 文脈 var counts: Table! -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     counts.setInt(0, 1, counts.getInt(0, 1) + 1)
+    /// }
+    /// ```
+    ///
+    /// 綴りと、無い列・表の外の行の扱いは ``setInt(_:_:_:)-(_,String,_)`` と同じ。
+    public mutating func setInt(_ row: Int, _ column: Int, _ value: Int) {
+        let index = TableValues.column(numbered: column, width: columnCount, call: "setInt")
+        write(row, index, String(value), call: "setInt")
+    }
+
+    /// 行をすべて除く。見出し (列の名前と数) は残る。
+    ///
+    /// <!-- example: 文脈 var log = Table(columns: ["frame", "x", "y"]) -->
+    /// ```swift
+    /// func keyPressed() {
+    ///     if key == "c" { log.clearRows() }
+    /// }
+    /// ```
+    ///
+    /// 見出しの行を読まなかった表は、列の数を行から数えるので、行を除くと ``columnCount`` は 0 になる。
+    public mutating func clearRows() {
+        cells.removeAll()
+    }
+
+    /// 行を 1 つ除く。`row` は 0 から数えた行の番号で、後ろの行は 1 つずつ前へ詰まる (順は保つ)。
+    ///
+    /// <!-- example: 文脈 var log = Table(columns: ["frame", "x", "y"]) -->
+    /// ```swift
+    /// func mouseDragged(deltaX: Float, deltaY: Float) {
+    ///     log.addRow([Float(frameCount), mouseX, mouseY])
+    ///     if log.rowCount > 100 { log.removeRow(0) }
+    /// }
+    /// ```
+    ///
+    /// **表の外の行には何もせず、初回だけ理由を知らせる** (``setFloat(_:_:_:)-(_,String,_)`` と同じく
+    /// 投げない。[ADR-0020] 決定 5)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public mutating func removeRow(_ row: Int) {
+        guard cells.indices.contains(row) else {
+            TableValues.warnOnce(
+                .rowOutOfRange(call: "removeRow"),
+                "removeRow(): there is no row \(row) — \(TableValues.extent(rowCount, "row")). "
+                    + "Nothing was removed")
+            return
+        }
+        cells.remove(at: row)
+    }
+
+    /// 列を 1 つ除く。`column` は列の名前で、右の列は 1 つずつ左へ詰まる。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     table.removeColumn("notes")
+    ///     try saveTable(table, "out/without-notes.csv")
+    /// }
+    /// ```
+    ///
+    /// **無い列には何もせず、初回だけ理由を知らせる** (表にある列の名前を添える。投げない)。
+    public mutating func removeColumn(_ column: String) {
+        remove(column: TableValues.column(named: column, in: titles, call: "removeColumn"))
+    }
+
+    /// 列を 1 つ除く。`column` は 0 から数えた列の番号。見出しの無い表はこちらで除く。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// func keyPressed() {
+    ///     if key == "x", table.columnCount > 0 { table.removeColumn(table.columnCount - 1) }
+    /// }
+    /// ```
+    ///
+    /// 無い列の扱いは ``removeColumn(_:)-(String)`` と同じ。
+    public mutating func removeColumn(_ column: Int) {
+        remove(column: TableValues.column(numbered: column, width: columnCount, call: "removeColumn"))
+    }
+
+    /// すべてのセルの前後の空白を落とす。空白には改行とタブも含める (`"  12 \t"` は `"12"`)。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     table = try loadTable("data/survey.csv", header: true)
+    ///     table.trim()
+    /// }
+    /// ```
+    ///
+    /// 整えるのはセルだけで、見出し (列の名前) は書き換えない。数として読む口
+    /// (``getFloat(_:_:)-(_,String)``) は前後の空白を落として読むので、整えなくても数は読める。
+    /// 整えるのは、文字のまま比べる・書き出すときである。
+    public mutating func trim() {
+        rewrite(column: nil) { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    /// 列の名前を名指して、その列のセルだけ前後の空白を落とす。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// table.trim("name")
+    /// ```
+    ///
+    /// 落とす空白は ``trim()`` と同じ。**無い列には何もせず、初回だけ理由を知らせる。**
+    public mutating func trim(_ column: String) {
+        let index = TableValues.column(named: column, in: titles, call: "trim")
+        guard let index else { return }
+        rewrite(column: index) { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    /// 列の番号 (0 から) を名指して、その列のセルだけ前後の空白を落とす。見出しの無い表はこちら。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// table.trim(0)
+    /// ```
+    ///
+    /// 扱いは ``trim(_:)-(String)`` と同じ。
+    public mutating func trim(_ column: Int) {
+        let index = TableValues.column(numbered: column, width: columnCount, call: "trim")
+        guard let index else { return }
+        rewrite(column: index) { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    /// `tokens` に含まれるどれかの文字を、すべてのセルから除く (`removeTokens(",$ ")` は `"$1,200"` を
+    /// `"1200"` にする)。
+    ///
+    /// <!-- example: 文脈 var prices: Table! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     prices = try loadTable("data/prices.csv", header: true)
+    ///     prices.removeTokens(",$ ")
+    /// }
+    /// ```
+    ///
+    /// `tokens` は並びではなく、1 文字ずつの集まりとして読む (`",$"` はカンマと `$` のどちらも除く)。
+    /// 文字は Swift の `Character` (書記素) で比べる。整えるのはセルだけで、見出しは書き換えない。
+    public mutating func removeTokens(_ tokens: String) {
+        let removed = Set(tokens)
+        rewrite(column: nil) { $0.filter { !removed.contains($0) } }
+    }
+
+    /// 列の名前を名指して、その列のセルだけから `tokens` のどれかの文字を除く。
+    ///
+    /// <!-- example: 文脈 var prices: Table! -->
+    /// ```swift
+    /// prices.removeTokens(",$", "price")
+    /// ```
+    ///
+    /// 除く文字は ``removeTokens(_:)`` と同じ。**無い列には何もせず、初回だけ理由を知らせる。**
+    public mutating func removeTokens(_ tokens: String, _ column: String) {
+        let index = TableValues.column(named: column, in: titles, call: "removeTokens")
+        guard let index else { return }
+        let removed = Set(tokens)
+        rewrite(column: index) { $0.filter { !removed.contains($0) } }
+    }
+
+    /// 列の番号 (0 から) を名指して、その列のセルだけから `tokens` のどれかの文字を除く。
+    ///
+    /// <!-- example: 文脈 var prices: Table! -->
+    /// ```swift
+    /// prices.removeTokens(",$", 1)
+    /// ```
+    ///
+    /// 扱いは ``removeTokens(_:_:)-(_,String)`` と同じ。
+    public mutating func removeTokens(_ tokens: String, _ column: Int) {
+        let index = TableValues.column(numbered: column, width: columnCount, call: "removeTokens")
+        guard let index else { return }
+        let removed = Set(tokens)
+        rewrite(column: index) { $0.filter { !removed.contains($0) } }
+    }
+
+    /// 列を除く共通の道。列が解けなかったときは、解く側が既に知らせている。
+    private mutating func remove(column: Int?) {
+        guard let column else { return }
+        titles?.remove(at: column)
+        for row in cells.indices { cells[row].remove(at: column) }
+    }
+
+    /// セルを書き換える共通の道。`column` が `nil` ならすべての列。
+    private mutating func rewrite(column: Int?, _ change: (String) -> String) {
+        for row in cells.indices {
+            if let column {
+                cells[row][column] = change(cells[row][column])
+            } else {
+                cells[row] = cells[row].map(change)
+            }
+        }
+    }
+
     /// 行の番号と列の名前で、セルを文字のまま読む。`row` は 0 から数えた行の番号。
     ///
     /// <!-- example: 文脈 var table: Table! -->

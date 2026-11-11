@@ -9,8 +9,8 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 23 |
-| 入れる | 3 |
+| 同等 | 24 |
+| 入れる | 2 |
 | 作例待ち | 1 |
 | 持たない | 7 |
 | 計 | 34 |
@@ -26,13 +26,13 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 ## 入れるの束
 
-「入れる」の API は、近いものごとに 6 本の `Feature` で入れる。表の「入れる」の行は当初 4 つ (いまは 3 つ。[#3711] で入れた `PImage.resize()` は「同等」に移した) で、欠けた形 (行は「同等」のまま、理由の欄に「無い形」と書いたもの) も束に入れた。
+「入れる」の API は、近いものごとに 6 本の `Feature` で入れる。表の「入れる」の行は当初 4 つ (いまは 2 つ。[#3711] で入れた `PImage.resize()` と [#3713] で入れた `PImage.mask()` は「同等」に移した) で、欠けた形 (行は「同等」のまま、理由の欄に「無い形」と書いたもの) も束に入れた。
 
 | 束 | API | 表の行 |
 | --- | --- | --- |
 | [#3711] 切り出しと大きさの変更 (入れた) | `Image.cropped(x:y:width:height:)`・`Image.resized(width:height:)` | `PImage.get()` の領域の形・`PImage.resize()` |
-| [#3713] マスク | `Image.mask(_:)` | `PImage.mask()` |
-| [#3714] 画面の写し | `Sketch.get()`・`get(x, y, w, h)` と、`Canvas` の同じもの | 関数 `get()` の領域と全体の形 |
+| [#3713] マスク (入れた) | `Image.mask(_:)` | `PImage.mask()` |
+| [#3714] 画面の写し (入れた) | `Sketch.get()`・`get(_:_:_:_:)`・`get(in:)` と、`Canvas` の同じもの | 関数 `get()` の領域と全体の形 |
 | [#3715] URL からの読み込み | `loadImage`・`requestImage` の URL と、種類を渡す引数 | `loadImage()`・`requestImage()` の URL の形 |
 | [#3716] `filter` の残りの効果 | `Effect` の `.posterize`・`.erode`・`.dilate` と、不透明にする効果 | `PImage.filter()`・関数 `filter()` の残りの 4 つ |
 | [#3717] テクスチャの読み方 | `textureMode`・`textureWrap` | `textureMode()`・`textureWrap()` |
@@ -46,8 +46,8 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | 領域の切り出し `PImage.get(x, y, w, h)` | `Image.cropped(x:y:width:height:)` | 同等 | 新しい画像を返し、元を変えない (名前は [#2449] と [#2580] の規則 3)。画像をはみ出す範囲は透明になり、重ならない範囲も投げずに透明の画像を返す。幅か高さが 1 を割れば `ImageFailure.unplaceable` を投げる。作業空間の値のまま写す | [#2449]・[#3711] |
 | 領域の `PImage.copy(sx, sy, sw, sh, dx, dy, dw, dh)`・`copy(src, …)` | `image(src, dx, dy, dw, dh, sx, sy, sw, sh)` | 持たない | 画面と描き場所へは、切り出しつきの `image()` で描ける。下地を置き換えるなら `blendMode(.replace)`。画像へ写すときは、描き場所に描いて画面の `get()` ([#3714]) で受けるか、拡縮しないなら `dst.pixels.update { }` の中で `src.get` を読む。画像の中を直に書き換える `copy(sx, …)` を足すと、新しい画像を返す `copy()` と同じ名前で働きが逆になる (規則 2a)。名前を変えて足すなら、作例を持つ別の `Feature` から | [#2449]・[#2580] |
 | `PImage.resize()` | `Image.resized(width:height:)` | 同等 | Processing の `resize` は自分を変えるが、`Image` の大きさは `let` で、新しい画像を返す (名前は [#2449])。読み方は縦横それぞれで固定して決定論を保つ: 縮める向きは作業空間 (線形・乗算済み) のまま光の量で平均し (覆う面積の割合で混ぜる。PR [#3691] のコマの縮小と同じく、エンコードした値では混ぜない)、広げる向きは `image()` が引き伸ばすときと同じく中心どうしの間を直線で補う (端は延ばす) | [#2449]・[#3711] |
-| `PImage.mask()` | — | 入れる | `Image.mask(_:)` で入れる。描画 API に、別の画像の明るさを不透明度にする手段が無い。自分を変える命令形は `set`・`fill` と同じで、Processing と同名同義 | [#2449]・[#3713] |
-| 画面の写しの `get()` | — | 入れる | `Sketch.get()`・`get(x, y, w, h)` (と `Canvas` の同じもの) で入れる。いまは `createImage` と `pixels` の写しで書くしかなく、`pixels` は実際の画素で数えるので、細かさを変えた作品や書き出しの倍率の下で、座標とずれる | [#2449]・[#3714] |
+| `PImage.mask()` | `Image.mask(_:)` | 同等 | 別の画像の明るさ (`brightness(_:)` の物差しで 0〜100 を 0〜1) を不透明度に掛ける。自分を変える命令形は `set`・`fill` と同じで、Processing と同名同義。不透明度は掛ける (置き換えない): 不透明な画像では Processing と同じ結果で、半透明の画素では違う (置き換えを再現できないのは不透明度 0 の画素だけ)。大きさの違うマスクは何も変えず 1 度だけ警告する | [#2449]・[#3713] |
+| 画面の写しの `get()` | `get()`・`get(_:_:_:_:)`・`get(in:)` (`Sketch` と `Canvas`) | 同等 | 画面の全体か領域を新しい `Image` にして返し、後の描画で変わらない。領域も返す画像の大きさも座標の単位で数え (1 画素の `get(x, y)` は実際の画素)、書き出しの倍率の下では光の量で平均して縮める。画面をはみ出す部分は透明で、幅か高さが 1 を割る領域は `ImageFailure.unplaceable` を投げる。3 つとも投げる (Processing は投げない)。`get(in: Rect)` は `rectMode`・`imageMode` に従わない。`Image` に密度 (Processing 4 の `PImage.pixelDensity`) は無い | [#2449]・[#3714] |
 
 ## PImage
 
@@ -65,7 +65,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | `PImage.save()` | `Image.save(_:)` | 同等 | 呼んだその場で書き終えて返る。書けなければ `ImageFailure.unwritable(path:reason:)` を投げる (Processing は `boolean`)。形式は PNG だけで、拡張子では選ばない。**名前が `.png` (大文字小文字を区別しない) で終わらなければ書かずに投げる** (`.svg`・`.jpg`・拡張子を省いた名前も。理由に PNG だけを書くことが載る・[#3723])。行き先の探し方はスケッチの `save(_:)` と同じ。無い形: TIFF・TARGA・JPEG (入力・出力・環境の領域の表 ([#3688]) と同じ。スケッチの `save()` は `.png` 以外の名前でも PNG で書き、1 度だけ知らせる) | [#2449]・PR [#2893]・[#3723] |
 | `PImage.filter()` | `Image.filtered(_:)` | 同等 | Processing は自分を変えるが、`filtered` は新しい画像を返し、元を変えない (規則 3・2a)。`THRESHOLD`・`GRAY`・`INVERT`・`BLUR` は `.threshold(level:)`・`.monochrome`・`.invert`・`.blur(radius:)` に当たる。無い形: `OPAQUE`・`POSTERIZE`・`ERODE`・`DILATE` ([#3716] で入れる) | [#2455]・PR [#3175]・[#3716] |
 | `PImage.resize()` | `Image.resized(width:height:)` | 同等 | 新しい画像を返し、元を変えない (「外した 4 つ」)。縮める向きは光の量で平均し、広げる向きは `image()` と同じ直線の補い。無い形: 0 で縦横比を保つ `resize(150, 0)` (1 を割る指定を 1×1 へ丸めない規則と衝突するので、`ImageFailure.unplaceable` を投げる) | [#2449]・[#3711] |
-| `PImage.mask()` | — | 入れる | `mask(_:)` で入れる (「外した 4 つ」)。無い形: 整数の配列を渡す `mask(maskArray)` (必要になってから足す) | [#2449]・[#3713] |
+| `PImage.mask()` | `Image.mask(_:)` | 同等 | マスクの明るさ (`brightness(_:)` の物差し) を不透明度に掛ける (「外した 4 つ」)。Processing は灰色を前提に青のチャンネルを読み、不透明度を置き換える。灰色の不透明なマスクと画像では同じ結果になる。無い形: 整数の配列を渡す `mask(maskArray)` (必要になってから足す) | [#2449]・[#3713] |
 | `PImage.blend()` | — (描き場所へ `blendMode(_:)` と `image(src, dx, dy, dw, dh, sx, sy, sw, sh)`) | 持たない | 混ぜ方は描画 API の `blendMode` が持ち、画像を直に混ぜる API は足さない (`copy(sx, …)` と同じ理由)。Processing の 14 のモードのうち 9 つ (BLEND・ADD・SUBTRACT・DARKEST・LIGHTEST・DIFFERENCE・EXCLUSION・MULTIPLY・SCREEN) は `BlendMode` にある。OVERLAY・HARD_LIGHT・SOFT_LIGHT・DODGE・BURN の 5 つは無く、`blendMode()` の行 (色・変換・描画の領域の表) で扱う | [#2449]・[#2580] |
 | `PImage.blendColor()` | — | 作例待ち | 2 色を混ぜて 1 色を返す関数 (所属は `PImage` だが、category は `color` なので色の領域の式にも入る。数えるのはこの表だけにする)。割れる点: Processing は 8 ビットの整数の色を 0〜255 に収める (`ADD` は 255 で頭打ち) が、mokume の混ぜ方は線形・乗算済みで、`.add` は 1.0 を超えた値を残す。CPU の関数を Processing の式に寄せるか、描画 API (`blendMode`) と同じ値を返すかで、同じモードの結果が変わる。残りの 5 つのモードも `BlendMode` に無く、`blendMode()` の行が先に決める。使う作例が来たら選ぶ | — |
 
@@ -90,11 +90,11 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `blend()` | — (`blendMode(_:)` と `image(src, dx, dy, dw, dh, sx, sy, sw, sh)`) | 持たない | 画像と画面の領域を混ぜる関数。混ぜ方は描画 API の `blendMode` が持ち、同じことを `image()` で描いて書ける。モードの欠けは `PImage.blend()` の行と同じ | [#2449]・[#2580] |
-| `copy()` | — (`image(src, dx, dy, dw, dh, sx, sy, sw, sh)`) | 持たない | 画像の領域を画面へ写すには、切り出しつきの `image()` で描く。画面の領域を画面へ写すには、画面の `get()` ([#3714]) で画像にして、`image(shot, …)` で置く。透けた画像は下地と混ざる (置き換えるなら `blendMode(.replace)`) | [#2449]・[#3714] |
+| `copy()` | — (`image(src, dx, dy, dw, dh, sx, sy, sw, sh)`) | 持たない | 画像の領域を画面へ写すには、切り出しつきの `image()` で描く。画面の領域を画面へ写すには、画面の `get()` ([#3714]) で画像にして、`image(shot, …)` で置く (`copy(sx, sy, sw, sh, dx, dy, dw, dh)` は `image(try get(sx, sy, sw, sh), dx, dy, dw, dh)`)。透けた画像は下地と混ざる (置き換えるなら `blendMode(.replace)`) | [#2449]・[#3714] |
 | `filter()` | `filter(_:)` | 同等 | 呼んだ時点までに描いたものに掛かり、後から描くものには掛からない (Processing と同じ)。焼き込んだ分は次のフレームへ持ち越す。`filter(shader)` の形は `makeEffect` で作った効果を `filter([.custom(…)])` に渡す。種類は `PImage.filter()` の行と同じ。フレームの終わりに画面全体へ掛ける `effects(_:)` は別 | [#2455]・PR [#3175]・[#3716] |
-| `get()` | `get(_:_:)` | 同等 | 1 画素を `LinearRGBA` で返し、範囲の外は透明。そのフレームでそこまでに描いたものが読める。無い形: 領域の `get(x, y, w, h)` と、引数なしの `get()` ([#3714] で入れる) | [#2449]・[#3714] |
+| `get()` | `get(_:_:)`・`get()`・`get(_:_:_:_:)`・`get(in:)` | 同等 | 1 画素の `get(x, y)` は `LinearRGBA` を返し、範囲の外は透明。引数なしの `get()` と領域の `get(x, y, w, h)` は、画面を新しい `Image` にして返す (「外した 4 つ」の画面の写しの行)。どれもそのフレームでそこまでに描いたものが読める。1 画素の形は実際の画素で、画像を返す形は座標の単位で数える | [#2449]・[#3714] |
 | `loadPixels()` | `loadPixels()` | 同等 | 溜めた図形を描き切り、画素を読める状態にする。`pixels`・`get`・`set` が必要なら自分で呼ぶので、省いても結果は変わらない | — |
-| `mask()` | — (`get()` で画面を画像にして `Image.mask(_:)` を掛け、`image()` で置く) | 持たない | 画面の描いた結果に掛ける形は、画像の `mask(_:)` ([#3713]) と画面の写し ([#3714]) の組み合わせで書ける | [#2449]・[#3713]・[#3714] |
+| `mask()` | — (`get()` で画面を画像にして `Image.mask(_:)` を掛け、`image()` で置く) | 持たない | 画面の描いた結果に掛ける形は、画像の `mask(_:)` ([#3713]) と画面の写し ([#3714]) の組み合わせで書ける: `let part = try get(); part.mask(m); background(0); image(part, 0, 0)` | [#2449]・[#3713]・[#3714] |
 | `pixels[]` | `pixels` | 同等 | 画面の画素への `Pixels`。索引は実際の画素で数え、細かさを下げているときは `width` × `height` より小さく、書き出しの倍率の下では大きい (`pixelWidth` × `pixelHeight`)。値は `LinearRGBA` | PR [#3066] |
 | `set()` | `set(_:_:_:)` | 同等 | 1 画素を書く。無い形: 画像を書き込む `set(x, y, img)` (`image(img, x, y)` で置ける。`blendMode(.replace)` で下地を置き換える) | — |
 | `updatePixels()` | — | 持たない | 書き換えは次に GPU が描画先へ触る前に自動で戻される。呼び忘れて画面が変わらない形が起きない | [#2450]・PR [#3066] |

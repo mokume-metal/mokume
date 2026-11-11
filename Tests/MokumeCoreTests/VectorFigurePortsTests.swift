@@ -82,6 +82,11 @@ struct VectorFigurePortsTests {
             try captured {
                 $0.bezier(from: Vector2(0, 0), control1: Vector2(10, 0), control2: Vector2(20, 10), to: Vector2(30, 10))
             } == 1)
+        #expect(try captured { $0.curve(0, 10, 10, 0, 20, 10, 30, 0) } == 1)
+        #expect(
+            try captured {
+                $0.curve(from: Vector2(10, 0), control1: Vector2(0, 10), control2: Vector2(30, 0), to: Vector2(20, 10))
+            } == 1)
     }
 
     @Test("頂点で作る形の口は、図形を控える")
