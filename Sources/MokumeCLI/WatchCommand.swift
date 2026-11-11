@@ -155,7 +155,8 @@ enum WatchCommand {
             say(
                 "Recording: each build gets its own file, "
                     + "\(ReplayRequest.generation(of: recording, number: 1)), "
-                    + "\(ReplayRequest.generation(of: recording, number: 2)), …")
+                    + "\(ReplayRequest.generation(of: recording, number: 2)), … "
+                    + "(a number whose name holds something other than a record is skipped)")
         }
         if let notice = context.place.notice { say(notice) }
         // **決められなかったときは黙らない** (#2517)。置き場の断片を元から読めないので、保存しても
