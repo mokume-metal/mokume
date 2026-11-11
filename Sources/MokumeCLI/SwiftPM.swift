@@ -133,18 +133,31 @@ nonisolated enum SwiftPM {
             }
         }
 
-        /// 置き場が `directory` の target (``sourceDirectory(of:in:)`` で決める)。無ければ `nil`。
+        /// `item` を含む target と、その置き場 (``sourceDirectory(of:in:)`` で決める)。`item` の祖先の
+        /// うち、**最も近い**ものを置き場にする target を選ぶ (`path: "Sources"` のように親を置き場に
+        /// した target も、`item` を含む)。無ければ `nil`。
         ///
-        /// **同じディレクトリかは、ファイルとして同じかで見る** — 綴り (大文字と小文字・`..`・
-        /// シンボリックリンク) の違いで、同じ置き場を別のものと読まない。
-        func target(placedAt directory: URL, in root: URL) -> Target? {
-            guard let wanted = Self.identity(of: directory) else { return nil }
-            return targets.first { target in
-                guard let place = sourceDirectory(of: target, in: root),
-                    let found = Self.identity(of: place)
-                else { return false }
-                return found.isEqual(wanted)
+        /// **同じディレクトリかは、ファイルとして同じかで見る** (``sameItem(_:_:)``)。
+        func target(containing item: URL, in root: URL) -> (target: Target, directory: URL)? {
+            let places = targets.compactMap { target in
+                sourceDirectory(of: target, in: root).map { (target: target, directory: $0) }
             }
+            var ancestor = item.deletingLastPathComponent()
+            let top = root.standardizedFileURL.path
+            while true {
+                if let found = places.first(where: { Self.sameItem($0.directory, ancestor) }) {
+                    return found
+                }
+                if ancestor.standardizedFileURL.path == top || ancestor.path == "/" { return nil }
+                ancestor = ancestor.deletingLastPathComponent()
+            }
+        }
+
+        /// 2 つの場所が、**ファイルとして**同じものか。綴り (大文字と小文字を区別しないボリュームでの
+        /// 大小・`..`) の違いで、同じ置き場を別のものと読まない。どちらかが無ければ `false`。
+        static func sameItem(_ a: URL, _ b: URL) -> Bool {
+            guard let one = identity(of: a), let other = identity(of: b) else { return false }
+            return one.isEqual(other)
         }
 
         private static func identity(of url: URL) -> NSObject? {
@@ -153,7 +166,7 @@ nonisolated enum SwiftPM {
         }
 
         /// 資材の相対パスの綴りを揃える (`./assets/`・`assets/` → `assets`)。
-        static func normalized(_ path: String?) -> String? {
+        private static func normalized(_ path: String?) -> String? {
             guard let path else { return nil }
             var parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
             while parts.first == "." { parts.removeFirst() }
@@ -162,20 +175,27 @@ nonisolated enum SwiftPM {
 
         /// target のソースの置き場。**`path:` があればそれ、無ければ道具立ての既定の置き場。**
         /// 在るものが無ければ `nil`。
+        ///
+        /// 既定の置き場は道具立てと同じ規則で決める: target の種類ごとの候補 (``Target/defaultRoots``)
+        /// のうち**パッケージに在る最初のもの**の下の `<名前>` (#3984)。候補ごとに `<名前>` を探す形に
+        /// すると、テストやプラグインの target が `Sources/<名前>` に当たりうる。
         private func sourceDirectory(of target: Target, in root: URL) -> URL? {
-            let candidates =
-                target.path.map { [$0] }
-                ?? ["Sources", "Source", "src", "srcs"].map { "\($0)/\(target.name)" }
-            for relative in candidates {
-                let url = root.appendingPathComponent(relative, isDirectory: true)
-                var isDirectory: ObjCBool = false
-                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-                    isDirectory.boolValue
-                {
-                    return url
-                }
+            let relative: String
+            if let path = target.path {
+                relative = path
+            } else {
+                guard let base = target.defaultRoots.first(where: { Self.isDirectory(root.appendingPathComponent($0)) })
+                else { return nil }
+                relative = "\(base)/\(target.name)"
             }
-            return nil
+            let url = root.appendingPathComponent(relative, isDirectory: true)
+            return Self.isDirectory(url) ? url : nil
+        }
+
+        private static func isDirectory(_ url: URL) -> Bool {
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
         }
 
         /// パスで指した依存を 1 つでも持つか。
@@ -276,13 +296,26 @@ nonisolated enum SwiftPM {
             }
         }
 
-        private enum CodingKeys: String, CodingKey { case name, path, resources }
+        /// 種類 (`executable`・`regular`・`test`・`plugin` など)。**鍵が無ければ `nil`。**
+        let kind: String?
+
+        /// `path:` が無いときに置き場を探す、パッケージ直下の候補 (道具立てと同じ並び)。
+        var defaultRoots: [String] {
+            switch kind {
+            case "test": ["Tests", "Sources", "Source", "src", "srcs"]
+            case "plugin": ["Plugins"]
+            default: ["Sources", "Source", "src", "srcs"]
+            }
+        }
+
+        private enum CodingKeys: String, CodingKey { case name, path, resources, kind = "type" }
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             name = try container.decode(String.self, forKey: .name)
             path = try container.decodeIfPresent(String.self, forKey: .path)
             resources = try container.decodeIfPresent([Resource].self, forKey: .resources) ?? []
+            kind = try? container.decodeIfPresent(String.self, forKey: .kind)
         }
     }
 

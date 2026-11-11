@@ -102,13 +102,18 @@ extension BuildResolver {
     /// - Parameter announce: 依存の解決を始める前の名乗りの書き先 (#3427)。**見張りだけが渡す** —
     ///   既定の素の `print` は、速さの行が書き換えている最中だと行の途中から続く (#685)。
     ///   導くのは作り直しの糸 (main actor の外) からも来るので、隔離を持たずに呼べる形でなければならない。
+    /// - Parameter afterReading: 宣言を読むたびに、読んだ宣言を渡す先 (``RunCommand/context(in:invocation:environment:home:announce:resolver:afterReading:)``)。
+    ///   **見張りだけが渡す** — 資材の宣言の検査 (``ResourceDeclaration/Once``)。投げれば導けなかった
+    ///   回になり、作り直しの失敗と同じ道を通る。
     static func live(
         in directory: URL, invocation: Invocation, running: RunningBuild? = nil,
-        announce: @escaping @Sendable (String) -> Void = { print($0) }
+        announce: @escaping @Sendable (String) -> Void = { print($0) },
+        afterReading: @escaping @Sendable (SwiftPM.Package?) throws(CommandFailure) -> Void = { _ in }
     ) -> BuildResolver {
         BuildResolver(directory: directory) { directory throws(CommandFailure) in
             let context = try RunCommand.context(
-                in: directory, invocation: invocation, announce: announce)
+                in: directory, invocation: invocation, announce: announce,
+                afterReading: afterReading)
             return BuildResolution(
                 context: context,
                 binPath: try RunCommand.binPath(
