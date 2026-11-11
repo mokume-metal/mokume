@@ -81,6 +81,8 @@ import simd
     private(set) var directUploads = 0
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
     private var warnedMismatch = false
+    /// 大きさの違うマスクを渡されたことを、もう知らせたか (``mask(_:)``)。
+    var warnedMaskMismatch = false
     /// ``filtered(_:)`` が効果を通す作業の面のうち、この絵が最後に使ったもの。**大きさが同じ絵どうしで
     /// 使い回す** (``FilterWorkspaces``) ので、この絵だけのものではない。持つのは、掛け終えた面がすぐ手放されて、
     /// 次の呼び出しで作り直すことにならないため。注意を 1 度だけ言う控えは面が持つ。
