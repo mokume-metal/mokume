@@ -153,6 +153,7 @@ struct AudioOutsideRunTests {
         ("createSawOsc()", { $0.createSawOsc() }),
         ("createWhiteNoise()", { $0.createWhiteNoise() }),
         ("createPinkNoise()", { $0.createPinkNoise() }),
+        ("createBrownNoise()", { $0.createBrownNoise() }),
         ("createLowPass()", { $0.createLowPass() }),
         ("createHighPass()", { $0.createHighPass() }),
         ("createBandPass()", { $0.createBandPass() }),
@@ -161,7 +162,7 @@ struct AudioOutsideRunTests {
         ("createAudioIn(device:)", { $0.createAudioIn() }),
     ]
 
-    @Test("投げない 12 口は、今までどおり足されていないものを返し、呼んだ口の名前で 1 度だけ警告する")
+    @Test("投げない 13 口は、今までどおり足されていないものを返し、呼んだ口の名前で 1 度だけ警告する")
     func quietMakersWarnByTheirOwnName() {
         let log = OutsideRun()
         OutsideRun.$current.withValue(log) {

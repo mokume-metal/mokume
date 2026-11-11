@@ -191,6 +191,162 @@ struct AtomicFileTests {
             == [inFlight.lastPathComponent, otherName.lastPathComponent].sorted())
     }
 
+    /// 置き場に残ったものの中身 (名前 → 中のファイルの中身)。
+    private func folderContents(_ folders: [URL]) -> [String: String?] {
+        Dictionary(uniqueKeysWithValues: folders.map { folder in
+            (folder.lastPathComponent,
+             try? String(contentsOf: folder.appendingPathComponent("keep.txt"), encoding: .utf8))
+        })
+    }
+
+    /// 書き手は、選ぶはずの一時ファイルの名前に既に何か在れば、別の連番を選ぶ ([#3943] の反証の指摘 2)。
+    /// 片付けは同じ名前のフォルダを残すので、残ったフォルダは後から来た書き手 (pid と連番が一致した) に
+    /// 中身ごと消されてはならない — 書くときも、書き損じた後の後始末でも。
+    ///
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    @Test("一時ファイルの名前にフォルダが在れば別の連番を選び、書いても書き損じてもフォルダは中身ごと残る")
+    func writersSkipFoldersAtTheirTemporaryName() throws {
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("frame-000.png")
+        // いまの連番を、1 度予約した一時ファイルの名前から読む
+        let probe = try AtomicFile.reserve(url)
+        let current = try #require(Int(probe.temporary.deletingPathExtension().lastPathComponent.split(separator: "-").last ?? ""))
+        // 次に選ばれうる連番の名前に、中身のあるフォルダを置く (並んで走る検査が連番を進めても届く数)
+        let folders = try (current + 1...current + 200).map { sequence in
+            let folder = AtomicFile.temporaryURL(for: url, writer: getpid(), sequence: sequence)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            try Data("mine \(sequence)".utf8).write(to: folder.appendingPathComponent("keep.txt"))
+            return folder
+        }
+        let before = folderContents(folders)
+
+        let chosen = try AtomicFile.reserve(url)
+        #expect(!FileManager.default.fileExists(atPath: chosen.temporary.path), "在る名前を選んだ: \(chosen.temporary.lastPathComponent)")
+        try AtomicFile.write(Data("frame".utf8), to: url)
+        #expect(try Data(contentsOf: url) == Data("frame".utf8))
+        struct Interrupted: Error {}
+        #expect(throws: Interrupted.self) { try AtomicFile.write(to: url) { _ in throw Interrupted() } }
+        #expect(throws: Interrupted.self) {
+            try AtomicFile.reserve(url).place { written in
+                try Data("half".utf8).write(to: written)
+                throw Interrupted()
+            }
+        }
+        #expect(folderContents(folders) == before, "残ったフォルダの中身が変わった")
+    }
+
+    @Test("書き損じた後の後始末は、一時ファイルの場所にフォルダが在っても消さない")
+    func theCleanupAfterAFailureKeepsAFolder() throws {
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("frame-000.png")
+        let folder = facet.appendingPathComponent(".taken.tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        try Data("mine".utf8).write(to: folder.appendingPathComponent("keep.txt"))
+        struct Interrupted: Error {}
+        let placement = AtomicFile.Placement(url: url, temporary: folder)
+        #expect(throws: Interrupted.self) { try placement.place { _ in throw Interrupted() } }
+        #expect(folderContents([folder]) == [".taken.tmp": "mine"])
+    }
+
+    @Test("リンクの行き先へ置けなかった後始末も、一時ファイルの場所にフォルダが在れば消さず、リンクも残す")
+    func theCleanupAfterAFailedPlacementOverALinkKeepsAFolder() throws {
+        let facet = try makeFacet()
+        let target = facet.appendingPathComponent("target.bin")
+        try Data("previous".utf8).write(to: target)
+        let url = facet.appendingPathComponent("link.mp4")
+        try FileManager.default.createSymbolicLink(at: url, withDestinationURL: target)
+        let folder = facet.appendingPathComponent(".taken.tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        try Data("mine".utf8).write(to: folder.appendingPathComponent("keep.txt"))
+        // フォルダはリンク (通常ファイルを指す) の上へ `rename(2)` できない (`ENOTDIR`) ので、置く段が失敗する
+        let placement = AtomicFile.Placement(url: url, temporary: folder)
+        #expect(throws: (any Error).self) { try placement.placeWritten() }
+        #expect(folderContents([folder]) == [".taken.tmp": "mine"])
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == target.path)
+        #expect(try Data(contentsOf: target) == Data("previous".utf8))
+    }
+
+    /// 消すのは `unlink(2)` 1 回 ([#3943] の 2 回目の反証の指摘 1・2)。見てから消すのではないので、見てから消すまでの
+    /// 間にフォルダへ替わる窓が無い。ここでは種類ごとに、残るもの・外れるものと戻り値を固定する。
+    ///
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    @Test("remove はフォルダを中身ごと残して false、リンクはリンクだけを外して true、通常ファイルと無い名前は true")
+    func removeUnlinksOnlyWhatIsNotAFolder() throws {
+        let manager = FileManager.default
+        let facet = try makeFacet()
+        let folder = facet.appendingPathComponent("folder", isDirectory: true)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: false)
+        let kept = folder.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+        let linkToFolder = facet.appendingPathComponent("link-to-folder")
+        try manager.createSymbolicLink(at: linkToFolder, withDestinationURL: folder)
+        let brokenLink = facet.appendingPathComponent("broken-link")
+        try manager.createSymbolicLink(
+            at: brokenLink, withDestinationURL: facet.appendingPathComponent("nowhere"))
+        let file = facet.appendingPathComponent("file.tmp")
+        try Data("half".utf8).write(to: file)
+        let missing = facet.appendingPathComponent("missing.tmp")
+
+        #expect(AtomicFile.remove(folder) == false, "フォルダは消えないので false")
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8), "フォルダの中身が残る")
+        #expect(AtomicFile.remove(linkToFolder))
+        #expect(!AtomicFile.exists(linkToFolder), "リンク自身は外れる")
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8), "リンクの指す先は残る")
+        #expect(AtomicFile.remove(brokenLink))
+        #expect(!AtomicFile.exists(brokenLink))
+        #expect(AtomicFile.remove(file))
+        #expect(!AtomicFile.exists(file))
+        #expect(AtomicFile.remove(missing), "もともと無いなら true")
+    }
+
+    @Test("remove は消せなかった (書き込めないフォルダの中の) ファイルに false を返す")
+    func removeReportsAFileItCouldNotRemove() throws {
+        let facet = try makeFacet()
+        let locked = facet.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: false)
+        let file = locked.appendingPathComponent("file.tmp")
+        try Data("half".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+
+        #expect(AtomicFile.remove(file) == false)
+        #expect(AtomicFile.exists(file))
+    }
+
+    @Test("GIF の書き手は、一時ファイルの場所にフォルダが在れば消さずに断る")
+    func theGIFWriterKeepsAFolderAtItsTemporaryName() throws {
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("loop.gif")
+        let folder = facet.appendingPathComponent(".taken.tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        try Data("mine".utf8).write(to: folder.appendingPathComponent("keep.txt"))
+        let placement = AtomicFile.Placement(url: url, temporary: folder)
+        #expect(throws: MovieWriteFailure.self) { _ = try GIFFile(path: url.path, frameRate: 10, placement: placement) }
+        #expect(folderContents([folder]) == [".taken.tmp": "mine"])
+    }
+
+    /// 片付けが消してよいのは、書き手が作る形 (通常ファイル) の一時ファイルだけ ([#3943] と同じ根)。
+    ///
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    @Test("居なくなった書き手の一時ファイルの名前でも、フォルダは中身ごと残す")
+    func theSweepKeepsFoldersNamedLikeATemporary() throws {
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("frame-000.png")
+        let (gone, goneExit) = try launch("/usr/bin/true")
+        goneExit.wait()
+        let file = AtomicFile.temporaryURL(for: url, writer: gone.processIdentifier, sequence: 1)
+        try Data("half".utf8).write(to: file)
+        let folder = AtomicFile.temporaryURL(for: url, writer: gone.processIdentifier, sequence: 2)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let kept = folder.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+
+        try AtomicFile.write(Data("frame".utf8), to: url)
+
+        #expect(try temporaries(in: facet) == [folder.lastPathComponent])
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
+    }
+
     // MARK: - 片付けの読みは、呼んだ糸で件数に上限を持つ (#3176)
 
     /// 終わって回収した子の番号 (= もう居ない書き手)。

@@ -170,8 +170,9 @@ package enum AtomicFile {
                     }
                 }
             } catch {
-                // **自分の分は自分で消す。** 名前が書き込みごとに違うので、誰も上書きしない
-                try? FileManager.default.removeItem(at: temporary)
+                // **自分の分は自分で消す。** 名前が書き込みごとに違うので、誰も上書きしない。書き手が作るのは
+                // 通常ファイルだけなので、フォルダは消さない (`unlink(2)` 1 回。``AtomicFile/remove(_:)``・#3943)
+                AtomicFile.remove(temporary)
                 throw error
             }
         }
@@ -196,7 +197,7 @@ package enum AtomicFile {
                 try AtomicFile.refuseDirectory(url)
                 guard rename(temporary.path, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             } catch {
-                try? FileManager.default.removeItem(at: temporary)
+                AtomicFile.remove(temporary)
                 throw error
             }
         }
@@ -211,9 +212,20 @@ package enum AtomicFile {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try refuseDirectory(url)
         sweepAbandonedTemporaries(of: url)
-        sequence += 1
-        return Placement(
-            url: url, temporary: temporaryURL(for: url, writer: getpid(), sequence: sequence))
+        // **在る名前は選ばない** (#3943)。片付けは一時ファイルの名前のフォルダを残すので、pid と連番が前の
+        // 書き手と一致すると、選んだ名前にそのフォルダが在りうる。種類を問わず、何も無い名前まで連番を進める
+        var temporary: URL
+        repeat {
+            sequence += 1
+            temporary = temporaryURL(for: url, writer: getpid(), sequence: sequence)
+        } while exists(temporary)
+        return Placement(url: url, temporary: temporary)
+    }
+
+    /// その名前に何か (種類を問わない・宛先の無い symlink も) が在るか。
+    nonisolated static func exists(_ url: URL) -> Bool {
+        var status = stat()
+        return lstat(url.path, &status) == 0
     }
 
     /// 書く先がディレクトリなら、`EISDIR` (`Is a directory`) で断る。
@@ -234,7 +246,8 @@ package enum AtomicFile {
     }
 
     /// その場所がディレクトリか。**消す・置き換える前に、中身ごと失う相手でないかを見るのに使う**
-    /// (``write(to:using:)``・``remove(_:)``・`MovieFile`)。
+    /// (``write(to:using:)``・`MovieFile`)。消す側は見ずに ``remove(_:)`` (`unlink(2)`) を呼ぶ — 見てから消すと、
+    /// 間にディレクトリへ替わる窓が残る (#3943)。
     ///
     /// - Parameter following: symlink を辿るか (`stat`)。辿らなければ symlink 自身を見る (`lstat`) —
     ///   消す側は symlink を外すだけで指す先は壊さないので辿らず、置き換える側 (`replaceItemAt`) は
@@ -505,8 +518,9 @@ package enum AtomicFile {
                 if let name = abandonedTemporary(entry) { abandoned.append(name) }
             }
             if finished { close() }
+            // 書き手が作るのは通常ファイルだけ。同じ名前のフォルダは書き手のものではない (``AtomicFile/remove(_:)``・#3943)
             for name in abandoned {
-                try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+                AtomicFile.remove(directory.appendingPathComponent(name))
             }
             return finished
         }
@@ -554,16 +568,31 @@ package enum AtomicFile {
     ///
     /// **ディレクトリは消さずに残す** (symlink は外すだけで、指す先は壊さない)。`removeItem` は
     /// ディレクトリを中身ごと消すので、置き場の名前をたまたまディレクトリが使っていると、利用者の
-    /// ものが黙って消える ([#2859](https://github.com/mokume-metal/mokume/issues/2859))。
+    /// ものが黙って消える ([#2859](https://github.com/mokume-metal/mokume/issues/2859)・[#3943])。
+    /// **見てから消すのではなく、`unlink(2)` を 1 回呼ぶ** — `unlink` はディレクトリを消さない (macOS は
+    /// `EPERM`) ので、見てから消すまでの間に同じ名前がディレクトリへ替わっても、中身ごと消す窓が無い。
     /// **名乗らない** — 消せなかったことはその後の書き込みが同じ場所で `Is a directory` と
     /// 1 度名乗る (``publishJSON(_:to:_:)``)。ここで言うと、掃除のたびに同じ場所を言い直す。
     ///
-    /// - Returns: 消した (または無かった) なら `true`。ディレクトリなので残したなら `false`。
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    ///
+    /// - Returns: 消えた・もともと無かったなら `true`。ディレクトリだった・消せなかった (権限など) なら `false`。
     @discardableResult
-    static func remove(_ url: URL) -> Bool {
-        guard !isDirectory(url, following: false) else { return false }
-        try? FileManager.default.removeItem(at: url)
-        return true
+    nonisolated static func remove(_ url: URL) -> Bool {
+        unlinkFile(url) == nil
+    }
+
+    /// ``remove(_:)`` の本体。`unlink(2)` を 1 回呼ぶ。
+    ///
+    /// - Returns: 消えなかった理由の `errno`。消えた・もともと無かった (`ENOENT`) なら `nil`。ディレクトリは
+    ///   `EPERM` (macOS) か `EISDIR`。
+    nonisolated static func unlinkFile(_ url: URL) -> Int32? {
+        url.withUnsafeFileSystemRepresentation { path -> Int32? in
+            guard let path else { return EINVAL }
+            if unlink(path) == 0 { return nil }
+            let code = errno
+            return code == ENOENT ? nil : code
+        }
     }
 
     /// JSON を組んで原子的に置く。**判断が呼び手にあるときだけこちら。**
