@@ -56,7 +56,8 @@ enum RecordOption {
 /// 作り直しは記録の切れ目で、新しい世代の記録が 1 本始まる。番号は子を起こすたびに 1 から進み、
 /// 作り直しに失敗して子を起こさなかった回は進まない。起こす口は作り直しの糸から呼ばれるので、数えるのは錠で守る。
 ///
-/// **世代の名前に記録でないもの (利用者のファイル・フォルダ・リンク) が在れば、その番号を飛ばす** ([#3970])。
+/// **世代の名前に記録でないもの (利用者のファイル・フォルダ・リンク・FIFO) が在るか、錠の名前が通常ファイルでなければ、
+/// その番号を飛ばす** ([#3970])。
 /// 世代の名前は道具が作ったもので、子は行き先を置き換えるので、渡せば利用者のファイルが消える。飛ばした回は 1 度知らせる。
 ///
 /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
@@ -80,11 +81,19 @@ nonisolated final class RecordGenerations: Sendable {
             number = found.number
             return (ReplayRequest.generation(of: destination, number: found.number), found.skipped)
         }
-        if !skipped.isEmpty {
-            say(
-                "Not recording over \(skipped.joined(separator: ", ")): not a record, so it is kept. "
-                    + "This build records to \(path)")
-        }
+        if !skipped.isEmpty { say(Self.skipNotice(skipped, recordingTo: path)) }
         return path
+    }
+
+    /// 知らせの 1 行に名指す、飛ばした名前の数の上限。越えた分は数だけ言う。
+    static let namedSkipLimit = 3
+
+    /// 番号を飛ばした知らせ。**実際に塞いでいた名前** (行き先か錠の名前) を名指し、多ければ先頭の
+    /// ``namedSkipLimit`` 個と残りの数にまとめる。
+    static func skipNotice(_ skipped: [String], recordingTo path: String) -> String {
+        var named = skipped.prefix(namedSkipLimit).joined(separator: ", ")
+        if skipped.count > namedSkipLimit { named += " and \(skipped.count - namedSkipLimit) more" }
+        return "Skipped generation numbers held by something other than a record or its lock file, "
+            + "which is kept as it is (\(named)). This build records to \(path)"
     }
 }

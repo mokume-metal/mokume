@@ -54,29 +54,31 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     ///
     /// - Parameter destination: `--record` で頼まれた行き先 (絶対パス)。
     /// - Parameter number: 前の世代の番号 (始まりは 0)。
-    /// - Returns: 選んだ番号と、飛ばした世代の名前 (番号の順)。
+    /// - Returns: 選んだ番号と、飛ばした番号を塞いでいた名前 (番号の順。行き先 `take-1.json` か、錠の名前
+    ///   `take-1.json.lock` のどちらか実際に塞いでいたもの)。
     package static func nextGeneration(of destination: String, after number: Int) -> (number: Int, skipped: [String]) {
         var candidate = number + 1
         var skipped: [String] = []
         while true {
             let path = generation(of: destination, number: candidate)
-            if isFreeForAGeneration(path) { return (candidate, skipped) }
-            skipped.append(URL(fileURLWithPath: path).lastPathComponent)
+            guard let blocking = blockingName(of: path) else { return (candidate, skipped) }
+            skipped.append(URL(fileURLWithPath: blocking).lastPathComponent)
             candidate += 1
         }
     }
 
-    /// 世代の行き先に使ってよいか: 行き先が何も無いか記録 (``isRecordFile(_:)``) で、**錠の名前
-    /// (`<行き先>.lock`) も何も無いか通常ファイル**のもの。錠の名前にリンク・フォルダなどが在ると、子は錠を取れずに
-    /// その世代を記録しない (``ReplayClaim/take(destination:)``) ので、その番号も飛ばす。
+    /// 世代の行き先を塞いでいる名前。使えれば `nil`。使えるのは、行き先が何も無いか記録 (``isRecordFile(_:)``) で、
+    /// **錠の名前 (`<行き先>.lock`) も何も無いか通常ファイル**のもの。錠の名前にリンク・フォルダなどが在ると、子は錠を
+    /// 取れずにその世代を記録しない (``ReplayClaim/take(destination:)``) ので、その番号も飛ばす。
     ///
     /// 見られない名前 (親がファイル・権限が無い) は空きとして返す — どの番号でも同じなので、飛ばし続けずに子に
     /// 渡し、子が書けない理由を言う。
-    private static func isFreeForAGeneration(_ path: String) -> Bool {
+    private static func blockingName(of path: String) -> String? {
         var status = stat()
-        if lstat(path, &status) == 0, !isRecordFile(path) { return false }
-        guard lstat(path + ReplayClaim.lockSuffix, &status) == 0 else { return true }
-        return (status.st_mode & S_IFMT) == S_IFREG
+        if lstat(path, &status) == 0, !isRecordFile(path) { return path }
+        let lock = path + ReplayClaim.lockSuffix
+        guard lstat(lock, &status) == 0 else { return nil }
+        return (status.st_mode & S_IFMT) == S_IFREG ? nil : lock
     }
 
     /// 記録の頭 (`{"schemaVersion":`) で始まる**通常ファイル**か。**リンクはたどらず、通常ファイルでないもの (フォルダ・

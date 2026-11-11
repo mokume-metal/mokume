@@ -149,6 +149,31 @@ struct RecordOptionTests {
         #expect((try? Data(contentsOf: second)) == Data("my notes".utf8))
     }
 
+    @Test("飛ばした知らせは塞いでいた名前 (錠の名前も) を名指し、多ければ先頭の 3 つと残りの数にまとめる (#3970)")
+    func theSkipNoticeNamesWhatHeldTheNumber() throws {
+        let manager = FileManager.default
+        let directory = try TestScratch.directory("mokume-record-generations-notice")
+        let base = directory.appendingPathComponent("take.json").path
+        // 1: 錠の名前がフォルダ (行き先は無い)。2〜5: 記録でないファイル
+        try manager.createDirectory(
+            at: directory.appendingPathComponent("take-1.json.lock"), withIntermediateDirectories: false)
+        for number in 2...5 {
+            try Data("notes".utf8).write(to: directory.appendingPathComponent("take-\(number).json"))
+        }
+        let said = Mutex<[String]>([])
+        let path = RecordGenerations(destination: base) { line in said.withLock { $0.append(line) } }.next()
+        #expect(path == directory.appendingPathComponent("take-6.json").path)
+        let notice = said.withLock { $0.first } ?? ""
+        #expect(
+            notice
+                == "Skipped generation numbers held by something other than a record or its lock file, which is "
+                + "kept as it is (take-1.json.lock, take-2.json, take-3.json and 2 more). This build records to "
+                + path)
+        // 上限ちょうどは数でまとめない
+        #expect(
+            RecordGenerations.skipNotice(["a", "b", "c"], recordingTo: "/x").contains("(a, b, c). This build"))
+    }
+
     // MARK: - 反証 1 回目
 
     @Test("記録が書かれたかは、在るかではなく、この実行の始まりより後に書かれたかで決める")

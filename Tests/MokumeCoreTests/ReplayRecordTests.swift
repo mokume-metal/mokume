@@ -510,14 +510,84 @@ struct ReplayRecordFormatTests {
         let fifo = directory.appendingPathComponent("take-1.json").path
         try #require(mkfifo(fifo, 0o644) == 0)
 
-        let returned = returnsInTime(unblocking: fifo) { _ = ReplayRequest.discardGenerations(of: base) }
+        // 掃除も番号選びも期限の中で呼ぶ (どちらも FIFO を読みに開けば止まる)
+        let next = Mutex<(Int, [String])?>(nil)
+        let returned = returnsInTime(unblocking: fifo) {
+            _ = ReplayRequest.discardGenerations(of: base)
+            let found = ReplayRequest.nextGeneration(of: base, after: 0)
+            next.withLock { $0 = (found.number, found.skipped) }
+        }
         #expect(returned, "FIFO を読みに開いて止まった")
         var status = stat()
         #expect(lstat(fifo, &status) == 0 && (status.st_mode & S_IFMT) == S_IFIFO, "FIFO を消した")
-        #expect(ReplayRequest.nextGeneration(of: base, after: 0) == (2, ["take-1.json"]))
+        #expect(next.withLock { $0 }.map { $0 == (2, ["take-1.json"]) } == true)
     }
 
-    @Test("世代の錠の名前にフォルダ・リンクが在る番号は飛ばし、通常ファイルなら使う (#3970)")
+    /// 書き手が記録の頭を書き込んだ FIFO は、読めば記録の頭が返る。それでも通常ファイルでないので記録に数えない。
+    @Test("記録の頭が読める FIFO も記録に数えず、掃除は残し、番号は飛ばす (#3970)")
+    func aFIFOThatReadsLikeARecordIsNotARecord() throws {
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json").path
+        let fifo = directory.appendingPathComponent("take-1.json").path
+        try #require(mkfifo(fifo, 0o644) == 0)
+        // 読み手を先に開いておくと、書き手も止まらずに開け、書いたバイトは管に溜まる
+        let reader = open(fifo, O_RDONLY | O_NONBLOCK)
+        try #require(reader >= 0)
+        defer { close(reader) }
+        let writer = open(fifo, O_WRONLY | O_NONBLOCK)
+        try #require(writer >= 0)
+        defer { close(writer) }
+        let head = Array("{\"schemaVersion\":1}\n".utf8)
+        let fill: @Sendable () -> Void = { _ = head.withUnsafeBytes { write(writer, $0.baseAddress, $0.count) } }
+
+        fill()
+        let isRecord = Mutex<Bool?>(nil)
+        let removed = Mutex<[String]?>(nil)
+        let next = Mutex<(Int, [String])?>(nil)
+        let returned = returnsInTime(unblocking: fifo) {
+            isRecord.withLock { $0 = ReplayRequest.isRecordFile(fifo) }
+            fill()
+            removed.withLock { $0 = ReplayRequest.discardGenerations(of: base) }
+            fill()
+            let found = ReplayRequest.nextGeneration(of: base, after: 0)
+            next.withLock { $0 = (found.number, found.skipped) }
+        }
+        #expect(returned)
+        #expect(isRecord.withLock { $0 } == false, "記録の頭が読める FIFO を記録に数えた")
+        #expect(removed.withLock { $0 } == [], "FIFO を消した")
+        var status = stat()
+        #expect(lstat(fifo, &status) == 0 && (status.st_mode & S_IFMT) == S_IFIFO)
+        #expect(next.withLock { $0 }.map { $0 == (2, ["take-1.json"]) } == true)
+    }
+
+    @Test("空のファイル・頭の違うファイル・読めないファイルは記録でなく、掃除は残し、番号は飛ばす (#3970)")
+    func filesThatAreNotRecordsAreKeptAndSkipped() throws {
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json").path
+        let empty = directory.appendingPathComponent("take-1.json")
+        try Data().write(to: empty)
+        let otherHead = directory.appendingPathComponent("take-2.json")
+        try Data("{\"version\":1}".utf8).write(to: otherHead)
+        var expected = ["take-1.json", "take-2.json"]
+        // 読めないファイル (権限なし) は root では読めてしまうので、root でないときだけ置く
+        let unreadable = directory.appendingPathComponent("take-3.json")
+        if getuid() != 0 {
+            try writeRecordHead(unreadable)
+            try #require(chmod(unreadable.path, 0) == 0)
+            expected.append("take-3.json")
+        }
+        defer { chmod(unreadable.path, 0o644) }
+
+        #expect(ReplayRequest.discardGenerations(of: base).isEmpty)
+        #expect(FileManager.default.fileExists(atPath: empty.path))
+        #expect((try? Data(contentsOf: otherHead)) == Data("{\"version\":1}".utf8))
+        let found = ReplayRequest.nextGeneration(of: base, after: 0)
+        #expect(found.number == expected.count + 1)
+        #expect(found.skipped == expected)
+        if getuid() != 0 { #expect(FileManager.default.fileExists(atPath: unreadable.path)) }
+    }
+
+    @Test("世代の錠の名前にフォルダ・リンク・FIFO が在る番号は飛ばし、通常ファイルなら使う (#3970)")
     func aGenerationWhoseLockNameIsTakenIsSkipped() throws {
         let manager = FileManager.default
         let directory = try scratch()
@@ -526,9 +596,20 @@ struct ReplayRecordFormatTests {
             at: directory.appendingPathComponent("take-1.json.lock"), withIntermediateDirectories: false)
         try manager.createSymbolicLink(
             atPath: directory.appendingPathComponent("take-2.json.lock").path, withDestinationPath: "/nowhere")
-        try Data("mine".utf8).write(to: directory.appendingPathComponent("take-3.json.lock"))
+        let fifo = directory.appendingPathComponent("take-3.json.lock").path
+        try #require(mkfifo(fifo, 0o644) == 0)
+        try Data("mine".utf8).write(to: directory.appendingPathComponent("take-4.json.lock"))
 
-        #expect(ReplayRequest.nextGeneration(of: base, after: 0) == (3, ["take-1.json", "take-2.json"]))
+        // 飛ばした名前は、塞いでいた錠の名前を名指す。FIFO の錠の名前でも期限の中で返る
+        let next = Mutex<(Int, [String])?>(nil)
+        let returned = returnsInTime(unblocking: fifo) {
+            let found = ReplayRequest.nextGeneration(of: base, after: 0)
+            next.withLock { $0 = (found.number, found.skipped) }
+        }
+        #expect(returned)
+        #expect(
+            next.withLock { $0 }.map { $0 == (4, ["take-1.json.lock", "take-2.json.lock", "take-3.json.lock"]) }
+                == true, "\(String(describing: next.withLock { $0 }))")
     }
 
     @Test(".lock の名前がフォルダなら錠に使わず断り、フォルダは残す (#3970)")
