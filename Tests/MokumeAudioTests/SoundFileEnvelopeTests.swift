@@ -71,8 +71,11 @@ struct SoundFileEnvelopeTests {
 
     /// `frames` フレーム回す。`flow` を渡すと鳴らす経路 (offline の流れ)、`nil` なら書き出しの経路。
     /// `start` は `setup()` で、`act` は `draw()` の記録の後に `frameCount` で呼ぶ。
+    ///
+    /// - Parameter routeAt: エフェクト (切れ目 20 kHz の低域通過) へ通す時。`0` なら `setup()` の `start` の前、
+    ///   `k` なら `frameCount` が `k` の `draw()` の `act` の前。`nil` なら通さない。
     private func take(
-        frames: Int, samples: [Float] = tone, audible: Bool, route: Bool = false,
+        frames: Int, samples: [Float] = tone, audible: Bool, routeAt: Int? = nil,
         start: @escaping (SoundFile, Env) -> Void,
         act: @escaping (SoundFile, Env, Int) -> Void = { _, _, _ in }
     ) throws -> Take {
@@ -84,14 +87,10 @@ struct SoundFileEnvelopeTests {
         var heard: [Frame] = []
         EnvelopeSketch.onSetup = { sketch in
             // 合成の音 (エフェクト) も同じ流れで鳴らす。最初に作るときだけ流れを差し込める
-            if route { _ = SynthStage.stage(for: sketch, flow: flow) }
+            if routeAt != nil { _ = SynthStage.stage(for: sketch, flow: flow) }
             let made = try flow.map { try sketch.loadSound(url.path, flow: $0) } ?? sketch.loadSound(url.path)
             let envelope = sketch.createEnv()
-            if route {
-                let filter = sketch.createLowPass()
-                filter.freq(20_000)
-                filter.process(made)
-            }
+            if routeAt == 0 { Self.route(made, in: sketch) }
             start(made, envelope)
             sound = made
             env = envelope
@@ -102,6 +101,7 @@ struct SoundFileEnvelopeTests {
                 Frame(
                     isPlaying: sound.isPlaying, position: sound.samplePosition, level: sound.level,
                     peak: sound.peak, spectrum: sound.spectrum))
+            if let routeAt, routeAt > 0, sketch.frameCount == routeAt { Self.route(sound, in: sketch) }
             act(sound, env, sketch.frameCount)
         }
         let runtime = try SketchRuntime(sketch: EnvelopeSketch(), gpu: try RenderDevice(), clock: nil)
@@ -112,6 +112,13 @@ struct SoundFileEnvelopeTests {
         }
         runtime.closePlugins()
         return Take(frames: heard, sound: played)
+    }
+
+    /// `sound` を切れ目 20 kHz の低域通過へ通す。
+    private static func route(_ sound: SoundFile, in sketch: EnvelopeSketch) {
+        let filter = sketch.createLowPass()
+        filter.freq(20_000)
+        filter.process(sound)
     }
 
     // MARK: - 形 (完了条件 1)
@@ -175,12 +182,12 @@ struct SoundFileEnvelopeTests {
         let frames = 60
         let start: (SoundFile, Env) -> Void = { song, env in env.play(song, 0.1, 0.2, 1, 0.3) }
         let direct = try take(frames: frames, audible: false, start: start)
-        let routed = try take(frames: frames, audible: false, route: true, start: start)
+        let routed = try take(frames: frames, audible: false, routeAt: 0, start: start)
         #expect(routed.frames == direct.frames)
         // 鳴らす経路: 一定の値 (0.5) のファイルを、切れ目 20 kHz の低域通過に通す。形の無い回に倍率を掛けたものと揃う
         let flat = [Float](repeating: 0.5, count: 96_000)
-        let plain = try take(frames: frames, samples: flat, audible: true, route: true, start: { song, _ in song.play() })
-        let shaped = try take(frames: frames, samples: flat, audible: true, route: true, start: start)
+        let plain = try take(frames: frames, samples: flat, audible: true, routeAt: 0, start: { song, _ in song.play() })
+        let shaped = try take(frames: frames, samples: flat, audible: true, routeAt: 0, start: start)
         let gain: (Int) -> Float = { trapezoid($0, attack: 4800, sustain: 9600, release: 14_400, level: 1) }
         // 節の立ち上がり (約 5 ミリ秒) が済んだ後
         let worst = (4000..<plain.sound.count).map { abs(shaped.sound[$0] - plain.sound[$0] * gain($0)) }.max() ?? 1
@@ -274,6 +281,173 @@ struct SoundFileEnvelopeTests {
         }
         let worst = zip(heard, expected).map { abs($0 - $1) }.max() ?? 1
         #expect(worst < 1e-6)
+    }
+
+    @Test("1 度だけの再生が鳴り終わった後・stop() の後に鳴らし直しても、形は鳴った標本の続きから進む")
+    func theShapeContinuesAfterTheEndAndAfterStop() throws {
+        // 一定の値 (0.5) の 4000 標本。1 秒かけて 1 から 0 へ下がる形を掛けて 1 度だけ鳴らす
+        let flat = [Float](repeating: 0.5, count: 4000)
+        let take = try take(
+            frames: 20, samples: flat, audible: true, start: { song, env in env.play(song, 0, 0, 1, 1) },
+            act: { song, _, frame in
+                if frame == 7 { song.play() }  // 鳴り終わった後 (標本 4800)。頭から
+                if frame == 9 { song.stop() }  // 1600 標本鳴ったところで
+                if frame == 11 { song.play() }  // 頭から終わりまで
+            })
+        let heard = take.sound.filter { $0 != 0 }
+        #expect(heard.count == 4000 + 1600 + 4000)
+        let worst = heard.indices.map {
+            abs(heard[$0] - 0.5 * trapezoid($0, attack: 0, sustain: 0, release: 48_000, level: 1))
+        }.max() ?? 1
+        #expect(worst < 1e-6)
+    }
+
+    @Test("鳴らす経路で鳴っている最中に掛け直すと、掛けた描き出しの頭の標本から新しい形になる")
+    func reshapingStartsAtTheNextRenderedSample() throws {
+        let flat = [Float](repeating: 0.5, count: 96_000)
+        let take = try take(
+            frames: 20, samples: flat, audible: true, start: { song, env in env.play(song, 0, 0, 1, 1) },
+            act: { song, env, frame in if frame == 10 { env.play(song, 0, 0, 1, 0.5) } })
+        // `frameCount` が 10 の draw() の後に描かせた音は、標本 9 × 800 から
+        let at = 9 * Self.perFrame
+        let expected = take.sound.indices.map { n in
+            0.5
+                * (n < at
+                    ? trapezoid(n, attack: 0, sustain: 0, release: 48_000, level: 1)
+                    : trapezoid(n - at, attack: 0, sustain: 0, release: 24_000, level: 1))
+        }
+        let gaps = take.sound.indices.map { abs(take.sound[$0] - expected[$0]) }
+        let worst = gaps.indices.max { gaps[$0] < gaps[$1] } ?? 0
+        #expect(gaps[worst] < 1e-6, "標本 \(worst) で \(gaps[worst]) ずれた")
+    }
+
+    @Test("形の途中で掛け直すと、解析が読む掛け直す前の履歴は、掛け直した時点の前の形の倍率で掛かる")
+    func historyBeforeAReshapeKeepsTheOldGain() throws {
+        // 1 秒かけて 1 から 0 へ下がる形を、標本 8000 (倍率 1 − 8000 / 48000) で掛け直す
+        let exported = try take(
+            frames: 16, audible: false, start: { song, env in env.play(song, 0, 0, 1, 1) },
+            act: { song, env, frame in if frame == 11 { env.play(song, 0.1, 0.1, 0.9, 0.1) } })
+        let at = 10 * Self.perFrame
+        let before = trapezoid(at, attack: 0, sustain: 0, release: 48_000, level: 1)
+        #expect(before > 0.8 && before < 0.9)
+        let shaped: (Int) -> Float = { n in
+            Self.tone[n]
+                * (n < at ? before : trapezoid(n - at, attack: 4800, sustain: 4800, release: 4800, level: 0.9))
+        }
+        // 掛け直した後の最初のフレームの解析は、ウィンドウの頭が掛け直す前の履歴にかかる
+        for index in 11..<13 {
+            let levels = AudioAnalysis.analyze(
+                span(from: (index - 1) * Self.perFrame, to: index * Self.perFrame) { $0 < 0 ? 0 : shaped($0) })
+            #expect(exported.frames[index].level == levels.level, "frame \(index)")
+            #expect(exported.frames[index].spectrum == levels.spectrum, "frame \(index)")
+        }
+    }
+
+    // MARK: - 切り替え (反証 #5)
+
+    @Test("包絡を掛けて鳴っている最中にエフェクトへ通しても、形は通す前の続きから掛かり、飛ばず二重にもならない")
+    func routingWhilePlayingKeepsTheShape() throws {
+        let flat = [Float](repeating: 0.5, count: 96_000)
+        let frames = 30
+        let plain = try take(
+            frames: frames, samples: flat, audible: true, routeAt: 10, start: { song, _ in song.play() })
+        let shaped = try take(
+            frames: frames, samples: flat, audible: true, routeAt: 10,
+            start: { song, env in env.play(song, 0, 0, 1, 1) })
+        try #require(plain.sound.count == frames * Self.perFrame && shaped.sound.count == plain.sound.count)
+        #expect(plain.frames.map(\.position) == shaped.frames.map(\.position))
+        // 通した後も音は出ている (節の立ち上がりの後。節の出口は中央に定位するので約 0.354)
+        #expect(plain.sound[12_000] > 0.3)
+        let gaps = plain.sound.indices.map {
+            abs(shaped.sound[$0] - plain.sound[$0] * trapezoid($0, attack: 0, sustain: 0, release: 48_000, level: 1))
+        }
+        let worst = gaps.indices.max { gaps[$0] < gaps[$1] } ?? 0
+        #expect(gaps[worst] < 2e-3, "標本 \(worst) で \(gaps[worst]) ずれた")
+    }
+
+    @Test("エフェクトへ通したまま鳴っている最中に env.play を掛けると、掛けた描き出しの頭から形が載る")
+    func reshapingARoutedFileWhilePlaying() throws {
+        let flat = [Float](repeating: 0.5, count: 96_000)
+        let frames = 45
+        let plain = try take(
+            frames: frames, samples: flat, audible: true, routeAt: 0, start: { song, _ in song.play() })
+        let shaped = try take(
+            frames: frames, samples: flat, audible: true, routeAt: 0, start: { song, _ in song.play() },
+            act: { song, env, frame in if frame == 10 { env.play(song, 0, 0, 1, 0.5) } })
+        let at = 9 * Self.perFrame
+        let gain: (Int) -> Float = { n in
+            n < at ? 1 : trapezoid(n - at, attack: 0, sustain: 0, release: 24_000, level: 1)
+        }
+        let gaps = plain.sound.indices.map { abs(shaped.sound[$0] - plain.sound[$0] * gain($0)) }
+        let worst = gaps.indices.max { gaps[$0] < gaps[$1] } ?? 0
+        #expect(gaps[worst] < 2e-3, "標本 \(worst) で \(gaps[worst]) ずれた")
+        #expect(shaped.sound[(at + 24_000)...].allSatisfy { abs($0) < 1e-4 }, "形が終わった後は無音")
+    }
+
+    @Test("包絡を掛けたファイルをエフェクトへ通す 1 回の呼び出しが載せる操作は 8 つで、詰まりの余裕より少ない")
+    func routingAShapedFileFitsTheCongestionMargin() throws {
+        let url = try writeWAV(Self.tone, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var posted: Int?
+        EnvelopeSketch.onSetup = { sketch in
+            let stage = SynthStage.stage(for: sketch)
+            let song = try sketch.loadSound(url.path)
+            sketch.createEnv().play(song, 0.1, 0.2, 1, 0.3)
+            let filter = sketch.createLowPass()
+            var count = 0
+            stage.rack.observePost = { _ in count += 1 }
+            filter.process(song)
+            stage.rack.observePost = nil
+            posted = count
+        }
+        EnvelopeSketch.onDraw = { _ in }
+        let runtime = try SketchRuntime(sketch: EnvelopeSketch(), gpu: try RenderDevice(), clock: nil)
+        try runtime.advance()
+        runtime.closePlugins()
+        // 節を足す・入力に選ぶ・区切りを始める・包絡の値 4 つ・位置のずれ。1 つでも増えたら、余裕を見直す
+        #expect(posted == 8)
+        #expect((posted ?? .max) < SynthRack.congestionMargin)
+    }
+
+    // MARK: - 書き出しへ加わる (反証 #5)
+
+    @Test("包絡を掛けて鳴っている最中に書き出しを始めても、音声トラックの形は鳴った標本の続きから載る")
+    func joiningTheTrackKeepsTheShape() async throws {
+        let flat = [Float](repeating: 0.5, count: 48_000)
+        let wav = try writeWAV(flat, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: wav) }
+        func record(shaped: Bool) async throws -> [Float] {
+            let url = TestScratch.path("mokume-envelope-join", pathExtension: "mov")
+            defer { try? FileManager.default.removeItem(at: url) }
+            var sound: SoundFile?
+            var env: Env?
+            EnvelopeSketch.onSetup = { sketch in
+                sound = try sketch.loadSound(wav.path)
+                env = sketch.createEnv()
+            }
+            EnvelopeSketch.onDraw = { sketch in
+                // 1 フレーム目 (標本 0) から鳴らし、11 フレーム目 (標本 8000) から書き出す
+                if sketch.frameCount == 1, let sound, let env {
+                    if shaped { env.play(sound, 0, 0, 1, 1) } else { sound.play() }
+                }
+                if sketch.frameCount == 11 { sketch.beginRecord(url.path) }
+                if sketch.frameCount == 41 { sketch.endRecord() }
+            }
+            let runtime = try SketchRuntime(
+                sketch: EnvelopeSketch(), gpu: try RenderDevice(), clock: .frameIndex(frameRate: 60))
+            for _ in 0..<41 { try runtime.advance() }
+            runtime.closePlugins()
+            return try await leftChannel(of: url)
+        }
+        let plain = try await record(shaped: false)
+        let shaped = try await record(shaped: true)
+        try #require(plain.count > 0 && shaped.count == plain.count)
+        #expect(plain[0] > 0.4)
+        let gaps = plain.indices.map {
+            abs(shaped[$0] - plain[$0] * trapezoid($0 + 8000, attack: 0, sustain: 0, release: 48_000, level: 1))
+        }
+        let worst = gaps.indices.max { gaps[$0] < gaps[$1] } ?? 0
+        #expect(gaps[worst] < 1e-5, "標本 \(worst) で \(gaps[worst]) ずれた")
     }
 
     // MARK: - 書き出しの音声トラック (完了条件 5・#3125)
@@ -407,5 +581,93 @@ struct SoundFileEnvelopeArgumentTests {
         #expect(file.count == 2)
         #expect(file == synth.map { $0.replacingOccurrences(of: "this SinOsc", with: "\"song.wav\"") })
         #expect(synth.first == "Env.play() takes attackTime of 0 seconds or more, so -1.0 was changed to 0 for this SinOsc")
+    }
+}
+
+/// スピーカーへ直に鳴らす音の側 (``FileVoice``) が包絡を受ける順 (#3099 の反証 #1・#4)。主スレッドの書き込みと
+/// 音の側の描き出しを、1 本のスレッドで交互に呼んで並べる。機材も GPU も要らない。
+@Suite("音の側が包絡を受ける順")
+struct FileVoiceEnvelopeTests {
+    /// 標本が `位置 ÷ 1000` の器 (2 チャンネル) を鳴らす音の側と、描き出し 1 回 (64 標本) の左の音。
+    private struct Voice {
+        let voice: FileVoice
+        let out: AVAudioPCMBuffer
+
+        init() throws {
+            voice = try #require(FileVoice(buffer: try rampBuffer(1000)))
+            let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+            out = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 64))
+            out.frameLength = 64
+        }
+
+        /// 描き出しを 1 回。前の値が残らないよう、描かせる前に 9 で埋める。
+        func render() -> [Float] {
+            let data = out.floatChannelData!
+            for channel in 0..<2 { for index in 0..<64 { data[channel][index] = 9 } }
+            voice.render(frames: 64, into: UnsafeMutableAudioBufferListPointer(out.mutableAudioBufferList))
+            #expect((0..<64).allSatisfy { data[0][$0] == data[1][$0] }, "左右は同じ")
+            return (0..<64).map { data[0][$0] }
+        }
+    }
+
+    /// 倍率が `level` で一定の包絡 (保つだけ)。
+    private func flat(_ level: Float) -> FileEnvelope {
+        var shape = EnvelopeShape()
+        shape.sustain = 1_000_000
+        shape.level = level
+        return FileEnvelope(shape: shape, offset: 0)
+    }
+
+    /// 器の `start` 標本目からの 64 標本に `gain` を掛けたもの。
+    private func ramp(from start: Int, _ gain: Float) -> [Float] {
+        (start..<(start + 64)).map { Float($0) / 1000 * gain }
+    }
+
+    @Test("新しい区切りの最初の描き出しが、次の包絡を書いている途中 (版が奇数) に来たら、全音量でも前の包絡でもなく無音で、次の描き出しで受ける")
+    func aRenderDuringTheWriteIsSilentAtTheSegmentHead() throws {
+        let side = try Voice()
+        side.voice.send(flat(0.5), generation: 1)
+        side.voice.send(.play(start: 0, looping: false), generation: 1)
+        #expect(side.render() == ramp(from: 0, 0.5))
+        // 同じ draw で `song.play(); env.play(song, …)`: 区切りを始め (包絡つき)、続けて形を掛け直す。
+        // 掛け直しを書いている途中に、新しい区切りの最初の描き出しが入る
+        side.voice.send(flat(0.25), generation: 2)
+        side.voice.send(.play(start: 100, looping: false), generation: 2)
+        var during: [Float] = []
+        side.voice.send(flat(0.75), generation: 2, whileWriting: { during = side.render() })
+        #expect(during == [Float](repeating: 0, count: 64))
+        // 書き終えたら受ける (区切りの中の位置は無音の描き出しの分も進んでいる)
+        #expect(side.render() == ramp(from: 164, 0.75))
+        // 区切りの途中の掛け直しを書いている途中なら、無音にはせず、いまの包絡のまま 1 回描く
+        side.voice.send(flat(0.5), generation: 2, whileWriting: { during = side.render() })
+        #expect(during == ramp(from: 228, 0.75))
+        #expect(side.render() == ramp(from: 292, 0.5))
+    }
+
+    @Test("次の区切りの包絡 (世代が 1 つ先) が命令より先に見えたら、いまの区切りの最初の描き出しは無音で、次の区切りでその包絡を受ける")
+    func anEnvelopeForTheNextSegmentIsNotTaken() throws {
+        let side = try Voice()
+        side.voice.send(flat(0.5), generation: 1)
+        side.voice.send(.play(start: 0, looping: false), generation: 1)
+        #expect(side.render() == ramp(from: 0, 0.5))
+        // 区切りを 2 つ続けて始めた: 2 つ目の包絡は書けたが、2 つ目の命令はまだ
+        side.voice.send(flat(0.25), generation: 2)
+        side.voice.send(.play(start: 100, looping: false), generation: 2)
+        side.voice.send(flat(0.75), generation: 3)
+        #expect(side.render() == [Float](repeating: 0, count: 64))
+        side.voice.send(.play(start: 200, looping: false), generation: 3)
+        #expect(side.render() == ramp(from: 200, 0.75))
+    }
+
+    @Test("包絡が一度も書かれていない音の側は、区切りの頭でも待たず、器の標本をそのまま描く")
+    func aVoiceWithoutEnvelopesNeverWaits() throws {
+        let side = try Voice()
+        side.voice.send(.play(start: 0, looping: false), generation: 1)
+        #expect(side.render() == ramp(from: 0, 1))
+        side.voice.send(.play(start: 300, looping: true), generation: 2)
+        #expect(side.render() == ramp(from: 300, 1))
+        side.voice.send(.halt, generation: 3)
+        side.voice.send(.play(start: 500, looping: false), generation: 4)
+        #expect(side.render() == ramp(from: 500, 1))
     }
 }
