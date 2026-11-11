@@ -271,6 +271,7 @@ struct WatchFrameHandOverTests {
         var submitted = gpu.submissionCount
         let late = watched.refresh(10)
         #expect(late.count == 1, "止まった作品の今の 1 枚が後から繋いだ受け手へ届かない: \(late)")
+        #expect(late.allSatisfy { $0 > 0 }, "番号 0 の絵を渡した: \(late)")
         #expect(gpu.submissionCount - submitted == 1, "同じ絵を写し直した (写しの投入 \(gpu.submissionCount - submitted) 回)")
         #expect(watched.receiver.lastPixel().map { $0[0] > $0[1] } == true, "今の絵 (赤) でない: \(String(describing: watched.receiver.lastPixel()))")
 
@@ -282,6 +283,36 @@ struct WatchFrameHandOverTests {
         #expect(gpu.submissionCount - submitted == 1, "同じ絵を写し直した (写しの投入 \(gpu.submissionCount - submitted) 回)")
         #expect(watched.receiver.lastPixel().map { $0[1] > $0[0] } == true, "描き直した絵 (緑) でない: \(String(describing: watched.receiver.lastPixel()))")
         #expect((late + redrawn) == (late + redrawn).sorted() && Set(late + redrawn).count == 2, "\(late + redrawn)")
+    }
+
+    /// **台に出せる絵が無いリフレッシュでも、写した絵の GPU の完了を受け手へ知らせる** (#3945)。子が絵を出さなく
+    /// なっても (面が引けない間など)、最後に写した 1 枚は次の絵を待たずに届く。
+    @Test("絵が無いリフレッシュでも、写した絵の GPU の完了を受け手へ知らせる")
+    func aCopyIsAnnouncedOnARefreshWithoutAFrame() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share in
+            FrameAnnouncement.announce(
+                sketch: share.sketch, identity: identity, title: share.title, in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") })
+        }
+        listing.say = { _ in }
+        defer { listing.withdraw() }
+        listing.follow(FrameShare(sketch: "Bricks", title: "Bricks"))
+        let texture = try childTexture(gpu: gpu)
+        listing.handOver(texture, isNew: true)  // 送り手を起こす (受け手はまだ居ない)
+        let sender = try #require(listing.announcement?.sender)
+        let service = try #require(listing.announcement.flatMap { Bootstrap.lookUp($0.entry.serviceName) })
+        defer { Bootstrap.releaseSend(service) }
+        let receiver = try ReceiverForWatch(width: 16, height: 8, service: service)
+        defer { receiver.close() }
+        sender.drain()
+        listing.handOver(texture, isNew: true)  // 写す。完了は次のリフレッシュで見る
+        _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+        #expect(receiver.takeFrames().isEmpty, "前提: 写した回には知らせない (GPU を待たない)")
+
+        listing.handOver(nil, isNew: false)
+        #expect(receiver.takeFrames().count == 1, "絵が無いリフレッシュで、写した絵の完了を知らせない")
     }
 
     /// **子の番号は子ごとに 1 から数える** ([#3948])。保存の前後の子がどちらも 3 枚目で止まっても、新しい世代の絵を
