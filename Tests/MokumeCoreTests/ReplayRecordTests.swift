@@ -407,6 +407,85 @@ struct ReplayRecordFormatTests {
         #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
     }
 
+    // MARK: - 錠のファイルの持ち主 (#3970)
+
+    @Test("行き先の隣に元から在る通常ファイルの .lock は、錠に使っても終わった後に同じ内容で残る (#3970)")
+    func anExistingLockFileIsKept() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let lock = directory.appendingPathComponent("take.json.lock")
+        try Data("mine".utf8).write(to: lock)
+
+        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        // 在るファイルを錠に使っても、排他は効く
+        #expect(ReplayRecorder.open(destination: destination).recorder == nil)
+        recorder.finish(last: nil)
+        #expect((try? Data(contentsOf: lock)) == Data("mine".utf8), "利用者の .lock を消した・書き換えた")
+        #expect(try object(at: destination)["complete"] as? Bool == true)
+    }
+
+    @Test("今回作った .lock だけを終わりに消し、落ちた回が残した .lock は次の実行が使って残す (#3970)")
+    func onlyTheLockFileThisRunMadeIsRemoved() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let lock = directory.appendingPathComponent("take.json.lock")
+        // 落ちた回の残り (記録が作る形の、中身の無い通常ファイル)
+        try Data().write(to: lock)
+
+        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        claim.release()
+        #expect(FileManager.default.fileExists(atPath: lock.path), "今回作っていない .lock を消した")
+
+        // 何も無いところから始めた回は、自分の .lock を消す
+        try FileManager.default.removeItem(at: lock)
+        let fresh = try #require(ReplayClaim.take(destination: destination).claim)
+        #expect(FileManager.default.fileExists(atPath: lock.path))
+        fresh.release()
+        #expect(!FileManager.default.fileExists(atPath: lock.path), "今回作った .lock が残った")
+    }
+
+    @Test(
+        ".lock の名前のシンボリックリンクはたどらず、リンクも指す先も残し、指す先が無ければ作らない (#3970)",
+        arguments: [true, false])
+    func aLockFileLinkIsNotFollowed(targetExists: Bool) throws {
+        let manager = FileManager.default
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let target = directory.appendingPathComponent("elsewhere.txt")
+        if targetExists { try Data("theirs".utf8).write(to: target) }
+        let link = directory.appendingPathComponent("take.json.lock")
+        try manager.createSymbolicLink(atPath: link.path, withDestinationPath: target.path)
+
+        let taken = ReplayClaim.take(destination: destination)
+        taken.claim?.release()
+        #expect(taken.claim == nil, "リンクを錠に使った")
+        #expect(taken.failure?.contains("symbolic link") == true, "理由: \(taken.failure ?? "nil")")
+        #expect((try? manager.destinationOfSymbolicLink(atPath: link.path)) == target.path, "リンクを外した")
+        if targetExists {
+            #expect((try? Data(contentsOf: target)) == Data("theirs".utf8), "指す先を書き換えた")
+        } else {
+            #expect(!manager.fileExists(atPath: target.path), "指す先にファイルを作った")
+        }
+    }
+
+    @Test("watch の始まりも、世代の隣に元から在る .lock を残す (#3970)")
+    func generationCleanupKeepsAnExistingLockFile() throws {
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json")
+        let first = directory.appendingPathComponent("take-1.json")
+        try writeRecordHead(first)
+        let lock = directory.appendingPathComponent("take-1.json.lock")
+        try Data("mine".utf8).write(to: lock)
+
+        #expect(ReplayRequest.discardGenerations(of: base.path) == ["take-1.json"])
+        #expect((try? Data(contentsOf: lock)) == Data("mine".utf8), "利用者の .lock を消した")
+        // 今回作った世代の .lock は残さない
+        let second = directory.appendingPathComponent("take-2.json")
+        try writeRecordHead(second)
+        #expect(ReplayRequest.discardGenerations(of: base.path) == ["take-2.json"])
+        #expect(!FileManager.default.fileExists(atPath: second.path + ".lock"))
+    }
+
     @Test("合図は使わなくても環境から消す: 記録しない実行 (ホストのアプリ・書き出しの子) が孫へ継がせない")
     func theSignalIsForgottenEvenWhenUnused() {
         var unset: [String] = []
@@ -556,6 +635,57 @@ struct ReplayRecordFormatTests {
         #expect(InputEvent.pinched(amount: .nan).hasNonFiniteNumber)
         #expect(!InputEvent.mouseMovedBy(dx: 3e38, dy: 3e38).hasNonFiniteNumber, "極端でも有限なら生の形で残せる")
         #expect(!InputEvent.keyUp(code: .a).hasNonFiniteNumber)
+    }
+}
+
+/// 錠の排他を、別のプロセスが握った錠で確かめる ([#3970])。
+///
+/// 落ちた回が残した `.lock` (錠のファイル) を、**別のプロセス** (`perl` の `flock`) が握っている間は、このプロセスは
+/// 記録を始めない。手放されたら使え、使い終えても今回作っていないので残す。待つのは期限つき。
+///
+/// [#3970]: https://github.com/mokume-metal/mokume/issues/3970
+@Suite(
+    "記録の錠: 別のプロセスとの排他",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/perl"), "/usr/bin/perl が要る"))
+struct ReplayClaimProcessTests {
+    @Test("別のプロセスが握る .lock は取れず、手放された後は使えて、今回作っていない .lock は残る")
+    func anotherProcessHoldsTheLock() throws {
+        let directory = try TestScratch.directory("mokume-replay-claim-process")
+        let destination = directory.appendingPathComponent("take.json")
+        let lock = directory.appendingPathComponent("take.json.lock")
+        try Data().write(to: lock)
+        let marker = directory.appendingPathComponent("held")
+
+        // 錠を握ったら印を書き、標準入力が閉じるまで握り続ける
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        process.arguments = [
+            "-e",
+            "use Fcntl ':flock'; open(my $f, '<', $ARGV[0]) or die; flock($f, LOCK_EX) or die; "
+                + "open(my $m, '>', $ARGV[1]) or die; close($m); <STDIN>;",
+            lock.path, marker.path,
+        ]
+        let input = Pipe()
+        process.standardInput = input
+        try process.run()
+        defer { if process.isRunning { kill(process.processIdentifier, SIGKILL) } }
+
+        let held = try ReplayRecordProcess.wait(upTo: .seconds(30)) {
+            FileManager.default.fileExists(atPath: marker.path)
+        }
+        try #require(held, "別のプロセスが錠を握らない")
+
+        let refused = ReplayClaim.take(destination: destination)
+        #expect(refused.claim == nil)
+        #expect(refused.failure?.contains("another run is already recording") == true, "理由: \(refused.failure ?? "nil")")
+
+        try input.fileHandleForWriting.close()
+        let exited = try ReplayRecordProcess.wait(upTo: .seconds(30)) { !process.isRunning }
+        try #require(exited, "別のプロセスが終わらない")
+
+        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        claim.release()
+        #expect(FileManager.default.fileExists(atPath: lock.path), "今回作っていない .lock を消した")
     }
 }
 

@@ -56,21 +56,35 @@ enum RecordOption {
 /// 作り直しは記録の切れ目で、新しい世代の記録が 1 本始まる。番号は子を起こすたびに 1 から進み、
 /// 作り直しに失敗して子を起こさなかった回は進まない。起こす口は作り直しの糸から呼ばれるので、数えるのは錠で守る。
 ///
+/// **世代の名前に記録でないもの (利用者のファイル・フォルダ・リンク) が在れば、その番号を飛ばす** ([#3970])。
+/// 世代の名前は道具が作ったもので、子は行き先を置き換えるので、渡せば利用者のファイルが消える。飛ばした回は 1 度知らせる。
+///
 /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
+/// [#3970]: https://github.com/mokume-metal/mokume/issues/3970
 nonisolated final class RecordGenerations: Sendable {
     private let destination: String
-    private let started = Mutex(0)
+    /// 最後に渡した世代の番号。
+    private let last = Mutex(0)
+    private let say: @Sendable (String) -> Void
 
-    init(destination: String) {
+    /// - Parameter say: 番号を飛ばしたことを知らせる先。検査だけが差し替える。
+    init(destination: String, say: @escaping @Sendable (String) -> Void = { WatchCommand.say($0) }) {
         self.destination = destination
+        self.say = say
     }
 
     /// 次の子の行き先。
     func next() -> String {
-        let number = started.withLock { count -> Int in
-            count += 1
-            return count
+        let (path, skipped) = last.withLock { number -> (String, [String]) in
+            let found = ReplayRequest.nextGeneration(of: destination, after: number)
+            number = found.number
+            return (ReplayRequest.generation(of: destination, number: found.number), found.skipped)
         }
-        return ReplayRequest.generation(of: destination, number: number)
+        if !skipped.isEmpty {
+            say(
+                "Not recording over \(skipped.joined(separator: ", ")): not a record, so it is kept. "
+                    + "This build records to \(path)")
+        }
+        return path
     }
 }

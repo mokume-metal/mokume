@@ -44,6 +44,38 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
         return url.deletingLastPathComponent().appendingPathComponent(numbered).path
     }
 
+    /// `watch` の次の世代を、`number` の次の番号から選ぶ ([#3970])。
+    ///
+    /// **世代の名前は道具が作ったもので、利用者は名指していない** (`run --record` の行き先とは違う)。その名前に
+    /// 記録でないもの (記録の頭で始まらない通常ファイル・フォルダ・シンボリックリンクなど) が在れば、子が行き先として
+    /// 置き換えないように**番号を飛ばし**、何も無いか記録の残りが在る番号を選ぶ。飛ばした名前は呼ぶ側が知らせる。
+    ///
+    /// [#3970]: https://github.com/mokume-metal/mokume/issues/3970
+    ///
+    /// - Parameter destination: `--record` で頼まれた行き先 (絶対パス)。
+    /// - Parameter number: 前の世代の番号 (始まりは 0)。
+    /// - Returns: 選んだ番号と、飛ばした世代の名前 (番号の順)。
+    package static func nextGeneration(of destination: String, after number: Int) -> (number: Int, skipped: [String]) {
+        var candidate = number + 1
+        var skipped: [String] = []
+        while true {
+            let path = generation(of: destination, number: candidate)
+            if isFreeForAGeneration(path) { return (candidate, skipped) }
+            skipped.append(URL(fileURLWithPath: path).lastPathComponent)
+            candidate += 1
+        }
+    }
+
+    /// 世代の行き先に使ってよいか: 何も無いか、記録の頭で始まる通常ファイル (リンクはたどらない)。
+    ///
+    /// 見られない名前 (親がファイル・権限が無い) は空きとして返す — どの番号でも同じなので、飛ばし続けずに子に
+    /// 渡し、子が書けない理由を言う。
+    private static func isFreeForAGeneration(_ path: String) -> Bool {
+        var status = stat()
+        guard lstat(path, &status) == 0 else { return true }
+        return (status.st_mode & S_IFMT) == S_IFREG && looksLikeARecord(URL(fileURLWithPath: path))
+    }
+
     /// 起動の口。**記録しない実行 (ホストのアプリの中の ``SketchView``・書き出しの子) でも、合図は読まずに環境
     /// から消す** — 残れば、そこから起こす子 (孫) が継いで、頼んでいない実行が記録を始める。
     ///

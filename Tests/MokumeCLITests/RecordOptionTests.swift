@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeTestSupport
+import Synchronization
 import Testing
 
 @testable import MokumeCLI
@@ -107,6 +108,42 @@ struct RecordOptionTests {
         #expect(generations.next() == "/tmp/out/take-3.json")
         // 別の見張りは別の数え
         #expect(RecordGenerations(destination: "/tmp/out/take.json").next() == "/tmp/out/take-1.json")
+    }
+
+    @Test("watch の世代の名前に記録でないものが在れば、触らずに番号を飛ばし、飛ばしたことを 1 度言う (#3970)")
+    func watchSkipsGenerationNamesTakenByOtherFiles() throws {
+        let manager = FileManager.default
+        let directory = try TestScratch.directory("mokume-record-generations")
+        let base = directory.appendingPathComponent("take.json").path
+        let first = directory.appendingPathComponent("take-1.json")
+        let second = directory.appendingPathComponent("take-2.json")
+        try Data("{\"theme\":\"dark\"}".utf8).write(to: first)
+        try Data("my notes".utf8).write(to: second)
+
+        // 見張りの始まりの掃除は、記録でないファイルに触らない
+        #expect(ReplayRequest.discardGenerations(of: base).isEmpty)
+        let said = Mutex<[String]>([])
+        let generations = RecordGenerations(destination: base) { line in said.withLock { $0.append(line) } }
+        let third = generations.next()
+        #expect(third == directory.appendingPathComponent("take-3.json").path)
+        #expect(said.withLock { $0.count } == 1, "飛ばしたことは 1 度だけ言う: \(said.withLock { $0 })")
+        let notice = said.withLock { $0.first } ?? ""
+        #expect(notice.contains("take-1.json") && notice.contains("take-2.json") && notice.contains(third))
+
+        // 以降の保存も同じ規則: 記録でないもの (フォルダ・リンク) の番号は飛ばし、記録の残りは使う
+        try manager.createDirectory(
+            at: directory.appendingPathComponent("take-4.json"), withIntermediateDirectories: false)
+        try manager.createSymbolicLink(
+            atPath: directory.appendingPathComponent("take-5.json").path, withDestinationPath: first.path)
+        #expect(generations.next() == directory.appendingPathComponent("take-6.json").path)
+        #expect(said.withLock { $0.count } == 2)
+        try Data("{\"schemaVersion\":1}".utf8).write(to: directory.appendingPathComponent("take-7.json"))
+        #expect(generations.next() == directory.appendingPathComponent("take-7.json").path)
+        #expect(generations.next() == directory.appendingPathComponent("take-8.json").path)
+        #expect(said.withLock { $0.count } == 2, "飛ばさなかった回は黙る")
+
+        #expect((try? Data(contentsOf: first)) == Data("{\"theme\":\"dark\"}".utf8))
+        #expect((try? Data(contentsOf: second)) == Data("my notes".utf8))
     }
 
     // MARK: - 反証 1 回目
