@@ -180,6 +180,42 @@ extension Canvas {
             graphics.drawnPicture, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 
+    // MARK: - 範囲を Rect で渡す形 (#3783)
+    //
+    // **`imageMode` に従わない** — `Rect` は左上で置く値なので、値のとおり左上から置く
+    // (ADR-0045 決定 5・`Rect.draw()` が `rectMode` に従わないのと同じ)。
+
+    /// 絵を `destination` に合わせて置く。``imageMode(_:)`` が既定 (`.corner`) のときの
+    /// `image(_:_:_:_:_:)` に `destination` の左上と大きさを渡すのと同じ。
+    public func image(_ image: Image, in destination: Rect) {
+        place(.loaded(image), destination.left, destination.top, destination.width, destination.height, mode: .corner)
+    }
+
+    /// 絵の `source` の範囲を切り出して `destination` に置く。``imageMode(_:)`` が既定のときの
+    /// 9 つの引数の形に、2 つの範囲の左上と大きさを渡すのと同じ。
+    public func image(_ image: Image, in destination: Rect, from source: Rect) {
+        place(
+            .loaded(image), destination.left, destination.top, destination.width, destination.height,
+            source.left, source.top, source.width, source.height, mode: .corner)
+    }
+
+    /// 描き場所を `destination` に合わせて置く。``imageMode(_:)`` が既定のときの 5 つの引数の形と同じ。
+    public func image(_ graphics: Canvas, in destination: Rect) {
+        note(placing: graphics)
+        place(
+            graphics.drawnPicture, destination.left, destination.top, destination.width, destination.height,
+            mode: .corner)
+    }
+
+    /// 描き場所の `source` の範囲を切り出して `destination` に置く。``imageMode(_:)`` が既定のときの
+    /// 9 つの引数の形と同じ。
+    public func image(_ graphics: Canvas, in destination: Rect, from source: Rect) {
+        note(placing: graphics)
+        place(
+            graphics.drawnPicture, destination.left, destination.top, destination.width, destination.height,
+            source.left, source.top, source.width, source.height, mode: .corner)
+    }
+
     // MARK: - 置き方は 1 本
 
     /// 絵を置く。**読み込んだ絵も描き場所もここへ集まる** ([ADR-0023] 決定 1)。
@@ -199,18 +235,21 @@ extension Canvas {
         place(picture, a, b, c, d)
     }
 
+    /// `mode` を渡さなければ ``imageMode(_:)`` で読む。`Rect` を取る形は `.corner` を渡し、値の
+    /// とおり左上で置く (#3783)。
     private func place(
-        _ picture: Picture, _ a: Float, _ b: Float, _ c: Float, _ d: Float
+        _ picture: Picture, _ a: Float, _ b: Float, _ c: Float, _ d: Float, mode: ShapeMode? = nil
     ) {
         place(
-            picture, a, b, c, d, 0, 0, Float(picture.width), Float(picture.height))
+            picture, a, b, c, d, 0, 0, Float(picture.width), Float(picture.height), mode: mode)
     }
 
     private func place(
         _ picture: Picture, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
-        _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
+        _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float,
+        mode: ShapeMode? = nil
     ) {
-        let box = Self.resolveBox(a, b, c, d, mode: style.imageMode)
+        let box = Self.resolveBox(a, b, c, d, mode: mode ?? style.imageMode)
         guard box.width > 0, box.height > 0, picture.width > 0, picture.height > 0 else {
             return
         }

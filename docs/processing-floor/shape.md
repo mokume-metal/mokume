@@ -9,8 +9,8 @@ Processing の本体の参照のうち、category が `shape`・`pshape` か、�
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 36 |
-| 入れる | 3 |
+| 同等 | 39 |
+| 入れる | 0 |
 | 作例待ち | 10 |
 | 持たない | 15 |
 | 計 | 64 |
@@ -20,15 +20,15 @@ Processing の本体の参照のうち、category が `shape`・`pshape` か、�
 - **保持した形 `Shape` は、焼いた頂点の並びの値の型である** ([#788]・[ADR-0021](../decisions/0021-solid-space-and-frame-assembly.md))。`createShape { }` か `loadShape(_:)` で作り、`shape(_:)` で置く。子の一覧・頂点の読み書き・変換・表示の旗は持たず、色と線は組んだとき (読んだとき) に形へ焼き付く (置く側の `fill` は効かない)。`PShape` の API のうち、この性質で「持たない」にしたものと、編集の表現を決めるまで「作例待ち」にしたものは、下の `PShape` の節に分けた
 - **読めないときは投げる。** `loadShape(_:)` は `null` を返さず `DataFailure` を投げ、`setup() throws` の `try` か `try?` で受ける
 - **平面の図形は視点を通らず、引数に `z` を持つ形と立体は奥行きと視点を通る** ([ADR-0021](../decisions/0021-solid-space-and-frame-assembly.md) 決定 2)。同じ名前で引数の数により変わることは、各 API の説明文に書く
-- **曲線の刻みは `curveDetail(_:)` の 1 本** で、`bezierVertex`・`quadraticVertex`・`curveVertex`・`bezier()` のどれにも効く (Processing は `bezierDetail()` と `curveDetail()` が別の設定)
+- **曲線の刻みは `curveDetail(_:)` の 1 本** で、`bezierVertex`・`quadraticVertex`・`curveVertex`・`bezier()`・`curve()` のどれにも効く (Processing は `bezierDetail()` と `curveDetail()` が別の設定)
 
 ## 入れるの束
 
-「入れる」の 3 件は、1 本の `Feature` で入れる。欠けた形のうち、3 次元の曲線は別の 1 本で入れる (件数に入れない)。`loadShape()` の下の子の行にある SVG の勾配 (件数に入れない) は、既に開いている [#3031] を `Feature` として使う。
+「入れる」の 3 件は、1 本の `Feature` で入れる (いまは 0 件。[#3710] で入れた 3 件は「同等」に移した)。欠けた形のうち、3 次元の曲線は別の 1 本で入れる (件数に入れない)。`loadShape()` の下の子の行にある SVG の勾配 (件数に入れない) は、既に開いている [#3031] を `Feature` として使う。
 
 | 束 | 口 | 件数 |
 | --- | --- | --- |
-| [#3710] 通過点を結ぶ曲線の単発の API | `curve()`・`curvePoint()`・`curveTangent()` | 3 |
+| [#3710] 通過点を結ぶ曲線の単発の API (入れた) | `curve()`・`curvePoint()`・`curveTangent()` | 3 |
 | [#3712] 3 次元の曲線 (欠けた形) | `bezierVertex()`・`quadraticVertex()`・`curveVertex()` の `z` を持つ形と、12 の数の `bezier()` | 0 |
 | [#3031] SVG の勾配 (子の行) | `loadShape()` が読む `<linearGradient>`・`<radialGradient>` | 0 |
 
@@ -72,7 +72,7 @@ Processing の本体の参照のうち、category が `shape`・`pshape` か、�
 | `bezier()` | `bezier(_:_:_:_:_:_:_:_:)` | 同等 | `beginShape()`・`vertex`・`bezierVertex`・`endShape()` を順に呼んだのと同じ絵。塗りが有効なら、始点と終点を結ばない開いた形のまま塗る。無い形: `z` を持つ 12 の数の形 ([#3712] で入れる) | [#2430]・PR [#3043]・[#3712] |
 | `bezierDetail()` | `curveDetail(_:)` | 同等 | 刻みは 1 つで、ベジェ・2 次・通過点を結ぶ曲線のどれにも効く (Processing は `bezierDetail()` と `curveDetail()` が別の設定)。ベジェだけを粗くするなど、別々にする形は無い。1…1024 の外は端へ丸め、1 度だけ知らせる。名前だけ違う API は足さない | [#2430] |
 | `bezierPoint()`・`bezierTangent()` (2 件) | `bezierPoint(_:_:_:_:_:)`・`bezierTangent(_:_:_:_:_:)` | 同等 | 値だけを扱う関数。`x` と `y` を別々に読み、`atan2` で向きにする。`t` は 0…1 の外も締めない | [#2430]・PR [#3043] |
-| `curve()`・`curvePoint()`・`curveTangent()` (3 件) | — | 入れる | 通過点を結ぶ曲線の単発の API。綴りは `curve*` と決まっていて ([#2430])、作例か対応表が来てから足すと預けられていた。名前・引数は Processing のまま割れない。式は `curveVertex` と同じ (一様 Catmull-Rom に `curveTightness` の張りを掛けたもの)。Processing の `curvePoint()`・`curveTangent()` も `curveTightness()` の設定を読む (`PGraphics.java` の `curveInit()` が張りで基底の行列を作る) ので、値だけの `bezierPoint()` と違いスケッチのメソッドになる。`z` を持つ 12 の数の `curve()` は [#3712] | [#2430]・[#3710] |
+| `curve()`・`curvePoint()`・`curveTangent()` (3 件) | `curve(_:_:_:_:_:_:_:_:)`・`curve(from:control1:control2:to:)`・`curvePoint(_:_:_:_:_:)`・`curveTangent(_:_:_:_:_:)` | 同等 | `curve()` は `beginShape()`・`curveVertex` を 4 回・`endShape()` を順に呼んだのと同じ絵で、引くのは 2 つ目から 3 つ目の点までの 1 区間 (`curveDetail`・`curveTightness` も同じに効く)。ラベル付きの形は `bezier(from:control1:control2:to:)` に揃え、`control1` が始点の手前・`control2` が終点の先の点。`curvePoint()`・`curveTangent()` は Processing と同じく `curveTightness()` の設定を読む (`PGraphics.java` の `curveInit()` が張りで基底の行列を作る) ので、値だけの `bezierPoint()` と違ってスケッチと描画先 (`Canvas`) のメソッドで、ラベル付きの形は持たない (`bezierPoint()` と同じ)。`x` と `y` を別々に読み、`atan2` で向きにする。無い形: `z` を持つ 12 の数の `curve()` ([#3712] で入れる) | [#2430]・[#3710]・[#3712] |
 | `curveDetail()` | `curveDetail(_:)` | 同等 | 1 区間あたりの刻みの数。既定は 20 (Processing と同じ)。`createShape { }` の中で変えても、抜けると戻る | [#2430] |
 | `curveTightness()` | `curveTightness(_:)` | 同等 | 0 が既定で、1 にすると点と点が直線で結ばれる (Processing と同じ) | [#2430] |
 

@@ -77,10 +77,11 @@ enum RenderCommand {
         guard FileManager.default.fileExists(atPath: package.path) else {
             throw .packageNotFound(path: directory.path)
         }
-        try ResourceDeclaration.check(in: directory)
-
         print("Tool: \(ToolVersion.describe())")
-        let context = try RunCommand.context(in: directory, invocation: options.invocation)
+        // 資材の宣言は、宣言を読んだ直後・ビルドの前に見る (`run` と同じ・#3984)
+        let context = try RunCommand.context(
+            in: directory, invocation: options.invocation,
+            afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
         try render(executable, in: directory, request: options.request)
