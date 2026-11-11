@@ -135,29 +135,28 @@ struct SVGCompositeGroupTests {
         let canvas = try makeCanvas()
         var combined: Shape?
         var nested: Shape?
-        let (group, single) = (try drawing(Self.group), try drawing(Self.element))
+        let group = try drawing(Self.group)
         try canvas.draw {
             let logo = canvas.shape(of: group, readFrom: "composite.svg")
-            let element = canvas.shape(of: single, readFrom: "composite.svg")
             combined = Shape.group([logo, logo])
             nested = canvas.createShape {
                 canvas.translate(4, 0)
-                canvas.shape(element)
+                canvas.shape(logo)
             }
             if let nested { canvas.shape(nested) }
         }
+        // 入れ子の記録で置いた群も、置いた先で 1 度だけ掛かる (子ごとに掛けると重なりが 191)
+        let image = try canvas.output.encodeForDisplay()
+        #expect(abs(alpha(image, 30, 30) - 128) <= 1, "\(image[30, 30])")
+        #expect(abs(alpha(image, 90, 80) - 128) <= 1, "\(image[90, 80])")
         let pair = try #require(combined)
         #expect(pair.compositeGroups.count == 2)
         #expect(pair.compositeGroups.map(\.runs) == [0..<1, 1..<2], "境目で区間を畳まない: \(pair.compositeGroups)")
         let moved = try #require(nested)
         #expect(moved.compositeGroups.count == 1)
         let bounds = try #require(moved.compositeGroups.first?.bounds)
-        #expect(bounds.minX < 24 && bounds.minX > 4, "外接も記録の変換で動く: \(bounds)")
+        #expect(bounds.minX == 24 && bounds.maxX == 174, "外接も記録の変換で動く: \(bounds)")
         #expect(canvas.warnings.message(for: .compositeGroupInsideShape) == nil, "記録の中で単位を開かない")
-
-        let image = try canvas.output.encodeForDisplay()
-        #expect(abs(alpha(image, 34, 34) - 128) <= 1, "\(image[34, 34])")
-        #expect(abs(alpha(image, 84, 80) - 128) <= 1, "\(image[84, 80])")
     }
 
     @Test("置き場所を並べて置くと、置き場所ごとに単位になる (置き場所どうしの重なりは重なる)")
