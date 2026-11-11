@@ -461,8 +461,9 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// text("\(current) / \(song.frames)", 20, 40)
     /// ```
     ///
-    /// 読み込んだ標本の数そのもので、``duration`` × ``sampleRate`` の近似ではない (``duration`` は単精度の秒なので、
-    /// 48 kHz で約 350 秒より長いファイルでは掛け直すと 1 標本以上ずれうる)。Processing Sound の
+    /// 読み込んだ標本の数そのもので、``duration`` × ``sampleRate`` の近似ではない。``duration`` は単精度の秒に
+    /// 丸めてあるので、掛け直して `Int` に切り捨てると、短いファイル (48 kHz で 7 標本から) でも 1 少なくなることがあり、
+    /// 長いファイル (約 512 秒から) では 2 以上ずれうる。標本の数が要るときはこちらを使う。Processing Sound の
     /// `SoundFile.frames()` に当たる。外した後も、追加し直した後も同じ値を返す。
     public var frames: Int { samples.count }
 
