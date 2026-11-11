@@ -38,7 +38,10 @@ on:
   # 「誰も見ていない release の赤」は、版を出す前の release.yml の release-check が塞ぐ
   # (#2662。merge の前ではなくなった — 理由は release.yml の release-check)。
   # push の run の結果を読むもの (release・stall-watch・queue-sweep・バッジ) も無い。
-  # キャッシュ (#1715) の置き場に main の run が要ると分かったら、そのときに戻す。
+  # キャッシュ (#1715) の置き場に main の run が要ると分かった (#3885: ci-static の道具の cache は
+  # 既定ブランチに在って初めて PR の初回と merge_group の run から当たる)。ただしここへ push は戻さず、
+  # cache を温めるだけの別のワークフロー warm-tools-cache.yml が main への push で走る。ここに戻すと
+  # すべての job に push で走らない条件が要り、push の run が ci-gate・queue-sweep の見る run に混ざる。
 
 permissions:
   contents: read
