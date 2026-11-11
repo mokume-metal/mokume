@@ -88,6 +88,17 @@ import mokume
 /// {"id":"d1","events":[{"type":"fileDropped","paths":["/tmp/a.png"],"x":480,"y":300}]}
 /// ```
 ///
+/// ## 題名と前にあるか
+///
+/// 押すたびに、ウィンドウの題名へ押した数が出る (`windowTitle(_:)`・[#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+/// ⌘Tab でほかのアプリへ移ると、左の列に「前に無い」が出る (`focused`)。押していた矢印も離した扱いになり、
+/// 四角が止まる。どちらも絵には出さないか、前に無い間だけ出すので、触らずに書き出した絵は変わらない
+/// (書き出しにはウィンドウが無く、`focused` はいつも `true`)。外から送るなら:
+///
+/// ```
+/// {"id":"w1","events":[{"type":"focusChanged","focused":false}]}
+/// ```
+///
 /// 下の行の「動いた量」はフレームの合計 (`movedX`)、「1 件ずつの和」はそのフレームに
 /// `mouseMoved(deltaX:deltaY:)` と `mouseDragged(deltaX:deltaY:)` へ渡った量の和で、2 つは
 /// 一致する。針は見回している間だけ描く — 触らずに書き出した絵は変わらない。
@@ -105,6 +116,8 @@ final class PointerAndKeys: Sketch {
     var released: [(x: Float, y: Float)] = []
     /// クリックした点。押下を伴う解放でだけ、``released`` の直後に増える。
     var clicked: [(x: Float, y: Float)] = []
+    /// 押した回数の通し番号。題名に出す。
+    var pressCount = 0
     /// 押さずに動いた件数。**1 フレームに何件届いても 1 件ずつ数える**。
     var movedCount = 0
     /// 引きずった線。1 件ぶんの量から、どこからどこへ動いたかを組み立てる。
@@ -150,6 +163,9 @@ final class PointerAndKeys: Sketch {
     func mousePressed() {
         pressed.append((mouseX, mouseY))
         if pressed.count > Self.keepAtMost { pressed.removeFirst() }
+        // 題名は絵の外にある。押した数を出す (溜める上限で頭打ちにしない通し番号)
+        pressCount += 1
+        windowTitle("pointer and keys — 押した \(pressCount)")
     }
 
     func mouseReleased() {
@@ -432,6 +448,10 @@ final class PointerAndKeys: Sketch {
 
         if !selection.isEmpty {
             text(selection, 24, 460)
+        }
+        // ウィンドウが前に無い間だけ出す (書き出しには出ない)
+        if !focused {
+            text("前に無い (⌘Tab で戻る)", 24, 492)
         }
 
         // 溜まっている出来事の数。状態ではなく、起きたことの数である
