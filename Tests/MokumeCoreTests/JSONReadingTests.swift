@@ -517,6 +517,148 @@ struct JSONReadingTests {
         #expect(reason.contains("does not fit in a Double"), "\(reason)")
     }
 
+    // MARK: - オブジェクトを作って書く (#3643)
+
+    @Test("空から作って書いたオブジェクトを saveJSONObject で書き、loadJSONObject で読み直すと同じ")
+    func writtenObjectRoundTrips() throws {
+        defer { cleanUp() }
+        var o = JSONObject()
+        o.setString("name", "Sapporo")
+        o.setFloat("temp", -3.5)
+        o.setInt("count", 2)
+        o.setBoolean("rain", false)
+        let path = folder.appendingPathComponent("out/a.json").path
+        try Bare().saveJSONObject(o, path)
+        let read = try Bare().loadJSONObject(path)
+        #expect(read == o)
+        #expect(read.getString("name") == "Sapporo")
+        #expect(read.getFloat("temp") == -3.5)
+        #expect(read.getInt("count") == 2)
+        #expect(read.getBoolean("rain") == false)
+    }
+
+    @Test("書く順は決まっている: キーは文字の順、UTF-8 (BOM なし)・LF・字下げ 2。同じ値は同じバイト列")
+    func writtenBytesAreDeterministic() throws {
+        defer { cleanUp() }
+        var first = JSONObject()
+        first.setInt("b", 1)
+        first.setString("a", "é\"\\\n\t\u{01}/")
+        var inner = JSONObject()
+        inner.setFloat("z", 0.1)
+        inner.setFloat("y", 2)
+        first.setJSONObject("c", inner)
+        first.setJSONObject("d", JSONObject())
+        first.setJSONArray("e", try array("[]"))
+        first.setJSONArray("f", try array(#"[1, "x", true, null]"#))
+        var second = JSONObject()
+        second.setJSONArray("f", try array(#"[1, "x", true, null]"#))
+        second.setJSONArray("e", try array("[]"))
+        second.setJSONObject("d", JSONObject())
+        second.setJSONObject("c", inner)
+        second.setString("a", "é\"\\\n\t\u{01}/")
+        second.setInt("b", 1)
+        let one = folder.appendingPathComponent("one.json").path
+        let two = folder.appendingPathComponent("two.json").path
+        try Bare().saveJSONObject(first, one)
+        try Bare().saveJSONObject(second, two)
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: one))
+        let other = try Data(contentsOf: URL(fileURLWithPath: two))
+        #expect(bytes == other)
+        let expected = """
+            {
+              "a": "é\\"\\\\\\n\\t\\u0001/",
+              "b": 1,
+              "c": {
+                "y": 2.0,
+                "z": 0.1
+              },
+              "d": {},
+              "e": [],
+              "f": [
+                1,
+                "x",
+                true,
+                null
+              ]
+            }
+
+            """
+        #expect(String(decoding: bytes, as: UTF8.self) == expected)
+        #expect(bytes.first == UInt8(ascii: "{"), "BOM を付けない")
+        #expect(!bytes.contains(0x0D), "行の終わりは LF だけ")
+        #expect(try Bare().loadJSONObject(one) == first)
+    }
+
+    @Test("入れ子は写しを書き換えて setJSONObject で戻す。既にあるキーは種類が変わっても置き換える")
+    func nestedAndReplacedValues() {
+        var o = JSONObject()
+        var main = JSONObject()
+        main.setFloat("temp", 1)
+        o.setJSONObject("main", main)
+        #expect(o.getJSONObject("main").getFloat("temp") == 1)
+        // 渡した時点の写し: 後で main を書き換えても o の中は変わらない
+        main.setFloat("temp", 9)
+        #expect(o.getJSONObject("main").getFloat("temp") == 1)
+        o.setString("main", "gone")
+        #expect(o.getString("main") == "gone")
+        o.setInt("main", 2)
+        #expect(o.getInt("main") == 2)
+        #expect(o.keys == ["main"])
+    }
+
+    @Test("NaN と無限はキーに書かず、キーごとに 1 度だけ知らせる。既にある値も置き換えない")
+    func nonFiniteIsNotWritten() {
+        let key = unique("nan")
+        var o = JSONObject()
+        o.setFloat(key, .nan)
+        #expect(o.hasKey(key) == false)
+        #expect(said(.notFinite(key: key))?.contains("JSON has no spelling for nan") == true)
+        let infinite = unique("inf")
+        o.setFloat(infinite, 4)
+        o.setFloat(infinite, -.infinity)
+        #expect(o.getFloat(infinite) == 4)
+        #expect(said(.notFinite(key: infinite))?.contains("-inf") == true)
+    }
+
+    @Test("読んだ桁の多い数は綴りのまま書き出し、読み直すと同じ値と同じ知らせになる")
+    func longNumbersKeepTheirSpelling() throws {
+        defer { cleanUp() }
+        let read = try object(
+            #"{"below": -9223372036854775809, "tiny": 1.00000000000000000000001, "min": -9223372036854775808.0, "two": 2.0}"#)
+        let path = folder.appendingPathComponent("long.json").path
+        try Bare().saveJSONObject(read, path)
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        #expect(text.contains(#""below": -9223372036854775809,"#))
+        #expect(text.contains(#""tiny": 1.00000000000000000000001"#))
+        #expect(text.contains(#""min": -9223372036854775808,"#), "Int に収まる整数の値は整数の綴り")
+        #expect(text.contains(#""two": 2.0"#))
+        let again = try Bare().loadJSONObject(path)
+        #expect(again == read)
+        #expect(again.getInt("below") == 0)
+        #expect(again.getInt("min") == Int.min)
+    }
+
+    @Test("書けない置き場では unwritable を投げ、前の中身を残す (saveTable と同じ道)")
+    func unwritablePlaceThrows() throws {
+        defer { cleanUp() }
+        let blocker = try file("blocker", "x")
+        var o = JSONObject()
+        o.setInt("a", 1)
+        let failure = #expect(throws: DataFailure.self) {
+            try Bare().saveJSONObject(o, blocker + "/inside.json")
+        }
+        guard case .unwritable(let path, _) = failure else {
+            Issue.record("unwritable で投げなかった: \(String(describing: failure))")
+            return
+        }
+        #expect(path == blocker + "/inside.json")
+        let existing = try file("keep.json", "{\"old\": true}\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path) }
+        #expect(throws: DataFailure.self) { try Bare().saveJSONObject(o, existing) }
+        #expect(try String(contentsOfFile: existing, encoding: .utf8) == "{\"old\": true}\n")
+    }
+
     // MARK: - 完了条件 8: XML
 
     private static let feed = """

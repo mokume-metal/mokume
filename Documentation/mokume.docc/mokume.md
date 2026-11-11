@@ -939,6 +939,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/loadJSONObject(_:)``
 - ``SketchPart/requestJSONObject(_:)``
 - ``SketchPart/parseJSONObject(_:)``
+- ``SketchPart/saveJSONObject(_:_:)``
 - ``SketchPart/loadJSONArray(_:)``
 - ``SketchPart/requestJSONArray(_:)``
 - ``SketchPart/parseJSONArray(_:)``
