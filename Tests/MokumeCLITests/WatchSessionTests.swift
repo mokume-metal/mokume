@@ -3525,6 +3525,73 @@ struct SourceStampTests {
         #expect(second == SourceStamp.current(for: sketch))
     }
 
+    /// **リンクの先を書き換えた保存も拾う** ([#3983](https://github.com/mokume-metal/mokume/issues/3983))。
+    /// `Sources` の中の `.swift` がスケッチの外のファイルへのシンボリックリンクのとき、中身は
+    /// リンクの先から読む。読み直すかを決める属性もリンクの先から取らないと、リンク自体の
+    /// 属性は変わらないので、持ち回る読み手だけが古い世代を名乗り続ける。
+    @Test("リンクの先を書き換えれば、持ち回る読み手も世代を変え、変わらなければ読み直さない")
+    func followsTheTargetOfALinkedSource() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let outside = TestScratch.path("mokume-stamp-outside", pathExtension: "swift")
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try "let sampleRed: Double = 242".write(to: outside, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: sketch.appendingPathComponent("Sources/app/Palette.swift"),
+            withDestinationURL: outside)
+        // 先もリンク自体も、保存してから時間の経った形にする。リンク自体の更新時刻は
+        // `setAttributes` では動かせない (先へ辿る) ので `lutimes` で戻す — 戻さないと、
+        // 作ったばかりのリンクは読むたびに読み直され、取りこぼしが隠れる
+        try settle(["Package.swift", "Sources/app/main.swift"], in: sketch)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: outside.path)
+        let old = timeval(tv_sec: Int(Date().timeIntervalSince1970) - 3600, tv_usec: 0)
+        #expect(lutimes(sketch.appendingPathComponent("Sources/app/Palette.swift").path, [old, old]) == 0)
+
+        let log = ReadLog()
+        let reader = SourceStamp.Reader(summarize: { url in
+            log.names.withLock { $0.append(url.lastPathComponent) }
+            return SourceStamp.Reader.digest(of: url)
+        })
+        var reads: [String] { log.names.withLock { $0 } }
+
+        let first = reader.current(for: sketch)
+        #expect(reads.contains("Palette.swift"), "リンクのソースを読んでいない: \(reads)")
+        #expect(first == SourceStamp.current(for: sketch))
+
+        // 変わらない巡回では、リンクのソースも読み直さない
+        log.names.withLock { $0.removeAll() }
+        #expect(reader.current(for: sketch) == first)
+        #expect(reads.isEmpty, "属性の変わらないファイルを読み直した: \(reads)")
+
+        // リンク自体は作り直さず、先だけを同じ大きさで書き換える
+        try "let sampleRed: Double = 150".write(to: outside, atomically: true, encoding: .utf8)
+        let second = reader.current(for: sketch)
+        #expect(second != first, "リンクの先の書き換えを、持ち回る読み手が取りこぼした")
+        #expect(second == SourceStamp.current(for: sketch), "持ち回る読み手と新しい読み手の世代が食い違う")
+    }
+
+    /// 境目。リンクの先を辿るのは数えると決めたもの (`Sources` の `.swift`) だけで、**置き場の
+    /// 中のシンボリックリンクは数えないまま** ([#2519](https://github.com/mokume-metal/mokume/issues/2519)
+    /// の確定条件。範囲の外と help と docc に書いてある)。
+    @Test("置き場の中のシンボリックリンクは、先を書き換えても数えない")
+    func linksInTheAssetsDirectoryStayUncounted() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("one", to: "Sources/app/assets/v.txt", in: sketch)
+        let outside = TestScratch.path("mokume-stamp-outside", pathExtension: "txt")
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try "10".write(to: outside, atomically: true, encoding: .utf8)
+        let first = SourceStamp.current(for: sketch)
+
+        try FileManager.default.createSymbolicLink(
+            at: sketch.appendingPathComponent("Sources/app/assets/linked.txt"),
+            withDestinationURL: outside)
+        #expect(SourceStamp.current(for: sketch) == first, "置き場のリンクを数えた")
+        try "20".write(to: outside, atomically: true, encoding: .utf8)
+        #expect(SourceStamp.current(for: sketch) == first, "置き場のリンクの先を数えた")
+    }
+
     /// 要約を取った名前の帳面。
     private nonisolated final class ReadLog: Sendable {
         let names = Mutex<[String]>([])

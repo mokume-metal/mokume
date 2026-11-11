@@ -210,8 +210,14 @@ nonisolated enum SourceStamp {
             return summary
         }
 
+        /// 属性。**中身を読む先と同じものから取る** — シンボリックリンクは辿った先の属性を取る
+        /// ([#3983](https://github.com/mokume-metal/mokume/issues/3983))。中身は ``digest(of:)`` が
+        /// リンクを辿って読むのに、`attributesOfItem` はリンク自体の属性を返すので、先だけを
+        /// 書き換えた保存では属性が揃ったままになり、持ち回る読み手は古い控えを返し続けていた。
         private static func attributes(of file: URL) -> Attributes? {
-            guard let found = try? FileManager.default.attributesOfItem(atPath: file.path),
+            guard
+                let found = try? FileManager.default.attributesOfItem(
+                    atPath: file.resolvingSymlinksInPath().path),
                 let size = (found[.size] as? NSNumber)?.intValue,
                 let modified = found[.modificationDate] as? Date,
                 let number = (found[.systemFileNumber] as? NSNumber)?.intValue
