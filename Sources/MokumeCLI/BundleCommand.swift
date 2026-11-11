@@ -621,16 +621,21 @@ enum BundleCommand {
     ///
     /// **確かめている間に `.build` が作り直されていたら、戻さない。** 戻す `mv` の先が既に在る
     /// ディレクトリだと、退避側と同じく中へ入れて入れ子にする。どちらも消さず、退避した物の在処を
-    /// 標準エラーで名乗って 0 以外で終わる。
+    /// 標準エラーで名乗って 0 以外で終わる。退避した物の有無もリンクとして見る (`-L`) — 切れた
+    /// シンボリックリンクの `.build` は `-e` では無いことになり、戻されずに取り残される。
+    ///
+    /// **退避先を消せなければ 0 以外で終わる。** 物が残ったまま成功で終わると、溜まっていくのに
+    /// 気付けない。`open` が先に失敗していたら、その終了コード (`s`) を潰さない。
     static func checkLine(for app: URL, package: URL) -> String {
         let build = GivenPath.shellWord(package.appendingPathComponent(".build"))
         let template = GivenPath.shellWord(package.appendingPathComponent(".build-held.XXXXXX"))
         let restore =
-            "if [ -e \"$held/.build\" ]; then"
+            "s=$?; if [ -e \"$held/.build\" ] || [ -L \"$held/.build\" ]; then"
             + " if [ -e \"$build\" ] || [ -L \"$build\" ]; then"
             + " printf \"%s\\n\" \"A new .build appeared while checking;"
             + " the one moved aside was left at $held/.build\" >&2; exit 1; fi;"
-            + " mv \"$held/.build\" \"$build\" || exit; fi; rmdir \"$held\""
+            + " mv \"$held/.build\" \"$build\" || exit; fi;"
+            + " rmdir \"$held\" || exit $((s ? s : 1))"
         return "( build=\(build); held=$(mktemp -d \(template)) || exit;"
             + " trap '\(restore)' EXIT; trap exit HUP INT TERM;"
             + " mv \"$build\" \"$held/.build\" || exit;"

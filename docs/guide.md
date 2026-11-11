@@ -191,7 +191,7 @@ Hardened Runtime とタイムスタンプ付きで署名し、公証に提出で
 配布前に、手元のビルド結果に依存していないかは次で確かめられます。描けたらアプリを閉じてください (閉じると `.build` が戻ります。Ctrl-C で止めても戻ります):
 
 ```bash
-( build=.build; held=$(mktemp -d .build-held.XXXXXX) || exit; trap 'if [ -e "$held/.build" ]; then if [ -e "$build" ] || [ -L "$build" ]; then printf "%s\n" "A new .build appeared while checking; the one moved aside was left at $held/.build" >&2; exit 1; fi; mv "$held/.build" "$build" || exit; fi; rmdir "$held"' EXIT; trap exit HUP INT TERM; mv "$build" "$held/.build" || exit; open -n -W bundle/Grain.app )
+( build=.build; held=$(mktemp -d .build-held.XXXXXX) || exit; trap 's=$?; if [ -e "$held/.build" ] || [ -L "$held/.build" ]; then if [ -e "$build" ] || [ -L "$build" ]; then printf "%s\n" "A new .build appeared while checking; the one moved aside was left at $held/.build" >&2; exit 1; fi; mv "$held/.build" "$build" || exit; fi; rmdir "$held" || exit $((s ? s : 1))' EXIT; trap exit HUP INT TERM; mv "$build" "$held/.build" || exit; open -n -W bundle/Grain.app )
 ```
 
 </details>

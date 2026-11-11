@@ -1032,6 +1032,49 @@ struct BundleCommandTests {
             "退避した在処を名乗っていない: \(run.output)")
     }
 
+    /// **`.build` が切れたシンボリックリンクでも、元の場所へ戻す** (#3985 の 2 回目の反証)。
+    /// 外付けのディスクへ張って外した形。退避した物の有無を `-e` だけで見ると、切れたリンクは
+    /// 無いことになり、戻さずに退避先に取り残される。
+    @Test("確かめ方の行は、.build が切れたシンボリックリンクでも元の場所へ戻す", arguments: shells)
+    func theCheckPutsBackADanglingBuildLink(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            danglingBuildLink: true)
+        #expect(run.status == 0, "確かめ方の行が通らない: \(run.line)\n\(run.output)")
+        #expect(run.buildLink?.hasSuffix("/gone") == true, "リンクが戻っていない: \(run.leftEntries)")
+        #expect(run.leftEntries == [".build", "bundle"], "スケッチに残った物: \(run.leftEntries)")
+    }
+
+    /// **退避先に物が残って消せなければ、0 以外で終わる** (#3985 の 2 回目の反証)。`.build` は
+    /// 戻っても、退避先が残ったまま成功で終わると、溜まっていくのに気付けない。`open` が先に
+    /// 失敗していたら、その終了コードを潰さない。
+    @Test(
+        "確かめ方の行は、退避先を消せなければ、.build を戻したうえで 0 以外で終わる",
+        arguments: shells, [0, 3])
+    func theCheckFailsWhenThePlaceCannotBeRemoved(shell: String, openStatus: Int) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            strayInHeld: true, openStatus: openStatus)
+        if openStatus == 0 {
+            #expect(run.status != 0, "退避先が残ったのに成功で終わった: \(run.line)")
+        } else {
+            #expect(run.status == Int32(openStatus), "open の終了コードを潰した: \(run.line)")
+        }
+        #expect(run.buildMarker == "current", "打った行: \(run.line)")
+        #expect(!run.nested, "打った行: \(run.line)")
+    }
+
+    /// **`open` が失敗したら、その終了コードを潰さない** (#3985 の 2 回目の反証)。戻す手は
+    /// 後始末で、うまくいっても `open` の失敗を成功に変えない。
+    @Test("確かめ方の行は、open の終了コードをそのまま返し、.build も戻す", arguments: shells)
+    func theCheckKeepsTheStatusOfOpen(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            openStatus: 3)
+        #expect(run.status == 3, "打った行: \(run.line)")
+        #expect(run.restored, "打った行: \(run.line)")
+    }
+
     private struct CheckRun {
         var line: String
         var app: URL
@@ -1052,6 +1095,8 @@ struct BundleCommandTests {
         var nested: Bool
         /// 残った `.build-held.*/.build/marker` の中身。
         var heldMarkers: [String]
+        /// 終わった後の `.build` がシンボリックリンクなら、その指す先。
+        var buildLink: String?
     }
 
     /// 確かめ方の行を、偽の `open` を `PATH` の先に置いて走らせる。
@@ -1066,17 +1111,24 @@ struct BundleCommandTests {
     /// - Parameter shell: 行を走らせる殻。
     /// - Parameter buildPresent: スケッチに `.build` を置くか。
     /// - Parameter recreateBuild: 偽のアプリが資材を読んだ後、待つ間に `.build` を作り直す。
+    /// - Parameter danglingBuildLink: `.build` を切れたシンボリックリンク (外付けへ張って外した形) にする。
+    /// - Parameter strayInHeld: 偽のアプリが待つ間に、退避先へ別のファイルを置く (`rmdir` が失敗する形)。
+    /// - Parameter openStatus: 偽の `open` の終了コード。
     private func runTheCheck(
         name: String, alreadyRunning: Bool, interrupted: Bool, signal: String = "TERM",
         existingHeld: Bool = false, shell: String = "/bin/sh", buildPresent: Bool = true,
-        recreateBuild: Bool = false
+        recreateBuild: Bool = false, danglingBuildLink: Bool = false, strayInHeld: Bool = false,
+        openStatus: Int = 0
     ) throws -> CheckRun {
         let parent = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: parent) }
         let sketch = parent.appendingPathComponent(name, isDirectory: true)
         let build = sketch.appendingPathComponent(".build", isDirectory: true)
         try FileManager.default.createDirectory(at: sketch, withIntermediateDirectories: true)
-        if buildPresent {
+        if danglingBuildLink {
+            try FileManager.default.createSymbolicLink(
+                atPath: build.path, withDestinationPath: parent.appendingPathComponent("gone").path)
+        } else if buildPresent {
             try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
             try "current".write(
                 to: build.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
@@ -1104,6 +1156,12 @@ struct BundleCommandTests {
         let recreate =
             recreateBuild
             ? "mkdir '\(quotedBuild)'; printf new > '\(quotedBuild)/marker'" : ""
+        // 確かめている間に、別の手が退避先へファイルを置く
+        let quotedSketch = sketch.path.replacingOccurrences(of: "'", with: #"'\''"#)
+        let stray =
+            strayInHeld
+            ? "for place in '\(quotedSketch)'/.build-held.*; do printf x > \"$place/stray\"; done"
+            : ""
         try """
             #!/bin/sh
             waits=no
@@ -1123,8 +1181,10 @@ struct BundleCommandTests {
                 elif [ -e '\(quotedBuild)' ]; then echo present; else echo held; fi
               } > '\(record.path).part'
               \(recreate)
+              \(stray)
               mv '\(record.path).part' '\(record.path)' ) >/dev/null 2>&1 &
             if [ "$waits" = yes ]; then wait; fi
+            exit \(openStatus)
             """.write(to: open, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: open.path)
 
@@ -1169,7 +1229,8 @@ struct BundleCommandTests {
         return CheckRun(
             line: line, app: app, sketch: sketch, status: result.status, output: result.output,
             record: try? String(contentsOf: record, encoding: .utf8), restored: restored,
-            leftEntries: left, buildMarker: buildMarker, nested: nested, heldMarkers: heldMarkers)
+            leftEntries: left, buildMarker: buildMarker, nested: nested, heldMarkers: heldMarkers,
+            buildLink: try? files.destinationOfSymbolicLink(atPath: build.path))
     }
 
     /// 文面の固定。スケッチの `.build` と `.app` を、引用した絶対パスで名指しする。
@@ -1183,11 +1244,12 @@ struct BundleCommandTests {
         let line: String = [
             "  ( build='/work/bund with space/.build';",
             " held=$(mktemp -d '/work/bund with space/.build-held.XXXXXX') || exit;",
-            " trap 'if [ -e \"$held/.build\" ]; then",
+            " trap 's=$?; if [ -e \"$held/.build\" ] || [ -L \"$held/.build\" ]; then",
             " if [ -e \"$build\" ] || [ -L \"$build\" ]; then",
             " printf \"%s\\n\" \"A new .build appeared while checking;",
             " the one moved aside was left at $held/.build\" >&2; exit 1; fi;",
-            " mv \"$held/.build\" \"$build\" || exit; fi; rmdir \"$held\"' EXIT;",
+            " mv \"$held/.build\" \"$build\" || exit; fi;",
+            " rmdir \"$held\" || exit $((s ? s : 1))' EXIT;",
             " trap exit HUP INT TERM;",
             " mv \"$build\" \"$held/.build\" || exit;",
             " open -n -W '/work/bund with space/bundle/Bund.app' )\n",
