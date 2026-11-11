@@ -1033,7 +1033,10 @@ let package = Package(
         // そちらの名前になる)。決め打ちにすると worktree からは組めない
         .executableTarget(
             name: "example-shots",
-            dependencies: [.product(name: "mokume", package: "{identity}")],
+            dependencies: [
+                .product(name: "mokume", package: "{identity}"),
+                .product(name: "MokumeHost", package: "{identity}"),
+            ],
             swiftSettings: [.swiftLanguageMode(.v6), .defaultIsolation(MainActor.self)])
     ]
 )
@@ -1043,6 +1046,9 @@ MAIN = """\
 // 説明文の中の例を描く。生成物 — 直接編集しない (scripts/example-shots.py が書く)。
 import Foundation
 import mokume
+// 外のパッケージからウィンドウなしで走らせる入口 (ADR-0048 決定 3)。実行の土台 (`SketchRuntime`) は
+// package に下がっていて、ここからは届かない (#3871)
+import MokumeHost
 
 // **裸の `try` に任せない** (#2541)。top-level の throw は Swift ランタイムの既定処理へ落ち、
 // `Fatal error: Error raised at top level: …` と内部の姿をそのまま出して trap する。道具の入口は
@@ -1054,14 +1060,15 @@ do {
 
     for entry in catalogue {
         // **つまみの保存を持たない** (#1832)。撮り直せば同じ絵になるよう、撮った人の手元にだけ在る
-        // `.mokume/state/params.json` を読まず、先に撮った例の値を後の例が戻さない
-        let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu, persistsParams: false)
+        // `.mokume/state/params.json` を読まず、先に撮った例の値を後の例が戻さない。保存の在処は
+        // 作業場所の下なので、走らせる側 (example-shots.py の `render`) が空の作業場所 (`MOKUME_WORK_DIR`) を渡して断つ
+        let runtime = try HeadlessRun(entry.make(), gpu: gpu)
         guard entry.frames > 0 else {
             // **最初のフレームを撮る。** 秒で待つと待つ間に進む枚数が実行ごとに変わり、
             // 撮り直すたびに別の絵になる
             try runtime.advance()
             let url = directory.appendingPathComponent("\\(entry.name).png")
-            try runtime.target.writePNG(to: url)
+            try runtime.writePNG(to: url)
             print("\\(entry.name) → \\(url.lastPathComponent)")
             continue
         }
@@ -1069,7 +1076,7 @@ do {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for index in 0..<entry.frames {
             try runtime.advance()
-            try runtime.target.writePNG(to: folder.appendingPathComponent(String(format: "f.%04d.png", index)))
+            try runtime.writePNG(to: folder.appendingPathComponent(String(format: "f.%04d.png", index)))
         }
         print("\\(entry.name) → \\(folder.lastPathComponent) (\\(entry.frames) 枚)")
     }
@@ -1169,9 +1176,14 @@ def render(
     subprocess.run(["swift", "build", "--package-path", str(package)], check=True, stdout=log)
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
+    # **空の作業場所で走らせる** (#1832・#3871)。撮った人の手元の `.mokume/state/params.json` を
+    # 読まないためで、置き場は組むたびに消える `package` の下に取る
+    work = package / "work"
+    work.mkdir()
     subprocess.run(
         ["swift", "run", "--package-path", str(package), "example-shots", str(out)],
         check=True, stdout=log, stderr=log,
+        env={**os.environ, "MOKUME_WORK_DIR": str(work)},
     )
     for shot in shots:
         if shot.is_motion and bundle:

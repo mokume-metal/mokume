@@ -20,7 +20,7 @@ import Foundation
 /// 1 枚だけ頼んだときは目録の唯一の要素と同じものになる。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
-public struct ObservationReport: Encodable, Equatable, Sendable {
+package struct ObservationReport: Encodable, Equatable, Sendable {
     /// この形式の版。上げ方は [ADR-0018] 決定 5。
     ///
     /// **先頭の格納プロパティである** — 合成の `encode` は宣言順に書き出すので、

@@ -11,7 +11,7 @@ import Foundation
 /// フレームで採ると観測が実行を侵す ([ADR-0018] の面が満たすべき性質)。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
-public struct RuntimeLoad: Encodable, Equatable, Sendable {
+package struct RuntimeLoad: Encodable, Equatable, Sendable {
     /// フレーム時間の要約 (ミリ秒)。
     public struct FrameTime: Encodable, Equatable, Sendable {
         /// 平均。

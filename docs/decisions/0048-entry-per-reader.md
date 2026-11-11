@@ -137,7 +137,7 @@ probes は mokume の版を固定している (2026-11-08 に多くが 0.16.2)�
 - **検査の対象**: `make api` の `API_MODULES` と参照の面 (`REFERENCE_MODULES`) に、新しいモジュールが加わる。生の部品を `package` に下げると、`REFERENCE_OMIT` の名指しの多くが要らなくなる
 - **実装済み** (2026-11-08): 決定 2 (`MokumeUI`) は [#3872](https://github.com/mokume-metal/mokume/issues/3872) で入った。名指しの一覧は `Sources/MokumeUI/Exports.swift` の 1 か所で、`import SwiftUI` と `import MokumeUI` だけのファイルが組めることを `Tests/MokumeUITests` が組んで確かめる。iOS ([#2605](https://github.com/mokume-metal/mokume/issues/2605)) の `SketchView` はこの上に載せる
 - **実装済み** (2026-11-08): 決定 1 の `MokumeHost` と決定 3 の口は [#3870](https://github.com/mokume-metal/mokume/issues/3870) で入った。口は `HeadlessRun` の 1 つで、名指しの一覧は `Sources/MokumeHost/Exports.swift` の 1 か所にある。`import MokumeHost` だけのファイルで使い切れることと、後始末を書かなくても差込口が閉じることは、`Tests/MokumeHostTests` が確かめる。mokume-syphon・mokumesh は同じ時期に移した
-- **未実装** (2026-11-08): 決定 3 の、生の部品を `package` に下げる段は [#3871](https://github.com/mokume-metal/mokume/issues/3871) が持つ
+- **実装済み** (2026-11-12): 決定 3 の、生の部品を `package` に下げる段は [#3871](https://github.com/mokume-metal/mokume/issues/3871) で入った。`REFERENCE_OMIT` に残るのは `ParamBox` だけで、`@Param` の展開先として利用者のモジュールから届く必要があるので `public` のまま面からだけ外す。本体の外から経路で依存して例を撮る道具 (`scripts/example-shots.py`) も `HeadlessRun` へ移した
 - [#2595](https://github.com/mokume-metal/mokume/issues/2595) (`LinearRGBA` → `Color`) は、この ADR の実装を待たない。`MokumeUI` は `Color` を再エクスポートしない
 
 > 破れたとき: 埋め込むファイルが `import mokume` を書かないと SwiftUI の部品に届かない形にする (`MokumeUI` が `MokumeCore` を丸ごと再エクスポートする、または必要な型を出し漏らす)。衝突がアプリの入口に戻ってくる。
