@@ -23,19 +23,14 @@ extension JSONValue {
 
     /// 整数の値として読む。**丸めない** — `2` と `2.0` は 2 で、`2.5` と `Int` に収まらない数は読めない。
     /// 数の文字は、10 進の綴りで整数の値のもの (`"3"`・`"3.0"`・`"1e3"`) だけを読む。
+    ///
+    /// **`Double` に丸めた後で整数かを決めない (#3950)。** 数の値は読み解くときに桁のある所で決めて
+    /// あり (`integer` か `number` か — ``JSONFile``)、数の文字は綴りから決める (``DecimalText/int(_:)``)。
     var asInt: Int? {
         switch self {
-        case .integer(let value):
-            return value
-        case .number(let value):
-            return Self.exactInt(value)
-        case .string(let text):
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            // `Double` を通すと 2⁵³ より大きな整数の桁が落ちるので、整数の綴りは先に `Int` で読む
-            if let value = Int(trimmed) { return value }
-            return DecimalText.double(text).flatMap(Self.exactInt)
-        default:
-            return nil
+        case .integer(let value): value
+        case .string(let text): DecimalText.int(text)
+        default: nil
         }
     }
 
@@ -49,14 +44,5 @@ extension JSONValue {
     var asBool: Bool? {
         if case .bool(let flag) = self { return flag }
         return nil
-    }
-
-    /// 整数の値である `Double` を `Int` にする。小数部があるか、`Int` に収まらなければ `nil`。
-    private static func exactInt(_ value: Double) -> Int? {
-        // 上端は含まない: 2⁶³ は `Int` に収まらない
-        guard value.isFinite, value == value.rounded(.towardZero),
-            value >= -9_223_372_036_854_775_808.0, value < 9_223_372_036_854_775_808.0
-        else { return nil }
-        return Int(value)
     }
 }

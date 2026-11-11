@@ -5,10 +5,11 @@ import Foundation
 
 /// JSON の値。読み解いた中身を、Foundation の型 (`NSNumber` や `NSNull`) を持たずに運ぶ。
 ///
-/// **数は 2 通りで持つ。** 整数の綴り (`2`・`-7`) で `Int` に収まるものは `integer` で、桁を
-/// 落とさずに持つ (``JSONObject/getInt(_:)`` が丸めずに返すため)。それ以外 (`2.0`・`1e3`・`Int` に
-/// 収まらない整数) は `number` で `Double`、有限である (収まらない数は ``JSONFile`` が読まずに
-/// 断る)。内部の形で、面には出ない。
+/// **数は 2 通りで持つ。** 値が整数で `Int` に収まる数 (`2`・`-7`・`2.0`・`1e3`) は `integer` で、桁を
+/// 落とさずに持つ (``JSONObject/getInt(_:)`` が丸めずに返すため)。それ以外 (`2.5`・`Int` に収まらない
+/// 整数) は `number` で `Double`、有限である (収まらない数は ``JSONFile`` が読まずに断る)。
+/// **整数かどうかは読み解くときに、桁が残っている所で決める** (#3950) — `number` の `Double` は
+/// 丸めた後なので、`Int.min` の 1 つ外も `Int.min` に見える。内部の形で、面には出ない。
 nonisolated enum JSONValue: Equatable, Sendable {
     case null
     case bool(Bool)
@@ -156,16 +157,34 @@ nonisolated enum JSONFile {
             return .string(string)
         case let number as NSNumber:
             if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
-            // 整数の綴りは `q` (符号つき 64 bit) で届く。`Int` を越える整数は `Q` か Double で届くので
-            // 下の `.number` に落ちる
-            if !CFNumberIsFloatType(number), String(cString: number.objCType) == "q" {
-                return .integer(number.intValue)
-            }
+            if let integer = integer(of: number) { return .integer(integer) }
             if !number.doubleValue.isFinite { nonFinite = true }
             return .number(number.doubleValue)
         default:
             return .null
         }
+    }
+
+    /// 数の値が整数で `Int` に収まるなら、その整数。**丸めた後の `Double` では決めない** (#3950)。
+    ///
+    /// `JSONSerialization` は数を 3 通りで渡す:
+    /// - 整数の綴りで 64 bit に収まるもの: `q` (符号つき) か `Q` (`Int.max` を越える側)。`q` はそのまま
+    ///   整数で、`Q` は収まらない
+    /// - 桁の多い綴り (`-9223372036854775809`・`1.00000000000000000000001`): `NSDecimalNumber` で、綴りの
+    ///   値を桁のまま持つ。その 10 進の綴りから決める (``DecimalText/int(_:)``)。`Double` にすると
+    ///   `Int.min` の 1 つ外が `Int.min` に、小さな端数が 0 に丸まる
+    /// - それ以外 (`2.0`・`1e3`・`2.5`): `Double`。読み解いた時点で丸まっているので、その値で決める
+    private static func integer(of number: NSNumber) -> Int? {
+        if let decimal = number as? NSDecimalNumber { return DecimalText.int(decimal.stringValue) }
+        if !CFNumberIsFloatType(number) {
+            return String(cString: number.objCType) == "q" ? number.intValue : nil
+        }
+        let value = number.doubleValue
+        // 上端は含まない: 2⁶³ は `Int` に収まらない
+        guard value.isFinite, value == value.rounded(.towardZero),
+            value >= -9_223_372_036_854_775_808.0, value < 9_223_372_036_854_775_808.0
+        else { return nil }
+        return Int(value)
     }
 
     /// 収まらない数を、それが書かれた行と列を添えた失敗にする。行と列の数え方は、他の壊れ方と
