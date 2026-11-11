@@ -292,6 +292,12 @@ struct JSONReadingTests {
         ("-9223372036854775808.5", nil),
         ("1.00000000000000000000001", nil),
         ("100000000000000000000.0", nil),
+        // 数の値: いまの振る舞いを固定する行。`JSONSerialization` が読み解く時点で丸める (17 桁以下の綴りは
+        // `Double` で、39 桁以上は Decimal の 38 桁で)。`JSONFile` の「その読み方に従う」の内とするか、数の
+        // 綴りを本体が読むかは #3958 で決める。決まったらここを書き換える
+        ("1.0000000000000001", 1),
+        ("9007199254740993.0", 9_007_199_254_740_992),
+        ("1.000000000000000000000000000000000000000000001", 1),
         // 数の値: 従来どおり
         ("2.0", 2), ("1e3", 1000), ("-0", 0), ("-0.0", 0), ("2.5", nil), ("1e30", nil),
         // 数の文字: Int の両端と、その 1 つ外
@@ -334,6 +340,32 @@ struct JSONReadingTests {
             // 読めない値は 0 を返して知らせ、読めた値は知らせない
             #expect((said(.notAnInteger(key: key)) != nil) == (item.expected == nil), "知らせ \(item.json)")
         }
+    }
+
+    @Test("読めない桁の多い数の知らせは、丸めた値ではなく書かれた綴りを名乗る。2.0 は 2.0 と名乗る")
+    func getIntNamesTheSpelling() throws {
+        let below = unique("below")
+        let tiny = unique("tiny")
+        let half = unique("half")
+        let whole = unique("whole")
+        let value = try object(
+            """
+            {"\(below)": -9223372036854775809, "\(tiny)": 1.00000000000000000000001,
+             "\(half)": -9223372036854775808.5, "\(whole)": 2.0}
+            """)
+        #expect(value.getInt(below) == 0)
+        #expect(
+            said(.notAnInteger(key: below))
+                == "getInt(\"\(below)\"): the value of \"\(below)\" is -9223372036854775809, which is not an "
+                + "integer that fits in an Int. Reading it as 0 (said once per key)")
+        #expect(value.getInt(tiny) == 0)
+        #expect(said(.notAnInteger(key: tiny))?.contains("is 1.00000000000000000000001, which") == true)
+        #expect(value.getInt(half) == 0)
+        #expect(said(.notAnInteger(key: half))?.contains("is -9223372036854775808.5, which") == true)
+        // 桁の多い数も、数として読む口では丸めた値で読める
+        #expect(value.getFloat(tiny) == 1)
+        #expect(value.getString(whole) == "")
+        #expect(said(.notAString(key: whole))?.contains("is 2.0, which is not a string") == true)
     }
 
     @Test("getFloat は整数の値も読み、数の文字の読み方は今までと同じ")
