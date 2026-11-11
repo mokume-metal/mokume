@@ -669,7 +669,9 @@ SKETCHES = pathlib.Path(__file__).resolve().parents[1] / "Sketches"
 # 「対象から外すもの」。**書けるのは「スケッチでは示せない理由」に限る** — 足すのが面倒な
 # だけのものを載せると、#1358 が塞いだ空白がここへ移るだけになる
 UNSHOWN = {
-    "plugins": "作者が書くのは 1 行だけで、中身は外のパッケージが書く",
+    "selectOutput": "ダイアログはウィンドウの外に出て、結果は選んだ人の手元の置き場で、--render と台帳で同じ絵を回せない。選ばせる流れは selectInput を呼ぶ参照スケッチ (FileAndSound・FileAndMovie) が示し、待ちの共有と結果はテストが見る (#3707)",
+    "selectFolder": "selectOutput と同じ理由",
+    "plugins":"作者が書くのは 1 行だけで、中身は外のパッケージが書く",
     "attach": "plugins と同じ理由 (呼ぶのは機能を作る側で、作者は createCapture() のような口を呼ぶ)",
     "detach": "attach と同じ理由",
     "captureDevices": "一覧は繋がっている機材に依り、絵にならない",
@@ -1130,6 +1132,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "mouseWheel": ASSEMBLY,
     "fileDropped": ASSEMBLY,
     "selectInput": (ASSEMBLY, "ウィンドウへファイルを選ばせるダイアログを頼み、結果を待つ。絵にもフレームの状態にも触れない (結果は入力の出来事として届く・#3062)"),
+    "selectOutput": (ASSEMBLY, "selectInput と同じ理由 (保存先を選ばせる・#3707)"),
+    "selectFolder": (ASSEMBLY, "selectInput と同じ理由 (フォルダを選ばせる・#3707)"),
     "requestPointerLock": (ASSEMBLY, "ウィンドウへカーソルを捕まえるよう頼む。絵にもフレームの状態にも触れず、ウィンドウの無い実行では何もしない (#1144)"),
     "exitPointerLock": (ASSEMBLY, "requestPointerLock と同じ理由 (頼みを取り下げる)"),
     "noCursor": (ASSEMBLY, "ウィンドウへ矢印のカーソルを隠すよう頼む。絵にもフレームの状態にも触れず、ウィンドウの無い実行では何もしない (#2439)"),
