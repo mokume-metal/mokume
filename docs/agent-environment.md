@@ -65,12 +65,19 @@ AGENTS.md に従って実行する。フックが何も出力しないことを�
 
 Claude の desktop アプリは、セッションに結び付いた PR の CI の失敗・main との衝突・
 レビューコメントを受けて同じセッションを起動し、直して push させる (PR ごとの Auto-fix)。
-これは [ADR-0017](decisions/0017-agent-support-locality.md) 決定 3 が言う「リポジトリの外の、
-設計を知らない機構」に当たる。mokume は CI の監視を要求しない。監視が拾うべき失敗は
-merge queue と `stall-watch` で足りている (#377)。外部の監視が当時の承認待ちを異常と読んで
-空回りした前例もある (#194)。使うかどうかは使う人が決める。
+`gh pr create` で作った PR はセッションに結び付き、Auto-fix が付く。
 
-ON にするなら、次の失敗と状態は**コードを直して push しても消えない** (#1994)。
+**PR の見届けはこれに任せ、待機を立てない** (#4021)。auto-merge を掛けたらターンを終える。
+`Monitor`・背景や手前の `sleep` と `gh` のループ・`ScheduleWakeup`・`gh pr checks --watch` で
+merge や赤を待たない。赤・衝突・コメントは Auto-fix が同じセッションを起こし、queue から外れて
+auto-merge も外れた PR は `stall-watch` が名乗る (AGENTS.md「マージ」)。かつて外の監視を
+退けた根拠 (#194・#1994: 承認待ちの赤を異常と読む) は、承認ゲートが無くなり
+([ADR-0044](decisions/0044-maintainer-authored-prs-without-approval-gate.md)) 当てはまらない。
+
+待ってよいのは Auto-fix の対象外だけである: 使い捨ての Draft PR の計測の run (下の節) と、
+release など PR に結び付かない run。そこでも待つ側が期限を持つ。
+
+Auto-fix で起こされても、次の失敗と状態は**コードを直して push しても消えない** (#1994)。
 直す先は右の列で、迂回はしない。
 
 | 失敗・状態 | 直す先 |

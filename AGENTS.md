@@ -62,9 +62,9 @@ mokume は Apple Silicon の macOS で動くクリエイティブコーディン
 
 ## マージ
 
-PR 本文が揃い `ci-gate`・`pr-gate` が成功したら、指示を待たず `gh pr merge --auto --squash` で queue に入れてよい。承認はどの PR にも要らない (`.github/`・`.claude/` を変える PR も)。queue がマージ後に再検証するので、手で merge しない。マージ後は main に戻って pull する。
+PR 本文が揃い `ci-gate`・`pr-gate` が成功したら、指示を待たず `gh pr merge --auto --squash` で queue に入れてよい。承認はどの PR にも要らない (`.github/`・`.claude/` を変える PR も)。queue がマージ後に再検証するので、手で merge しない。queue に入れたら見届けのために待機もポーリングもしない (止まりは `stall-watch` が名乗り、製品に PR の監視があればそれが起こす。`docs/agent-environment.md`)。手元で続けるときは main を pull してから始める。
 
-- **Draft は待つ理由 (人の確認・判断 / 前の PR / 後から足すコミット / 使い捨て) があるときだけ。** 理由が無ければ Ready で出して auto-merge を掛ける。Draft は queue にも stall-watch にも見られないので、理由を本文の先頭に書き、同じセッションで人に確かめ、解けたら Ready にして merge まで見届ける。見届けられずに終えるとき (無人・利用制限) は、待ちの理由と再開の手順を PR にコメントする
+- **Draft は待つ理由 (人の確認・判断 / 前の PR / 後から足すコミット / 使い捨て) があるときだけ。** 理由が無ければ Ready で出して auto-merge を掛ける。Draft は queue にも stall-watch にも見られないので、理由を本文の先頭に書き、同じセッションで人に確かめ、解けたら Ready にして auto-merge を掛ける。解けないまま終えるとき (無人・利用制限) は、待ちの理由と再開の手順を PR にコメントする
 - **後からコミットを足す予定の PR は、足し終えるまで auto-merge を掛けない** (必須チェックの成功で queue に入る)。掛けたなら成功する前に `gh pr merge --disable-auto` で外す
 - check が 1 本も付かないのは main との衝突で、手元で解いて push する。他の止まり方は `bash scripts/stall-watch.sh` が判別して対処を示す (対象から外すなら Draft に)
 - `BEHIND` でも "Update branch" は押さない (auto-merge が外れるだけ)
