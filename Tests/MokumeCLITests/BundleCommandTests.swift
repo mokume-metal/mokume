@@ -42,7 +42,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         #expect(app.lastPathComponent == "Demo.app")
         for path in ["Contents/Info.plist", "Contents/MacOS/demo", "Contents/Resources/demo_demo.bundle"] {
@@ -60,7 +60,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         let data = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
         let plist =
@@ -83,7 +83,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: written, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         let plist = try readInfoPlist(of: app)
         #expect(plist["NSCameraUsageDescription"] as? String == "木目のカメラ映像を絵にするため")
@@ -101,7 +101,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         let plist = try readInfoPlist(of: app)
         #expect(plist["NSCameraUsageDescription"] == nil)
@@ -124,12 +124,12 @@ struct BundleCommandTests {
         let out = root.appendingPathComponent("out", isDirectory: true)
 
         let app = try BundleCommand.assemble(
-            executable: executable, identity: identity, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: identity, minimumSystemVersion: "26.0", into: out, excluding: [])
         let stale = app.appendingPathComponent("Contents/Resources/old.bundle", isDirectory: true)
         try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
 
         _ = try BundleCommand.assemble(
-            executable: executable, identity: identity, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: identity, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(!FileManager.default.fileExists(atPath: stale.path))
     }
 
@@ -169,7 +169,7 @@ struct BundleCommandTests {
             #expect(throws: CommandFailure.self, "\(name) で投げなかった") {
                 try BundleCommand.assemble(
                     executable: executable, identity: unchecked, minimumSystemVersion: "26.0",
-                    into: out)
+                    into: out, excluding: [])
             }
         }
         for keep in kept {
@@ -241,7 +241,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: app) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(FileManager.default.fileExists(atPath: keep.path), "keep.txt が消えた")
     }
@@ -258,7 +258,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: app) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(FileManager.default.fileExists(atPath: keep.path), "keep.txt が消えた")
     }
@@ -273,7 +273,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: file) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(try String(contentsOf: file, encoding: .utf8) == "keep")
     }
@@ -306,12 +306,12 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let out = root.appendingPathComponent("out", isDirectory: true)
         let app = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         let added = app.appendingPathComponent("added.txt")
         try "x".write(to: added, atomically: true, encoding: .utf8)
 
         _ = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(!FileManager.default.fileExists(atPath: added.path))
     }
 
@@ -323,13 +323,13 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let out = root.appendingPathComponent("out", isDirectory: true)
         let app = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         let added = app.appendingPathComponent("added.txt")
         try "x".write(to: added, atomically: true, encoding: .utf8)
 
         let renamed = AppIdentity(name: "Grain", identifier: "org.example.other", version: "0.2.0")
         _ = try BundleCommand.assemble(
-            executable: executable, identity: renamed, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: renamed, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(!FileManager.default.fileExists(atPath: added.path))
         #expect(
             try readInfoPlist(of: app)["CFBundleIdentifier"] as? String == "org.example.other")
@@ -347,7 +347,7 @@ struct BundleCommandTests {
         try writeUnmarkedInfoPlist(identifier: grain.identifier, into: app)
 
         _ = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(!FileManager.default.fileExists(atPath: keep.path), "前の出力が残った")
         #expect(try readInfoPlist(of: app)[AppIdentity.bundledMarkKey] as? Bool == true)
     }
@@ -605,7 +605,7 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let out = root.appendingPathComponent("out", isDirectory: true)
         let app = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         let locked = app.appendingPathComponent("Contents/Resources/locked", isDirectory: true)
         try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
         try "old".write(
@@ -625,7 +625,7 @@ struct BundleCommandTests {
         }
 
         let rebuilt = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
 
         #expect(rebuilt.path == app.path)
         #expect(
@@ -660,7 +660,7 @@ struct BundleCommandTests {
         }
 
         _ = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
 
         #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent(mine).path))
         for name in others {
@@ -676,7 +676,7 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let out = root.appendingPathComponent("out", isDirectory: true)
         let app = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         let added = app.appendingPathComponent("added.txt")
         try "x".write(to: added, atomically: true, encoding: .utf8)
         chmod(out.path, 0o555)  // --out の中で名前を変えられない
@@ -687,7 +687,7 @@ struct BundleCommandTests {
 
         do {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
             Issue.record("投げなかった")
         } catch {
             guard case .cannotCreate(let path, _) = error else {
@@ -712,7 +712,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: link) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(
             (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == target.path,
@@ -734,7 +734,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: link) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) != nil)
     }
@@ -778,7 +778,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: app) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(FileManager.default.fileExists(atPath: keep.path), "\(shape) で keep.txt が消えた")
     }
@@ -800,11 +800,11 @@ struct BundleCommandTests {
 
         #expect(throws: CommandFailure.self) {
             try BundleCommand.assemble(
-                executable: missing, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: missing, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(throws: Never.self) {
             try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
     }
 
@@ -818,7 +818,7 @@ struct BundleCommandTests {
         let named = AppIdentity(name: name, identifier: "org.example.bund", version: "0.1.0")
 
         let app = try BundleCommand.assemble(
-            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out, excluding: [])
         let note = try BundleCommand.writeOpeningNote(for: named, beside: app)
 
         #expect(app.standardizedFileURL == out.appendingPathComponent("\(name).app").standardizedFileURL)
@@ -851,7 +851,7 @@ struct BundleCommandTests {
             path: root.appendingPathComponent(AppIdentity.fileName).path)
 
         let app = try BundleCommand.assemble(
-            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out, excluding: [])
         let note = try BundleCommand.writeOpeningNote(for: named, beside: app)
 
         #expect(FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Info.plist").path))
@@ -880,7 +880,7 @@ struct BundleCommandTests {
             name: given.name, identifier: "org.example.bund", version: "0.1.0")
 
         let app = try BundleCommand.assemble(
-            executable: executable, identity: unchecked, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: unchecked, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(throws: CommandFailure.self, "\(given.testDescription) の紙が書けた") {
             try BundleCommand.writeOpeningNote(for: unchecked, beside: app)
         }
@@ -905,11 +905,69 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         #expect(throws: Never.self) { try BundleCommand.check(app, contains: ["demo_demo.bundle"]) }
         #expect(throws: (any Error).self) {
             try BundleCommand.check(app, contains: ["demo_other.bundle"])
+        }
+    }
+
+    /// **実行 product が使わない target の包みは入れず、必須の検査も同じ範囲を見る** (#3982)。
+    /// テストの target の fixture (`<pkg>_DemoTests.bundle`) が配る `.app` に入っていた。除く範囲は
+    /// 宣言の依存の閉包で決める (``SwiftPM/Package/ResourceScope/excluded``)。
+    /// 依存のパッケージの包み (`mokume_MokumeCore.bundle`) は宣言を辿らずに入れる。コピーから
+    /// 除いた包みを「欠けている」と読まないことと、要る包みが欠ければ従来どおり止まることも見る。
+    ///
+    /// 期待する一覧は完了条件から: テストの target だけの包み (`Sketch_DemoTests`) は入らない。作品の
+    /// 実行 target (`Sketch_Demo`)・作品のライブラリ (`Sketch_Lib`、組めた回)・依存のパッケージ
+    /// (`mokume_MokumeCore`、`makeBuildOutput` の `demo_demo`) は入る。パッケージ名を `Sketch` に
+    /// するのは、`demo_demo.bundle` と大文字小文字だけ違う名前がファイルシステムで同じ場所になるのを避けるため。
+    @Test(
+        "テストの target の包みは入らず、作品と依存の包みは入り、検査も同じ範囲を見る",
+        arguments: [true, false])
+    func bundlesOutsideTheProductStayOut(libraryBuilt: Bool) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let bin = executable.deletingLastPathComponent()
+        var beside = ["Sketch_Demo.bundle", "Sketch_DemoTests.bundle", "mokume_MokumeCore.bundle"]
+        if libraryBuilt { beside.append("Sketch_Lib.bundle") }
+        for name in beside {
+            let inside = bin.appendingPathComponent("\(name)/Contents/Resources", isDirectory: true)
+            try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+            try name.write(
+                to: inside.appendingPathComponent("sample.txt"), atomically: true, encoding: .utf8)
+        }
+        let dump = """
+            {"name":"Sketch",
+             "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
+             "targets":[
+               {"name":"Demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
+                "dependencies":[{"byName":["Lib",null]},{"product":["Mokume","mokume",null,null]}]},
+               {"name":"Lib","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}]},
+               {"name":"DemoTests","type":"test","resources":[{"rule":{"copy":{}},"path":"fixtures"}],
+                "dependencies":[{"byName":["Demo",null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: identity, minimumSystemVersion: "26.0",
+            into: root.appendingPathComponent("out", isDirectory: true),
+            excluding: package.resourceScope(forProduct: "Demo").excluded)
+        let resources = app.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let shipped = try FileManager.default.contentsOfDirectory(atPath: resources.path).sorted()
+        #expect(
+            shipped
+                == (["Sketch_Demo.bundle", "demo_demo.bundle", "mokume_MokumeCore.bundle"]
+                    + (libraryBuilt ? ["Sketch_Lib.bundle"] : [])).sorted())
+
+        let required = package.resourceScope(forProduct: "Demo").required
+        #expect(required == ["Sketch_Demo.bundle", "Sketch_Lib.bundle"])
+        if libraryBuilt {
+            #expect(throws: Never.self) { try BundleCommand.check(app, contains: required) }
+        } else {
+            #expect(throws: CommandFailure.self) { try BundleCommand.check(app, contains: required) }
         }
     }
 
@@ -1592,7 +1650,7 @@ struct BundleCommandTests {
             at: URL(fileURLWithPath: "/usr/bin/true"), to: executable)
         return try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
     }
 
     /// 本物の Mach-O を主実行ファイルにした包みを組んで、`sign` を通す。
@@ -1609,7 +1667,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
         try BundleCommand.sign(app, as: signature, entitlements: entitlements, scratch: scratch)
         return app
     }
