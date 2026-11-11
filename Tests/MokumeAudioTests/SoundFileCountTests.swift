@@ -12,6 +12,9 @@ import Testing
 /// 読み、持ち主のいない `SoundFile` を作る。GPU も音の機材も要らない。
 ///
 /// **数は定数を写さず、数字で書く** (#2285)。
+///
+/// 2^24 標本を超えるファイルの `frames` は、大きなファイルを 1 つだけ書くために ``AudioFileLoadTests`` の
+/// `longFileIsReadToTheEnd` で確かめる (大きなファイルを書く検査を並列に走らせない)。
 @Suite("音声ファイルのチャンネルと標本の数", .serialized)
 struct SoundFileCountTests {
     /// `channels` チャンネル・`frames` 標本の、32 bit 浮動小数の WAV を書く。チャンネルごとに値を変える。
@@ -63,18 +66,6 @@ struct SoundFileCountTests {
         let song = try load(url)
         #expect(song.channels == 4)
         #expect(song.frames == 4800)
-    }
-
-    @Test("frames は読み込んだ標本の数そのもので、2^24 標本を超えても duration × sampleRate の丸めに引きずられない")
-    func framesIsExactBeyondSinglePrecision() throws {
-        // 2^24 + 1 標本 (48 kHz で約 349.5 秒)。単精度の秒に掛け直すと、この数は表せない
-        let count = 16_777_217
-        let url = try writeWAV(channels: 1, frames: count)
-        defer { try? FileManager.default.removeItem(at: url) }
-        let song = try load(url)
-        #expect(song.frames == 16_777_217)
-        let approximate = song.duration * song.sampleRate
-        #expect(Int(approximate) != 16_777_217, "掛け直しでも合うなら、この長さは検査にならない: \(approximate)")
     }
 
     @Test("外した (close) 後も、足し直した (open) 後も同じ値を返し、投げない")
