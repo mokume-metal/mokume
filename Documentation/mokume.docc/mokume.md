@@ -591,6 +591,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
 - ``lerpColor(_:_:_:)``
+- ``lerpColor(_:_:amount:)``
 - ``paletteLerp(_:_:)``
 - ``red(_:)``
 - ``green(_:)``
@@ -1022,6 +1023,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/random(_:_:)``
 - ``SketchPart/randomGaussian()``
 - ``SketchPart/randomGaussian(_:_:)``
+- ``SketchPart/randomGaussian(mean:standardDeviation:)``
 - ``SketchPart/random(_:)-([Element])``
 - ``SketchPart/shuffle(_:)``
 - ``SketchPart/randomSeed(_:)``
@@ -1030,6 +1032,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/noise(_:_:_:_:)``
 - ``SketchPart/noiseSeed(_:)``
 - ``SketchPart/noiseDetail(_:_:)``
+- ``SketchPart/noiseDetail(octaves:falloff:)``
 - ``NoiseField``
 
 ### 角度と数値の変換
@@ -1042,13 +1045,18 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``radians(_:)``
 - ``degrees(_:)``
 - ``map(_:_:_:_:_:)``
+- ``map(_:fromLow:fromHigh:toLow:toHigh:)``
 - ``lerp(_:_:_:)``
+- ``lerp(_:_:amount:)``
 - ``constrain(_:_:_:)``
 - ``norm(_:_:_:)``
 - ``smoothstep(_:_:_:)``
+- ``smoothstep(_:_:x:)``
 - ``damp(_:_:_:_:)``
+- ``damp(_:toward:lambda:deltaTime:)``
 - ``pingpong(_:_:)``
 - ``lerpAngle(_:_:_:)``
+- ``lerpAngle(_:_:amount:)``
 - ``dist(_:_:_:_:)``
 - ``dist(_:_:_:_:_:_:)``
 - ``dist(_:_:)-(Vector2,_)``
