@@ -14,18 +14,18 @@ import Testing
 /// **数は定数を写さず、数字で書く** (#2285)。2^24 = 16,777,216。
 @Suite("音声ファイルの読み込み: 長さ", .serialized)
 struct AudioFileLoadTests {
-    /// 終わりの標本の値。ほかの標本 (0.25) と見分ける。16 bit で丸めずに表せる値。
+    /// 終わりの標本の値。ほかの標本 (0.25) と見分ける。
     private static let last: Float = 0.75
 
-    /// `frames` 標本のモノラルの 16 bit の WAV を書く (大きなファイルを小さく置くため)。終わりの標本だけ ``last``。
+    /// `frames` 標本のモノラルの 32 bit 浮動小数の WAV を書く。終わりの標本だけ ``last``。
+    ///
+    /// **32 bit 浮動小数で書く** — 16 bit の整数で書いたファイルは、変換の経路を通るので 1 回の `read` で 2^24 を
+    /// 超えて読めてしまい、切れる不具合を再現しない (処理の形式のままのファイルだけが切れる)。
     private func writeWAV(frames: Int) throws -> URL {
         let url = TestScratch.path("mokume-long", pathExtension: "wav")
         let format = try #require(
             AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false))
-        var settings = format.settings
-        settings[AVLinearPCMBitDepthKey] = 16
-        settings[AVLinearPCMIsFloatKey] = false
-        let file = try AVAudioFile(forWriting: url, settings: settings)
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
         let piece = 1 << 20
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(piece)))
         var written = 0
