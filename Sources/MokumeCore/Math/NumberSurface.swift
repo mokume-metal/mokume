@@ -574,8 +574,11 @@ public nonisolated func pingpong(_ t: some ScalarConvertible, _ length: some Sca
     }
     // 負の長さは、正の長さの往復を負の側へ写す
     let reach = abs(length)
-    // 周期 2 * reach の中の位置 (0 以上 2 * reach 未満)。``mod(_:_:)`` と同じ畳み方
-    let position = foldedIntoPeriod(t, by: 2 * reach)
+    // 周期 2 * reach の中の位置 (0 以上 2 * reach 未満)。三角波は左右対称なので |t| を畳む。
+    // ``mod(_:_:)`` の畳み方で負の t に 2 * reach を足すと、大きな reach では小さな時刻が丸めで
+    // 消える (`pingpong(-1, 1e8)` が 0 — #3953)。|t| の剰余は丸めずに求まる。
+    // 2 * reach が ∞ になる長さでは、剰余は |t| そのもの
+    let position = abs(t).truncatingRemainder(dividingBy: 2 * reach)
     // 立ち上がりは位置をそのまま返す。全区間に `reach - abs(position - reach)` を当てると、
     // 大きな reach を引いて足し戻す間に小さな時刻が丸めで消える (`pingpong(1, 1e8)` が 0 — #3953)。
     // 下降の `position - reach` は position が [reach, 2 * reach) にあるので丸めずに引ける。

@@ -453,8 +453,8 @@ struct NumberSurfaceTests {
             }
             t += 0.37
         }
-        // 小さな負の値が周期へ丸まる境目 (-1e-9 + 2 は Float で 2 ちょうど) でも 0 のまま
-        #expect(pingpong(-1e-9, 1) == 0)
+        // 小さな負の値は、周期へ戻す足し算 (-1e-9 + 2 は Float で 2 ちょうど) で丸めず、正の側と同じ値になる (#3953)
+        #expect(pingpong(-1e-9, 1) == 1e-9)
         #expect(pingpong(1e9, 1).isFinite && pingpong(-1e9, 1).isFinite)
     }
 
@@ -469,6 +469,20 @@ struct NumberSurfaceTests {
         // 折り返し点と下降はこれまでどおり
         #expect(pingpong(100_000_000, 100_000_000) == 100_000_000)
         #expect(pingpong(150_000_000, 100_000_000) == 50_000_000)
+    }
+
+    @Test("pingpong は、大きな length でも負の時刻を正の時刻と同じ値にする")
+    func pingpongMirrorsNegativeTimeUnderALargeLength() {
+        // 負の時刻を t + 2 * length で周期へ戻すと、-1 + 2e8 が 2e8 に丸まって 0 になる (#3953 の反証)
+        for t: Float in [1, 2, 10, 150_000_000] {
+            #expect(pingpong(-t, 100_000_000) == pingpong(t, 100_000_000), "t = \(t)")
+            #expect(pingpong(-t, -100_000_000) == pingpong(t, -100_000_000), "t = \(t)")
+        }
+        #expect(pingpong(-1, 100_000_000) == 1)
+        #expect(pingpong(-10, 100_000_000) == 10)
+        // 周期 2 * length が Float を越える長さでも、負の時刻は 0 に潰れない
+        #expect(pingpong(-1, Float.greatestFiniteMagnitude) == 1)
+        #expect(pingpong(1, Float.greatestFiniteMagnitude) == 1)
     }
 
     @Test("pingpong は、負の length では負の側へ往復する")
