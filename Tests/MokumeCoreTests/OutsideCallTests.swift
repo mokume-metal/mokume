@@ -7,7 +7,7 @@ import Testing
 
 @testable import MokumeCore
 
-/// 呼び出しの外から頼まれたときに言う 11 通を、**実装とは別の場所に写して突き合わせる**。
+/// 呼び出しの外から頼まれたときに言う 14 通を、**実装とは別の場所に写して突き合わせる**。
 ///
 /// 以前の断りは「the sketch is not running」と言っていた。`draw()` が回り続けている最中に
 /// `Task` から頼むとこれが出て、呼ぶ側は「起動に失敗したのか」「もう終わったのか」を
@@ -22,6 +22,16 @@ private let outsideCallNotices: [OutsideCall: String] = [
             + "started in one of them runs after it returns, and counts as outside",
     .selectInput:
         "selectInput() is only accepted from inside setup(), draw() or an input callback such as "
+            + "mousePressed(), or from a Task started in one of them. This call was made from "
+            + "somewhere else (an initialiser, after the sketch ended, or Task.detached), so no "
+            + "dialog was asked for and it returned nil",
+    .selectOutput:
+        "selectOutput() is only accepted from inside setup(), draw() or an input callback such as "
+            + "mousePressed(), or from a Task started in one of them. This call was made from "
+            + "somewhere else (an initialiser, after the sketch ended, or Task.detached), so no "
+            + "dialog was asked for and it returned nil",
+    .selectFolder:
+        "selectFolder() is only accepted from inside setup(), draw() or an input callback such as "
             + "mousePressed(), or from a Task started in one of them. This call was made from "
             + "somewhere else (an initialiser, after the sketch ended, or Task.detached), so no "
             + "dialog was asked for and it returned nil",
@@ -70,7 +80,7 @@ private let outsideCallNotices: [OutsideCall: String] = [
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
 @Suite("呼び出しの外から頼んだときの文面")
 struct OutsideCallNoticeTests {
-    @Test("12 通とも原文のまま")
+    @Test("14 通とも原文のまま")
     func noticesKeepTheirWording() {
         for (call, original) in outsideCallNotices {
             #expect(call.notice == original, "\(call) の文面が変わっている")

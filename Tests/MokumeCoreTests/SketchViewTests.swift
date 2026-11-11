@@ -99,13 +99,24 @@ private final class WithCounter: Sketch {
     func draw() {}
 }
 
-/// `setup()` で `selectInput` を頼む (`Task` から) スケッチ。
+/// `setup()` で選ばせるダイアログを頼む (`Task` から) スケッチ。既定は `selectInput` で、`kind` で保存先・フォルダに替える。
 private final class SelectAsker: Sketch {
     var settings: SketchSettings { SketchSettings(width: 64, height: 36) }
     var result: String??
+    var kind: SelectionBroker.Kind = .file
     init() {}
+    convenience init(kind: SelectionBroker.Kind) {
+        self.init()
+        self.kind = kind
+    }
     func setup() {
-        Task { result = .some(await selectInput("pick")) }
+        Task {
+            switch kind {
+            case .file: result = .some(await selectInput("pick"))
+            case .output: result = .some(await selectOutput("pick"))
+            case .folder: result = .some(await selectFolder("pick"))
+            }
+        }
     }
     func draw() {}
 }
@@ -565,11 +576,14 @@ struct SketchViewTests {
     }
 
     /// 指摘 4: 止めたら、開いているファイルのシートを閉じる。
-    @Test("止めたら、開いているファイルを選ぶシートを閉じ、取り消しとして結果を渡す")
-    func stoppingClosesTheOpenFileSheet() async throws {
+    /// 保存先 (`selectOutput`)・フォルダ (`selectFolder`) も同じシートで出し、止めたら `nil` で終わる (#3707)。
+    @Test(
+        "止めたら、開いている選ばせるシートを閉じ、取り消しとして結果を渡す。シートは頼んだ種類で出る",
+        arguments: SelectionBroker.Kind.allCases)
+    func stoppingClosesTheOpenFileSheet(kind: SelectionBroker.Kind) async throws {
         try await Diagnostics.$digest.withValue(WarningDigest()) {
             let (window, container) = hostWindow()
-            let asker = SelectAsker()
+            let asker = SelectAsker(kind: kind)
             let view = SketchHostView(sketch: asker)
             container.addSubview(view)
             defer {
@@ -589,6 +603,7 @@ struct SketchViewTests {
                     return !picker.shown.isEmpty
                 }, "頼んだシートが出ていない")
             #expect(picker.dismissals == 0)
+            #expect(picker.shown.map(\.kind) == [kind], "頼んだ種類のシートではない")
 
             view.stop()
             #expect(picker.dismissals == 1, "止めてもシートが開いたまま")

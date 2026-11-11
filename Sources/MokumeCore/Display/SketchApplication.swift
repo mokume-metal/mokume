@@ -1447,7 +1447,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         let serial = pending.serial
         // `pick` が同じ呼び出しのうちに結果を返した検査の口のために、先に控えてから出す
         shownSelection = (serial, {}, false)
-        let dismiss = filePicker.pick(prompt: pending.prompt, over: window) {
+        let dismiss = filePicker.pick(prompt: pending.prompt, kind: pending.kind, over: window) {
             [weak self, weak surface] path in
             // 番号を載せる — 頼み直しの後に、前の頼みへの答えが溜まりに残っても、新しい待ちを終えない
             self?.markSelectionAnswered(serial: serial)

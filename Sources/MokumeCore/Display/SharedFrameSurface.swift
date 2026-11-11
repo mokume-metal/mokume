@@ -165,6 +165,12 @@ final class SharedFrameSurface {
     static let selectInputSerialKey = "serial"
     /// ``selectInputAttribute`` の辞書の鍵 — ダイアログに添える文言 (文字列)。
     static let selectInputPromptKey = "prompt"
+    /// ``selectInputAttribute`` の辞書の鍵 — 何を選ばせるか (文字列 `file`・`output`・`folder`。
+    /// ``SelectionBroker/Kind``・[#3707](https://github.com/mokume-metal/mokume/issues/3707))。**載っていなければ
+    /// `file`** — この鍵より前のライブラリの子は ``SketchPart/selectInput(_:)`` しか頼めない。知らない値の頼みは
+    /// 読まない (違う種類のパネルを出して、子が思っていないパスを返さないため)。種類を別の属性にしないのは、
+    /// 番号と文言を 1 つの値にしたのと同じ理由である。
+    static let selectInputKindKey = "kind"
 
     /// スケッチがウィンドウの題名を変えるよう頼んでいるときの、題名を載せる属性の名前 (文字列・
     /// [#3709](https://github.com/mokume-metal/mokume/issues/3709))。
@@ -886,6 +892,7 @@ final class SharedFrameSurface {
         let value: [String: Any] = [
             selectInputSerialKey: NSNumber(value: request.serial),
             selectInputPromptKey: request.prompt,
+            selectInputKindKey: request.kind.rawValue,
         ]
         IOSurfaceSetValue(surface, selectInputAttribute as CFString, value as CFDictionary)
     }
@@ -893,14 +900,23 @@ final class SharedFrameSurface {
     /// 引いた面が名乗っているファイルを選ばせる頼み。読み手の側の規則 (``publishSelection(_:to:)`` と対)。
     ///
     /// - Returns: 載っていない面は `nil` (頼んでいない)。番号が正の整数でない値は頼みとして読まない。
-    ///   文言の無い頼みは、文言を空にして読む (番号が頼みの本体で、文言は添え書き)。
+    ///   文言の無い頼みは、文言を空にして読む (番号が頼みの本体で、文言は添え書き)。種類の無い頼みは
+    ///   `file` と読み、知らない種類の頼みは読まない (``selectInputKindKey``)。
     static func selectionRequest(on surface: IOSurfaceRef) -> SelectionBroker.Request? {
         guard let value = IOSurfaceCopyValue(surface, selectInputAttribute as CFString)
                 as? [String: Any],
             let serial = (value[selectInputSerialKey] as? NSNumber)?.intValue, serial > 0
         else { return nil }
+        let kind: SelectionBroker.Kind
+        if let named = value[selectInputKindKey] {
+            guard let raw = named as? String, let known = SelectionBroker.Kind(rawValue: raw)
+            else { return nil }
+            kind = known
+        } else {
+            kind = .file
+        }
         return SelectionBroker.Request(
-            serial: serial, prompt: value[selectInputPromptKey] as? String ?? "")
+            serial: serial, prompt: value[selectInputPromptKey] as? String ?? "", kind: kind)
     }
 
     /// 測れた数だけを載せる。測れていなければ**消す**。

@@ -293,15 +293,22 @@ struct SharedFrameStageTests {
             // 結果が届いて頼みが消え、次の頼み (2) が来る
             try draw(child, frame: 4, gpu: gpu)
             stage.displayLinkFired()
-            try draw(child, frame: 5, gpu: gpu, selection: SelectionBroker.Request(serial: 2, prompt: "again"))
+            // 次の頼みはフォルダ・その次は保存先 (#3707)。種類も面に載って、道具のウィンドウは種類に合うダイアログを出す
+            try draw(
+                child, frame: 5, gpu: gpu,
+                selection: SelectionBroker.Request(serial: 2, prompt: "again", kind: .folder))
             stage.displayLinkFired()
             #expect(picker.shown.map(\.prompt) == ["pick", "again"])
 
             // 開いている間に別の頼み (3) に変わったら、前のダイアログは結果ごと捨てて閉じる
-            try draw(child, frame: 6, gpu: gpu, selection: SelectionBroker.Request(serial: 3, prompt: "third"))
+            try draw(
+                child, frame: 6, gpu: gpu,
+                selection: SelectionBroker.Request(serial: 3, prompt: "third", kind: .output))
             stage.displayLinkFired()
             // 閉じるように言われたのは、答え済みの 1 枚目 (頼みが消えたとき・害は無い) と、開いていた 2 枚目
             #expect(picker.dismissals == 2 && picker.shown.count == 3)
+            #expect(
+                picker.shown.map(\.kind) == [.file, .folder, .output], "頼みの種類のダイアログを出していない")
             lines.removeAll()
             picker.answer(1, "/tmp/stale.csv")
             #expect(lines.isEmpty, "閉じたダイアログの結果が子へ渡った")

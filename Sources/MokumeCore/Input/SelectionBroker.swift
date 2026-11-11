@@ -3,11 +3,13 @@
 
 import Foundation
 
-/// ファイルを選ばせる頼み (``SketchPart/selectInput(_:)``) の待ち。
+/// 選ばせるダイアログの頼み (``SketchPart/selectInput(_:)``・``SketchPart/selectOutput(_:)``・
+/// ``SketchPart/selectFolder(_:)``) の待ち。
 ///
-/// **1 度に待てるのは 1 つ** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。待ちの最中にもう
-/// 1 度頼まれたら、前の待ちは取り消しと同じ `nil` で終える。要求に番号を振って同時に複数を待つ形は、
-/// 複数を同時に待つ作例が無いので採らなかった。
+/// **1 度に待てるのは 1 つで、3 つの API で共有する** ([#3062](https://github.com/mokume-metal/mokume/issues/3062)・
+/// [#3707](https://github.com/mokume-metal/mokume/issues/3707))。待ちの最中にもう 1 度頼まれたら、どの API からでも、
+/// 前の待ちは取り消しと同じ `nil` で終える。要求に番号を振って同時に複数を待つ形は、複数を同時に待つ作例が
+/// 無いので採らなかった。何を選ばせるかは頼みの種類 (``Kind``) が持ち、ウィンドウを持つ側が種類に合うパネルを出す。
 ///
 /// ## 頼みと結果の道
 ///
@@ -31,10 +33,27 @@ import Foundation
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
 final class SelectionBroker {
-    /// ウィンドウを持つ側へ渡す頼み。通し番号は 1 から数え、頼むたびに進む。
+    /// 何を選ばせるか。ウィンドウを持つ側は種類に合うパネルを出す (``FilePicker``)。
+    enum Kind: String, CaseIterable, Sendable {
+        /// 在るファイルを 1 つ (``SketchPart/selectInput(_:)``)。
+        case file
+        /// 保存先 (``SketchPart/selectOutput(_:)``)。まだ無いファイルの名前も選べる。
+        case output
+        /// フォルダを 1 つ (``SketchPart/selectFolder(_:)``)。
+        case folder
+    }
+
+    /// ウィンドウを持つ側へ渡す頼み。通し番号は 1 から数え、頼むたびに進む (種類を問わず 1 つの列)。
     struct Request: Equatable, Sendable {
         let serial: Int
         let prompt: String
+        let kind: Kind
+
+        init(serial: Int, prompt: String, kind: Kind = .file) {
+            self.serial = serial
+            self.prompt = prompt
+            self.kind = kind
+        }
     }
 
     /// いま待っている頼み。待っていなければ `nil`。
@@ -49,13 +68,13 @@ final class SelectionBroker {
 
     /// 頼んで、結果が届くまで待つ。**取り消しは `nil`。**
     ///
-    /// 待ちの最中なら、前の待ちを `nil` で終えてから新しく頼む。**実行が終わった後なら、待たずに `nil` を返す**
-    /// (結果を届ける合流点がもう配られない — 待てば返らない・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
-    func request(_ prompt: String) async -> String? {
+    /// 待ちの最中なら、**前の頼みの種類を問わず**前の待ちを `nil` で終えてから新しく頼む。**実行が終わった後なら、
+    /// 待たずに `nil` を返す** (結果を届ける合流点がもう配られない — 待てば返らない・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    func request(_ prompt: String, kind: Kind = .file) async -> String? {
         guard !isEnded else { return nil }
         resolve(nil)
         issued += 1
-        let request = Request(serial: issued, prompt: prompt)
+        let request = Request(serial: issued, prompt: prompt, kind: kind)
         return await withCheckedContinuation { continuation in
             waiting = continuation
             pending = request

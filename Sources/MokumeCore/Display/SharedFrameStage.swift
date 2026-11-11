@@ -624,7 +624,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         let (pid, serial) = (wanted.pid, wanted.request.serial)
         // `pick` が同じ呼び出しのうちに結果を返した検査の口のために、先に控えてから出す
         shownSelection = ShownSelection(pid: pid, serial: serial, dismiss: {})
-        let dismiss = filePicker.pick(prompt: wanted.request.prompt, over: view.window) {
+        let dismiss = filePicker.pick(
+            prompt: wanted.request.prompt, kind: wanted.request.kind, over: view.window
+        ) {
             [weak self] path in
             self?.answerSelection(path, pid: pid, serial: serial)
         }
