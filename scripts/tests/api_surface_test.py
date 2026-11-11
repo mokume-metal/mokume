@@ -89,6 +89,22 @@ class ApiSurfaceTests(unittest.TestCase):
         # `clear` で始まっても、次が大文字でなければ別の語
         self.assertEqual(api.check_onoff([symbol("clearance()", owner="Sketch")]), [])
 
+    def test_理由つきの許可表に載せた口はオンオフの検査から外す(self):
+        """データの操作で手本の綴りの `Table.clearRows()` は通す (#3642)。"""
+        self.assertIn("Table.clearRows()", api.ONOFF_ALLOWLIST)
+        self.assertEqual(api.check_onoff([symbol("clearRows()", owner="Table")]), [])
+
+    def test_許可表に無い_clear_enable_disable_はこれまでどおり落とす(self):
+        for name in ("clearColumns()", "enableRows()", "disableRows()", "clearRows(_:)"):
+            problems = api.check_onoff([symbol(name, owner="Table")])
+            self.assertEqual(len(problems), 1, name)
+            self.assertIn("ONOFF_ALLOWLIST", problems[0])
+
+    def test_許可表の鍵は持ち主つきで_他の型の同じ名前は落とす(self):
+        for owner in ("TableRow", "Sketch", None):
+            problems = api.check_onoff([symbol("clearRows()", owner=owner)])
+            self.assertEqual(len(problems), 1, owner)
+
     def test_転送の引数ラベルの食い違いを見つける(self):
         symbols = [
             symbol("tint(_:)", owner="Sketch"),
