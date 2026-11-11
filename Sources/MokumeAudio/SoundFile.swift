@@ -108,6 +108,12 @@ import MokumeDiagnostics
 ///
 /// Processing Sound では、`LowPass`・`Reverb` などの `process(_:)` が `SoundFile` を受け付ける。
 ///
+/// ## エンベロープを掛ける
+///
+/// 合成した音と同じ ``Env`` で、音量にエンベロープを掛けられる (``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)``)。
+/// 曲の頭の立ち上げ・終わりのフェードが、``amp(_:)`` を毎フレーム動かさずに書ける。再生中なら位置を動かさず、
+/// 再生していなければ ``play()`` と同じ位置から 1 度だけ再生する。エンベロープが終わると無音になるが、再生は止まらない。
+///
 /// ## 書き出しでは、音を動画の音声トラックへ入れる
 ///
 /// ウィンドウを表示して実行している間は実際に音を出し、解析の位置は実際に出力したサンプル数から読む。**固定クロックで `.mov` へ
@@ -324,7 +330,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case cannotProcess
         case fileCapacity
         case congested
-        /// ``Env/play(_:_:_:_:_:)`` の引数の知らせ。種類は ``EnvelopeArguments`` が名乗る。
+        /// `Env.play` の引数の知らせ。種類は ``EnvelopeArguments`` が名乗る。
         case envelope(String)
     }
 
@@ -514,7 +520,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// 再生中か。``play()`` か ``loop()`` で `true` になり、``pause()``・``stop()``・
     /// 再生の終了で `false` になる。値はそのフレームの開始時点のもの。
     ///
-    /// ``Env/play(_:_:_:_:_:)`` で再生を始めたときも `true` になり、エンベロープが終わって無音になっても
+    /// ``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)`` で再生を始めたときも `true` になり、エンベロープが終わって無音になっても
     /// `true` のまま (再生は止まらない)。
     public var isPlaying: Bool { playhead.isPlaying }
 
