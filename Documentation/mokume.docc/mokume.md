@@ -975,10 +975,13 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/ambientLight(_:_:_:)``
 - ``SketchPart/directionalLight(_:_:_:_:)``
 - ``SketchPart/directionalLight(_:_:_:_:_:_:)``
+- ``SketchPart/directionalLight(color:direction:)``
 - ``SketchPart/pointLight(_:_:_:_:)``
 - ``SketchPart/pointLight(_:_:_:_:_:_:)``
+- ``SketchPart/pointLight(color:position:)``
 - ``SketchPart/spotLight(_:_:_:_:_:_:_:angle:)``
 - ``SketchPart/spotLight(_:_:_:_:_:_:_:_:_:angle:)``
+- ``SketchPart/spotLight(color:position:direction:angle:)``
 - ``SketchPart/lights()``
 - ``SketchPart/noLights()``
 - ``SketchPart/shininess(_:)``

@@ -117,6 +117,14 @@ struct SceneOutsideFrameTests {
             Mouth("pointLight(r,g,b)", .light) { $0.pointLight(200, 180, 160, 8, 8, 50) },
             Mouth("spotLight(color)", .light) { $0.spotLight(white, 8, 8, 50, 0, 0, -1) },
             Mouth("spotLight(r,g,b)", .light) { $0.spotLight(200, 180, 160, 8, 8, 50, 0, 0, -1) },
+            // ラベル付きの形 (#3780)
+            Mouth("directionalLight(color:direction:)", .light) {
+                $0.directionalLight(color: white, direction: Vector3(0, 1, -1))
+            },
+            Mouth("pointLight(color:position:)", .light) { $0.pointLight(color: white, position: Vector3(8, 8, 50)) },
+            Mouth("spotLight(color:position:direction:)", .light) {
+                $0.spotLight(color: white, position: Vector3(8, 8, 50), direction: Vector3(0, 0, -1))
+            },
             Mouth("lights", .light) { $0.lights() },
             Mouth("noLights", .light) { $0.noLights() },
             // 材質
