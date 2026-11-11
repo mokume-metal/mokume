@@ -138,4 +138,27 @@ struct EnvLengthTests {
         #expect(peaks[0][8..<12].allSatisfy { $0 > 0.3 }, "\(peaks[0])")
         #expect(notices.lines.isEmpty, "\(notices.lines)")
     }
+
+    /// 境目は標本の数で決まり、秒では決まらない。48 kHz の外 (44.1 kHz・96 kHz) でも、1 区間と合計のそれぞれで、
+    /// 収まる最長の `Float` の秒とその 1 つ上 (`nextUp`) を確かめる。境目の秒は `Int.max ÷ sampleRate` から
+    /// 下へたどって探す (定数を写さない)。
+    @Test("44.1・48・96 kHz で、1 区間と合計のそれぞれ、収まる最長の秒は受け、その 1 つ上の Float は拒む", arguments: [44_100.0, 48_000, 96_000])
+    func theBoundaryFollowsTheSampleRate(_ rate: Double) {
+        func counts(_ attack: Float, _ sustain: Float) -> (attack: Int, sustain: Int, release: Int)? {
+            EnvelopeShape.sampleCounts(attack: attack, sustain: sustain, release: 0, sampleRate: rate)
+        }
+        // 1 区間
+        var one = Float(Double(Int.max) / rate)
+        while counts(one, 0) == nil { one = one.nextDown }
+        #expect(counts(one, 0) != nil && counts(one.nextUp, 0) == nil, "\(rate) Hz: \(one)")
+        #expect(counts(0, one.nextUp) == nil, "持続でも同じ")
+        // 合計: 2 区間とも単独では収まり、合計で越える
+        var half = Float(Double(Int.max) / rate / 2)
+        while counts(half, half) == nil { half = half.nextDown }
+        let next = half.nextUp
+        #expect(counts(next, 0) != nil && counts(0, next) != nil, "\(rate) Hz: 1 区間ずつなら収まる")
+        #expect(counts(half, half) != nil && counts(next, next) == nil, "\(rate) Hz: \(half)")
+        // 48 kHz で拒む 1e14 秒 + 1e14 秒は、44.1 kHz なら 8.82 × 10¹⁸ 標本で収まる
+        #expect((counts(Float(1e14), Float(1e14)) != nil) == (rate < 46_000), "\(rate) Hz")
+    }
 }
