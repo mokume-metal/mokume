@@ -61,6 +61,35 @@ nonisolated enum JSONRPC {
         return number
     }
 
+    /// 数を整数として読む。**整数でなければ `nil`。** `Int` に収まらない整数は符号の側の端
+    /// (`Int.max` / `Int.min`) に寄せる。
+    ///
+    /// **整数かは、読み手が渡した値そのもので見る** ([#3959](https://github.com/mokume-metal/mokume/issues/3959))。
+    /// `JSONSerialization` は桁の多い数を `NSDecimalNumber` で渡す。`as? Int` は端数を捨て
+    /// (`12345678901234567.5` → 12345678901234567)、`doubleValue` は端数を丸めて消す
+    /// (`1.00000000000000000000001` → 1.0) ので、どちらで決めても端数のある数を整数と読む。
+    /// 10 進の値は 10 進のまま、浮動小数は浮動小数のまま (2 進の値はどれも正確) 見る。
+    static func wholeNumber(_ number: NSNumber) -> Int? {
+        if let decimal = number as? NSDecimalNumber {
+            var value = decimal.decimalValue
+            guard !value.isNaN else { return nil }
+            var rounded = Decimal()
+            NSDecimalRound(&rounded, &value, 0, .plain)
+            guard rounded == value else { return nil }
+            if value > Decimal(Int.max) { return .max }
+            if value < Decimal(Int.min) { return .min }
+            return Int(NSDecimalNumber(decimal: value).stringValue)
+        }
+        if CFNumberIsFloatType(number) {
+            let double = number.doubleValue
+            guard double.isFinite, double == double.rounded() else { return nil }
+            if let exact = Int(exactly: double) { return exact }
+            return double > 0 ? .max : .min
+        }
+        // 整数の型。`Int` に収まらないのは符号なしの大きな数だけ
+        return (number as? Int) ?? .max
+    }
+
     /// 受け取った呼び出し。
     struct Call {
         let id: ID?

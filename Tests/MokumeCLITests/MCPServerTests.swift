@@ -1036,6 +1036,64 @@ struct MCPServerTests {
         #expect(Tools.seriesArgument(nil, key: "count") == .omitted)
     }
 
+    /// **桁の多い数は `NSDecimalNumber` で届く** ([#3959](https://github.com/mokume-metal/mokume/issues/3959))。
+    /// `as? Int` は端数を捨て、`doubleValue` は端数を丸めて消すので、どちらで整数かを決めても
+    /// `1.00000000000000000000001` を整数と読む。整数かは 10 進の値で見る。数は JSON の文字から読む —
+    /// Swift の数の書き方では、JSON の読み手がどの型で渡すかを再現できない。
+    @Test(
+        "桁の多い数も、端数があれば断り、整数なら値か符号の側の端で読む",
+        arguments: [
+            ("1.00000000000000000000001", nil), ("12345678901234567.5", nil),
+            ("-0.00000000000000000000001", nil), ("2.5", nil),
+            ("1e19", Int.max), ("-1e19", Int.min), ("9223372036854775808", Int.max),
+            ("-9223372036854775809", Int.min), ("18446744073709551616", Int.max),
+            ("100000000000000000000000000000.0", Int.max), ("9223372036854775807", Int.max),
+            ("-9223372036854775808", Int.min), ("3", 3), ("3.0", 3), ("1e3", 1000),
+            ("12345678901234567.0", 12_345_678_901_234_567),
+        ] as [(String, Int?)])
+    func readsLongNumbersExactly(text: String, whole: Int?) throws {
+        let values = try decode(#"{"count": \#(text)}"#)
+        let answer = Tools.seriesArgument(values["count"], key: "count")
+        #expect(answer == (whole.map { .value($0) } ?? .refused("count must be a whole number")), "\(text)")
+    }
+
+    /// 上を JSON-RPC の 1 行から通す。端数のある数は区画に要求を置く前に断り、時刻つきの観測の
+    /// 「count=1 と every=1」も 10 進の値で見る (`doubleValue == 1` は `1.00000000000000000000001` を
+    /// 1 と読む)。
+    @Test(
+        "JSON-RPC の行で届いた端数つきの枚数・間隔は、要求を置かずに断る",
+        arguments: [
+            (#"{"count":1.00000000000000000000001}"#, "count must be a whole number"),
+            (#"{"every":12345678901234567.5}"#, "every must be a whole number"),
+            (#"{"time":3,"count":1.00000000000000000000001}"#,
+             "A specified time requires count=1 and every=1"),
+            (#"{"time":3,"every":0.99999999999999999999999}"#,
+             "A specified time requires count=1 and every=1"),
+        ])
+    func refusesFractionalSeriesSentOverJSONRPC(arguments: String, reason: String) throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let line =
+            #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"observe","arguments":"#
+            + arguments + "}}"
+        let (server, recorder) = makeServer(directory: directory, input: [line])
+        server.serve()
+        let answer = try decode(try #require(recorder.written.first))
+        let result = try #require(answer["result"] as? [String: Any], "\(arguments)")
+        #expect(result["isError"] as? Bool == true, "\(arguments)")
+        let text = (result["content"] as? [[String: Any]])?.first?["text"] as? String
+        #expect(text == reason, "\(arguments)")
+        #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path), "\(arguments)")
+    }
+
+    /// 時刻つきの観測は、`1` と綴りの違う整数の 1 (`1.0`・`1e0`) なら受ける。
+    @Test("時刻つきの観測は、綴りの違う整数の 1 を受ける", arguments: ["1.0", "1e0", "1.00000000000000000000000"])
+    func acceptsOneSpelledDifferentlyWithATime(one: String) throws {
+        let request = try #require(
+            try placedObservation(#"{"time":3,"count":\#(one),"every":\#(one)}"#), "\(one)")
+        #expect(request["time"] != nil)
+    }
+
     @Test("範囲の外の枚数・間隔は切らずに要求へ置き、撮る側が切ったことを名乗れるようにする")
     func passesOutOfRangeSeriesThrough() throws {
         let directory = try makeDirectory()
