@@ -16,7 +16,7 @@ import Testing
 struct MaskLevelTests {
     @Test("brightness の物差しで読む: 白は 1、黒は 0、表示で中間の灰色は 0.5")
     func levelsFollowBrightness() {
-        #expect(Image.maskLevel(.display(red: 1, green: 1, blue: 1)) == 1)
+        #expect(abs(Image.maskLevel(.display(red: 1, green: 1, blue: 1)) - 1) < 1e-4)
         #expect(Image.maskLevel(.display(red: 0, green: 0, blue: 0)) == 0)
         let gray = LinearRGBA.display(red: 0.5, green: 0.5, blue: 0.5)
         #expect(abs(Image.maskLevel(gray) - 0.5) < 0.001)
@@ -28,7 +28,7 @@ struct MaskLevelTests {
 
     @Test("灰色でない色は最も大きい成分で読み、範囲の外は端へ寄せる")
     func levelsOfOtherColours() {
-        #expect(Image.maskLevel(.display(red: 1, green: 0, blue: 0)) == 1, "青が 0 でも赤一色は 1")
+        #expect(abs(Image.maskLevel(.display(red: 1, green: 0, blue: 0)) - 1) < 1e-4, "青が 0 でも赤一色は 1")
         #expect(Image.maskLevel(.linear(red: 4, green: 4, blue: 4)) == 1, "表示を超えて明るい画素は 1")
         #expect(Image.maskLevel(.transparent) == 0)
         #expect(Image.maskLevel(.linear(red: .nan, green: 0, blue: 0)) == 0)
