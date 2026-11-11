@@ -967,13 +967,34 @@ struct BundleCommandTests {
         #expect(run.restored, "止められたあとに .build が戻っていない: \(run.line)")
     }
 
+    /// **退避先と同じ名前の物が既にあっても、巻き込まない** (#3985)。退避先を `.build-held` に
+    /// 決め打ちしていたので、それが既にあるディレクトリだと `mv` は `.build` をその**中へ**
+    /// 入れ、戻す手は `.build-held` ごと `.build` の中へ入れていた — 終了 0 のまま
+    /// `.build/.build` ができ、作者が置いていた `.build-held` も消えた。退避先はその回が
+    /// 作る一意な場所にし、事前にある `.build-held` には触れない。通常の起動・閉じた場合・
+    /// 止められた場合のどれでも同じに保つ。
+    @Test(
+        "確かめ方の行は、既にある .build-held を巻き込まず、.build を入れ子にせず戻す",
+        arguments: [nil, "TERM", "INT", "HUP"])
+    func theCheckLeavesAnExistingHeldDirectoryAlone(signal: String?) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: signal != nil,
+            signal: signal ?? "TERM", existingHeld: true)
+        if signal == nil {
+            #expect(run.status == 0, "確かめ方の行が通らない: \(run.line)")
+            #expect(run.record == "\(run.app.path)\nheld\n", "打った行: \(run.line)")
+        }
+        #expect(run.restored, "元の .build・.build-held の配置が保たれていない: \(run.line)")
+    }
+
     private struct CheckRun {
         var line: String
         var app: URL
         var status: Int32
         /// 偽の `open` が書き残したもの。アプリが資材を読んだ時点の `.build` の有無。
         var record: String?
-        /// 終わった後に `.build` が元の中身ごと戻っていて、退避の跡が無いか。
+        /// 終わった後に `.build` が元の中身ごと (入れ子にならずに) 戻っていて、その回の退避の
+        /// 跡が無く、前からあった `.build-held` があればその中身がそのままか。
         var restored: Bool
     }
 
@@ -985,15 +1006,25 @@ struct BundleCommandTests {
     /// されているかを書き残させる — 本物の `.app` を開かずに、手順の順序まで見る。
     ///
     /// - Parameter interrupted: 偽の `open` が待つ間に、行を包む殻へ `signal` を送る。
+    /// - Parameter existingHeld: 作者が前から置いていた `.build-held` (中身つき) を用意する。
     private func runTheCheck(
-        name: String, alreadyRunning: Bool, interrupted: Bool, signal: String = "TERM"
+        name: String, alreadyRunning: Bool, interrupted: Bool, signal: String = "TERM",
+        existingHeld: Bool = false
     ) throws -> CheckRun {
         let parent = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: parent) }
         let sketch = parent.appendingPathComponent(name, isDirectory: true)
         let build = sketch.appendingPathComponent(".build", isDirectory: true)
         try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
-        try "".write(to: build.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
+        try "current".write(
+            to: build.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
+        let held = sketch.appendingPathComponent(".build-held", isDirectory: true)
+        if existingHeld {
+            try FileManager.default.createDirectory(at: held, withIntermediateDirectories: true)
+            try "existing".write(
+                to: held.appendingPathComponent("existing-content"), atomically: true,
+                encoding: .utf8)
+        }
         let app = sketch.appendingPathComponent("bundle/Bund.app", isDirectory: true)
         try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
 
@@ -1050,10 +1081,17 @@ struct BundleCommandTests {
                 Thread.sleep(forTimeInterval: 0.05)
             }
         }
+        let files = FileManager.default
+        let left = (try? files.contentsOfDirectory(atPath: sketch.path)) ?? []
         let restored =
-            FileManager.default.fileExists(atPath: build.appendingPathComponent("marker").path)
-            && !FileManager.default.fileExists(
-                atPath: sketch.appendingPathComponent(".build-held").path)
+            (try? String(contentsOf: build.appendingPathComponent("marker"), encoding: .utf8))
+                == "current"
+            && !files.fileExists(atPath: build.appendingPathComponent(".build").path)
+            && Set(left) == Set([".build", "bundle"] + (existingHeld ? [".build-held"] : []))
+            && (!existingHeld
+                || (try? String(
+                    contentsOf: held.appendingPathComponent("existing-content"), encoding: .utf8))
+                    == "existing")
         return CheckRun(
             line: line, app: app, status: result.status,
             record: try? String(contentsOf: record, encoding: .utf8), restored: restored)
@@ -1067,12 +1105,15 @@ struct BundleCommandTests {
             package: URL(fileURLWithPath: "/work/bund with space", isDirectory: true),
             note: URL(fileURLWithPath: "/work/bund with space/bundle/How to open Bund.txt"),
             signedAs: nil, identity: identity)
-        #expect(
-            report.contains(
-                "  ( build='/work/bund with space/.build'; held='/work/bund with space/.build-held';"
-                    + " mv \"$build\" \"$held\" || exit;"
-                    + " trap 'mv \"$held\" \"$build\"' EXIT; trap exit HUP INT TERM;"
-                    + " open -n -W '/work/bund with space/bundle/Bund.app' )\n"))
+        let line: String = [
+            "  ( build='/work/bund with space/.build';",
+            " held=$(mktemp -d '/work/bund with space/.build-held.XXXXXX') || exit;",
+            " mv \"$build\" \"$held/.build\" || { rmdir \"$held\"; exit 1; };",
+            " trap 'mv \"$held/.build\" \"$build\" && rmdir \"$held\"' EXIT;",
+            " trap exit HUP INT TERM;",
+            " open -n -W '/work/bund with space/bundle/Bund.app' )\n",
+        ].joined()
+        #expect(report.contains(line))
     }
 
     /// 確かめ方の行は、アプリを閉じるまで端末に戻らない (`open -n -W`)。戻らないことを

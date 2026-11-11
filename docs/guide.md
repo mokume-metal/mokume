@@ -191,7 +191,7 @@ Hardened Runtime とタイムスタンプ付きで署名し、公証に提出で
 配布前に、手元のビルド結果に依存していないかは次で確かめられます。描けたらアプリを閉じてください (閉じると `.build` が戻ります。Ctrl-C で止めても戻ります):
 
 ```bash
-( build=.build; held=.build-held; mv "$build" "$held" || exit; trap 'mv "$held" "$build"' EXIT; trap exit HUP INT TERM; open -n -W bundle/Grain.app )
+( build=.build; held=$(mktemp -d .build-held.XXXXXX) || exit; mv "$build" "$held/.build" || { rmdir "$held"; exit 1; }; trap 'mv "$held/.build" "$build" && rmdir "$held"' EXIT; trap exit HUP INT TERM; open -n -W bundle/Grain.app )
 ```
 
 </details>

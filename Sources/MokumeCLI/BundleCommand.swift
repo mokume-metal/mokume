@@ -608,11 +608,19 @@ enum BundleCommand {
     /// `.build-held` のまま残り、次のビルドが全部やり直しになる。包む殻 `( … )` の中で EXIT に
     /// 戻す手を掛け、信号は `exit` に倒して EXIT を通す。殻の中で変数に置くので、貼った人の
     /// 殻に名前が残らず、trap の文字列にパスを写さずに済む (パスの引用は変数の代入が受け持つ)。
+    ///
+    /// **退避先は、その回が `mktemp -d` で作る一意なディレクトリの中** (#3985)。決まった名前
+    /// (`.build-held`) へ `mv` すると、同じ名前のディレクトリが既にあったとき `.build` はその
+    /// **中へ**入り、戻す手は退避先ごと `.build` の中へ入れる — 終了 0 のまま `.build/.build`
+    /// ができ、作者が置いていた物も巻き込む。その回が作った場所なら衝突せず、戻した後に
+    /// 消してよいのも空になったその場所だけ (`rmdir` は中身が残っていれば消さない)。
     static func checkLine(for app: URL, package: URL) -> String {
         let build = GivenPath.shellWord(package.appendingPathComponent(".build"))
-        let held = GivenPath.shellWord(package.appendingPathComponent(".build-held"))
-        return "( build=\(build); held=\(held); mv \"$build\" \"$held\" || exit;"
-            + " trap 'mv \"$held\" \"$build\"' EXIT; trap exit HUP INT TERM;"
+        let template = GivenPath.shellWord(package.appendingPathComponent(".build-held.XXXXXX"))
+        return "( build=\(build); held=$(mktemp -d \(template)) || exit;"
+            + " mv \"$build\" \"$held/.build\" || { rmdir \"$held\"; exit 1; };"
+            + " trap 'mv \"$held/.build\" \"$build\" && rmdir \"$held\"' EXIT;"
+            + " trap exit HUP INT TERM;"
             + " open -n -W \(GivenPath.shellWord(app)) )"
     }
 
