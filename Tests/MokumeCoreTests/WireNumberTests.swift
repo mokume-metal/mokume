@@ -45,6 +45,10 @@ struct WireNumberTests {
             (#"{"number":-1e400}"#, true),
             (#"{"number":123456789012345678901234567890}"#, false),
             (#"{"number":-123456789012345678901234567890}"#, true),
+            // `Int` の端の 1 つ外 (#3959。`Decimal` で読む段が寄せる)
+            (#"{"number":9223372036854775808}"#, false),
+            (#"{"number":-9223372036854775809}"#, true),
+            (#"{"number":100000000000000000000000000000.0}"#, false),
         ] as [(String, Bool)])
     func readsABigIntegerAsAnOverflowWithItsSign(_ json: String, _ negative: Bool) throws {
         #expect(try read(Int.self, json) == .overflow(negative: negative))
@@ -58,6 +62,73 @@ struct WireNumberTests {
     @Test("整数でない数は、桁あふれにしない", arguments: ["2.5", "-0.5", "1e-3"])
     func readsAFractionAsNotWhole(_ number: String) throws {
         #expect(try read(Int.self, #"{"number":\#(number)}"#) == .notWhole)
+    }
+
+    /// **桁の多い数も、整数かは 10 進の値で決める** ([#3959](https://github.com/mokume-metal/mokume/issues/3959))。
+    /// `JSONDecoder` の `Int` への読みは `1.00000000000000000000001` を 1 に、`12345678901234567.5` を
+    /// 12345678901234567 にし、`Int` に収まらない数の誤りの字面を `Double` に丸めると
+    /// `100000000000000000000000000000.5` を整数の桁あふれと読む。
+    @Test(
+        "桁の多い端数つきの数は、整数でない",
+        arguments: [
+            "1.00000000000000000000001", "12345678901234567.5", "-0.00000000000000000000001",
+            "0.99999999999999999999999", "9007199254740993.5", "9223372036854775807.5",
+            "100000000000000000000000000000.5",
+        ])
+    func readsALongFractionAsNotWhole(_ number: String) throws {
+        #expect(try read(Int.self, #"{"number":\#(number)}"#) == .notWhole, "\(number)")
+    }
+
+    @Test(
+        "Int に収まる整数は、綴りによらずその値",
+        arguments: [
+            ("12345678901234567.0", 12_345_678_901_234_567), ("1.00000000000000000000000", 1),
+            ("9223372036854775807", .max), ("-9223372036854775808", .min),
+            ("-0", 0), ("-0.0", 0), ("1E+2", 100), ("10e-1", 1),
+        ] as [(String, Int)])
+    func readsAWholeNumberInAnySpelling(_ number: String, _ value: Int) throws {
+        #expect(try read(Int.self, #"{"number":\#(number)}"#) == .value(value), "\(number)")
+    }
+
+    /// **Foundation の読みに依る綴り** (#3959 の 2 回目の反証で実測・macOS 27.0 / arm64)。`JSONDecoder` は
+    /// `Decimal` を指数 -128〜127・仮数 38 桁で読み、外れると誤りか丸めになる。読みは直す前 (`c1eef96d`) と
+    /// 同じで、**Foundation の版が変わって読みが変わったら、ここが赤くなって気付く**ための行である。
+    /// `1e-400` は整数でないが、`Decimal` に収まらず `Int` の読みに回り、`Double` で 0 に丸まって届く
+    /// (MCP サーバの側も `JSONSerialization` が 0 で渡すので、読み手からは見分けられない)。仮数が 38 桁を越える
+    /// 綴りは丸まって届く (`9` が 40 個は `99…900` で範囲の外、`1.` に 0 が 39 個と `1` は 1)。
+    enum Expected: Sendable { case notWhole, value(Int), overflow(negative: Bool) }
+
+    @Test(
+        "Decimal の指数・仮数の端の綴りは、Foundation の読みのまま固定する",
+        arguments: [
+            ("1e-400", .value(0)), ("5e-324", .notWhole), ("1e-130", .notWhole),
+            ("1e-128", .notWhole), ("1e-127", .notWhole),
+            ("1e100", .overflow(negative: false)), ("1e127", .overflow(negative: false)),
+            ("1e128", .overflow(negative: false)), ("1e400", .overflow(negative: false)),
+            ("-1e400", .overflow(negative: true)),
+            ("1" + String(repeating: "0", count: 40), .overflow(negative: false)),
+            (String(repeating: "9", count: 40), .overflow(negative: false)),
+            ("-1" + String(repeating: "0", count: 40), .overflow(negative: true)),
+            ("1." + String(repeating: "0", count: 39) + "1", .value(1)),
+        ] as [(String, Expected)])
+    func readsTheEdgesOfDecimalAsFoundationDoes(_ number: String, _ expected: Expected) throws {
+        let reading = try read(Int.self, #"{"number":\#(number)}"#)
+        let wanted: WireNumber<Int> =
+            switch expected {
+            case .notWhole: .notWhole
+            case .value(let value): .value(value)
+            case .overflow(let negative): .overflow(negative: negative)
+            }
+        #expect(reading == wanted, "\(number)")
+    }
+
+    /// 10 進の値の判定は、JSON から届かない値 (`NaN`) も整数と読まない。MCP サーバの引数の読み
+    /// (`JSONRPC.wholeNumber`) は、入口で有限でない数を断るので、ここで直に固定する。
+    @Test("10 進の NaN は整数でない")
+    func refusesADecimalNaN() {
+        #expect(WholeDecimal.integer(.nan) == nil)
+        #expect(WholeDecimal.integer(Decimal(string: "1e30")!) == .max)
+        #expect(WholeDecimal.integer(Decimal(string: "-1e30")!) == .min)
     }
 
     @Test("型の違う値は、場所つきの DecodingError で投げる", arguments: [#""0.5""#, "true", "[]", "{}"])

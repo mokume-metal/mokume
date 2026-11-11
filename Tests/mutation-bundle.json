@@ -14,7 +14,7 @@
       "id": "2280-observe-time-with-count",
       "origin": "#2278",
       "file": "Sources/MokumeCLI/MCP/Tools.swift",
-      "find": "guard let value = JSONRPC.number(raw), value.doubleValue == 1 else {",
+      "find": "guard Self.seriesArgument(raw, key: key) == .value(1) else {",
       "replace": "guard JSONRPC.number(raw) != nil else {",
       "gpu": false,
       "note": "time と count=2 / every=2 の併用を断らずに送る (ObserveTests.rejectsInvalidTimeArguments が殺すはず)"
