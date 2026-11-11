@@ -4,7 +4,7 @@
 
 ## プロジェクト
 
-mokume は Apple Silicon の macOS で動くクリエイティブコーディング環境 (Swift + Metal) で、宣言的・フレームベースのスケッチ API を提供する。ゲームも書け、iOS / iPadOS へも出せる方向へ広げている (iOS は未実装)。
+mokume は Apple Silicon の macOS で動くクリエイティブコーディング環境 (Swift + Metal) で、宣言的・フレームベースのスケッチ API を提供する。ゲームへ (いま書けるのは場面の切り替えまで)、iOS / iPadOS へ (未実装) 広げている。
 
 ## 正典の在処
 
