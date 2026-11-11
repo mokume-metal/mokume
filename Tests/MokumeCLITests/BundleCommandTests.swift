@@ -915,7 +915,7 @@ struct BundleCommandTests {
 
     /// **実行 product が使わない target の包みは入れず、必須の検査も同じ範囲を見る** (#3982)。
     /// テストの target の fixture (`<pkg>_DemoTests.bundle`) が配る `.app` に入っていた。除く範囲は
-    /// 宣言の依存の閉包で決める (``SwiftPM/Package/unusedResourceBundles(forProduct:)``)。
+    /// 宣言の依存の閉包で決める (``SwiftPM/Package/ResourceScope/excluded``)。
     /// 依存のパッケージの包み (`mokume_MokumeCore.bundle`) は宣言を辿らずに入れる。コピーから
     /// 除いた包みを「欠けている」と読まないことと、要る包みが欠ければ従来どおり止まることも見る。
     ///
@@ -954,7 +954,7 @@ struct BundleCommandTests {
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
             into: root.appendingPathComponent("out", isDirectory: true),
-            excluding: package.unusedResourceBundles(forProduct: "Demo"))
+            excluding: package.resourceScope(forProduct: "Demo").excluded)
         let resources = app.appendingPathComponent("Contents/Resources", isDirectory: true)
         let shipped = try FileManager.default.contentsOfDirectory(atPath: resources.path).sorted()
         #expect(
@@ -962,7 +962,7 @@ struct BundleCommandTests {
                 == (["Sketch_Demo.bundle", "demo_demo.bundle", "mokume_MokumeCore.bundle"]
                     + (libraryBuilt ? ["Sketch_Lib.bundle"] : [])).sorted())
 
-        let required = package.declaredResourceBundles(forProduct: "Demo")
+        let required = package.resourceScope(forProduct: "Demo").required
         #expect(required == ["Sketch_Demo.bundle", "Sketch_Lib.bundle"])
         if libraryBuilt {
             #expect(throws: Never.self) { try BundleCommand.check(app, contains: required) }

@@ -45,8 +45,8 @@ struct SwiftPMTests {
         #expect(package.targets.isEmpty)
         #expect(package.platforms.isEmpty)
         #expect(package.minimumMacOSVersion == nil)
-        #expect(package.declaredResourceBundles(forProduct: "demo").isEmpty)
-        #expect(package.unusedResourceBundles(forProduct: "demo").isEmpty)
+        #expect(package.resourceScope(forProduct: "demo").required.isEmpty)
+        #expect(package.resourceScope(forProduct: "demo").excluded.isEmpty)
     }
 
     @Test("dump-package の出力でなければ、読めたことにしない")
@@ -66,8 +66,8 @@ struct SwiftPMTests {
             """
         let package = try #require(SwiftPM.package(inDumpOf: dump))
         // product の宣言が無ければ、推し量らずに全部の target を数え、何も除かない
-        #expect(package.declaredResourceBundles(forProduct: "demo") == ["demo_demo.bundle"])
-        #expect(package.unusedResourceBundles(forProduct: "demo").isEmpty)
+        #expect(package.resourceScope(forProduct: "demo").required == ["demo_demo.bundle"])
+        #expect(package.resourceScope(forProduct: "demo").excluded.isEmpty)
     }
 
     /// 道具立てが書く依存の形 (`byName`・`target`・`product`) の dump。
@@ -103,10 +103,10 @@ struct SwiftPMTests {
         let package = try #require(SwiftPM.package(inDumpOf: multiProductDump))
         #expect(package.targetClosure(ofProduct: "Demo") == ["Demo", "Lib", "Core"])
         #expect(
-            package.declaredResourceBundles(forProduct: "Demo")
+            package.resourceScope(forProduct: "Demo").required
                 == ["Demo_Demo.bundle", "Demo_Lib.bundle", "Demo_Core.bundle"])
         #expect(
-            package.unusedResourceBundles(forProduct: "Demo")
+            package.resourceScope(forProduct: "Demo").excluded
                 == [
                     "Demo_Tool.bundle", "Demo_ToolKit.bundle", "Demo_DemoTests.bundle",
                     "Demo_Unused.bundle",
@@ -120,14 +120,96 @@ struct SwiftPMTests {
         let package = try #require(SwiftPM.package(inDumpOf: multiProductDump))
         #expect(package.targetClosure(ofProduct: "Tool") == ["Tool", "ToolKit", "Core"])
         #expect(
-            package.declaredResourceBundles(forProduct: "Tool")
+            package.resourceScope(forProduct: "Tool").required
                 == ["Demo_Core.bundle", "Demo_ToolKit.bundle"])
         #expect(
-            package.unusedResourceBundles(forProduct: "Tool")
+            package.resourceScope(forProduct: "Tool").excluded
                 == [
                     "Demo_Demo.bundle", "Demo_Lib.bundle", "Demo_DemoTests.bundle",
                     "Demo_Unused.bundle",
                 ])
+    }
+
+    /// **条件つきの依存も閉包に入れる** (#3982 の反証)。`dump-package` は条件を `null` でなく
+    /// オブジェクトで書く (Swift 6.4 の `dump-package` で実測した形をそのまま写す):
+    /// `.target(name:condition: .when(platforms:))`・`.byName(name:condition:)`・
+    /// `.target(name:condition: .when(traits:))`。2 番目の要素を名前と同じ型で読むと依存ごと
+    /// 落ち、`Lib` とその先の `Core` の資材が配る `.app` から抜け、実行時に `Bundle.module` が落ちる。
+    /// 条件は形を問わず読み飛ばし、条件にかかわらず入れる (入れすぎる側へ倒す)。
+    @Test("条件つきの依存 (platforms・traits) も、条件を問わず閉包に入る")
+    func conditionalDependenciesStayInTheClosure() throws {
+        let dump = """
+            {"name":"Cond",
+             "products":[{"name":"App","type":{"executable":null},"targets":["App"]}],
+             "targets":[
+               {"name":"App","type":"executable","dependencies":[
+                 {"target":["Lib",{"platformNames":["macos"]}]},
+                 {"byName":["My Lib-é",{"platformNames":["macos"]}]},
+                 {"target":["Extra",{"platformNames":[],"traits":["Extra"]}]}]},
+               {"name":"Lib","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}],
+                "dependencies":[{"target":["Core",{"platformNames":["macos"]}]}]},
+               {"name":"Core","type":"regular","resources":[{"rule":{"copy":{}},"path":"c"}]},
+               {"name":"My Lib-é","type":"regular","resources":[{"rule":{"copy":{}},"path":"e"}]},
+               {"name":"Extra","type":"regular","resources":[{"rule":{"copy":{}},"path":"x"}]},
+               {"name":"AppTests","type":"test","resources":[{"rule":{"copy":{}},"path":"f"}],
+                "dependencies":[{"byName":["App",null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+        #expect(
+            package.targetClosure(ofProduct: "App") == ["App", "Lib", "Core", "My Lib-é", "Extra"])
+        let scope = package.resourceScope(forProduct: "App")
+        #expect(
+            scope.required
+                == ["Cond_Lib.bundle", "Cond_Core.bundle", "Cond_My Lib-é.bundle", "Cond_Extra.bundle"])
+        #expect(scope.excluded == ["Cond_AppTests.bundle"])
+    }
+
+    /// **読めない依存に出会ったら、閉包を求めずに何も除かない** (#3982 の反証)。知らない鍵・名前の
+    /// 読めない形を読めた分だけで辿ると、使っている target が黙って閉包から落ちる。従来の判定
+    /// (資材を宣言した target を全部数え、何も除かない) へ倒す。
+    @Test(
+        "読めない形の依存に出会ったら、閉包を求めず、何も除かずに全部数える",
+        arguments: [
+            #"{"module":["Lib",null]}"#,  // 知らない鍵
+            #"{"target":[{"name":"Lib"},null]}"#,  // 名前が文字列でない
+            #"{"target":"Lib"}"#,  // 配列でない
+            #"{"target":["Lib",null],"byName":["Lib",null]}"#,  // 鍵が 2 つ
+            #""Lib""#,  // オブジェクトでない
+        ])
+    func unreadableDependenciesExcludeNothing(dependency: String) throws {
+        let dump = """
+            {"name":"Odd",
+             "products":[{"name":"App","type":{"executable":null},"targets":["App"]}],
+             "targets":[
+               {"name":"App","type":"executable","dependencies":[\(dependency)]},
+               {"name":"Lib","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}]},
+               {"name":"AppTests","type":"test","resources":[{"rule":{"copy":{}},"path":"f"}],
+                "dependencies":[{"byName":["App",null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+        #expect(package.targetClosure(ofProduct: "App") == nil)
+        let scope = package.resourceScope(forProduct: "App")
+        #expect(scope.excluded.isEmpty)
+        #expect(scope.required == ["Odd_Lib.bundle", "Odd_AppTests.bundle"])
+    }
+
+    /// 閉包の外の target の依存が読めなくても、配る範囲は決まる (辿らないので出会わない)。
+    @Test("閉包の外の target の依存が読めなくても、閉包は求まる")
+    func unreadableDependenciesOutsideTheClosureDoNotMatter() throws {
+        let dump = """
+            {"name":"Odd",
+             "products":[{"name":"App","type":{"executable":null},"targets":["App"]}],
+             "targets":[
+               {"name":"App","type":"executable","dependencies":[{"byName":["Lib",null]}]},
+               {"name":"Lib","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}]},
+               {"name":"AppTests","type":"test","resources":[{"rule":{"copy":{}},"path":"f"}],
+                "dependencies":[{"module":["App",null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+        #expect(
+            package.resourceScope(forProduct: "App")
+                == SwiftPM.Package.ResourceScope(
+                    required: ["Odd_Lib.bundle"], excluded: ["Odd_AppTests.bundle"]))
     }
 
     /// 宣言に無い product は、推し量らずに従来どおり (全部数え、何も除かない)。
@@ -135,8 +217,8 @@ struct SwiftPMTests {
     func unknownProductsExcludeNothing() throws {
         let package = try #require(SwiftPM.package(inDumpOf: multiProductDump))
         #expect(package.targetClosure(ofProduct: "Missing") == nil)
-        #expect(package.unusedResourceBundles(forProduct: "Missing").isEmpty)
-        #expect(package.declaredResourceBundles(forProduct: "Missing").count == 6)
+        #expect(package.resourceScope(forProduct: "Missing").excluded.isEmpty)
+        #expect(package.resourceScope(forProduct: "Missing").required.count == 6)
     }
 
     @Test("名乗っている macOS の下限を読む")

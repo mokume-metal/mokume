@@ -114,14 +114,15 @@ enum BundleCommand {
             configuration: configuration, place: .inPackage(.packaging), product: product)
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
 
+        // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)
+        let scope = declared?.resourceScope(forProduct: product)
         let app = try assemble(
             executable: executable, identity: identity,
             minimumSystemVersion: declared?.minimumMacOSVersion ?? defaultMinimumSystemVersion,
-            into: out, excluding: declared?.unusedResourceBundles(forProduct: product) ?? [])
+            into: out, excluding: scope?.excluded ?? [])
         let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
         let note = try finish(
-            app, identity: identity,
-            bundles: declared?.declaredResourceBundles(forProduct: product) ?? []
+            app, identity: identity, bundles: scope?.required ?? []
         ) { app throws(CommandFailure) in
             try sign(app, as: signature, entitlements: identity.entitlements)
         }
@@ -187,7 +188,7 @@ enum BundleCommand {
     /// 場所は ``replaceableApp(for:in:)`` が、中身は ``isOwnOutput(_:identity:)`` が確かめ、
     /// どちらかが外れたら何も消さずに投げる。
     ///
-    /// - Parameter excluding: 入れない包みの名前 (``SwiftPM/Package/unusedResourceBundles(forProduct:)``)。
+    /// - Parameter excluding: 入れない包みの名前 (``SwiftPM/Package/ResourceScope/excluded``)。
     static func assemble(
         executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL,
         excluding: Set<String> = []

@@ -85,32 +85,34 @@ nonisolated enum SwiftPM {
             platforms.first { $0.platformName == "macos" }?.version
         }
 
-        /// 入っているべき資材の包みの名前。**`product` が使う target のものだけ** (#3982)。
-        ///
-        /// 道具立ては資材を `<パッケージ>_<ターゲット>.bundle` の名前で作る。テストの target や
-        /// 別の product の target が宣言した資材は、配るものには要らない — 数えると、コピーから
-        /// 除いた包みを「欠けている」と読んでしまう。`product` の宣言が見つからなければ、
-        /// 推し量らずに全部の target を数える (従来の判定)。
-        func declaredResourceBundles(forProduct product: String) -> [String] {
-            let used = targetClosure(ofProduct: product)
-            return targets.filter { !$0.resources.isEmpty && used?.contains($0.name) != false }
-                .map { "\(name)_\($0.name).bundle" }
+        /// 配る範囲の資材の包み。**コピーで除く名前と、入っているべき名前を、同じ閉包から 1 度に求める**
+        /// (#3982)。別々に求めると、片方だけ古い求め方に戻っても気付けない — 除いた包みを「欠けている」と
+        /// 読む、あるいは要る包みを除いたまま検査が通る。
+        struct ResourceScope: Equatable {
+            /// 入っているべき包みの名前 (資材を宣言した target のうち、閉包の中のもの)。道具立ては資材を
+            /// `<パッケージ>_<ターゲット>.bundle` の名前で作る。
+            let required: [String]
+            /// 配るものに入れない包みの名前 (このパッケージの target のうち、閉包の外のもの)。資材の
+            /// 宣言が無くても道具立てが包みを作る種類があるので、宣言の有無は見ない。他のパッケージの
+            /// 包みは宣言を辿らずに入れる (依存が持ち込む資材は無ければ絵が出ない) ので、ここには載らない。
+            let excluded: Set<String>
         }
 
-        /// 配るものに入れない包みの名前。**このパッケージの target のうち、`product` が使わないもの** (#3982)。
-        ///
-        /// 名前の形 (`…Tests`) では決めない — 依存の閉包の外にあるかで決める。テストの target も、
-        /// 別の product だけが使う target もここに入る。資材の宣言が無くても道具立てが包みを作る
-        /// ことがある (種類で自動に取り込まれる資材) ので、宣言の有無は見ない。他のパッケージの
-        /// 包みは宣言を辿らずに入れる (依存が持ち込む資材は無ければ絵が出ない) ので、ここには
-        /// 載らない。`product` の宣言が見つからなければ何も除かない。
-        func unusedResourceBundles(forProduct product: String) -> Set<String> {
-            guard let used = targetClosure(ofProduct: product) else { return [] }
-            return Set(targets.filter { !used.contains($0.name) }.map { "\(name)_\($0.name).bundle" })
+        /// `product` を配る範囲。**名前の形 (`…Tests`) では決めない** — 依存の閉包の内外で決める。
+        /// 閉包が求められない (product の宣言が無い・読めない依存に出会った) ときは、推し量らずに従来の
+        /// 判定 (資材を宣言した target を全部数え、何も除かない) へ倒す。
+        func resourceScope(forProduct product: String) -> ResourceScope {
+            let used = targetClosure(ofProduct: product)
+            return ResourceScope(
+                required: targets.filter { !$0.resources.isEmpty && used?.contains($0.name) != false }
+                    .map { "\(name)_\($0.name).bundle" },
+                excluded: used.map { used in
+                    Set(targets.filter { !used.contains($0.name) }.map { "\(name)_\($0.name).bundle" })
+                } ?? [])
         }
 
         /// `product` を作る target と、それらがこのパッケージの中で (推移的に) 依存する target の名前。
-        /// product の宣言が無ければ `nil`。
+        /// product の宣言が無い、または辿る途中で依存を読めない target に出会ったら `nil`。
         ///
         /// `byName` は同じ名前の target があれば target、無ければ他のパッケージの product と読む
         /// (道具立てと同じ解き方)。
@@ -121,7 +123,8 @@ nonisolated enum SwiftPM {
             var pending = declared.targets
             while let next = pending.popLast() {
                 guard let target = byName[next], used.insert(next).inserted else { continue }
-                pending.append(contentsOf: target.dependencies)
+                guard let dependencies = target.dependencies else { return nil }
+                pending.append(contentsOf: dependencies)
             }
             return used
         }
@@ -293,19 +296,40 @@ nonisolated enum SwiftPM {
 
         /// 同じパッケージの target を指しうる依存の名前 (`byName`・`target`)。**他のパッケージの
         /// product (`product`) は載せない** — 閉包はこのパッケージの中だけで求める。
-        let dependencies: [String]
+        ///
+        /// **1 件でも形を読めない依存があれば `nil`** (読めた分だけを返さない)。個別に捨てると、
+        /// 使っている target が閉包から黙って落ち、その資材が配る `.app` から抜ける。`nil` を見た
+        /// 閉包は求めるのを諦め、何も除かない側へ倒れる (``Package/targetClosure(ofProduct:)``)。
+        let dependencies: [String]?
 
-        /// target の依存 1 件。種別は鍵で書き分けられ、値の先頭が名前
-        /// (`{"byName": ["Lib", null]}`・`{"target": ["Lib", null]}`・`{"product": ["X", "pkg", …]}`)。
-        private struct Dependency: Decodable {
-            let name: String?
+        /// target の依存 1 件。種別は鍵で書き分けられ、値は配列で先頭が名前。**2 番目以降 (条件など) は
+        /// 形を問わず読み飛ばす** — 条件は `null` のほか、オブジェクトでも書かれる
+        /// (`{"target": ["A", {"platformNames": ["macos"]}]}`・`{"target": ["C", {"platformNames": [],
+        /// "traits": ["Extra"]}]}`)。条件つきの依存は、条件にかかわらず閉包に入れる (入れすぎる側へ倒す)。
+        private enum Dependency: Decodable {
+            /// 同じパッケージの target を指しうるもの (`byName`・`target`)。
+            case local(String)
+            /// 他のパッケージの product (`product`)。
+            case external
+            /// 知らない鍵・名前の読めない形。
+            case unreadable
 
-            private enum CodingKeys: String, CodingKey { case byName, target }
+            private enum CodingKeys: String, CodingKey { case byName, target, product }
 
             init(from decoder: any Decoder) throws {
-                let container = try decoder.container(keyedBy: CodingKeys.self)
-                let key = container.contains(.byName) ? CodingKeys.byName : .target
-                name = (try? container.decode([String?].self, forKey: key))?.first ?? nil
+                guard let container = try? decoder.container(keyedBy: CodingKeys.self),
+                    container.allKeys.count == 1, let key = container.allKeys.first
+                else {
+                    self = .unreadable
+                    return
+                }
+                guard var values = try? container.nestedUnkeyedContainer(forKey: key),
+                    let name = try? values.decode(String.self)
+                else {
+                    self = .unreadable
+                    return
+                }
+                self = key == .product ? .external : .local(name)
             }
         }
 
@@ -316,9 +340,21 @@ nonisolated enum SwiftPM {
             name = try container.decode(String.self, forKey: .name)
             path = try container.decodeIfPresent(String.self, forKey: .path)
             resources = try container.decodeIfPresent([Resource].self, forKey: .resources) ?? []
-            dependencies =
-                try container.decodeIfPresent([Dependency].self, forKey: .dependencies)?
-                .compactMap(\.name) ?? []
+            // 鍵が無ければ依存が無い。在るのに配列として読めなければ、読めない
+            if container.contains(.dependencies) {
+                let read = try? container.decode([Dependency].self, forKey: .dependencies)
+                var names: [String]? = []
+                for dependency in read ?? [.unreadable] {
+                    switch dependency {
+                    case .local(let name): names?.append(name)
+                    case .external: break
+                    case .unreadable: names = nil
+                    }
+                }
+                dependencies = names
+            } else {
+                dependencies = []
+            }
         }
     }
 
