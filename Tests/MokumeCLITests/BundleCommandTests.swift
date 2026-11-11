@@ -1551,6 +1551,38 @@ struct BundleCommandTests {
         #expect(!failure.message.contains("declares an executable"))
     }
 
+    /// **資材の宣言は、読んだ宣言で見る** (#3984 の反証)。宣言が読めない回は資材の抜けとは名乗らず、
+    /// 宣言を読む段が道具立ての失敗として止める。読めて抜けがあれば、ビルドの前に資材の抜けで止める。
+    @Test("bundle は、宣言が読めない回は道具立ての失敗で、読めて抜けがあれば資材の抜けで止まる")
+    func bundleChecksResourcesWithTheDeclarationItRead() throws {
+        for (manifest, expectsResources) in [
+            ("this is not a manifest\n", false), (ResourceDeclarationTests.manifest(), true),
+        ] {
+            let root = try makeWorkspace()
+            defer { try? FileManager.default.removeItem(at: root) }
+            try manifest.write(
+                to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+            try #"{"name": "Demo", "identifier": "org.example.demo", "version": "0.1.0"}"#.write(
+                to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
+                encoding: .utf8)
+            let assets = root.appendingPathComponent("Sources/demo/assets", isDirectory: true)
+            try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+            try "x".write(
+                to: assets.appendingPathComponent("grain.png"), atomically: true, encoding: .utf8)
+
+            let thrown = #expect(throws: CommandFailure.self) {
+                try BundleCommand.run([root.path])
+            }
+            if expectsResources {
+                #expect(thrown == .resourcesNotDeclared(directory: "Sources/demo/assets"))
+            } else if let thrown, case .toolchainFailed(let command, _) = thrown {
+                #expect(command == RunCommand.dumpCommand)
+            } else {
+                Issue.record("宣言が読めない回を道具立ての失敗と名乗らなかった: \(String(describing: thrown))")
+            }
+        }
+    }
+
     /// 署名の前まで組んだ包み (本物の Mach-O を主実行ファイルにする)。
     private func makeApplicationToSign(in root: URL) throws -> URL {
         let bin = root.appendingPathComponent("bin", isDirectory: true)

@@ -44,13 +44,14 @@ struct WatchCommandTests {
         return url
     }
 
-    /// 宣言の抜けを持つスケッチ。`Package.swift` は在るが `resources:` を書いていない。
+    /// 宣言の抜けを持つスケッチ。`Package.swift` は置き場を持つ target `demo` を宣言するが、
+    /// `resources:` を書いていない (検査は道具立てが解いた宣言を読む・#3984)。
     private func makeSketchWithUndeclaredAssets() throws -> URL {
         let root = try makeDirectory()
         let assets = root.appendingPathComponent("Sources/demo/assets", isDirectory: true)
         try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
         try Data("画像のつもり".utf8).write(to: assets.appendingPathComponent("picture.png"))
-        try Data(#"// swift-tools-version: 6.2"#.utf8)
+        try Data(ResourceDeclarationTests.manifest().utf8)
             .write(to: root.appendingPathComponent("Package.swift"))
         return root
     }

@@ -362,7 +362,8 @@ struct WatchOffMainTests {
         })
         let running = RunningBuild()
         let hooks = WatchSession.Hooks.live(
-            resolver: .live(in: sketch, invocation: Invocation(), running: running),
+            resolver: .live(
+                in: sketch, invocation: Invocation(), running: running, afterReading: { _ in }),
             running: running, stamps: reader)
 
         let stamp = await hooks.stamp(sketch)
