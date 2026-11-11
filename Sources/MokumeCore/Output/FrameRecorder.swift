@@ -210,7 +210,8 @@ final class FrameRecorder: Outlet {
         case vectorAskedTwice(destination: String)
         /// 連番の綴りに `.svg` を渡した `beginRecord`。
         case vectorSeries
-        /// 拡張子が `.png` でない名前を渡した `save()` ([#3723])。**行き先によらず 1 度言う。**
+        /// 拡張子が `.png` でない名前を渡した `save()` ([#3723])。**行き先によらず、控え 1 つにつき 1 度言う**
+        /// (控えは録りを始めるたびに空に戻る — ``forgetWarnings()`` — ので、録りを始めた後は言い直す)。
         ///
         /// [#3723]: https://github.com/mokume-metal/mokume/issues/3723
         case shotNotPNG
@@ -380,7 +381,7 @@ final class FrameRecorder: Outlet {
             return
         }
         // **`.png` でない名前でも PNG で書き、黙らない** ([#3723])。投げると `draw()` の中で毎フレーム止まるので
-        // 書いたうえで知らせる。毎フレーム違う名前で頼む形で行が続かないよう、行き先によらず 1 度だけ言う
+        // 書いたうえで知らせる。毎フレーム違う名前で頼む形で行が続かないよう、行き先によらず控え 1 つにつき 1 度だけ言う
         //
         // [#3723]: https://github.com/mokume-metal/mokume/issues/3723
         if !Self.isPNG(path) { warnOnce(.shotNotPNG, Self.notPNGNotice(call: "save", name: path)) }

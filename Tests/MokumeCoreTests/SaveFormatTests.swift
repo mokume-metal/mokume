@@ -61,6 +61,27 @@ struct SaveFormatNoticeTests {
         _ = saying { recorder.close() }
     }
 
+    @Test("名前を変えて続けて呼んでも知らせは 1 度で、録りを始めた後は言い直す")
+    func aShotNoticeIsOncePerLogAcrossNames() {
+        let recorder = FrameRecorder()
+        let (_, before) = saying {
+            recorder.save("out/a.jpg", at: 1)
+            recorder.save("out/b.tif", at: 2)
+            recorder.save("out/c", at: 3)
+        }
+        #expect(notPNGLines(before).count == 1, "\(before)")
+        #expect(notPNGLines(before).first?.contains("save(\"out/a.jpg\")") == true, "\(before)")
+        // 録りを始めると控えが空に戻る (説明文の「録りを始めた後は言い直す」)
+        let (_, after) = saying {
+            recorder.beginRecord("out/f-####.png", at: 4)
+            recorder.save("out/d.jpg", at: 4)
+            recorder.save("out/e.jpg", at: 5)
+        }
+        #expect(notPNGLines(after).count == 1, "\(after)")
+        #expect(notPNGLines(after).first?.contains("save(\"out/d.jpg\")") == true, "\(after)")
+        _ = saying { recorder.close() }
+    }
+
     @Test("save(\"x.png\")・save(\"x.PNG\") は知らせない")
     func aPNGShotIsNotNamed() {
         let recorder = FrameRecorder()
