@@ -15,7 +15,7 @@ extension JSONValue {
     var asFloat: Float? {
         switch self {
         case .integer(let value): Float(value)
-        case .number(let value): Float(value)
+        case .number(let value), .longNumber(let value, _): Float(value)
         case .string(let text): DecimalText.float(text)
         default: nil
         }
@@ -23,19 +23,16 @@ extension JSONValue {
 
     /// 整数の値として読む。**丸めない** — `2` と `2.0` は 2 で、`2.5` と `Int` に収まらない数は読めない。
     /// 数の文字は、10 進の綴りで整数の値のもの (`"3"`・`"3.0"`・`"1e3"`) だけを読む。
+    ///
+    /// **`Double` に丸めた後で整数かを決めない (#3950)。** 桁の多い数の値は読み解くときに綴りで決めて
+    /// あり (`integer` か `longNumber` か — ``JSONFile``)、数の文字は綴りから決める (``DecimalText/int(_:)``)。
+    /// `number` は `JSONSerialization` が `Double` で渡した数で、その値で決めるしかない (#3958)。
     var asInt: Int? {
         switch self {
-        case .integer(let value):
-            return value
-        case .number(let value):
-            return Self.exactInt(value)
-        case .string(let text):
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            // `Double` を通すと 2⁵³ より大きな整数の桁が落ちるので、整数の綴りは先に `Int` で読む
-            if let value = Int(trimmed) { return value }
-            return DecimalText.double(text).flatMap(Self.exactInt)
-        default:
-            return nil
+        case .integer(let value): return value
+        case .number(let value): return Self.exactInt(value)
+        case .string(let text): return DecimalText.int(text)
+        default: return nil
         }
     }
 
