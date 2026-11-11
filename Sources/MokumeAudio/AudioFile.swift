@@ -40,11 +40,41 @@ nonisolated enum AudioFile {
         guard
             let buffer = AVAudioPCMBuffer(
                 pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
-            (try? file.read(into: buffer)) != nil,
-            buffer.floatChannelData != nil
+            buffer.floatChannelData != nil,
+            readAll(file, into: buffer)
         else { throw .unreadable(path: path) }
         guard buffer.frameLength > 0 else { throw .empty }
         return buffer
+    }
+
+    /// 1 回に読む標本の数の上限。`AVAudioFile.read(into:)` は器の容量にかかわらず 1 回に 2^24 標本までしか
+    /// 読まないので (#3969)、それより小さな塊で読む。
+    static let readChunk: AVAudioFrameCount = 1 << 20
+
+    /// `file` の全部を、塊 (``readChunk``) ごとに読んで `buffer` の頭から並べる。**読めた数がファイルの長さに
+    /// 届かなければ `false`** — 読めた分だけを黙って返すと、長いファイルの終わりが切れたまま鳴る (#3969)。
+    /// 塊の器は 1 つだけで、メモリの上限は塊の大きさしか増えない。
+    static func readAll(_ file: AVAudioFile, into buffer: AVAudioPCMBuffer) -> Bool {
+        let length = file.length
+        guard
+            let piece = AVAudioPCMBuffer(
+                pcmFormat: file.processingFormat, frameCapacity: min(readChunk, buffer.frameCapacity)),
+            let target = buffer.floatChannelData, let source = piece.floatChannelData
+        else { return false }
+        let channelCount = Int(file.processingFormat.channelCount)
+        var filled = 0
+        while AVAudioFramePosition(filled) < length {
+            let wanted = AVAudioFrameCount(min(AVAudioFramePosition(readChunk), length - AVAudioFramePosition(filled)))
+            guard (try? file.read(into: piece, frameCount: wanted)) != nil else { return false }
+            let count = Int(piece.frameLength)
+            guard count > 0 else { break }
+            for channel in 0..<channelCount {
+                (target[channel] + filled).update(from: source[channel], count: count)
+            }
+            filled += count
+        }
+        buffer.frameLength = AVAudioFrameCount(filled)
+        return AVAudioFramePosition(filled) == length
     }
 
     /// チャンネルを平均したモノラルの標本列。
