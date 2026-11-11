@@ -56,6 +56,11 @@ struct SynthNodelessPlayTests {
         // 予約の時刻 (0.05 秒) を過ぎるまで回し、同じ時点の isPlaying と音を見る
         supply(stage, 0..<8)
         #expect(!extra.isPlaying && extra.peak == 0, "\(call.label): \(extra.peak)")
+        // 解析を始める印 (isActive) も立てない (呼ぶ側が isPlaying だけ戻して isActive を立てる退行を見る)
+        #expect(!extra.isActive, "\(call.label)")
+        // stop() の後も false
+        extra.stop()
+        #expect(!extra.isPlaying && !extra.isActive)
         stage.close()
         // 置き場が埋まった知らせは、これまでどおり 1 度だけで、文面も同じ
         #expect(notices.lines.count == 1, "\(notices.lines)")
@@ -72,7 +77,7 @@ struct SynthNodelessPlayTests {
         let last: SynthSource = isNoise ? WhiteNoise(stage: stage) : SinOsc(stage: stage)
         #expect(last.node != nil && held.count == 63)
         call.play(last)
-        #expect(last.isPlaying, "\(call.label)")
+        #expect(last.isPlaying && last.isActive, "\(call.label)")
         supply(stage, 0..<8)
         #expect(last.isPlaying && last.peak > 0.1, "\(call.label): \(last.peak)")
         stage.close()
@@ -90,7 +95,7 @@ struct SynthNodelessPlayTests {
         stage.close()
         let before = stage.rack.rendered
         call.play(source)
-        #expect(!source.isPlaying, "\(call.label)")
+        #expect(!source.isPlaying && !source.isActive, "\(call.label)")
         #expect(source.peak == 0)
         #expect(stage.rack.rendered == before)
         #expect(notices.lines.isEmpty, "\(notices.lines)")
