@@ -933,11 +933,19 @@ struct BundleCommandTests {
     /// (アプリは遅れて資材を読む)、`-W` があればアプリが終わるまで待つ。アプリが資材を読む
     /// 時点で `.build` が退避されているかを書き残させる — 本物の `.app` を開かずに、
     /// 手順の順序と、`-W` で `.build` を戻すのを遅らせていることまで見る (#2833)。
+    /// 確かめ方の行を貼られうる殻。**症状は zsh で出て**、利用ガイドの行は zsh / bash に
+    /// 貼られる (#3985 の反証)。`/bin/sh` だけで見ると、殻ごとの違い (trap の掛かり方・最後の
+    /// コマンドを exec するか) を取り逃す。手元に在る殻だけで回す。
+    nonisolated static let shells = ["/bin/sh", "/bin/zsh", "/bin/bash"].filter {
+        FileManager.default.isExecutableFile(atPath: $0)
+    }
+
     @Test(
         "確かめ方の行は、スケッチの親から貼っても、スケッチの .build を退避して戻す",
-        arguments: ["bund", "bund with space", "it's bund"])
-    func theCheckCanBePastedFromTheParent(name: String) throws {
-        let run = try runTheCheck(name: name, alreadyRunning: false, interrupted: false)
+        arguments: ["bund", "bund with space", "it's bund"], shells)
+    func theCheckCanBePastedFromTheParent(name: String, shell: String) throws {
+        let run = try runTheCheck(
+            name: name, alreadyRunning: false, interrupted: false, shell: shell)
         #expect(run.status == 0, "確かめ方の行が通らない: \(run.line)")
         // アプリが資材を読む時点でスケッチの .build は退避されていて、開いたのは束ねた .app
         #expect(run.record == "\(run.app.path)\nheld\n", "打った行: \(run.line)")
@@ -949,9 +957,12 @@ struct BundleCommandTests {
     /// `open -W` だけでは、動いているアプリを前に出してその終了を待つだけで、新しく起動
     /// しない — 資材を読み終えているアプリが描いているのを見て、確かめ方が素通りする。
     /// 偽の `open` は、`-n` が無ければ動いているアプリを使い回す (本物の `open` と同じ)。
-    @Test("確かめ方の行は、同じアプリが既に動いていても、新しく起こして .build 無しで読ませる")
-    func theCheckStartsANewInstanceEvenIfOneIsRunning() throws {
-        let run = try runTheCheck(name: "bund", alreadyRunning: true, interrupted: false)
+    @Test(
+        "確かめ方の行は、同じアプリが既に動いていても、新しく起こして .build 無しで読ませる",
+        arguments: shells)
+    func theCheckStartsANewInstanceEvenIfOneIsRunning(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund", alreadyRunning: true, interrupted: false, shell: shell)
         #expect(run.status == 0, "確かめ方の行が通らない: \(run.line)")
         #expect(run.record == "\(run.app.path)\nheld\n", "打った行: \(run.line)")
         #expect(run.restored, "打った行: \(run.line)")
@@ -959,11 +970,11 @@ struct BundleCommandTests {
 
     /// **途中で止められても `.build` は戻る** (#2833 の反証)。アプリを閉じるまで長く待つので、
     /// 待つ間に Ctrl-C や端末を閉じる (SIGINT・SIGHUP・SIGTERM) が起きうる。戻す手が行の
-    /// 最後にあるだけだと、`.build` が `.build-held` のまま残り、次のビルドが全部やり直しになる。
-    @Test("確かめ方の行は、待つ間に止められても .build を戻す", arguments: ["TERM", "INT", "HUP"])
-    func theCheckPutsBuildBackWhenInterrupted(signal: String) throws {
+    /// 最後にあるだけだと、`.build` が退避先に残り、次のビルドが全部やり直しになる。
+    @Test("確かめ方の行は、待つ間に止められても .build を戻す", arguments: ["TERM", "INT", "HUP"], shells)
+    func theCheckPutsBuildBackWhenInterrupted(signal: String, shell: String) throws {
         let run = try runTheCheck(
-            name: "bund", alreadyRunning: false, interrupted: true, signal: signal)
+            name: "bund", alreadyRunning: false, interrupted: true, signal: signal, shell: shell)
         #expect(run.restored, "止められたあとに .build が戻っていない: \(run.line)")
     }
 
@@ -975,11 +986,11 @@ struct BundleCommandTests {
     /// 止められた場合のどれでも同じに保つ。
     @Test(
         "確かめ方の行は、既にある .build-held を巻き込まず、.build を入れ子にせず戻す",
-        arguments: [nil, "TERM", "INT", "HUP"])
-    func theCheckLeavesAnExistingHeldDirectoryAlone(signal: String?) throws {
+        arguments: [nil, "TERM", "INT", "HUP"], shells)
+    func theCheckLeavesAnExistingHeldDirectoryAlone(signal: String?, shell: String) throws {
         let run = try runTheCheck(
             name: "bund with space", alreadyRunning: false, interrupted: signal != nil,
-            signal: signal ?? "TERM", existingHeld: true)
+            signal: signal ?? "TERM", existingHeld: true, shell: shell)
         if signal == nil {
             #expect(run.status == 0, "確かめ方の行が通らない: \(run.line)")
             #expect(run.record == "\(run.app.path)\nheld\n", "打った行: \(run.line)")
@@ -987,15 +998,60 @@ struct BundleCommandTests {
         #expect(run.restored, "元の .build・.build-held の配置が保たれていない: \(run.line)")
     }
 
+    /// **退避できなければ、0 以外で終わり、作った退避先を残さない** (#3985 の反証)。`.build` が
+    /// 無い (まだビルドしていない・別の場所で打った) と `mv` は失敗する。そのとき作った
+    /// `.build-held.XXXXXX` を消し忘れると、打つたびにスケッチの下へ空のディレクトリが溜まる。
+    @Test("確かめ方の行は、.build が無ければ 0 以外で終わり、退避先を残さない", arguments: shells)
+    func theCheckFailsWithoutLeavingAPlaceWhenThereIsNoBuild(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            buildPresent: false)
+        #expect(run.status != 0, "退避できないのに成功で終わった: \(run.line)")
+        #expect(run.leftEntries == ["bundle"], "スケッチに残った物: \(run.leftEntries)")
+    }
+
+    /// **確かめている間に `.build` が作り直されていたら、戻さずに在処を名乗る** (#3985 の反証)。
+    /// 戻す `mv` の先が既に在るディレクトリだと、退避側と同じく中へ入れて `.build/.build` を作る。
+    /// どちらも消さず、入れ子にもせず、退避した物の在処を標準エラーで言って 0 以外で終わる。
+    @Test(
+        "確かめ方の行は、確かめている間に .build が作り直されたら、入れ子にせず在処を名乗る",
+        arguments: shells)
+    func theCheckKeepsBothWhenBuildIsRecreated(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            recreateBuild: true)
+        #expect(run.status != 0, "戻せないのに成功で終わった: \(run.line)")
+        #expect(run.buildMarker == "new", "作り直された .build が残っていない: \(run.line)")
+        #expect(!run.nested, ".build が入れ子になった: \(run.line)")
+        let held = try #require(
+            run.leftEntries.first { $0.hasPrefix(".build-held.") },
+            "退避した物が残っていない: \(run.leftEntries)")
+        #expect(run.heldMarkers == ["current"], "退避した中身が残っていない: \(run.line)")
+        #expect(
+            run.output.contains("\(run.sketch.path)/\(held)/.build"),
+            "退避した在処を名乗っていない: \(run.output)")
+    }
+
     private struct CheckRun {
         var line: String
         var app: URL
+        var sketch: URL
         var status: Int32
+        /// 行の標準出力と標準エラー。
+        var output: String
         /// 偽の `open` が書き残したもの。アプリが資材を読んだ時点の `.build` の有無。
         var record: String?
         /// 終わった後に `.build` が元の中身ごと (入れ子にならずに) 戻っていて、その回の退避の
         /// 跡が無く、前からあった `.build-held` があればその中身がそのままか。
         var restored: Bool
+        /// 終わった後にスケッチの直下に在る名前 (並べ替え済み)。
+        var leftEntries: [String]
+        /// 終わった後の `.build/marker` の中身。
+        var buildMarker: String?
+        /// `.build/.build` が在るか。
+        var nested: Bool
+        /// 残った `.build-held.*/.build/marker` の中身。
+        var heldMarkers: [String]
     }
 
     /// 確かめ方の行を、偽の `open` を `PATH` の先に置いて走らせる。
@@ -1007,17 +1063,24 @@ struct BundleCommandTests {
     ///
     /// - Parameter interrupted: 偽の `open` が待つ間に、行を包む殻へ `signal` を送る。
     /// - Parameter existingHeld: 作者が前から置いていた `.build-held` (中身つき) を用意する。
+    /// - Parameter shell: 行を走らせる殻。
+    /// - Parameter buildPresent: スケッチに `.build` を置くか。
+    /// - Parameter recreateBuild: 偽のアプリが資材を読んだ後、待つ間に `.build` を作り直す。
     private func runTheCheck(
         name: String, alreadyRunning: Bool, interrupted: Bool, signal: String = "TERM",
-        existingHeld: Bool = false
+        existingHeld: Bool = false, shell: String = "/bin/sh", buildPresent: Bool = true,
+        recreateBuild: Bool = false
     ) throws -> CheckRun {
         let parent = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: parent) }
         let sketch = parent.appendingPathComponent(name, isDirectory: true)
         let build = sketch.appendingPathComponent(".build", isDirectory: true)
-        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
-        try "current".write(
-            to: build.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: sketch, withIntermediateDirectories: true)
+        if buildPresent {
+            try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+            try "current".write(
+                to: build.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
+        }
         let held = sketch.appendingPathComponent(".build-held", isDirectory: true)
         if existingHeld {
             try FileManager.default.createDirectory(at: held, withIntermediateDirectories: true)
@@ -1037,6 +1100,10 @@ struct BundleCommandTests {
         let quotedBuild = sketch.path.replacingOccurrences(of: "'", with: #"'\''"#) + "/.build"
         // 待つ間に止められる回は、`$PPID` (行を包む殻) へ信号を送ってから、少し待って終わる
         let interrupt = interrupted ? "kill -\(signal) \"$PPID\"; sleep 0.3; exit 1" : ""
+        // 確かめている間に、別の手が .build を作り直す
+        let recreate =
+            recreateBuild
+            ? "mkdir '\(quotedBuild)'; printf new > '\(quotedBuild)/marker'" : ""
         try """
             #!/bin/sh
             waits=no
@@ -1055,6 +1122,7 @@ struct BundleCommandTests {
                 if [ -e '\(running.path)' ] && [ "$new" = no ]; then echo reused
                 elif [ -e '\(quotedBuild)' ]; then echo present; else echo held; fi
               } > '\(record.path).part'
+              \(recreate)
               mv '\(record.path).part' '\(record.path)' ) >/dev/null 2>&1 &
             if [ "$waits" = yes ]; then wait; fi
             """.write(to: open, atomically: true, encoding: .utf8)
@@ -1067,34 +1135,41 @@ struct BundleCommandTests {
             report.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
                 .first { $0.hasPrefix("(") })
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", line]
+        process.executableURL = URL(fileURLWithPath: shell)
+        // 利用者の設定 (`.zshrc` など) を読ませない — 貼った行そのものの振る舞いを見る
+        process.arguments = (shell.hasSuffix("zsh") ? ["-f"] : []) + ["-c", line]
         process.currentDirectoryURL = parent
         process.environment = ["PATH": "\(tools.path):/usr/bin:/bin"]
-        let result = try RunCommand.capture(process, capturing: true, errors: .inherit)
+        let result = try RunCommand.capture(process, capturing: true, errors: .merge)
 
         // `-W` が無いと、行は偽物のアプリが書き残すより先に戻る。遅れて書くのを、期限つきで待つ
-        // (止められた回は書き残さないので待たない)
-        if !interrupted {
+        // (止められた回・退避できなかった回は書き残さないので待たない)
+        if !interrupted, buildPresent {
             let deadline = Date().addingTimeInterval(10)
             while !FileManager.default.fileExists(atPath: record.path), Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
             }
         }
         let files = FileManager.default
-        let left = (try? files.contentsOfDirectory(atPath: sketch.path)) ?? []
+        let left = ((try? files.contentsOfDirectory(atPath: sketch.path)) ?? []).sorted()
+        let buildMarker = try? String(
+            contentsOf: build.appendingPathComponent("marker"), encoding: .utf8)
+        let nested = files.fileExists(atPath: build.appendingPathComponent(".build").path)
+        let heldMarkers = left.filter { $0.hasPrefix(".build-held.") }.compactMap {
+            try? String(
+                contentsOf: sketch.appendingPathComponent("\($0)/.build/marker"), encoding: .utf8)
+        }
         let restored =
-            (try? String(contentsOf: build.appendingPathComponent("marker"), encoding: .utf8))
-                == "current"
-            && !files.fileExists(atPath: build.appendingPathComponent(".build").path)
+            buildMarker == "current" && !nested
             && Set(left) == Set([".build", "bundle"] + (existingHeld ? [".build-held"] : []))
             && (!existingHeld
                 || (try? String(
                     contentsOf: held.appendingPathComponent("existing-content"), encoding: .utf8))
                     == "existing")
         return CheckRun(
-            line: line, app: app, status: result.status,
-            record: try? String(contentsOf: record, encoding: .utf8), restored: restored)
+            line: line, app: app, sketch: sketch, status: result.status, output: result.output,
+            record: try? String(contentsOf: record, encoding: .utf8), restored: restored,
+            leftEntries: left, buildMarker: buildMarker, nested: nested, heldMarkers: heldMarkers)
     }
 
     /// 文面の固定。スケッチの `.build` と `.app` を、引用した絶対パスで名指しする。
@@ -1108,9 +1183,13 @@ struct BundleCommandTests {
         let line: String = [
             "  ( build='/work/bund with space/.build';",
             " held=$(mktemp -d '/work/bund with space/.build-held.XXXXXX') || exit;",
-            " mv \"$build\" \"$held/.build\" || { rmdir \"$held\"; exit 1; };",
-            " trap 'mv \"$held/.build\" \"$build\" && rmdir \"$held\"' EXIT;",
+            " trap 'if [ -e \"$held/.build\" ]; then",
+            " if [ -e \"$build\" ] || [ -L \"$build\" ]; then",
+            " printf \"%s\\n\" \"A new .build appeared while checking;",
+            " the one moved aside was left at $held/.build\" >&2; exit 1; fi;",
+            " mv \"$held/.build\" \"$build\" || exit; fi; rmdir \"$held\"' EXIT;",
             " trap exit HUP INT TERM;",
+            " mv \"$build\" \"$held/.build\" || exit;",
             " open -n -W '/work/bund with space/bundle/Bund.app' )\n",
         ].joined()
         #expect(report.contains(line))

@@ -614,13 +614,26 @@ enum BundleCommand {
     /// **中へ**入り、戻す手は退避先ごと `.build` の中へ入れる — 終了 0 のまま `.build/.build`
     /// ができ、作者が置いていた物も巻き込む。その回が作った場所なら衝突せず、戻した後に
     /// 消してよいのも空になったその場所だけ (`rmdir` は中身が残っていれば消さない)。
+    ///
+    /// **戻す手は `mv` より先に掛ける。** 後に掛けると、退避した直後に届いた信号で `.build` が
+    /// 乱数の名前の下に取り残される。戻す手は「退避した物が在るときだけ戻す」ので、`mv` の前に
+    /// 止められても `mv` が失敗しても、作った空の場所を消すだけで済む。
+    ///
+    /// **確かめている間に `.build` が作り直されていたら、戻さない。** 戻す `mv` の先が既に在る
+    /// ディレクトリだと、退避側と同じく中へ入れて入れ子にする。どちらも消さず、退避した物の在処を
+    /// 標準エラーで名乗って 0 以外で終わる。
     static func checkLine(for app: URL, package: URL) -> String {
         let build = GivenPath.shellWord(package.appendingPathComponent(".build"))
         let template = GivenPath.shellWord(package.appendingPathComponent(".build-held.XXXXXX"))
+        let restore =
+            "if [ -e \"$held/.build\" ]; then"
+            + " if [ -e \"$build\" ] || [ -L \"$build\" ]; then"
+            + " printf \"%s\\n\" \"A new .build appeared while checking;"
+            + " the one moved aside was left at $held/.build\" >&2; exit 1; fi;"
+            + " mv \"$held/.build\" \"$build\" || exit; fi; rmdir \"$held\""
         return "( build=\(build); held=$(mktemp -d \(template)) || exit;"
-            + " mv \"$build\" \"$held/.build\" || { rmdir \"$held\"; exit 1; };"
-            + " trap 'mv \"$held/.build\" \"$build\" && rmdir \"$held\"' EXIT;"
-            + " trap exit HUP INT TERM;"
+            + " trap '\(restore)' EXIT; trap exit HUP INT TERM;"
+            + " mv \"$build\" \"$held/.build\" || exit;"
             + " open -n -W \(GivenPath.shellWord(app)) )"
     }
 
