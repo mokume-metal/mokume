@@ -5,7 +5,7 @@ import MokumeCore
 
 // 音の合成とエフェクト。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
-// 手本は Processing Sound の `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc`・`WhiteNoise`・`PinkNoise`・
+// 手本は Processing Sound の `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc`・`WhiteNoise`・`PinkNoise`・`BrownNoise`・
 // `Env`・`LowPass`・`HighPass`・`BandPass`・`Reverb`・`Delay` である ([ADR-0020] 決定 1)。
 // Processing の `new SinOsc(this)` に当たる作る口は、`createAudioIn()` の先例どおり
 // `create` + 型の名前にする。呼べば使える標準の機能で ([ADR-0042] 決定 1)、`plugins` には何も
@@ -120,6 +120,19 @@ extension Sketch {
     /// ```
     public func createPinkNoise() -> PinkNoise {
         PinkNoise(stage: SynthStage.stage(for: self))
+    }
+
+    /// ブラウンノイズを作る。使い方は ``createWhiteNoise()`` と同じ。
+    ///
+    /// <!-- example: 文脈 var noise: BrownNoise? -->
+    /// ```swift
+    /// func setup() {
+    ///     noise = createBrownNoise()
+    ///     noise?.play(0.3)
+    /// }
+    /// ```
+    public func createBrownNoise() -> BrownNoise {
+        BrownNoise(stage: SynthStage.stage(for: self))
     }
 
     // MARK: - 包絡
