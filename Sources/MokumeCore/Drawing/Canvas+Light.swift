@@ -58,6 +58,25 @@ extension Canvas {
             color: color, entry: .spotLight)
     }
 
+    /// 向きだけを持つ光を置く。``directionalLight(_:_:_:_:)`` に `direction` の成分を渡すのと同じ (#3780)。
+    public func directionalLight(color: LinearRGBA, direction: Vector3) {
+        directionalLight(color, direction.x, direction.y, direction.z)
+    }
+
+    /// 位置を持つ光を置く。``pointLight(_:_:_:_:)`` に `position` の成分を渡すのと同じ (#3780)。
+    public func pointLight(color: LinearRGBA, position: Vector3) {
+        pointLight(color, position.x, position.y, position.z)
+    }
+
+    /// 位置と向きと広がりを持つ光を置く。``spotLight(_:_:_:_:_:_:_:angle:)`` に `position`・`direction` の
+    /// 成分を渡すのと同じで、`angle` の既定値 (π/6) も同じ (#3780)。
+    public func spotLight(
+        color: LinearRGBA, position: Vector3, direction: Vector3, angle: some ScalarConvertible = Float.pi / 6
+    ) {
+        spotLight(
+            color, position.x, position.y, position.z, direction.x, direction.y, direction.z, angle: angle)
+    }
+
     /// 知らせずに受け取る半頂角。**上の端は `Float.pi / 2` より 1 ulp 大きい所まで**
     /// ([#1698] の反証 8)。`Float.pi` は 0 の側へ丸めてあるので、`Double.pi / 2` を `Float` へ
     /// 移した値 (`asFloat`) は `Float.pi / 2` より 1 ulp 大きい。書いた人にとってはどちらも π/2
