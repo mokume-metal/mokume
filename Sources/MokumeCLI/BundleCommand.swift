@@ -82,9 +82,6 @@ enum BundleCommand {
                 atPath: directory.appendingPathComponent("Package.swift").path)
         else { throw .packageNotFound(path: directory.path) }
 
-        // **束ねる前に見る。** 宣言の抜けはビルドを通るので、後では「組み上がったのに
-        // 絵が出ない」形になる — しかも配った先で出る
-        try ResourceDeclaration.check(in: directory)
         let identity = try AppIdentity.read(in: directory)
         identity.warnIfExample()
         // **許可の文言も、ビルドの前に見る。** 使うのに無いと、止まるのは配った先になる
@@ -107,6 +104,9 @@ enum BundleCommand {
         let reading = try RunCommand.declaration(in: directory)
         if let failure = reading.failure { throw failure }
         let declared = reading.package
+        // **束ねる前に見る。** 宣言の抜けはビルドを通るので、後では「組み上がったのに
+        // 絵が出ない」形になる — しかも配った先で出る。見るのは読んだ宣言 (#3984)
+        try ResourceDeclaration.check(in: directory, declared: declared)
         guard let product = declared?.executableProductName else {
             throw .noExecutable(path: directory.path)
         }

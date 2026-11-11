@@ -228,6 +228,24 @@ extension Canvas {
         currentCurveTightness = amount
     }
 
+    /// 通過点を結ぶ曲線の上の点の、1 つの軸の値 (#3710)。**この描画先の張り (``curveTightness(_:)``) を読む。**
+    /// 意味の正本は ``SketchPart/curvePoint(_:_:_:_:_:)``。
+    public func curvePoint(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ t: some ScalarConvertible
+    ) -> Float {
+        curvePointValue(a.asFloat, b.asFloat, c.asFloat, d.asFloat, t.asFloat, tightness: currentCurveTightness)
+    }
+
+    /// 通過点を結ぶ曲線の、1 つの軸についての傾き (#3710)。**この描画先の張りを読む。**
+    /// 意味の正本は ``SketchPart/curveTangent(_:_:_:_:_:)``。
+    public func curveTangent(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ t: some ScalarConvertible
+    ) -> Float {
+        curveTangentValue(a.asFloat, b.asFloat, c.asFloat, d.asFloat, t.asFloat, tightness: currentCurveTightness)
+    }
+
     public func beginContour() {
         guard admitsShapeCall("beginContour") else { return }
         // 開いたままの穴は、endShape() と同じ規則で畳んでから次を始める (#1528)

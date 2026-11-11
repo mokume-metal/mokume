@@ -498,6 +498,30 @@ extension Canvas {
         bezier(start.x, start.y, control1.x, control1.y, control2.x, control2.y, end.x, end.y)
     }
 
+    // 通過点を結ぶ曲線の 1 区間を引く (#3710)。`beginShape()`・`curveVertex()` を 4 回・`endShape()` と同じ道を通る。
+    public func curve(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
+        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
+    ) {
+        let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
+        // 区間の外・組み立て中の形の扱いは ``bezier(_:_:_:_:_:_:_:_:)`` と同じ
+        guard canPlace else { return warnOutsideFrame(.placing) }
+        let outer = takeOpenShape()
+        beginShape()
+        curveVertex(x1, y1)
+        curveVertex(x2, y2)
+        curveVertex(x3, y3)
+        curveVertex(x4, y4)
+        endShape()
+        restoreOpenShape(outer)
+    }
+
+    /// 通過点を結ぶ曲線の 1 区間を引く。``curve(_:_:_:_:_:_:_:_:)`` に `control1`・`start`・`end`・`control2`
+    /// の成分をこの順で渡すのと同じ (#3710)。
+    public func curve(from start: Vector2, control1: Vector2, control2: Vector2, to end: Vector2) {
+        curve(control1.x, control1.y, start.x, start.y, end.x, end.y, control2.x, control2.y)
+    }
+
     // 線。塗りは持たない。
     public func line(_ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible) {
         let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
