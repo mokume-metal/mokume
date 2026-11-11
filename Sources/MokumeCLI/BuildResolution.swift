@@ -108,7 +108,7 @@ extension BuildResolver {
     static func live(
         in directory: URL, invocation: Invocation, running: RunningBuild? = nil,
         announce: @escaping @Sendable (String) -> Void = { print($0) },
-        afterReading: @escaping @Sendable (SwiftPM.Package?) throws(CommandFailure) -> Void = { _ in }
+        afterReading: @escaping @Sendable (SwiftPM.Package?) throws(CommandFailure) -> Void
     ) -> BuildResolver {
         BuildResolver(directory: directory) { directory throws(CommandFailure) in
             let context = try RunCommand.context(

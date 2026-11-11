@@ -96,9 +96,14 @@ nonisolated enum SwiftPM {
         /// ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。
         ///
         /// 見張りが子へ渡し、置き場の断片を束の写しではなく元から読ませる (``ShaderOrigin``)。決めるのは
-        /// 宣言である — product を作る target のうち、`.copy("assets")` を宣言したもの。**どの target の置き場が
+        /// 宣言である — product を作る target のうち、置き場を `.copy` で宣言したもの。**どの target の置き場が
         /// 束に入るかを、ディレクトリの並びから推し量らない** (束に入っていない別の target の断片を黙って
         /// 読まない)。
+        ///
+        /// **宣言が置き場を指すかは、走らせる前の検査と同じ 1 つで見る** (``declaration(of:by:placedAt:)``・
+        /// #3984)。検査が通す宣言 (`.copy("Assets")`・`path: "Sources"` の `.copy("demo/assets")`) を、ここで
+        /// 綴りで比べて「写されない」と読むと、見張りは黙って束の写しを読ませる。見る置き場は、target の
+        /// 置き場の直下の置き場と、検査が見る `Sources/<名前>/<置き場>` のうちその target が含むもの。
         ///
         /// - Parameters:
         ///   - product: 走らせる実行ファイルの名前。宣言が読めなければ `nil`。
@@ -111,25 +116,54 @@ nonisolated enum SwiftPM {
             else { return .undecided }
             var found: [URL] = []
             for name in declared.targets {
-                guard let target = targets.first(where: { $0.name == name }),
-                    target.resources.contains(where: {
-                        $0.isCopy && Self.normalized($0.path) == directoryName
-                    })
-                else { continue }
-                // 置き場の場所が決まらない target があれば、決められない (推し量らない)
-                guard let place = sourceDirectory(of: target, in: root) else { return .undecided }
-                let assets = place.appendingPathComponent(directoryName, isDirectory: true)
-                var isDirectory: ObjCBool = false
-                if FileManager.default.fileExists(atPath: assets.path, isDirectory: &isDirectory),
-                    isDirectory.boolValue
-                {
-                    found.append(assets)
+                guard let target = targets.first(where: { $0.name == name }) else { continue }
+                // 置き場の場所が決まらない target が写す宣言を持てば、決められない (推し量らない)
+                guard let directory = sourceDirectory(of: target, in: root) else {
+                    if target.resources.contains(where: \.isCopy) { return .undecided }
+                    continue
+                }
+                let places =
+                    [directory.appendingPathComponent(directoryName, isDirectory: true)]
+                    + Self.places(in: root, directoryName: directoryName).filter {
+                        self.target(containing: $0, in: root)?.target.name == name
+                    }
+                for place in places where Self.isDirectory(place) {
+                    guard declaration(of: place, by: target, placedAt: directory)?.isCopy == true,
+                        !found.contains(where: { Self.sameItem($0, place) })
+                    else { continue }
+                    found.append(place)
                 }
             }
             switch found.count {
             case 0: return .notCopied
             case 1: return .source(found[0])
             default: return .undecided
+            }
+        }
+
+        /// 走らせる前の検査が見る置き場の候補 (`Sources/<名前>/<置き場の名前>`)。在るかは見ない。
+        static func places(in root: URL, directoryName: String) -> [URL] {
+            let sources = root.appendingPathComponent("Sources", isDirectory: true)
+            guard
+                let entries = try? FileManager.default.contentsOfDirectory(
+                    at: sources, includingPropertiesForKeys: [.isDirectoryKey])
+            else { return [] }
+            return entries.sorted { $0.path < $1.path }.map {
+                $0.appendingPathComponent(directoryName, isDirectory: true)
+            }
+        }
+
+        /// `target` が置き場 `place` を資材として挙げている宣言。無ければ `nil`。
+        ///
+        /// **宣言のパスは target の置き場 (`directory`) から解き、置き場そのものとファイルとして同じかで
+        /// 見る** (``sameItem(_:_:)``)。綴り (`./assets`・`assets/`・区別しないボリュームの `Assets`) では
+        /// 比べない。**置き場そのものを指す宣言だけ**が置き場の宣言である — 祖先 (`.copy("demo")`・
+        /// `.copy(".")`) を写すと束の中は `demo/assets/…` になり、読み込み側 (束の直下の `assets/<名前>`
+        /// を探す) は見つけられない。置き場の中の 1 ファイル (`assets/img.png`) だけでは他の資材が入らない。
+        func declaration(of place: URL, by target: Target, placedAt directory: URL) -> Target.Resource? {
+            target.resources.first { resource in
+                guard let path = resource.path else { return false }
+                return Self.sameItem(Self.resolve(path, from: directory), place)
             }
         }
 
@@ -154,10 +188,15 @@ nonisolated enum SwiftPM {
         }
 
         /// 2 つの場所が、**ファイルとして**同じものか。綴り (大文字と小文字を区別しないボリュームでの
-        /// 大小・`..`) の違いで、同じ置き場を別のものと読まない。どちらかが無ければ `false`。
+        /// 大小・`..`) の違いで、同じ置き場を別のものと読まない。
+        ///
+        /// ファイルの識別子で比べ、取れなければ実体のパス (`realpath(3)`) で比べる。識別子が取れない
+        /// だけで「同じでない」に倒すと、検査は置き場の持ち主を見失って通す側へ倒れる。どちらも
+        /// 取れなければ (在らない場所) `false`。
         static func sameItem(_ a: URL, _ b: URL) -> Bool {
-            guard let one = identity(of: a), let other = identity(of: b) else { return false }
-            return one.isEqual(other)
+            if let one = identity(of: a), let other = identity(of: b) { return one.isEqual(other) }
+            guard let one = realPath(of: a), let other = realPath(of: b) else { return false }
+            return one == other
         }
 
         private static func identity(of url: URL) -> NSObject? {
@@ -165,16 +204,22 @@ nonisolated enum SwiftPM {
                 .fileResourceIdentifier as? NSObject
         }
 
-        /// 資材の相対パスの綴りを揃える (`./assets/`・`assets/` → `assets`)。
-        private static func normalized(_ path: String?) -> String? {
-            guard let path else { return nil }
-            var parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-            while parts.first == "." { parts.removeFirst() }
-            return parts.joined(separator: "/")
+        private static func realPath(of url: URL) -> String? {
+            guard let resolved = realpath(url.path, nil) else { return nil }
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+
+        /// 宣言に書かれたパスを、基準の場所から解く。**絶対パスはそのまま使う** — 基準に足すと
+        /// 在らない場所になり、検査が黙って素通りする (#3984)。
+        private static func resolve(_ path: String, from base: URL) -> URL {
+            path.hasPrefix("/")
+                ? URL(fileURLWithPath: path, isDirectory: true)
+                : base.appendingPathComponent(path, isDirectory: true)
         }
 
         /// target のソースの置き場。**`path:` があればそれ、無ければ道具立ての既定の置き場。**
-        /// 在るものが無ければ `nil`。
+        /// 在るものが無ければ `nil`。`path:` が絶対パスならそのまま使う。
         ///
         /// 既定の置き場は道具立てと同じ規則で決める: target の種類ごとの候補 (``Target/defaultRoots``)
         /// のうち**パッケージに在る最初のもの**の下の `<名前>` (#3984)。候補ごとに `<名前>` を探す形に
@@ -188,7 +233,7 @@ nonisolated enum SwiftPM {
                 else { return nil }
                 relative = "\(base)/\(target.name)"
             }
-            let url = root.appendingPathComponent(relative, isDirectory: true)
+            let url = Self.resolve(relative, from: root)
             return Self.isDirectory(url) ? url : nil
         }
 

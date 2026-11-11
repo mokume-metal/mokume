@@ -68,48 +68,22 @@ nonisolated enum ResourceDeclaration {
     /// 中身を持つのに、置き場を含む target が宣言していない置き場 (リポジトリからの相対)。
     ///
     /// **見るのは置き場を含む target の宣言だけ** — 別の target の宣言では、その資材は束に
-    /// 入らない。置き場を含む target が宣言に無ければ見ない: ビルドに入らないディレクトリで、
+    /// 入らない。宣言が置き場を指すかは、見張りが子へ置き場を渡すかの判断 (``SwiftPM/Package/assetsOrigin(forProduct:in:directoryName:)``)
+    /// と同じ 1 つ (``SwiftPM/Package/declaration(of:by:placedAt:)``) で見る — 置き場そのものを指す宣言だけが
+    /// 宣言で、祖先 (`.copy("demo")`) や中の 1 ファイル (`.copy("assets/img.png")`) は宣言ではない。
+    ///
+    /// **置き場を含む target が宣言に無ければ見ない (通す)**: ビルドに入らないディレクトリで、
     /// 資材を宣言しても届かない。
     static func undeclared(in root: URL, declared: SwiftPM.Package) -> [String] {
-        let sources = root.appendingPathComponent("Sources", isDirectory: true)
-        guard
-            let places = try? FileManager.default.contentsOfDirectory(
-                at: sources, includingPropertiesForKeys: [.isDirectoryKey])
-        else { return [] }
-
         var found: [String] = []
-        for place in places.sorted(by: { $0.path < $1.path }) {
-            let assets = place.appendingPathComponent(directoryName, isDirectory: true)
+        for assets in SwiftPM.Package.places(in: root, directoryName: directoryName) {
             guard hasContents(assets),
                 let owner = declared.target(containing: assets, in: root),
-                !declares(assets, in: owner.target, placedAt: owner.directory)
+                declared.declaration(of: assets, by: owner.target, placedAt: owner.directory) == nil
             else { continue }
-            found.append("Sources/\(place.lastPathComponent)/\(directoryName)")
+            found.append("Sources/\(assets.deletingLastPathComponent().lastPathComponent)/\(directoryName)")
         }
         return found
-    }
-
-    /// target が置き場を資材として挙げているか。
-    ///
-    /// **宣言のパスは target の置き場から解き、ファイルとして比べる** (``SwiftPM/Package/sameItem(_:_:)``)。
-    /// 綴り (`./assets`・`assets/`・大文字と小文字を区別しないボリュームの `Assets`) で比べない。
-    /// 宣言が置き場そのものか、その祖先 (target の置き場まで) を指すときだけ「宣言あり」とする —
-    /// 置き場の中の 1 ファイル (`assets/img.png`) だけの宣言では、他の資材は束に入らない。
-    private static func declares(_ assets: URL, in target: SwiftPM.Target, placedAt directory: URL)
-        -> Bool
-    {
-        var covering: [URL] = [assets]
-        var ancestor = assets.deletingLastPathComponent()
-        while true {
-            covering.append(ancestor)
-            if SwiftPM.Package.sameItem(ancestor, directory) || ancestor.path == "/" { break }
-            ancestor = ancestor.deletingLastPathComponent()
-        }
-        return target.resources.contains { resource in
-            guard let path = resource.path else { return false }
-            let named = directory.appendingPathComponent(path, isDirectory: true)
-            return covering.contains { SwiftPM.Package.sameItem($0, named) }
-        }
     }
 
     /// 置き場に中身があるか (隠しファイルは数えない)。**置き場そのものがリンクなら辿らず、

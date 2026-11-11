@@ -171,7 +171,7 @@ enum RunCommand {
         home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
         announce: (String) -> Void = { print($0) },
         resolver: (_ arguments: [String], _ directory: URL) -> Void = launchResolve,
-        afterReading: (SwiftPM.Package?) throws(CommandFailure) -> Void = { _ in }
+        afterReading: (SwiftPM.Package?) throws(CommandFailure) -> Void
     ) throws(CommandFailure) -> BuildContext {
         let declared = try dumpPackage(in: directory)
         // **読んだ宣言を、他の段より先に渡す** — 資材の宣言の検査 (``ResourceDeclaration``) は

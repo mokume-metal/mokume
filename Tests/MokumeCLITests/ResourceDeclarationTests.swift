@@ -26,10 +26,11 @@ struct ResourceDeclarationTests {
     ///   - otherTargets: `targets:` に足す target。
     static func manifest(
         resources: String? = nil, path: String? = nil, before: String = "",
-        otherTargets: String = ""
+        otherTargets: String = "", product: Bool = false
     ) -> String {
         let placed = path.map { ", path: \"\($0)\"" } ?? ""
         let declared = resources.map { ", resources: [\($0)]" } ?? ""
+        let products = product ? #"products: [.executable(name: "demo", targets: ["demo"])],"# : ""
         return """
             // swift-tools-version: 6.0
             import PackageDescription
@@ -37,6 +38,7 @@ struct ResourceDeclarationTests {
             \(before)
             let package = Package(
                 name: "demo",
+                \(products)
                 targets: [
                     .executableTarget(name: "demo"\(placed)\(declared)),
                     \(otherTargets)
@@ -132,19 +134,75 @@ struct ResourceDeclarationTests {
 
     /// **置き場を含む target を見る** (#3984 の反証)。`path: "Sources"` のように親を置き場にした
     /// target は `Sources/demo/assets` を含む。宣言のパスはその target の置き場から解く。
-    @Test("親のディレクトリを置き場にした target も、置き場を含むものとして見る")
+    ///
+    /// **置き場そのものを指す宣言だけが宣言** (#3984 の 2 回目の反証)。祖先 (`.copy("demo")`・
+    /// `.copy(".")`) を写すと束の中は `demo/assets/…` になり、読み込み側 (束の直下の `assets/<名前>`
+    /// を探す) は見つけられない — 検査が防ぐはずの「通ったのに絵が出ない」になる。
+    @Test("親のディレクトリを置き場にした target は、置き場そのものの宣言だけで通る")
     func aTargetPlacedAtAParentContainsThePlace() throws {
-        let undeclared = try makeSketch(
-            manifest: Self.manifest(path: "Sources"), assets: ["grain.png"])
-        defer { try? FileManager.default.removeItem(at: undeclared) }
-        #expect(throws: stops) { try check(undeclared) }
-
-        for covering in [#".copy("demo/assets")"#, #".copy("demo")"#] {
-            let declared = try makeSketch(
-                manifest: Self.manifest(resources: covering, path: "Sources"), assets: ["grain.png"])
-            defer { try? FileManager.default.removeItem(at: declared) }
-            #expect(throws: Never.self, "\(covering)") { try check(declared) }
+        for (resources, passes) in [
+            (nil, false), (#".copy("demo/assets")"#, true), (#".copy("demo")"#, false),
+            (#".copy(".")"#, false),
+        ] as [(String?, Bool)] {
+            let root = try makeSketch(
+                manifest: Self.manifest(resources: resources, path: "Sources"), assets: ["grain.png"])
+            defer { try? FileManager.default.removeItem(at: root) }
+            if passes {
+                #expect(throws: Never.self, "\(String(describing: resources))") { try check(root) }
+            } else {
+                #expect(throws: stops, "\(String(describing: resources))") { try check(root) }
+            }
         }
+    }
+
+    /// 同じ形の、置き場の直上の target。`.copy(".")` は target の置き場を丸ごと写し、束の中は
+    /// `assets/…` ではなく直下に資材が並ぶ。
+    @Test("target の置き場を丸ごと写す宣言では止まる")
+    func copyingTheWholeTargetDoesNotCount() throws {
+        let root = try makeSketch(
+            manifest: Self.manifest(resources: #".copy(".")"#), assets: ["grain.png"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(throws: stops) { try check(root) }
+    }
+
+    /// **`path:` が絶対パスなら、そのまま使う** (#3984 の反証)。パッケージの場所に足すと在らない
+    /// 場所になり、置き場の持ち主が見つからずに素通りしていた。
+    @Test("絶対パスの path: の target も、置き場を含むものとして見る")
+    func anAbsoluteTargetPathIsUsedAsIs() throws {
+        let probe = try makeSketch(manifest: Self.manifest(), assets: ["grain.png"])
+        defer { try? FileManager.default.removeItem(at: probe) }
+        let absolute = probe.appendingPathComponent("Sources/demo").path
+        try Self.manifest(path: absolute).write(
+            to: probe.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        // 道具立てが絶対パスの path: を受け付けないなら、この形は起こらない (検査の前提を確かめる)
+        let declared = try #require(try RunCommand.dumpPackage(in: probe))
+        #expect(declared.targets.first?.path == absolute)
+        #expect(throws: stops) { try check(probe) }
+    }
+
+    /// **検査と見張りは、同じ宣言を同じに読む** (#3984 の 2 回目の反証)。検査が通す宣言を、見張りが
+    /// 子へ置き場を渡すかの判断 (`assetsOrigin`) が綴りで比べて「写されない」と読むと、見張りは黙って
+    /// 束の写しを読ませる。`.copy` で置き場そのものを指す宣言は、検査が通し、見張りは元の置き場を渡す。
+    @Test(
+        "検査が通す .copy の宣言は、見張りも置き場の元として読む",
+        arguments: [
+            (#".copy("assets")"#, nil), (#".copy("./assets")"#, nil), (#".copy("Assets")"#, nil),
+            (#".copy("demo/assets")"#, "Sources"),
+        ] as [(String, String?)])
+    func theCheckAndTheWatchReadTheSameDeclaration(resources: String, path: String?) throws {
+        let root = try makeSketch(
+            manifest: Self.manifest(resources: resources, path: path, product: true),
+            assets: ["grain.png"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let declared = try #require(try RunCommand.dumpPackage(in: root))
+        #expect(ResourceDeclaration.undeclared(in: root, declared: declared).isEmpty, "\(resources)")
+        let origin = declared.assetsOrigin(forProduct: "demo", in: root, directoryName: "assets")
+        let place = root.appendingPathComponent("Sources/demo/assets")
+        guard case .source(let url) = origin else {
+            Issue.record("見張りが置き場の元を読まない: \(resources) → \(origin)")
+            return
+        }
+        #expect(SwiftPM.Package.sameItem(url, place), "\(resources) → \(url.path)")
     }
 
     /// **置き場そのものがシンボリックリンクなら見ない** (前と同じ)。中身を数えるときにリンクを
@@ -338,6 +396,31 @@ struct ResourceDeclarationTests {
         // 通った後は見ない (作り直しのたびには見ない・#682)
         try write(Self.manifest(before: "// 宣言を外した"))
         #expect(throws: Never.self) { try resolver.current() }
+    }
+
+    /// **子を起こす段の導き直しでも、資材の宣言の抜けは飲み込まない** (#3984 の 2 回目の反証)。
+    /// 子を起こす段は置き場の元を導き手から取る。そこで導き直しが走って検査が止めたら、子を
+    /// 起こさずに理由を返す。他の失敗は今までどおり「置き場の元を渡さない」に倒す。
+    @Test("子を起こす段の導き直しで資材の検査が止めたら、子を起こさない")
+    func theLaunchStepDoesNotSwallowTheResourceCheck() throws {
+        let directory = try TestScratch.directory("mokume-resources-launch")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let refused = BuildResolver(directory: directory) { _ throws(CommandFailure) in
+            throw CommandFailure.resourcesNotDeclared(directory: "Sources/demo/assets")
+        }
+        let hooks = WatchSession.Hooks.live(resolver: refused, running: RunningBuild())
+        #expect(throws: stops) {
+            _ = try hooks.launch(URL(fileURLWithPath: "/usr/bin/true"), directory, nil, nil)
+        }
+
+        // 他の失敗は飲み込み、子は起こす (置き場の元を渡さないだけ)
+        let failing = BuildResolver(directory: directory) { _ throws(CommandFailure) in
+            throw CommandFailure.toolchainFailed(command: RunCommand.dumpCommand, status: 1)
+        }
+        let launched = try WatchSession.Hooks.live(resolver: failing, running: RunningBuild())
+            .launch(URL(fileURLWithPath: "/usr/bin/true"), directory, nil, nil)
+        launched.waitUntilExit()
+        #expect(launched.terminationStatus == 0)
     }
 
     /// 始めに宣言が読めた見張りは、そこで 1 度だけ見る (#682)。
