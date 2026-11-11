@@ -210,6 +210,14 @@ final class FrameRecorder: Outlet {
         case vectorAskedTwice(destination: String)
         /// 連番の綴りに `.svg` を渡した `beginRecord`。
         case vectorSeries
+        /// 拡張子が `.png` でない名前を渡した `save()` ([#3723])。**行き先によらず 1 度言う。**
+        ///
+        /// [#3723]: https://github.com/mokume-metal/mokume/issues/3723
+        case shotNotPNG
+        /// 拡張子が `.png` でない連番の綴りを渡した `beginRecord` ([#3723])。
+        ///
+        /// [#3723]: https://github.com/mokume-metal/mokume/issues/3723
+        case seriesNotPNG
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -371,6 +379,11 @@ final class FrameRecorder: Outlet {
                     reason: "save(\"\(path)\"): \(Self.tooLongReason(long)). Nothing was saved"))
             return
         }
+        // **`.png` でない名前でも PNG で書き、黙らない** ([#3723])。投げると `draw()` の中で毎フレーム止まるので
+        // 書いたうえで知らせる。毎フレーム違う名前で頼む形で行が続かないよう、行き先によらず 1 度だけ言う
+        //
+        // [#3723]: https://github.com/mokume-metal/mokume/issues/3723
+        if !Self.isPNG(path) { warnOnce(.shotNotPNG, Self.notPNGNotice(call: "save", name: path)) }
         oneShots.append((frame, path))
     }
 
@@ -382,6 +395,27 @@ final class FrameRecorder: Outlet {
     nonisolated static func isVector(_ path: String) -> Bool {
         path.lowercased().hasSuffix(".svg")
     }
+
+    // MARK: - 絵の形式 ([#3723])
+
+    /// 行き先の綴りの拡張子が `.png` か (大文字小文字を区別しない)。**絵を書く API が書けるのは PNG だけである。**
+    ///
+    /// [#3723]: https://github.com/mokume-metal/mokume/issues/3723
+    nonisolated static func isPNG(_ path: String) -> Bool {
+        path.lowercased().hasSuffix(".png")
+    }
+
+    /// `.png` でない名前で絵を書いた `save()`・連番の 1 行。**API の名前・渡した名前・書いた形式を名指す。**
+    static func notPNGNotice(call: String, name: String) -> String {
+        "\(call)(\"\(name)\"): the name does not end in .png, but pictures are written as PNG only, so the file "
+            + "holds a PNG under that name (other names like it are written the same way). "
+            + "Name it .png"
+    }
+
+    /// `.png` でない名前を断る `Image.save` の理由 (1 文)。
+    nonisolated static let notPNGImageReason =
+        "an image is written as PNG only, and a name that does not end in .png would hold a PNG under another "
+        + "name. Name it .png"
 
     /// `draw()` の外で頼まれた SVG の行き先。**次の `draw()` が丸ごと控える。**
     private var pendingVectors: [String] = []
@@ -584,6 +618,12 @@ final class FrameRecorder: Outlet {
         recordingFrom = frame
         startSoundDecision(for: pattern, carries: false)
         forgetWarnings()
+        // **`.png` でない連番も PNG で書き、黙らない** ([#3723])。控えを空に戻した後に言うので、この録りの間は 1 度
+        //
+        // [#3723]: https://github.com/mokume-metal/mokume/issues/3723
+        if !Self.isPNG(pattern) {
+            warnOnce(.seriesNotPNG, Self.notPNGNotice(call: "beginRecord", name: pattern))
+        }
     }
 
     // MARK: - 音声トラック ([#3125])
