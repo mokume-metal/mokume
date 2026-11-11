@@ -15,20 +15,27 @@ import Foundation
 /// 錠を取った実行だけが、前の回の完成品と `.partial` を消せる (``discardPrevious()``)。取れなかった実行は、
 /// 先に書いている実行のファイルに触らない。
 ///
-/// 錠のファイルは手放すときに消す。消えたファイルの錠を、消える前に開いていた別の実行が取る競合は、
-/// 取った後に「名前が指すファイルが握った記述子のものか」を照らして取り直す。
+/// 錠のファイルは、**今回の実行が作った (`O_EXCL` で作れた) ときだけ**手放すときに消す ([#3970])。元から在った
+/// ファイル (利用者のもの・落ちた回の残り) は錠に使うが、消さずに残す。名前がシンボリックリンクなら、たどらず
+/// (`O_NOFOLLOW`)、記録を始めない — リンクも指す先も残し、指す先が無ければ作らない。通常ファイルでないもの
+/// (フォルダなど) も錠に使わない。消えたファイルの錠を、消える前に開いていた別の実行が取る競合は、取った後に
+/// 「名前が指すファイルが握った記述子のものか」を照らして取り直す。
 ///
 /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
+/// [#3970]: https://github.com/mokume-metal/mokume/issues/3970
 nonisolated final class ReplayClaim {
     /// 記録の行き先。
     let destination: URL
     private let lockPath: String
     private var descriptor: Int32
+    /// 錠のファイルを今回作ったか。作ったときだけ手放すときに消す (#3970)。
+    private let created: Bool
 
-    private init(destination: URL, lockPath: String, descriptor: Int32) {
+    private init(destination: URL, lockPath: String, descriptor: Int32, created: Bool) {
         self.destination = destination
         self.lockPath = lockPath
         self.descriptor = descriptor
+        self.created = created
     }
 
     deinit { release() }
@@ -49,9 +56,26 @@ nonisolated final class ReplayClaim {
         let lockPath = destination.path + lockSuffix
         // 取るまでの間に、持ち主が錠のファイルを消していたら取り直す (数回で足りる)
         for _ in 0..<4 {
-            let descriptor = open(lockPath, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+            // 今回作れたときだけ、手放すときに消す (#3970)。在れば、リンクをたどらずに開く — 利用者のファイルや
+            // 落ちた回の残りは使うだけで消さず、リンクならその先に触らない
+            var created = true
+            var descriptor = open(lockPath, O_RDONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
+            if descriptor < 0, errno == EEXIST {
+                created = false
+                descriptor = open(lockPath, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+                if descriptor < 0, errno == ENOENT { continue }  // 開くまでの間に持ち主が消した
+            }
             guard descriptor >= 0 else {
-                return (nil, "Could not open \(lockPath): \(String(cString: strerror(errno)))")
+                let code = errno
+                if code == ELOOP {
+                    return (nil, "Could not lock \(lockPath): it is a symbolic link, which is left as it is")
+                }
+                return (nil, "Could not open \(lockPath): \(String(cString: strerror(code)))")
+            }
+            var held = stat()
+            guard fstat(descriptor, &held) == 0, (held.st_mode & S_IFMT) == S_IFREG else {
+                close(descriptor)
+                return (nil, "Could not lock \(lockPath): it is not a regular file")
             }
             guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
                 let code = errno
@@ -65,12 +89,13 @@ nonisolated final class ReplayClaim {
                 }
                 return (nil, "Could not lock \(lockPath): \(String(cString: strerror(code)))")
             }
-            var held = stat()
             var named = stat()
-            if fstat(descriptor, &held) == 0, stat(lockPath, &named) == 0, held.st_ino == named.st_ino,
-                held.st_dev == named.st_dev
-            {
-                return (ReplayClaim(destination: destination, lockPath: lockPath, descriptor: descriptor), nil)
+            if lstat(lockPath, &named) == 0, held.st_ino == named.st_ino, held.st_dev == named.st_dev {
+                return (
+                    ReplayClaim(
+                        destination: destination, lockPath: lockPath, descriptor: descriptor, created: created),
+                    nil
+                )
             }
             close(descriptor)
         }
@@ -123,10 +148,17 @@ nonisolated final class ReplayClaim {
         return entry.dropFirst(prefix.count).dropLast(suffix.count).allSatisfy { ("0"..."9").contains($0) }
     }
 
-    /// 錠を手放す。錠のファイルも消す。2 度目からは何もしない。
+    /// 錠を手放す。**錠のファイルは今回作ったときだけ消す** (#3970)。2 度目からは何もしない。
     func release() {
         guard descriptor >= 0 else { return }
-        unlink(lockPath)
+        // 名前が今も握っている錠のファイルを指すときだけ (錠を握っている間に替えられていたら、替えたものは消さない)
+        var held = stat()
+        var named = stat()
+        if created, fstat(descriptor, &held) == 0, lstat(lockPath, &named) == 0, held.st_ino == named.st_ino,
+            held.st_dev == named.st_dev
+        {
+            unlink(lockPath)
+        }
         flock(descriptor, LOCK_UN)
         close(descriptor)
         descriptor = -1

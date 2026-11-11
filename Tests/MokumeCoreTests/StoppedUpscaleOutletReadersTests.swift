@@ -141,9 +141,9 @@ struct StoppedUpscaleOutletReadersTests {
             catchUp: .placing,
             reason: "描き場所から絵を作る唯一の式 (drawnPicture・座標の大きさを持たせる・#3453)。作った絵を使う行は下の .drawnPicture が数える"),
         Reader(
-            file: "MokumeCore/Drawing/Canvas+Image.swift", token: ".drawnPicture", count: 4,
+            file: "MokumeCore/Drawing/Canvas+Image.swift", token: ".drawnPicture", count: 6,
             catchUp: .placing,
-            reason: "texture(canvas) と image(canvas) の 3 形。どれも絵を作る直前に note(placing: graphics) を通す (#2042)"),
+            reason: "texture(canvas) と image(canvas) の 3 形と、範囲を Rect で取る image(canvas, in:) の 2 形 (#3783)。どれも絵を作る直前に note(placing: graphics) を通す (#2042)"),
         Reader(
             file: "MokumeCore/Drawing/Canvas+CompositeGroup.swift", token: ".drawnPicture", count: 1,
             catchUp: .placing,

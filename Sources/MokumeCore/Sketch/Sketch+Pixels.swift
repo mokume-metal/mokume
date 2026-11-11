@@ -270,6 +270,10 @@ extension SketchPart {
 
     /// 1 画素の色。原点は左上。範囲の外は透明を返す。索引は ``pixels`` と同じ。
     ///
+    /// **位置は実際の画素で数える** (``pixelWidth`` × ``pixelHeight``)。描いた領域を絵として取る
+    /// ``get(_:_:_:_:)`` は座標の単位で数えるので、細かさ (``SketchSettings/pixelDensity``) を下げた作品や
+    /// 書き出しの倍率 (`mokume render --scale`) の下では、同じ数でも指す場所が違う。
+    ///
     /// **返す値は線形・アルファ乗算済みの ``LinearRGBA`` である** ([ADR-0011] 決定 4)。塗りの色
     /// (``fill(_:)-(LinearRGBA)``) や ``set(_:_:_:)`` が受けるのも同じ表現なので、読んだ値を
     /// そのまま渡せば、半透明の画素でも同じ色が出る。0–255 の乗算していない数として読むときは
@@ -304,6 +308,142 @@ extension SketchPart {
         liveCanvas(.read(returning: ".transparent"))?.get(x, y) ?? .transparent
     }
 
+    /// 描いた画面の全体を、新しい ``Image`` にして返す。Processing の引数なしの `get()` に当たる。
+    ///
+    /// **そのフレームでそこまでに描いたもの**が写る (1 画素の ``get(_:_:)`` と同じく、呼んだ所がフレームの
+    /// 区切りになる)。返した絵は画面と画素も面も共有しないので、**後で描き足しても、次のフレームになっても
+    /// 変わらない** (``Image/copy()`` と同じ)。下の例は、描いた画面を取って、左上に半分の大きさで置き直して
+    /// いる — 置いた写しには、取った後に描いた白い円が写らない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///     circle(260, 170, 160)
+    ///     fill(89, 191, 242)
+    ///     rect(40, 190, 140, 70)
+    ///
+    ///     let shot = try! get()   // ここまでの画面
+    ///     fill(242)
+    ///     circle(330, 70, 50)     // 取った後に描いたものは写らない
+    ///
+    ///     stroke(242)
+    ///     image(shot, 10, 10, width / 2, height / 2)
+    ///     noFill()
+    ///     rect(10, 10, width / 2, height / 2)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の円と水色の四角を描いた画面の左上に、同じ画面を半分に縮めた写しが白い枠つきで重なる。右上の白い円は写しには無い -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 大きさは座標の大きさ (``width`` × ``height``) で、`image(shot, 0, 0)` で置けば画面とちょうど重なる。
+    /// 細かさや書き出しの倍率の扱いは ``get(_:_:_:_:)`` と同じ。
+    ///
+    /// - Returns: ``width`` × ``height`` の新しい `Image`。
+    /// - Throws: GPU に絵を置けないとき ``ImageFailure/unplaceable(width:height:)``。`setup()`・`draw()`・
+    ///   入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと
+    ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない。返す絵を走っている画面からしか作れない)。
+    // shot: 後で撮る
+    public func get() throws(ImageFailure) -> Image {
+        try readingCanvas().get()
+    }
+
+    /// 描いた画面の領域を、新しい ``Image`` にして返す。Processing の `get(x, y, w, h)` に当たる。
+    ///
+    /// **領域は座標の単位で数え、返す絵の大きさも座標の大きさ** (`w` × `h`) である。1 画素の ``get(_:_:)`` は
+    /// 実際の画素で数えるので、単位が違う。刻んだ画素が座標と違えば (書き出しの倍率 `mokume render --scale` で
+    /// 細かく刻んでいる・細かさ ``SketchSettings/pixelDensity`` を下げている)、座標の大きさへ読み直す。倍率の
+    /// 下では**細部が落ちる** (光の量で平均して縮める) が、`image(shot, x, y)` で置けば元の位置と大きさに重なる。
+    ///
+    /// 画面をはみ出す部分は透明になる (``get(_:_:)`` が範囲の外で透明を返すのと同じ)。画素は作業空間の値の
+    /// まま写す (8 bit を経由しない)。返した絵が後の描画で変わらないことと、いつの絵が写るかは ``get()`` と同じ。
+    ///
+    /// 下の例は、左に描いた絵の領域を取って、右へ等倍で置き直している。取った後に描いた白い円は写しに無い。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///     circle(100, 150, 150)
+    ///     fill(89, 191, 242)
+    ///     rect(110, 60, 70, 180)
+    ///
+    ///     let left = try! get(0, 0, 200, 300)   // 左半分
+    ///     fill(242)
+    ///     circle(60, 60, 40)                    // 取った後に描いたものは写らない
+    ///     image(left, 200, 0)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左半分に橙色の円と水色の縦長の四角、右半分に同じ絵の写し。白い小さな円は左にだけある -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// - Parameters:
+    ///   - x: 領域の左端 (座標)。
+    ///   - y: 領域の上端 (座標)。
+    ///   - w: 領域の幅 (座標)。返す絵の幅。
+    ///   - h: 領域の高さ (座標)。返す絵の高さ。
+    /// - Returns: `w` × `h` の新しい `Image`。
+    /// - Throws: 幅・高さのどちらかが 1 を割るか面の上限を越えるとき ``ImageFailure/unplaceable(width:height:)``
+    ///   (``createImage(_:_:)`` と同じ。1 を割る指定を 1×1 へ丸めない)。走っていない所で呼んだときは ``get()`` と同じ。
+    // shot: 後で撮る
+    public func get(_ x: Int, _ y: Int, _ w: Int, _ h: Int) throws(ImageFailure) -> Image {
+        try readingCanvas().get(x, y, w, h)
+    }
+
+    /// ``Rect`` の領域を、新しい ``Image`` にして返す。働きは ``get(_:_:_:_:)`` と同じ。
+    ///
+    /// **``imageMode(_:)``・``rectMode(_:)`` に従わず、値のとおり左上で読む** (``Rect`` はモードを読まない)。
+    /// 値は近い整数へ丸めて読む。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///     circle(120, 150, 180)
+    ///
+    ///     let frame = Rect(left: 60, top: 90, width: 120, height: 120)
+    ///     let part = try! get(in: frame)
+    ///     image(part, 240, 90)
+    ///     noFill()
+    ///     stroke(242)
+    ///     frame.draw()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左に橙色の円と、その中ほどを囲む白い枠。右に、枠の中を写した四角い絵 -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// - Throws: ``get(_:_:_:_:)`` と同じ。幅・高さが数でないときも ``ImageFailure/unplaceable(width:height:)``。
+    // shot: 後で撮る
+    public func get(in rect: Rect) throws(ImageFailure) -> Image {
+        try readingCanvas().get(in: rect)
+    }
+
+    /// 画面を絵にして返す API が読む描画先。**引く実行は 1 画素の ``get(_:_:)`` と同じ** (読む API の規則)。
+    /// 引けなければ、返す絵を作れないので、API ごとに 1 度だけ警告して `notRunning(call:)` を投げる
+    /// (``resourceCanvas(_:_:)`` と同じ扱い)。
+    private func readingCanvas(_ call: String = #function) throws(ImageFailure) -> Canvas {
+        guard let runtime = activeRun(for: .read, from: self) else {
+            OutsideRun.log.warn(call, .thrown)
+            throw .notRunning(call: call)
+        }
+        return runtime.activeCanvas
+    }
+
     /// 1 画素の色を書き換える。範囲の外は何もしない。
     ///
     /// **書いた画素だけが変わる。** 図形を描く口と違って塗りも線も見ないので、
@@ -333,4 +473,17 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=e62332bb
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) { liveCanvas()?.set(x, y, color) }
+
+    /// 1 画素の色を書き換える。座標と色にラベルを付けて渡す。
+    ///
+    /// ``set(_:_:_:)`` に同じ値を同じ順で渡すのと同じ画素になる。範囲の外の扱い・色を検めないことも
+    /// そちらと同じで、違うのは**どの値が座標でどれが色かを呼び出しの行で読める**ことだけである。
+    /// 座標は手本の形と同じ `Int` で取る。
+    ///
+    /// ```swift
+    /// // set(120, 80, color(242, 217, 89)) と同じ画素
+    /// set(x: 120, y: 80, to: color(242, 217, 89))
+    /// ```
+    // shot: 参照 set(_:_:_:)
+    public func set(x: Int, y: Int, to color: LinearRGBA) { liveCanvas()?.set(x: x, y: y, to: color) }
 }
