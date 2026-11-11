@@ -35,6 +35,12 @@ extension Canvas {
         apply(camera, name: "camera")
     }
 
+    /// 見る位置・見ている先・上方向を `Vector3` で決める。``camera(_:_:_:_:_:_:_:_:_:)`` に
+    /// 3 つの値の成分を渡すのと同じ (#3778)。
+    public func camera(eye: Vector3, center: Vector3, up: Vector3) {
+        camera(eye.x, eye.y, eye.z, center.x, center.y, center.z, up.x, up.y, up.z)
+    }
+
     // 作っておいた視点を当てる。
     public func setCamera(_ camera: Camera) {
         apply(camera, name: "setCamera")
@@ -53,6 +59,13 @@ extension Canvas {
                 fieldOfView: fieldOfView, aspect: aspect, near: near, far: far))
     }
 
+    /// 遠くのものほど小さく写す。``perspective(_:_:_:_:)`` に同じ順で渡すのと同じ (#3779)。
+    public func perspective(
+        fieldOfView: some ScalarConvertible, aspect: some ScalarConvertible, near: some ScalarConvertible, far: some ScalarConvertible
+    ) {
+        perspective(fieldOfView, aspect, near, far)
+    }
+
     // 平行投影を既定へ戻す。
     public func ortho() {
         apply(replacingProjection: Camera.defaultOrthographic(width: width, height: height))
@@ -66,6 +79,14 @@ extension Canvas {
         apply(
             replacingProjection: .orthographic(
                 left: left, right: right, bottom: bottom, top: top, near: near, far: far))
+    }
+
+    /// 距離によらず同じ大きさで写す。``ortho(_:_:_:_:_:_:)`` に同じ順で渡すのと同じ (#3779)。
+    public func ortho(
+        left: some ScalarConvertible, right: some ScalarConvertible, bottom: some ScalarConvertible, top: some ScalarConvertible,
+        near: some ScalarConvertible, far: some ScalarConvertible
+    ) {
+        ortho(left, right, bottom, top, near, far)
     }
 
     // MARK: - 当てる

@@ -262,6 +262,67 @@ struct FrameSenderTests {
         #expect(frames.map(\.frameCount) == [7])
     }
 
+    /// **止まった作品では次の番号が来ない** (#3945)。最後に書いた絵を GPU が打ち切ったら、同じ番号のまま書き直して
+    /// 知らせる。書き直すのは打ち切られた 1 度だけで、届いた後は同じ絵を書かない。
+    @Test("止まった作品の最後の絵を GPU が打ち切ったら、同じ番号で 1 度だけ書き直して知らせる")
+    func aDroppedStillFrameIsRewritten() throws {
+        let harness = try makeHarness()
+        defer { harness.sender.stop() }
+        let receiver = ModelReceiver(width: Self.width, height: Self.height, count: 3)
+        defer { receiver.die() }
+        receiver.connect(to: harness.service)
+        harness.sender.drain()
+        _ = receiver.receiveAll()
+
+        harness.gpu.dropsNextSubmissionForTesting = "検査の打ち切り"
+        let submitted = harness.gpu.submissionCount
+        for _ in 0..<6 { try harness.step(frame: 7) }
+        let frames = ModelReceiver.frames(in: receiver.receiveAll())
+        #expect(frames.map(\.frameCount) == [7], "打ち切られた今の絵を書き直していない: \(frames.map(\.frameCount))")
+        #expect(harness.gpu.submissionCount - submitted == 2, "打ち切りの後も書き直し続けた")
+    }
+
+    /// **止まった作品では次の番号が来ない** (#3945 と同じ根)。待ち行列が埋まって最後の絵を知らせ損ねたら、その面は
+    /// 空きへ戻し (``aFullQueueDoesNotBlock()`` の約束)、受け手が読み終えた後のリフレッシュで、空いた面へ同じ番号を
+    /// 書き直して知らせる。届いた後は書き直さない。
+    @Test("待ち行列が埋まって止まった作品の最後の絵を知らせ損ねたら、受け手が読み終えた後に書き直して 1 度だけ届ける")
+    func aStillFrameMissedByAFullQueueIsRewritten() throws {
+        let harness = try makeHarness()
+        defer { harness.sender.stop() }
+        let receiver = ModelReceiver(width: Self.width, height: Self.height, count: 8)
+        defer { receiver.die() }
+        receiver.connect(to: harness.service)
+        harness.sender.drain()
+        _ = receiver.receiveAll()
+        // 待ち行列 (既定 5 通) を越えて書き、7 枚目で止まる
+        for frame in Int64(1)...7 { try harness.step(frame: frame) }
+        try harness.step(frame: 7)
+        var got = ModelReceiver.frames(in: receiver.receiveAll())
+        for frame in got { receiver.release(slot: frame.slot, to: harness.service) }
+        #expect(!got.map(\.frameCount).contains(7), "前提: 7 枚目は待ち行列が埋まって知らせ損ねる: \(got.map(\.frameCount))")
+
+        for _ in 0..<6 {
+            try harness.step(frame: 7)
+            got += ModelReceiver.frames(in: receiver.receiveAll())
+        }
+        #expect(got.filter { $0.frameCount == 7 }.count == 1, "止まった作品の最後の絵が届かない: \(got.map(\.frameCount))")
+        let submitted = harness.gpu.submissionCount
+        for _ in 0..<3 { try harness.step(frame: 7) }
+        #expect(harness.gpu.submissionCount == submitted, "届いた後も書き直した")
+    }
+
+    /// 毎リフレッシュ呼ばれても (#3945)、見送ったのは 1 枚の絵である。
+    @Test("受け手が面を全部掴んでいる間、同じ番号で何度呼ばれても見送りは 1 枚と数える")
+    func aStillFrameIsSkippedOnce() throws {
+        let harness = try makeHarness()
+        defer { harness.sender.stop() }
+        let receiver = ModelReceiver(width: Self.width, height: Self.height, count: 2)
+        defer { receiver.die() }
+        receiver.connect(to: harness.service)
+        for frame: Int64 in [1, 2, 3, 3, 3, 3, 4] { try harness.step(frame: frame) }
+        #expect(harness.sender.skippedFrames == 2, "見送り: \(harness.sender.skippedFrames)")
+    }
+
     @Test("受け手が面を返さないと、書かずに見送った枚数が増え、送り手は止まらない")
     func aReceiverThatHoldsEverySurfaceIsSkipped() throws {
         let harness = try makeHarness()

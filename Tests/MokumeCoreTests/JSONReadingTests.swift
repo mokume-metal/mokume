@@ -276,6 +276,98 @@ struct JSONReadingTests {
         }
     }
 
+    /// `getInt` の境界の組 (#3950)。左は JSON の値の綴りそのまま、右は返るべき整数で、`nil` は
+    /// 「0 を返して知らせる」。**整数かどうかは、桁が残っている所 (文字・Foundation が `Decimal` で
+    /// 渡す長い数) で決める** — `Double` に丸めた後では、`Int.min` の 1 つ外も `Int.min` に、端数のある
+    /// 文字も整数に見える。
+    private static let integerBoundaries: [(json: String, expected: Int?)] = [
+        // 数の値: Int の両端と、その 1 つ外
+        ("-9223372036854775808", Int.min),
+        ("-9223372036854775809", nil),
+        ("9223372036854775807", Int.max),
+        ("9223372036854775808", nil),
+        ("-18446744073709551615", nil),
+        // 数の値: Foundation が Decimal で渡す長い綴り。丸めた後の Double ではなく綴りの値で決める
+        ("-9223372036854775808.0", Int.min),
+        ("-9223372036854775808.5", nil),
+        ("1.00000000000000000000001", nil),
+        ("100000000000000000000.0", nil),
+        // 数の値: いまの振る舞いを固定する行。`JSONSerialization` が読み解く時点で丸める (17 桁以下の綴りは
+        // `Double` で、39 桁以上は Decimal の 38 桁で)。`JSONFile` の「その読み方に従う」の内とするか、数の
+        // 綴りを本体が読むかは #3958 で決める。決まったらここを書き換える
+        ("1.0000000000000001", 1),
+        ("9007199254740993.0", 9_007_199_254_740_992),
+        ("1.000000000000000000000000000000000000000000001", 1),
+        // 数の値: 従来どおり
+        ("2.0", 2), ("1e3", 1000), ("-0", 0), ("-0.0", 0), ("2.5", nil), ("1e30", nil),
+        // 数の文字: Int の両端と、その 1 つ外
+        (#""-9223372036854775808""#, Int.min),
+        (#""-9223372036854775809""#, nil),
+        (#""9223372036854775807""#, Int.max),
+        (#""9223372036854775808""#, nil),
+        // 数の文字: 端数・指数のある綴りも、丸めずに値で決める
+        (#""9007199254740993.0""#, 9_007_199_254_740_993),
+        (#""1.0000000000000001""#, nil),
+        (#""-9223372036854775808.0""#, Int.min),
+        (#""-9223372036854775808.5""#, nil),
+        (#""92233720368547758.07e2""#, Int.max),
+        (#""9.223372036854775808e18""#, nil),
+        (#""-9.223372036854775808e18""#, Int.min),
+        (#""100e-2""#, 1),
+        (#""150e-2""#, nil),
+        (#""1E+2""#, 100),
+        (#""0.0e999999999999""#, 0),
+        (#""1e999999999999""#, nil),
+        (#""1e-999999999999""#, nil),
+        // 数の文字: 従来の有効な綴り (空白・符号・0・先頭の 0・小数点で終わる)
+        (#""1e3""#, 1000), (#""3.0""#, 3), (#"" 3\n""#, 3), (#""\t-7 ""#, -7), (#""-0""#, 0),
+        (#""+0.0""#, 0), (#""+5""#, 5), (#""007""#, 7), (#""5.""#, 5),
+        // 数の文字でない綴り
+        (#""""#, nil), (#"" ""#, nil), (#""1 2""#, nil), (#"".5""#, nil), (#"".""#, nil),
+        (#""-""#, nil), (#""1e""#, nil), (#""0x10""#, nil), (#""inf""#, nil), (#""--1""#, nil),
+    ]
+
+    @Test("getInt の境界: Int の両端とその 1 つ外・端数・指数・空白・-0 を、キーで引く口と番号で引く口で同じに読む")
+    func getIntBoundaries() throws {
+        let cases = Self.integerBoundaries
+        let keys = cases.map { _ in unique("bound") }
+        let members = zip(keys, cases).map { #""\#($0)": \#($1.json)"# }.joined(separator: ", ")
+        let byKey = try object("{\(members)}")
+        let byIndex = try array("[\(cases.map(\.json).joined(separator: ", "))]")
+        for (index, (key, item)) in zip(keys, cases).enumerated() {
+            #expect(byKey.getInt(key) == item.expected ?? 0, "getInt(key) \(item.json)")
+            #expect(byIndex.getInt(index) == item.expected ?? 0, "getInt(index) \(item.json)")
+            // 読めない値は 0 を返して知らせ、読めた値は知らせない
+            #expect((said(.notAnInteger(key: key)) != nil) == (item.expected == nil), "知らせ \(item.json)")
+        }
+    }
+
+    @Test("読めない桁の多い数の知らせは、丸めた値ではなく書かれた綴りを名乗る。2.0 は 2.0 と名乗る")
+    func getIntNamesTheSpelling() throws {
+        let below = unique("below")
+        let tiny = unique("tiny")
+        let half = unique("half")
+        let whole = unique("whole")
+        let value = try object(
+            """
+            {"\(below)": -9223372036854775809, "\(tiny)": 1.00000000000000000000001,
+             "\(half)": -9223372036854775808.5, "\(whole)": 2.0}
+            """)
+        #expect(value.getInt(below) == 0)
+        #expect(
+            said(.notAnInteger(key: below))
+                == "getInt(\"\(below)\"): the value of \"\(below)\" is -9223372036854775809, which is not an "
+                + "integer that fits in an Int. Reading it as 0 (said once per key)")
+        #expect(value.getInt(tiny) == 0)
+        #expect(said(.notAnInteger(key: tiny))?.contains("is 1.00000000000000000000001, which") == true)
+        #expect(value.getInt(half) == 0)
+        #expect(said(.notAnInteger(key: half))?.contains("is -9223372036854775808.5, which") == true)
+        // 桁の多い数も、数として読む口では丸めた値で読める
+        #expect(value.getFloat(tiny) == 1)
+        #expect(value.getString(whole) == "")
+        #expect(said(.notAString(key: whole))?.contains("is 2.0, which is not a string") == true)
+    }
+
     @Test("getFloat は整数の値も読み、数の文字の読み方は今までと同じ")
     func getFloatStillReadsNumbers() throws {
         let value = try object(#"{"i": 7, "d": 7.5, "s": "7.25", "big": 9007199254740993}"#)
