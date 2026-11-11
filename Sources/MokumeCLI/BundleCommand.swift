@@ -116,20 +116,49 @@ enum BundleCommand {
 
         // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)
         let scope = declared?.resourceScope(forProduct: product)
-        let app = try assemble(
+        let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
+        let published = try distribute(
             executable: executable, identity: identity,
             minimumSystemVersion: declared?.minimumMacOSVersion ?? defaultMinimumSystemVersion,
-            into: out, excluding: scope?.excluded ?? [])
-        let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
-        let note = try finish(
-            app, identity: identity, bundles: scope?.required ?? []
+            into: out, excluding: scope?.excluded ?? [], bundles: scope?.required ?? []
         ) { app throws(CommandFailure) in
             try sign(app, as: signature, entitlements: identity.entitlements)
         }
         print(
             report(
-                for: app, package: directory, note: note, signedAs: signature,
-                identity: identity))
+                for: published.app, package: directory, note: published.note,
+                signedAs: signature, identity: identity))
+    }
+
+    /// 組み立て → 仕上げ (資材の検め・紙・署名) → 公開。**公開するまで `--out` の `<name>.app` と紙に
+    /// 触れない** ([#3981](https://github.com/mokume-metal/mokume/issues/3981))。
+    ///
+    /// 前は `<name>.app` を退けてからその場所に組み、署名していたので、コピー・資材の検め・紙・署名の
+    /// どこで止まっても、直前に署名を通った前の版はもう無く、残るのは途中の新しい版だった。いまは
+    /// `--out` の中の一時の置き場 (``stage(executable:identity:minimumSystemVersion:into:excluding:)``) で
+    /// 全部を済ませ、通ったものだけを ``publish(_:identity:into:steps:)`` で入れ替える。止まった回は
+    /// 一時の置き場を片付けるだけで、前の版と紙はそのまま残る。代償は、入れ替えるまで新旧 2 版分の
+    /// ディスクを使うこと。
+    ///
+    /// - Parameter signing: 署名の段 (``finish(_:identity:bundles:signing:)`` と同じ)。
+    /// - Parameter steps: 公開の手 (検査が失敗を差し込むために外から渡せる形にしてある)。
+    /// - Returns: 公開した `<name>.app` と紙の場所。
+    static func distribute(
+        executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL,
+        excluding: Set<String>, bundles: [String],
+        signing: (URL) throws(CommandFailure) -> Void, steps: PublishSteps = .live
+    ) throws(CommandFailure) -> (app: URL, note: URL) {
+        let staging = try stage(
+            executable: executable, identity: identity,
+            minimumSystemVersion: minimumSystemVersion, into: out, excluding: excluding)
+        do {
+            _ = try finish(staging.app, identity: identity, bundles: bundles, signing: signing)
+            let app = try publish(staging, identity: identity, into: out, steps: steps)
+            return (app, out.appendingPathComponent(noteFileName(for: identity)))
+        } catch {
+            discard(staging)
+            throw error
+        }
     }
 
     /// 組み上がった包みの仕上げ。**手順の順序をここ 1 か所で持つ** — 資材の検め → 開き方の紙 → 署名。
@@ -179,10 +208,11 @@ enum BundleCommand {
 
     // MARK: - 組み立て
 
-    /// 包みを組む。中身は毎回まっさらから作り直す。
+    /// 包みを組んで、そのまま公開する (署名も紙も無い)。``distribute(executable:identity:minimumSystemVersion:into:excluding:bundles:signing:steps:)``
+    /// から仕上げを抜いた形で、組み立てと公開の約束を検査から見るための口。
     ///
-    /// **作り直しは消してから。** 前の版の資材が残ると、消したはずのものが配られる —
-    /// しかも手元では動くので気付けない。
+    /// **作り直しは入れ替えで。** 中身は毎回まっさらな一時の置き場で組むので、前の版の資材は
+    /// 混ざらない — 混ざると、消したはずのものが配られ、しかも手元では動くので気付けない。
     ///
     /// **消してよいのは、`--out` の直下にある、前の版の自分の `.app` だけである** (#2309・#2500)。
     /// 場所は ``replaceableApp(for:in:)`` が、中身は ``isOwnOutput(_:identity:)`` が確かめ、
@@ -193,18 +223,85 @@ enum BundleCommand {
         executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL,
         excluding: Set<String>
     ) throws(CommandFailure) -> URL {
-        let app = try replaceableApp(for: identity, in: out)
+        let staging = try stage(
+            executable: executable, identity: identity,
+            minimumSystemVersion: minimumSystemVersion, into: out, excluding: excluding)
+        do {
+            return try publish(staging, identity: identity, into: out)
+        } catch {
+            discard(staging)
+            throw error
+        }
+    }
+
+    /// 組み立ての一時の置き場。`--out` の直下の `.mokume-bundle-<UUID>/` で、中に `<name>.app` と
+    /// (仕上げの後は) 紙を持つ。**`--out` の中に置くのは、公開を同じボリュームの中の rename で済ませる
+    /// ため** (別のボリュームからは 1 手で入れ替えられない)。
+    ///
+    /// **置き場の名前に作品名を入れない。** 名前は上限 (``AppIdentity/maximumNameLength``) まで使えるので、
+    /// 前後に足すとファイル名の上限を越える。強制終了で残っても、名前 (`mokume-bundle`) と中身
+    /// (`<name>.app`・紙) で何の残りかは分かる。次の回が片付けるのは、中身が自分の名前の物だけのもの
+    /// (``isOwnRemnant(_:name:)``)。
+    struct Staging {
+        /// 一時の置き場そのもの。
+        let directory: URL
+        /// 中で組む `<name>.app`。
+        let app: URL
+    }
+
+    /// 一時の置き場で包みを組む。`--out` の `<name>.app` と紙には触れない。
+    ///
+    /// **ビルドの前と同じ確かめを先に通す** (``replaceableApp(for:in:)``)。作り直せない相手なら、組む前に
+    /// 止まる。前の回に止められて残った一時の置き場 (``sweepRemnants(in:identity:)``) はここで片付ける
+    /// (退けた前の版が残っていれば、先に元の場所へ戻す)。途中で失敗したら、作った一時の置き場を
+    /// 片付けて投げる。
+    static func stage(
+        executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL,
+        excluding: Set<String>
+    ) throws(CommandFailure) -> Staging {
+        _ = try replaceableApp(for: identity, in: out)
+        sweepRemnants(in: out, identity: identity)
+        let target = try replaceableApp(for: identity, in: out)
+        let directory = out.appendingPathComponent(
+            "\(stagingPrefix)\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            // 置き場を作れないのは、`<name>.app` を書けないのと同じ事情 (`--out` を書けない・無いなど)
+            throw .cannotCreate(path: target.path, reason: Diagnostics.failureText(error))
+        }
+        let staging = Staging(
+            directory: directory,
+            app: directory.appendingPathComponent(target.lastPathComponent, isDirectory: true))
+        do {
+            try build(
+                staging.app, executable: executable, identity: identity,
+                minimumSystemVersion: minimumSystemVersion, excluding: excluding)
+        } catch {
+            discard(staging)
+            throw error
+        }
+        return staging
+    }
+
+    /// 一時の置き場を片付ける。消し損ねても投げない (次の回に ``sweepRemnants(in:name:)`` が片付ける)。
+    static func discard(_ staging: Staging) {
+        try? FileManager.default.removeItem(at: staging.directory)
+    }
+
+    /// `app` の場所に、包みの中身を組む。
+    private static func build(
+        _ app: URL, executable: URL, identity: AppIdentity, minimumSystemVersion: String,
+        excluding: Set<String>
+    ) throws(CommandFailure) {
         let contents = app.appendingPathComponent("Contents", isDirectory: true)
         let programs = contents.appendingPathComponent("MacOS", isDirectory: true)
         let resources = contents.appendingPathComponent("Resources", isDirectory: true)
-
-        try retire(app, in: out, name: identity.name)
         try create(programs)
         try create(resources)
 
-        // **`Info.plist` を先に書く。** 印 (``AppIdentity/bundledMarkKey``) が入っているので、組み立ての
-        // 途中で止まって残った `.app` も、次の回に自分の出力と確かめられて作り直せる (後に書くと、
-        // 途中の `.app` は印を持たず、手で消すまで先へ進めない)
+        // **`Info.plist` を先に書く。** 印 (``AppIdentity/bundledMarkKey``) が入っているので、途中の
+        // `.app` が何かの拍子に `--out` へ出ても、次の回に自分の出力と確かめられて作り直せる
         let plist = identity.infoPlist(
             executable: executable.lastPathComponent,
             minimumSystemVersion: minimumSystemVersion)
@@ -227,7 +324,6 @@ enum BundleCommand {
         for bundle in resourceBundles(besides: executable, excluding: excluding) {
             try copy(bundle, to: resources.appendingPathComponent(bundle.lastPathComponent))
         }
-        return app
     }
 
     /// 作る `<name>.app` の場所。**消してよいと確かめられたときだけ返し、そうでなければ何も消さずに
@@ -386,39 +482,171 @@ enum BundleCommand {
 
     // MARK: - 前の出力を退ける
 
-    /// 前の出力を消す一時の名前の形 (`.<name>.app.removing-<UUID>`)。名前の前後を固定する。
+    /// 一時の置き場の名前の頭 (`.mokume-bundle-<UUID>`)。
+    static let stagingPrefix = ".mokume-bundle-"
+
+    /// 入れ替えられないボリュームで、前の版を退けておく置き場の中の場所 (``publish(_:identity:into:steps:)``)。
+    static let previousDirectoryName = "previous"
+
+    /// 前の版が前の出力を消すのに使っていた一時の名前の形 (`.<name>.app.removing-<UUID>`)。
+    /// 残っていれば片付ける対象として読むだけで、もう作らない。
     private static func retiringPrefix(_ name: String) -> String { ".\(name).app.removing-" }
 
-    /// 消し損ねた一時の名前か。**消してよいのは、この名前のこの形のものだけ** (`<UUID>` が UUID として
-    /// 読めるもの)。ほかの `.` から始まるものや、ほかの作品の一時の名前には触れない。
+    /// 前の版が残した、前の出力を消し損ねた一時の名前か。**消してよいのは、この名前のこの形のものだけ**
+    /// (`<UUID>` が UUID として読めるもの)。ほかの `.` から始まるものや、ほかの作品の一時の名前には触れない。
     static func isRetiredRemnant(_ fileName: String, name: String) -> Bool {
         let prefix = retiringPrefix(name)
-        guard fileName.hasPrefix(prefix) else { return false }
-        return UUID(uuidString: String(fileName.dropFirst(prefix.count))) != nil
+        return fileName.hasPrefix(prefix)
+            && UUID(uuidString: String(fileName.dropFirst(prefix.count))) != nil
     }
 
-    /// 前の `<name>.app` を退ける。**`<name>.app` の場所に半端なものを残さない** (#2500)。
+    /// 止められて残った一時の置き場のうち、**この作品のもの**か。片付けてよいのはこれだけ
+    /// (#2500・#3054 の持ち主の確かめと同じ考え方)。
     ///
-    /// 直接消すと、途中で止まった (Ctrl-C・kill・消せないものがある) とき `Info.plist` だけが先に
-    /// 消えて他が残ることがあり、次の回に自分の出力と確かめられず断られる。だから `--out` の中の
-    /// 一時の名前へ**先に rename し** (同じ場所での rename は 1 手で、半端が出ない)、それから消す。
-    /// rename に失敗したら黙らずに投げる (`<name>.app` は元のまま)。一時の名前の中身を消し損ねても、
-    /// 新しい `<name>.app` は作れるので投げず、残ったものは次の回に ``isRetiredRemnant(_:name:)`` の形
-    /// のものだけ先に消す。
-    private static func retire(_ app: URL, in out: URL, name: String) throws(CommandFailure) {
+    /// 名前が `.mokume-bundle-<UUID>` (UUID として読める) の実体のディレクトリで、中身が空か、
+    /// `<name>.app`・`How to open <name>.txt`・`previous/` (中は `<name>.app` だけ) のどれかだけであること。
+    /// 別の作品が同じ `--out` に残した置き場は、中身の名前が違うので触れない。リンクは辿らずに断る。
+    static func isOwnRemnant(_ directory: URL, name identity: AppIdentity) -> Bool {
+        let fileName = directory.lastPathComponent
+        guard fileName.hasPrefix(stagingPrefix),
+            UUID(uuidString: String(fileName.dropFirst(stagingPrefix.count))) != nil,
+            kind(of: directory) == .typeDirectory,
+            let entries = try? FileManager.default.contentsOfDirectory(atPath: directory.path)
+        else { return false }
+        let app = "\(identity.name).app"
+        let allowed: Set<String> = [app, noteFileName(for: identity), previousDirectoryName]
+        guard Set(entries).isSubset(of: allowed) else { return false }
+        guard entries.contains(previousDirectoryName) else { return true }
+        let previous = directory.appendingPathComponent(previousDirectoryName, isDirectory: true)
+        guard kind(of: previous) == .typeDirectory,
+            let inside = try? FileManager.default.contentsOfDirectory(atPath: previous.path)
+        else { return false }
+        return Set(inside).isSubset(of: [app])
+    }
+
+    /// 前の回に止められて残った一時の置き場を片付ける。
+    ///
+    /// **先に、退けたまま戻せなかった前の版を戻す。** 入れ替えられないボリュームでは前の版を
+    /// `previous/<name>.app` へ退けてから新しい版を置く (2 手) ので、その間に止められると `<name>.app` が
+    /// 無く、前の版は置き場の中に残る。`<name>.app` が無く、それが残っていれば、元の場所へ戻してから
+    /// 片付ける (戻せなければその置き場は片付けない)。前の版が残した `.removing-` の形も片付ける。
+    private static func sweepRemnants(in out: URL, identity: AppIdentity) {
         let listing = (try? FileManager.default.contentsOfDirectory(atPath: out.path)) ?? []
-        for entry in listing where isRetiredRemnant(entry, name: name) {
-            try? FileManager.default.removeItem(at: out.appendingPathComponent(entry))
+        let app = out.appendingPathComponent("\(identity.name).app", isDirectory: true)
+        for entry in listing {
+            let place = out.appendingPathComponent(entry, isDirectory: true)
+            if isRetiredRemnant(entry, name: identity.name) {
+                try? FileManager.default.removeItem(at: place)
+                continue
+            }
+            guard isOwnRemnant(place, name: identity) else { continue }
+            let previous = place.appendingPathComponent(previousDirectoryName, isDirectory: true)
+                .appendingPathComponent(app.lastPathComponent, isDirectory: true)
+            // `<name>.app` が在れば、残った前の版はもう要らない (新しい版が置けている)
+            if kind(of: previous) != nil, kind(of: app) == nil {
+                guard renamex_np(previous.path, app.path, UInt32(RENAME_EXCL)) == 0 else { continue }
+            }
+            try? FileManager.default.removeItem(at: place)
         }
-        guard kind(of: app) != nil else { return }
-        let retiring = out.appendingPathComponent(
-            "\(retiringPrefix(name))\(UUID().uuidString)", isDirectory: true)
+    }
+
+    // MARK: - 公開
+
+    /// 公開の手。どれも同じボリュームの中の 1 手 (rename) で、途中の姿が外から見えない。
+    /// **検査が、手の前後で失敗や中断を差し込むために外から渡せる形にしてある。**
+    struct PublishSteps {
+        /// 紙を置く。在る普通のファイルは置き換える (`rename(2)`)。
+        var replace: (_ from: URL, _ to: URL) throws -> Void
+        /// 2 つの場所を入れ替える (`renamex_np` の `RENAME_SWAP`)。
+        var swap: (_ from: URL, _ to: URL) throws -> Void
+        /// 動かす。**行き先に在れば断る** (`RENAME_EXCL`)。
+        var move: (_ from: URL, _ to: URL) throws -> Void
+        /// 一時の置き場を片付ける。
+        var remove: (_ directory: URL) -> Void
+
+        static var live: PublishSteps {
+            PublishSteps(
+                replace: { from, to in try rename(from, to, flags: 0) },
+                swap: { from, to in try rename(from, to, flags: UInt32(RENAME_SWAP)) },
+                move: { from, to in try rename(from, to, flags: UInt32(RENAME_EXCL)) },
+                remove: { directory in try? FileManager.default.removeItem(at: directory) })
+        }
+
+        private static func rename(_ from: URL, _ to: URL, flags: UInt32) throws {
+            guard renamex_np(from.path, to.path, flags) == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+        }
+    }
+
+    /// 入れ替え (`RENAME_SWAP`) をそのボリュームが持たないと言った失敗か。
+    private static func swapIsUnsupported(_ error: any Error) -> Bool {
+        let error = error as NSError
+        return error.domain == NSPOSIXErrorDomain
+            && [Int(ENOTSUP), Int(EINVAL), Int(EOPNOTSUPP)].contains(error.code)
+    }
+
+    /// 一時の置き場で仕上がった `.app` と紙を、`--out` へ出す ([#3981](https://github.com/mokume-metal/mokume/issues/3981))。
+    ///
+    /// **どの手の間で止まっても (失敗・Ctrl-C・kill)、`--out` には前の版か新しい版のどちらかが紙と揃って
+    /// 残る。** 手は順に:
+    /// 1. **紙を置く** (1 手の rename)。紙の中身は名前だけで決まる (``openingNote(for:)``) ので、同じ名前の
+    ///    前の版の紙と同じ文である。ここで止まっても、前の `.app` と (同じ文の) 紙が揃っている
+    /// 2. **`.app` を入れ替える。** 前の版があれば `RENAME_SWAP` で 1 手に入れ替える — 退けてから置く
+    ///    2 手にすると、その間に `<name>.app` が無い瞬間ができる。前の版が無ければ置くだけ (在れば断る)
+    /// 3. **一時の置き場を片付ける** (前の版が入っている)。消し損ねても投げず、次の回に片付ける
+    ///
+    /// **入れ替えを持たないボリューム** (`RENAME_SWAP` が `ENOTSUP`・`EINVAL` で断られる。APFS・HFS+ 以外の
+    /// 一部) では、前の版を一時の置き場の `previous/` へ退けてから新しい版を置く 2 手に倒す。置けなければ
+    /// 前の版を戻して投げる。**2 手の間で強制終了されたときだけ `<name>.app` が無い瞬間が残る** が、前の版は
+    /// 置き場の `previous/<name>.app` に揃って残り、次の回が組み立ての前に元の場所へ戻す
+    /// (``sweepRemnants(in:identity:)``)。
+    ///
+    /// 置く前に、ビルドの前と同じ確かめ (``replaceableApp(for:in:)``・``replaceableNote(for:in:)``) を
+    /// もう一度通す。ビルドの間に置き換わった相手を、確かめずに入れ替えない (#2500・#3054)。
+    static func publish(
+        _ staging: Staging, identity: AppIdentity, into out: URL, steps: PublishSteps = .live
+    ) throws(CommandFailure) -> URL {
+        let app = try replaceableApp(for: identity, in: out)
+        let stagedNote = staging.directory.appendingPathComponent(noteFileName(for: identity))
+        if kind(of: stagedNote) != nil {
+            let note = try replaceableNote(for: identity, in: out)
+            do {
+                try steps.replace(stagedNote, note)
+            } catch {
+                throw .cannotCreate(path: note.path, reason: Diagnostics.failureText(error))
+            }
+        }
         do {
-            try FileManager.default.moveItem(at: app, to: retiring)
+            if kind(of: app) == nil {
+                try steps.move(staging.app, app)
+            } else {
+                do {
+                    try steps.swap(staging.app, app)
+                } catch where swapIsUnsupported(error) {
+                    try replaceInTwoSteps(staging, app: app, steps: steps)
+                }
+            }
         } catch {
             throw .cannotCreate(path: app.path, reason: Diagnostics.failureText(error))
         }
-        try? FileManager.default.removeItem(at: retiring)
+        steps.remove(staging.directory)
+        return app
+    }
+
+    /// 入れ替えを持たないボリュームでの倒し先。前の版を `previous/` へ退けてから新しい版を置き、
+    /// 置けなければ前の版を戻す。
+    private static func replaceInTwoSteps(_ staging: Staging, app: URL, steps: PublishSteps) throws {
+        let holder = staging.directory.appendingPathComponent(previousDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: holder, withIntermediateDirectories: true)
+        let previous = holder.appendingPathComponent(app.lastPathComponent, isDirectory: true)
+        try steps.move(app, previous)
+        do {
+            try steps.move(staging.app, app)
+        } catch {
+            try? steps.move(previous, app)
+            throw error
+        }
     }
 
     /// 実行ファイルの隣に並んだ資材の包み。
