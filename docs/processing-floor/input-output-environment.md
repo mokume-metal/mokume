@@ -129,8 +129,8 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
-| `save()` | `save(_:)` | 同等 | 形式は PNG で、色空間は作業空間と同じ Display P3。**透けたところは透けたまま残る** (Processing は不透明に書く)。名前が `.svg` で終わるときだけ、絵でなく線を書く ([ADR-0023](../decisions/0023-frame-stages-and-outputs.md))。呼んだ時点では予約するだけで、書き込みはフレームの外で走る。無い形: TIFF・TARGA・JPEG、拡張子を省いた名前 | [#3139] |
-| `saveFrame()` | `beginRecord("out/f-####.png")` … `endRecord()`。1 枚なら `save("f-\(frameCount).png")` | 同等 | 連番は 2 つの API で挟む。**`####` は `frameCount` ではなく、録りの中の通し番号 (0 から)**。名前が `.mov` で終われば 1 本の動画になる。無い形: 引数なしの `saveFrame()` (既定の名前 `screen-####.tif`)、`####` に `frameCount` を入れる書き方 | [#2437] |
+| `save()` | `save(_:)` | 同等 | 形式は PNG で、色空間は作業空間と同じ Display P3。**透けたところは透けたまま残る** (Processing は不透明に書く)。名前が `.svg` で終わるときだけ、絵でなく線を書く ([ADR-0023](../decisions/0023-frame-stages-and-outputs.md))。呼んだ時点では予約するだけで、書き込みはフレームの外で走る。無い形: TIFF・TARGA・JPEG、拡張子を省いた名前。**名前が `.png`・`.svg` (大文字小文字を区別しない) で終わらなければ、PNG で書いたうえで 1 度だけ知らせる** (`draw()` の中で毎フレーム止めないよう、投げない・[#3723]) | [#3139]・[#3723] |
+| `saveFrame()` | `beginRecord("out/f-####.png")` … `endRecord()`。1 枚なら `save("f-\(frameCount).png")` | 同等 | 連番は 2 つの API で挟む。**`####` は `frameCount` ではなく、録りの中の通し番号 (0 から)**。名前が `.mov` で終われば 1 本の動画になる。連番の名前が `.png` で終わらなければ (`f-####.jpg`)、PNG で書いたうえで 1 度だけ知らせる ([#3723])。無い形: 引数なしの `saveFrame()` (既定の名前 `screen-####.tif`)、`####` に `frameCount` を入れる書き方 | [#2437] |
 
 ## 文字の出力
 
@@ -159,3 +159,4 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 [#3707]: https://github.com/mokume-metal/mokume/issues/3707
 [#3708]: https://github.com/mokume-metal/mokume/issues/3708
 [#3709]: https://github.com/mokume-metal/mokume/issues/3709
+[#3723]: https://github.com/mokume-metal/mokume/issues/3723
