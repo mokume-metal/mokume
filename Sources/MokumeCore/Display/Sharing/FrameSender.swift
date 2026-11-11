@@ -43,8 +43,11 @@ package final class FrameSender {
         var pending: [(slot: Int, submission: UInt64, frameCount: Int64, writes: Int64, hostTime: UInt64)] = []
         /// 面へ書いた回数。
         var writes: Int64 = 0
-        /// 最後に書いたフレームの番号。同じ番号の絵を 2 度書かない。
+        /// 最後に書いたフレームの番号。同じ番号の絵を 2 度書かない。**書いた絵を GPU が打ち切ったら戻す** —
+        /// 止まった作品では次の番号が来ないので、戻さないと受け手は今の絵を受け取れない (#3945)。
         var lastFrameCount: Int64?
+        /// 面が全部掴まれていて見送ったフレームの番号。同じ番号を何度呼ばれても 1 枚と数える。
+        var lastSkippedFrameCount: Int64?
 
         init(id: UInt32, name: String, port: mach_port_t, surfaces: [HandedSurface]) {
             self.id = id
@@ -262,9 +265,12 @@ package final class FrameSender {
 
     /// 繋がっている受け手の面へ、1 フレームを書く。**受け手が居なければ何もしない。**
     ///
+    /// **表示のリフレッシュごとに呼んでよい** (#3945)。同じ番号の絵は受け手ごとに 1 度だけ書くので、止まった作品へ
+    /// 後から繋いだ受け手には今の絵を 1 度書き、前に書いた絵の GPU の完了は呼ばれるたびに見て知らせる。
+    ///
     /// - Parameters:
     ///   - width: いまの描く解像度。前と違えば、受け手に大きさの変更を知らせて面を手放す (``resize(width:height:)``)
-    ///   - frameCount: フレームの番号。前に書いた番号と同じなら書かない (止まっている作品)
+    ///   - frameCount: フレームの番号。その受け手へ前に書いた番号と同じなら書かない (止まっている作品)
     ///   - hostTime: 描いた時刻
     ///   - write: 与えた面へ絵を書く投入をして、その番号を返す。待たない
     package func deliver(
@@ -279,7 +285,10 @@ package final class FrameSender {
             let busy = Set(receiver.pending.map(\.slot))
             guard let slot = receiver.held.indices.first(where: { !receiver.held[$0] && !busy.contains($0) })
             else {
-                skippedFrames += 1
+                if receiver.lastSkippedFrameCount != frameCount {
+                    receiver.lastSkippedFrameCount = frameCount
+                    skippedFrames += 1
+                }
                 continue
             }
             let submission = try write(receiver.surfaces[slot].texture)
@@ -327,6 +336,12 @@ package final class FrameSender {
         }
     }
 
+    /// 書いた焼きのうち、GPU が無事に終えたものを知らせる。**書く絵が無いリフレッシュに呼ぶ** — 止まった作品でも、
+    /// 最後に書いた絵を次の絵を待たずに知らせる (#3945)。待たない。
+    package func announceCompleted() {
+        for receiver in receivers { announce(receiver) }
+    }
+
     /// 控えた焼きのうち、GPU が無事に終えたものを知らせる。結末がまだなら次へ回す。
     private func announce(_ receiver: Receiver) {
         while let burn = receiver.pending.first {
@@ -334,9 +349,11 @@ package final class FrameSender {
             case nil:
                 return
             case true?:
-                // 打ち切られた焼きは知らせない (中身が揃っていない)
+                // 打ち切られた焼きは知らせない (中身が揃っていない)。それが最後に書いた絵なら、同じ番号でも書き直す
+                // (止まった作品では次の番号が来ない・#3945)
                 receiver.pending.removeFirst()
                 receiver.held[burn.slot] = false
+                if receiver.lastFrameCount == burn.frameCount { receiver.lastFrameCount = nil }
             case false?:
                 receiver.pending.removeFirst()
                 let surface = receiver.surfaces[burn.slot].surface

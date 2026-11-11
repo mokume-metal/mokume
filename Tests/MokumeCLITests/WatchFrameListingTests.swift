@@ -132,7 +132,7 @@ struct WatchFrameHandOverTests {
         let service = try #require(listing.announcement.flatMap { Bootstrap.lookUp($0.entry.serviceName) })
         defer { Bootstrap.releaseSend(service) }
         let texture = try childTexture(gpu: gpu)
-        listing.handOver(texture)
+        listing.handOver(texture, isNew: true)
         let receiver = try ReceiverForWatch(width: 16, height: 8, service: service, name: "mapper")
         listing.announcement?.sender?.drain()
         #expect(names == [["mapper"]])
@@ -160,7 +160,7 @@ struct WatchFrameHandOverTests {
 
         // 2 つの世代の子の面
         let generations = try (0..<2).map { _ in try childTexture(gpu: gpu) }
-        listing.handOver(generations[0])  // 送り手を起こす (受け手はまだ居ない)
+        listing.handOver(generations[0], isNew: true)  // 送り手を起こす (受け手はまだ居ない)
         let sender = try #require(listing.announcement?.sender)
         let receiver = try ReceiverForWatch(width: 16, height: 8, service: service)
         defer { receiver.close() }
@@ -168,12 +168,145 @@ struct WatchFrameHandOverTests {
         var counts: [Int64] = []
         for texture in [generations[0], generations[0], generations[1], generations[1], generations[1]] {
             sender.drain()
-            listing.handOver(texture)
+            listing.handOver(texture, isNew: true)
             _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
             counts += receiver.takeFrames()
         }
         #expect(counts == counts.sorted() && counts.count >= 3, "番号が途切れた: \(counts)")
         #expect(Set(counts).count == counts.count)
+    }
+
+    // MARK: - 作品のウィンドウの台から受け手まで (#3945・#3947)
+
+    /// 本物の作品のウィンドウの台と子の面を、見張りと同じ口 (``WatchFrameListing/attach(to:)``) で繋いだ組。
+    private struct Watched {
+        let gpu: RenderDevice
+        let window: SharedFrameWindow
+        let listing: WatchFrameListing
+        let sender: FrameSender
+        let receiver: ReceiverForWatch
+        let service: mach_port_t
+
+        /// 表示のリフレッシュを `times` 回打つ。**子は描かない** (止まっている作品)。届いた frame の番号を返す。
+        func refresh(_ times: Int) -> [Int64] {
+            var counts: [Int64] = []
+            for _ in 0..<times {
+                sender.drain()
+                window.stage.displayLinkFired()
+                // 写しの結末を検査の側で揃える (送り手は待たない。次のリフレッシュで結末を見る)
+                _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+                counts += receiver.takeFrames()
+            }
+            return counts
+        }
+
+        func close() {
+            receiver.close()
+            Bootstrap.releaseSend(service)
+            listing.withdraw()
+            window.stage.close()
+        }
+    }
+
+    /// 子の面 (`watch` の子が作品のウィンドウへ差し出す面) を区画に置き、名乗りの中身を載せる。
+    private func makeChild(in facet: URL, gpu: RenderDevice, offset: TimeInterval = 0) throws -> SharedFrameSurface {
+        let child = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: facet)
+        child.frameShare = FrameShare(sketch: "Bricks", title: "Bricks")
+        try child.publishManifest()
+        // 見張りは目録の更新時刻が動いたときだけ読み直すので、入れ替えの目録は時刻をずらす
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(offset)],
+            ofItemAtPath: facet.appendingPathComponent(SharedFrameSurface.manifestName).path)
+        return child
+    }
+
+    /// 子の面へ 1 枚焼いて名乗らせる。色で絵を見分ける。
+    private func draw(_ child: SharedFrameSurface, _ color: LinearRGBA, gpu: RenderDevice) throws {
+        let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+        try source.fill(with: color)
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        try child.write(
+            source, using: presenter,
+            numbers: FrameNumbers(frameCount: 1, time: 0, frameRate: 60, frameTimeMs: 16.7))
+        _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+        try child.publishPending()
+    }
+
+    /// 子の面を置いた区画で、作品のウィンドウの台を作り、見張りと同じ口で名乗りを繋ぎ、1 度リフレッシュして送り手を
+    /// 起こしてから受け手を繋ぐ。
+    private func watch(facet: URL, gpu: RenderDevice) throws -> Watched {
+        let directory = try TestScratch.directory("mokume-frames")
+        let window = try SharedFrameWindow(gpu: gpu, facet: facet, title: "Bricks")
+        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share in
+            FrameAnnouncement.announce(
+                sketch: share.sketch, identity: identity, title: share.title, in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") })
+        }
+        listing.say = { _ in }
+        listing.attach(to: window)
+        window.stage.displayLinkFired()
+        let sender = try #require(listing.announcement?.sender, "1 枚目で送り手を起こしていない")
+        let name = try #require(listing.announcement?.entry.serviceName)
+        let service = try #require(Bootstrap.lookUp(name))
+        let receiver = try ReceiverForWatch(width: 16, height: 8, service: service)
+        return Watched(
+            gpu: gpu, window: window, listing: listing, sender: sender, receiver: receiver, service: service)
+    }
+
+    /// **受け手へ渡すのは、子の新しい絵が来たときだけではない** ([#3945])。止まった作品 (`noLoop()`) へ後から繋いだ
+    /// 受け手にも今の 1 枚が届き、繋がっている間に 1 回だけ描き直して止まっても、その 1 枚が GPU の完了の後に届く。
+    /// どちらも同じ絵を写し直さない。
+    ///
+    /// [#3945]: https://github.com/mokume-metal/mokume/issues/3945
+    @Test("止まった作品へ後から繋いでも今の 1 枚が届き、1 回だけ描き直して止まるとその 1 枚が届く。同じ絵は写し直さない")
+    func aStillSketchReachesItsReceivers() throws {
+        let facet = try TestScratch.directory("mokume-viewport")
+        let gpu = try RenderDevice()
+        let child = try makeChild(in: facet, gpu: gpu)
+        try draw(child, .linear(red: 1, green: 0, blue: 0), gpu: gpu)
+        let watched = try watch(facet: facet, gpu: gpu)
+        defer { watched.close() }
+
+        // 繋いだ後、子は 1 枚も描かない
+        var submitted = gpu.submissionCount
+        let late = watched.refresh(10)
+        #expect(late.count == 1, "止まった作品の今の 1 枚が後から繋いだ受け手へ届かない: \(late)")
+        #expect(gpu.submissionCount - submitted == 1, "同じ絵を写し直した (写しの投入 \(gpu.submissionCount - submitted) 回)")
+        #expect(watched.receiver.lastPixel().map { $0[0] > $0[1] } == true, "今の絵 (赤) でない: \(String(describing: watched.receiver.lastPixel()))")
+
+        // 1 回だけ描き直して、また止まる
+        try draw(child, .linear(red: 0, green: 1, blue: 0), gpu: gpu)
+        submitted = gpu.submissionCount
+        let redrawn = watched.refresh(10)
+        #expect(redrawn.count == 1, "描き直した 1 枚が届かない: \(redrawn)")
+        #expect(gpu.submissionCount - submitted == 1, "同じ絵を写し直した (写しの投入 \(gpu.submissionCount - submitted) 回)")
+        #expect(watched.receiver.lastPixel().map { $0[1] > $0[0] } == true, "描き直した絵 (緑) でない: \(String(describing: watched.receiver.lastPixel()))")
+        #expect((late + redrawn) == (late + redrawn).sorted() && Set(late + redrawn).count == 2, "\(late + redrawn)")
+    }
+
+    /// **子の番号は子ごとに 1 から数える** ([#3947])。保存の前後の子がどちらも 3 枚目で止まっても、新しい世代の絵を
+    /// 受け手へ渡す。
+    ///
+    /// [#3947]: https://github.com/mokume-metal/mokume/issues/3947
+    @Test("保存の前後の子が同じ番号で止まっても、新しい世代の絵を受け手へ渡す")
+    func aNewGenerationWithTheSameFrameNumberIsHandedOver() throws {
+        let facet = try TestScratch.directory("mokume-viewport")
+        let gpu = try RenderDevice()
+        let before = try makeChild(in: facet, gpu: gpu)
+        for _ in 0..<3 { try draw(before, .linear(red: 1, green: 0, blue: 0), gpu: gpu) }
+        let watched = try watch(facet: facet, gpu: gpu)
+        defer { watched.close() }
+        let first = watched.refresh(5)
+        #expect(first.count == 1, "\(first)")
+
+        // 保存で子が入れ替わり、台が次に見るまでに新しい子が 3 枚描いて止まる
+        let after = try makeChild(in: facet, gpu: gpu, offset: 5)
+        for _ in 0..<3 { try draw(after, .linear(red: 0, green: 1, blue: 0), gpu: gpu) }
+        let handed = watched.refresh(10)
+        #expect(handed.count == 1, "新しい世代の絵を渡さない: \(handed)")
+        #expect(watched.receiver.lastPixel().map { $0[1] > $0[0] } == true, "新しい世代の絵 (緑) でない: \(String(describing: watched.receiver.lastPixel()))")
+        #expect(handed.allSatisfy { $0 > first.max() ?? 0 }, "道具の番号が進んでいない: \(first) → \(handed)")
+        _ = before
     }
 }
 
@@ -201,6 +334,8 @@ private final class ReceiverForWatch {
     let service: mach_port_t
     let surfaces: [IOSurfaceRef]
     var id: UInt32 = 0
+    /// 最後に届いた frame の面。
+    private(set) var lastSlot: Int?
 
     init(width: Int, height: Int, service: mach_port_t, name: String? = nil) throws {
         var port: mach_port_t = 0
@@ -227,12 +362,27 @@ private final class ReceiverForWatch {
                 let slot = reader.uint32(), let count = reader.int64()
             else { continue }
             counts.append(count)
+            lastSlot = Int(slot)
             var payload = FrameLink.Payload()
             payload.append(receiver)
             payload.append(slot)
             FrameLink.send(.release, to: service, payload: payload)
         }
         return counts
+    }
+
+    /// 最後に届いた frame の面の真ん中の 1 画素 (半精度 4 成分)。まだ届いていなければ `nil`。面は返した後も読める
+    /// (送り手は次に書くまで触らない)。
+    func lastPixel() -> [Float]? {
+        guard let lastSlot else { return nil }
+        let surface = surfaces[lastSlot]
+        IOSurfaceLock(surface, .readOnly, nil)
+        defer { IOSurfaceUnlock(surface, .readOnly, nil) }
+        let base = IOSurfaceGetBaseAddress(surface)
+        let offset = (IOSurfaceGetHeight(surface) / 2) * IOSurfaceGetBytesPerRow(surface)
+            + (IOSurfaceGetWidth(surface) / 2) * 8
+        let components = base.advanced(by: offset).assumingMemoryBound(to: Float16.self)
+        return (0..<4).map { Float(components[$0]) }
     }
 
     func close() {

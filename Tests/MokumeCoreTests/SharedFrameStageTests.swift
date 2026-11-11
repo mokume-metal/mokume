@@ -1390,6 +1390,53 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **受け手へ渡す絵は、リフレッシュごとに新しいかを添えて知らせる** ([#3945]・[#3947])。止まった作品でも毎回呼び
+    /// (見張りが後から繋いだ受け手へ今の絵を写し、写した絵の完了を知らせる)、新しいのは絵が変わった回だけである。
+    /// 子の番号は子ごとに 1 から数えるので、乗り換え・映し直しの後は同じ番号でも新しい。
+    ///
+    /// [#3945]: https://github.com/mokume-metal/mokume/issues/3945
+    /// [#3947]: https://github.com/mokume-metal/mokume/issues/3947
+    @Test("映す世代の絵をリフレッシュごとに知らせ、新しいのは絵が変わった回と、同じ番号でも世代が替わった回だけ")
+    func theShownFrameIsHandedEveryRefresh() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("hand-over"))
+            defer { stage.close() }
+            var told: [(texture: ObjectIdentifier?, isNew: Bool)] = []
+            stage.onFrame = { texture, isNew in told.append((texture.map { ObjectIdentifier($0) }, isNew)) }
+
+            // まだ何も無い
+            stage.displayLinkFired()
+            #expect(told.count == 1 && told[0].texture == nil && !told[0].isNew)
+
+            let before = try makeSurface(in: facet, gpu: gpu, drawing: 3)
+            told.removeAll()
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(told.map(\.isNew) == [true, false, false], "\(told.map(\.isNew))")
+            #expect(told.allSatisfy { $0.texture != nil && $0.texture == told[0].texture })
+            let first = told[0].texture
+
+            // 保存で入れ替わった子も 3 枚目で止まる
+            let after = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)],
+                ofItemAtPath: facet.appendingPathComponent(SharedFrameSurface.manifestName).path)
+            for frame in 1...3 { try draw(after, frame: frame, gpu: gpu) }
+            told.removeAll()
+            for _ in 0..<2 { stage.displayLinkFired() }
+            #expect(told.map(\.isNew) == [true, false], "乗り換えた世代の同じ番号の絵を新しいとしない: \(told.map(\.isNew))")
+            #expect(told[0].texture != first)
+
+            // 新しい世代を捨てて前の版を映し直す。前の版も 3 枚目のまま
+            told.removeAll()
+            stage.abandonIncoming(pids: [ProcessInfo.processInfo.processIdentifier])
+            for _ in 0..<2 { stage.displayLinkFired() }
+            #expect(told.map(\.isNew) == [true, false], "映し直した世代の絵を新しいとしない: \(told.map(\.isNew))")
+            #expect(told[0].texture == first)
+            _ = before
+        }
+    }
+
     /// **乗り換えを待つ子が 1 枚書いてすぐ死に、離脱の知らせが台の拍より先に来ても、台は死んだ子の頼みを読まない**
     /// ([#2983] の反証 6)。伝えた時点では台はまだ死んだ子の目録を採っていないので、番号で指して、採った目録も
     /// 生まれたときから手放した扱いにする。生きた別の世代の頼みには従う。
