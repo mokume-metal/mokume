@@ -1,0 +1,43 @@
+name: Warm tools cache
+
+# ci.yml の ci-static が使う道具 (actionlint・shellcheck) の cache を、既定ブランチ (main) に置く
+# (#3885)。cache は自分の ref と既定ブランチのぶんしか読めない。PR の run が書いた cache はその PR
+# の次の run からしか読めず、merge_group の run (別の ref) は毎回外れ、取得で落ちた run は何も
+# 保存しない。main に 1 つ在れば、PR の初回の run と merge queue の run の両方から当たる。
+#
+# **ci.yml には置かない。** ci.yml の on: に push を戻すと、すべての job に「push では走らない」
+# 条件が要り、push の run が ci-gate・stall-watch・queue-sweep が ci.yml の run を数える所へ混ざる
+# (#1713 で push をやめた理由)。別のワークフローなら、それらは ci.yml の run だけを見続ける。
+# この job は必須チェックではなく、結果を読むものも無い。
+#
+# **ci-static と path と key を同じ文字列に保つ。** 一致は scripts/tests/ci_workflow_test.py が見る。
+# 当たっていれば check-workflows.sh は何も取らずに終わり、外れていれば版と sha256 の照合つきで
+# 取って、job の終わりに保存する。GH_TOKEN・GITHUB_TOKEN は持ち込まない。
+#
+# 代償: main の cache が 7 日使われないと GitHub が破棄する。その直後の run は外れて取得に落ち、
+# その run が成功すれば PR の ref に保存される。main の cache は次の main への push で戻る。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  warm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: .build/tools
+          key: workflow-lint-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/check-workflows.sh') }}
+      - run: bash scripts/check-workflows.sh
