@@ -444,6 +444,18 @@ public class SynthSource: SynthSound {
             let sustainLevel = accept(
                 level, 0...1, call: "Env.play", meaning: "a sustainLevel")
         else { return }
+        // 標本の数で表せない長さ (区間か合計が Int を越える) は、音の側で落ちる前に呼び出しごと拒む (#3951)
+        guard
+            EnvelopeShape.sampleCounts(
+                attack: attackTime, sustain: sustainTime, release: releaseTime,
+                sampleRate: stage.rack.sampleRate) != nil
+        else {
+            notice(
+                "Env.play.tooLong",
+                "Env.play() got times that are too long to count in samples (each, or all three "
+                    + "together), so the call is ignored for this \(name)")
+            return
+        }
         // 値・包絡・鳴らす操作を 1 つの予約として渡す。時刻が先なら、前の予約の値を書き換えないよう全部がその時刻に効く
         guard
             postReservation(
@@ -793,6 +805,9 @@ public final class Env {
     ///
     /// 秒数が負なら 0 に、`sustainLevel` が 0〜1 の外なら端にクランプし、NaN・無限大があれば
     /// 呼び出し全体を無視する。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
+    /// 有限でも、秒数のどれか 1 つ、または 3 つの合計がサンプル数で表せないほど長い (48 kHz で
+    /// およそ 1.9 × 10¹⁴ 秒を越える) ときは、同じく呼び出し全体を無視して 1 度だけ警告する。
+    /// 鳴っている音の包絡も先の予約もそのまま残る。
     /// すぐに始める。先の時刻に始めるなら ``play(_:_:_:_:_:at:)``。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -817,8 +832,8 @@ public final class Env {
     ///   - at: 始める時刻 (オーディオクロックの秒。``Sketch/soundTime`` と同じクロック)。現在より前 (負を含む) なら、次に生成する
     ///     サンプルの先頭で始める。
     ///
-    /// NaN・無限大 (`time` を含む) があれば呼び出し全体を無視して 1 度だけ警告する (投げない —
-    /// [ADR-0020] 決定 5)。
+    /// NaN・無限大 (`time` を含む) と、サンプル数で表せないほど長い秒数があれば、呼び出し全体を無視して
+    /// 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
     ///
     /// ## 先の時刻へ予約する
     ///

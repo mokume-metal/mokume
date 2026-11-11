@@ -14,7 +14,12 @@ import mokume
 /// `t` は 0 から 1 を 6.7 秒で巡る。`t` は曲線の長さの割合ではないので、曲線が急に曲がる所では
 /// 機体の速さが変わる。
 ///
+/// **下の橙の機体は、通過点を結ぶ曲線の側の 3 つの口** (`curve`・`curvePoint`・`curveTangent`・[#3710])
+/// で同じことをする。4 つの点のうち両端の 2 つ (灰色の丸) は通らず、間の 1 区間だけを飛ぶ。
+/// こちらの 2 つの口は、いまの `curveTightness` を読む。
+///
 /// [#2430]: https://github.com/mokume-metal/mokume/issues/2430
+/// [#3710]: https://github.com/mokume-metal/mokume/issues/3710
 final class CurveAndFlight: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 960, height: 540, title: "curve and flight")
@@ -47,6 +52,26 @@ final class CurveAndFlight: Sketch {
             rotate(angle)
             noStroke()
             fill(255)
+            triangle(14, 0, -10, -8, -10, 8)
+        }
+
+        // 通過点を結ぶ曲線の 1 区間と、その上を飛ぶ橙の機体。両端の点は曲がり方を決めるだけで通らない
+        noStroke()
+        fill(70, 76, 90)
+        circle(120, 380, 10)
+        circle(880, 520, 10)
+        noFill()
+        stroke(120)
+        strokeWeight(2)
+        curve(120, 380, 300, 500, 700, 440, 880, 520)
+        let cx = curvePoint(120, 300, 700, 880, t)
+        let cy = curvePoint(380, 500, 440, 520, t)
+        let heading = atan2(curveTangent(380, 500, 440, 520, t), curveTangent(120, 300, 700, 880, t))
+        push {
+            translate(cx, cy)
+            rotate(heading)
+            noStroke()
+            fill(242, 115, 64)
             triangle(14, 0, -10, -8, -10, 8)
         }
     }

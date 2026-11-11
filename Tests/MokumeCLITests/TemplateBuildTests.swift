@@ -130,7 +130,9 @@ struct TemplateBuildTests {
             "木目", to: root.appendingPathComponent("Sources/asset-sketch/assets/grain.txt"))
 
         // 宣言があるので、走らせる前の検査は通る
-        #expect(throws: Never.self) { try ResourceDeclaration.check(in: root) }
+        #expect(throws: Never.self) {
+            try ResourceDeclaration.check(in: root, declared: try RunCommand.dumpPackage(in: root))
+        }
 
         let scratch = SharedDebugScratch.place
         let built = try BuildProcess.build(in: root, scratchPath: scratch)

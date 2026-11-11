@@ -442,6 +442,45 @@ extension SketchPart {
         canvas.image(image, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 
+    /// 画像を、`destination` の範囲に合わせて置く。範囲を ``Rect`` で渡す。
+    ///
+    /// ``imageMode(_:)`` が既定 (`.corner`) のときの 5 つの引数の形に、`destination` の左上と幅・高さを
+    /// 渡すのと同じ絵になる。違いは 2 つで、**どの数が何かを呼び出しの行で読める**ことと、
+    /// **``imageMode(_:)`` に従わない**ことである — ``Rect`` は左上で置く値なので、モードが `.center`
+    /// でも値のとおり左上から置く (``Rect/draw()`` が ``rectMode(_:)`` に従わないのと同じ)。
+    ///
+    /// <!-- example: 文脈 var tile: Image! -->
+    /// ```swift
+    /// // image(tile, 10, 20, 64, 64) (既定のモード) と同じ絵
+    /// image(tile, in: Rect(left: 10, top: 20, width: 64, height: 64))
+    /// ```
+    // shot: 参照 image(_:_:_:_:_:) (Image, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+    public func image(_ image: Image, in destination: Rect) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.image(image, in: destination)
+    }
+
+    /// 画像の `source` の範囲を切り出して、`destination` の範囲に置く。2 つの範囲を ``Rect`` で渡す。
+    ///
+    /// ``imageMode(_:)`` が既定 (`.corner`) のときの 9 つの引数の形に、置き先と切り出しの左上と幅・高さを
+    /// 渡すのと同じ絵になる。切り出しが画像の外へ出たときの扱いもそちらと同じで、違いは
+    /// **どの範囲が置き先でどれが切り出しかを呼び出しの行で読める**ことと、**``imageMode(_:)`` に
+    /// 従わない**ことである (置き先は値のとおり左上から置く)。
+    ///
+    /// <!-- example: 文脈 var tile: Image! -->
+    /// ```swift
+    /// // image(tile, 190, 40, 128, 128, 4, 4, 28, 28) (既定のモード) と同じ絵
+    /// image(
+    ///     tile,
+    ///     in: Rect(left: 190, top: 40, width: 128, height: 128),
+    ///     from: Rect(left: 4, top: 4, width: 28, height: 28))
+    /// ```
+    // shot: 参照 image(_:_:_:_:_:_:_:_:_:) (Image, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+    public func image(_ image: Image, in destination: Rect, from source: Rect) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.image(image, in: destination, from: source)
+    }
+
     /// 4 つの数を、画像のどこの寸法として読むか。既定は**左上の角と、幅と高さ**。
     ///
     /// 下の 4 枚はどれも同じ 4 つの数 `200, 150, 120, 90` を渡していて、変えたのは

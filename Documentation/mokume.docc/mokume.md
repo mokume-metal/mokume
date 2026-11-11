@@ -591,6 +591,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
 - ``lerpColor(_:_:_:)``
+- ``lerpColor(_:_:amount:)``
 - ``paletteLerp(_:_:)``
 - ``red(_:)``
 - ``green(_:)``
@@ -629,6 +630,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/line(_:_:)-(Vector2,_)``
 - ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
 - ``SketchPart/bezier(from:control1:control2:to:)``
+- ``SketchPart/curve(_:_:_:_:_:_:_:_:)``
+- ``SketchPart/curve(from:control1:control2:to:)``
 
 ### 座標の読み方
 
@@ -666,6 +669,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/curveTightness(_:)``
 - ``bezierPoint(_:_:_:_:_:)``
 - ``bezierTangent(_:_:_:_:_:)``
+- ``SketchPart/curvePoint(_:_:_:_:_:)``
+- ``SketchPart/curveTangent(_:_:_:_:_:)``
 - ``SketchPart/beginContour()``
 - ``SketchPart/endContour()``
 - ``SketchPart/endShape(_:)``
@@ -764,6 +769,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/image(_:_:_:)-23fpf``
 - ``SketchPart/image(_:_:_:_:_:)-4ch39``
 - ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-6fe4h``
+- ``SketchPart/image(_:in:)-(Image,_)``
+- ``SketchPart/image(_:in:from:)-(Image,_,_)``
 - ``SketchPart/texture(_:)-c9g``
 - ``SketchPart/noTexture()``
 - ``Image``
@@ -885,7 +892,11 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/pixels``
 - ``SketchPart/loadPixels()``
 - ``SketchPart/get(_:_:)``
+- ``SketchPart/get()``
+- ``SketchPart/get(_:_:_:_:)``
+- ``SketchPart/get(in:)``
 - ``SketchPart/set(_:_:_:)``
+- ``SketchPart/set(x:y:to:)``
 - ``Pixels``
 - ``PixelBuffer``
 
@@ -895,6 +906,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/image(_:_:_:)-7psdx``
 - ``SketchPart/image(_:_:_:_:_:)-666br``
 - ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-3q9cm``
+- ``SketchPart/image(_:in:)-(Canvas,_)``
+- ``SketchPart/image(_:in:from:)-(Canvas,_,_)``
 - ``SketchPart/texture(_:)-6aozc``
 - ``Canvas``
 
@@ -1022,6 +1035,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/random(_:_:)``
 - ``SketchPart/randomGaussian()``
 - ``SketchPart/randomGaussian(_:_:)``
+- ``SketchPart/randomGaussian(mean:standardDeviation:)``
 - ``SketchPart/random(_:)-([Element])``
 - ``SketchPart/shuffle(_:)``
 - ``SketchPart/randomSeed(_:)``
@@ -1030,6 +1044,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/noise(_:_:_:_:)``
 - ``SketchPart/noiseSeed(_:)``
 - ``SketchPart/noiseDetail(_:_:)``
+- ``SketchPart/noiseDetail(octaves:falloff:)``
 - ``NoiseField``
 
 ### 角度と数値の変換
@@ -1042,13 +1057,18 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``radians(_:)``
 - ``degrees(_:)``
 - ``map(_:_:_:_:_:)``
+- ``map(_:fromLow:fromHigh:toLow:toHigh:)``
 - ``lerp(_:_:_:)``
+- ``lerp(_:_:amount:)``
 - ``constrain(_:_:_:)``
 - ``norm(_:_:_:)``
 - ``smoothstep(_:_:_:)``
+- ``smoothstep(_:_:x:)``
 - ``damp(_:_:_:_:)``
+- ``damp(_:toward:lambda:deltaTime:)``
 - ``pingpong(_:_:)``
 - ``lerpAngle(_:_:_:)``
+- ``lerpAngle(_:_:amount:)``
 - ``dist(_:_:_:_:)``
 - ``dist(_:_:_:_:_:_:)``
 - ``dist(_:_:)-(Vector2,_)``
@@ -1168,6 +1188,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 
 - ``Scene``
 - ``ArcadeBody``
+- ``Camera2D``
 
 ### 実行中に値を調整する
 

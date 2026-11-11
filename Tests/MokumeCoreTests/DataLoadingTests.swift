@@ -162,6 +162,152 @@ struct DataLoadingTests {
         #expect(TableValues.warnings.hasWarned(.columnOutOfRange))
     }
 
+    // MARK: - 表の行と列を書き換える (#3642)
+
+    /// 3 行 × 2 列の表 (a: 1, 2, 3 / b: 10, 20, 30)。
+    private static func threeRows() -> Table {
+        var t = Table(columns: ["a", "b"])
+        t.addRow([1, 10])
+        t.addRow([2, 20])
+        t.addRow([3, 30])
+        return t
+    }
+
+    @Test("removeRow は行を除いて順を保ち、removeColumn は列と見出しを除き、clearRows は見出しを残す")
+    func removeRowsAndColumns() {
+        var t = Self.threeRows()
+        t.removeRow(1)
+        #expect(t.rowCount == 2)
+        #expect(t.rows.map { $0.getString("a") } == ["1.0", "3.0"])
+        #expect(t.rows.map { $0.getString("b") } == ["10.0", "30.0"])
+        t.removeColumn("a")
+        #expect(t.columnTitles == ["b"])
+        #expect(t.columnCount == 1)
+        #expect(t.getFloat(1, "b") == 30)
+        t.clearRows()
+        #expect(t.rowCount == 0)
+        #expect(t.columnTitles == ["b"])
+        #expect(t.columnCount == 1)
+
+        // 番号の形と、見出しの無い表
+        var u = Self.threeRows()
+        u.removeColumn(0)
+        #expect(u.columnTitles == ["b"])
+        #expect(u.rows.map { $0.getFloat(0) } == [10, 20, 30])
+        u.removeRow(2)
+        u.removeRow(0)
+        #expect(u.rows.map { $0.getFloat(0) } == [20])
+    }
+
+    @Test("見出しの無い表の列を番号で除くと、どの行からも同じ列が除かれる")
+    func removeColumnWithoutHeader() throws {
+        defer { cleanUp() }
+        var t = try Bare().loadTable(try file("t.csv", "1,2,3\n4,5,6\n"))
+        t.removeColumn(1)
+        #expect(t.columnCount == 2)
+        #expect(t.rows.map { [$0.getString(0), $0.getString(1)] } == [["1", "3"], ["4", "6"]])
+        #expect(t.columnTitles.isEmpty)
+    }
+
+    @Test("無い列・表の外の行には何もせず、口ごとに 1 度だけ知らせる (投げない)")
+    func editsOutsideTheTableDoNothing() {
+        let before = Self.threeRows()
+        var t = before
+        t.removeRow(3)
+        t.removeRow(-1)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "removeRow"))?.contains("there is no row 3") == true)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "removeRow"))?.hasSuffix("Nothing was removed") == true)
+        let typo = "c-\(UUID().uuidString)"
+        t.removeColumn(typo)
+        #expect(TableValues.warnings.message(for: .noColumn(typo))?.hasPrefix("removeColumn(") == true)
+        t.removeColumn(2)
+        t.setInt(0, "q-\(UUID().uuidString)", 1)
+        t.setInt(5, "a", 1)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "setInt"))?.contains("there is no row 5") == true)
+        t.setInt(0, 9, 1)
+        t.trim("t-\(UUID().uuidString)")
+        t.trim(7)
+        t.removeTokens("1", "r-\(UUID().uuidString)")
+        t.removeTokens("1", -2)
+        #expect(t == before)
+    }
+
+    @Test("setInt は整数の綴りで書き (setFloat は 3.0)、getInt で読み直すと同じ整数")
+    func setIntWritesIntegerSpelling() {
+        var t = Self.threeRows()
+        t.setInt(0, "a", 3)
+        #expect(t.getString(0, "a") == "3")
+        t.setFloat(1, "a", 3)
+        #expect(t.getString(1, "a") == "3.0")
+        t.setInt(2, 1, -9_223_372_036_854_775_808)
+        #expect(t.getString(2, 1) == "-9223372036854775808")
+        #expect(t.getInt(2, 1) == Int.min)
+        #expect(t.getInt(0, "a") == 3)
+    }
+
+    @Test("trim は前後の空白 (タブ・改行を含む) を落とし、列を名指すとその列だけ。見出しは触らない")
+    func trimCells() throws {
+        defer { cleanUp() }
+        let csv = "\" name \",value\n\"  12 \t\",\" x \"\n\"\n7\r\n\",\"\ty\"\n"
+        var all = try Bare().loadTable(try file("t.csv", csv), header: true)
+        let original = all
+        all.trim()
+        #expect(all.rows.map { $0.getString(" name ") } == ["12", "7"])
+        #expect(all.rows.map { $0.getString("value") } == ["x", "y"])
+        #expect(all.columnTitles == [" name ", "value"])
+
+        var named = original
+        named.trim("value")
+        #expect(named.rows.map { $0.getString("value") } == ["x", "y"])
+        #expect(named.rows.map { $0.getString(" name ") } == original.rows.map { $0.getString(" name ") })
+        var numbered = original
+        numbered.trim(0)
+        #expect(numbered.rows.map { $0.getString(0) } == ["12", "7"])
+        #expect(numbered.rows.map { $0.getString(1) } == [" x ", "\ty"])
+    }
+
+    @Test("removeTokens はどれかの文字をセルから除き、列を名指すとその列だけ。見出しは触らない")
+    func removeTokensFromCells() throws {
+        defer { cleanUp() }
+        let csv = "price,$ note\n\"$1,200\",\"a, b$\"\n\" $ 35\",x\n"
+        var all = try Bare().loadTable(try file("t.csv", csv), header: true)
+        let original = all
+        all.removeTokens(",$ ")
+        #expect(all.rows.map { $0.getString("price") } == ["1200", "35"])
+        #expect(all.rows.map { $0.getString("$ note") } == ["ab", "x"])
+        #expect(all.columnTitles == ["price", "$ note"])
+        #expect(all.getInt(0, "price") == 1200)
+
+        var named = original
+        named.removeTokens(",$ ", "price")
+        #expect(named.rows.map { $0.getString("price") } == ["1200", "35"])
+        #expect(named.rows.map { $0.getString("$ note") } == ["a, b$", "x"])
+        var numbered = original
+        numbered.removeTokens("$", 1)
+        #expect(numbered.rows.map { $0.getString(1) } == ["a, b", "x"])
+        #expect(numbered.rows.map { $0.getString(0) } == ["$1,200", " $ 35"])
+    }
+
+    @Test("書き換えた表を saveTable で書いて読み直すと、書き換えた表に戻る")
+    func editedTableRoundTrips() throws {
+        defer { cleanUp() }
+        var t = Self.threeRows()
+        t.addColumn("note")
+        t.setString(0, "note", "  keep \t")
+        t.setString(2, "note", "$5,000")
+        t.removeRow(1)
+        t.removeColumn("b")
+        t.setInt(1, "a", 42)
+        t.trim("note")
+        t.removeTokens("$,", 1)
+        let path = folder.appendingPathComponent("edited.csv").path
+        try Bare().saveTable(t, path)
+        let read = try Bare().loadTable(path, header: true)
+        #expect(read == t)
+        #expect(read.columnTitles == ["a", "note"])
+        #expect(read.rows.map { [$0.getString("a"), $0.getString("note")] } == [["1.0", "keep"], ["42", "5000"]])
+    }
+
     // MARK: - 表から番号で読む (#3641)
 
     @Test("表から行の番号と列で 1 つのセルを読む: 名前と番号の 2 つの形が、行から読んだ値と同じ")

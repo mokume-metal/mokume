@@ -477,6 +477,43 @@ extension SketchPart {
         canvas.image(graphics, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 
+    /// グラフィックスを、`destination` の範囲に合わせて置く。範囲を ``Rect`` で渡す。
+    ///
+    /// ``imageMode(_:)`` が既定 (`.corner`) のときの 5 つの引数の形に、`destination` の左上と幅・高さを
+    /// 渡すのと同じ絵になる。違いは、**どの数が何かを呼び出しの行で読める**ことと、**``imageMode(_:)`` に
+    /// 従わない**ことである (``Rect`` は左上で置く値なので、値のとおり左上から置く)。
+    ///
+    /// <!-- example: 文脈 var pad: Canvas! -->
+    /// ```swift
+    /// // image(pad, 20, 30, 240, 120) (既定のモード) と同じ絵
+    /// image(pad, in: Rect(left: 20, top: 30, width: 240, height: 120))
+    /// ```
+    // shot: 参照 image(_:_:_:_:_:) (Canvas, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+    public func image(_ graphics: Canvas, in destination: Rect) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.image(graphics, in: destination)
+    }
+
+    /// グラフィックスの `source` の範囲を切り出して、`destination` の範囲に置く。2 つの範囲を ``Rect`` で渡す。
+    ///
+    /// ``imageMode(_:)`` が既定 (`.corner`) のときの 9 つの引数の形に、置き先と切り出しの左上と幅・高さを
+    /// 渡すのと同じ絵になる。違いは、**どの範囲が置き先でどれが切り出しかを呼び出しの行で読める**ことと、
+    /// **``imageMode(_:)`` に従わない**ことである。
+    ///
+    /// <!-- example: 文脈 var pad: Canvas! -->
+    /// ```swift
+    /// // image(pad, 190, 40, 128, 128, 0, 0, 60, 60) (既定のモード) と同じ絵
+    /// image(
+    ///     pad,
+    ///     in: Rect(left: 190, top: 40, width: 128, height: 128),
+    ///     from: Rect(left: 0, top: 0, width: 60, height: 60))
+    /// ```
+    // shot: 参照 image(_:_:_:_:_:_:_:_:_:) (Canvas, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+    public func image(_ graphics: Canvas, in destination: Rect, from source: Rect) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.image(graphics, in: destination, from: source)
+    }
+
     /// これから置く塗りに画像を貼る。
     ///
     /// 下の画像は、橙色と青灰色の 8 画素の格子でできた 64 画素四方の画像を、同じ
