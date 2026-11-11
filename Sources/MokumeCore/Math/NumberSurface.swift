@@ -340,12 +340,13 @@ public nonisolated func lerp(_ start: some ScalarConvertible, _ stop: some Scala
 /// 戻らない・`amount` を増やして値が逆行する・外挿で NaN を返す、の 3 つを壊すうえ、端の間の
 /// ふつうの値も 4 つに 1 つが最下位ビットで動く。
 ///
-/// **幅は有限でも、幅と `amount` の積だけが溢れる外挿は、始まりと積を半分にしてから足して 2 倍する**
+/// **幅は有限でも、幅と有限の `amount` の積だけが溢れる外挿は、始まりと積を半分にしてから足して 2 倍する**
 /// ([#3952])。`lerp(m, 0, 2)` (m は `Float` の最大) は真の値が `-m` なのに、積 `-2m` が ∞ になって
-/// -∞ を返していた。積が溢れるのは幅が大きいときだけなので、幅の半分は丸まらず、半分の積は元の積を
-/// 丸めたものの半分になる。和の丸めも 1 回なので、値は元の式を指数の上限なしで計算したのと同じになり、
-/// 真の値が `Float` を越えるときだけ ±∞ を返す。`amount` が ±∞ でも ±∞ のままで、数でない値は作らない。
-/// **溢れない組は式も値も変えない。**
+/// -∞ を返していた。`amount` が有限なら、積が溢れるのは幅が 1 以上のときだけなので、幅の半分は丸まらず、
+/// 半分の積は元の積を丸めたものの半分になる。和の丸めも 1 回なので、値は元の式を指数の上限なしで
+/// 計算したのと同じになり、真の値が `Float` を越えるときだけ ±∞ を返す。**`amount` が ±∞・NaN の組と、
+/// 溢れない組は、式も値も変えない** — ±∞ の `amount` に幅の小さな組を半分にして当てると、幅の半分が 0 に
+/// 丸まって `0 × ∞` の NaN になる。
 ///
 /// [#1312]: https://github.com/mokume-metal/mokume/issues/1312
 /// [#1453]: https://github.com/mokume-metal/mokume/issues/1453
@@ -357,7 +358,10 @@ nonisolated func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> 
     guard span != 0 else { return start }
     guard amount != 1 else { return stop }
     let step = span * amount
-    return step.isFinite ? start + step : 2 * (start / 2 + span / 2 * amount)
+    // 計算し直すのは `amount` が有限のときだけ。±∞ (比が溢れた `map`) や NaN は元の式のまま —
+    // 幅が最小の非正規化数だと半分が 0 に丸まり、`0 × ∞` の NaN を作る (#3952 の反証)
+    guard !step.isFinite, amount.isFinite else { return start + step }
+    return 2 * (start / 2 + span / 2 * amount)
 }
 
 // MARK: - 値を範囲へ締める

@@ -629,6 +629,9 @@ struct NumberSurfaceTests {
     func farExtrapolationNeverGivesNotANumber() {
         // 写した先の幅が 0 なら、どこを写しても下端 — 比が ∞ でも `0 × ∞` を作らない
         #expect(map(3e38, -3e38, 0, 5, 5) == 5)
+        // 比そのものが溢れて ∞ になる組でも (`1e30 / 1e-30`)。写した先の幅が 0 なら下端
+        #expect(map(1e30, 0, 1e-30, 5, 5) == 5)
+        #expect(map(-1e30, 0, 1e-30, 5, 5) == 5)
         // 元の幅が溢れる範囲の外の値 (真の値は 1.0169…)
         #expect(map(3e38, -3e38, 2.9e38, 0, 1).isFinite)
         // 締めないので、真の値が Float に無ければ ∞ のまま (比は 2 で収まり、写した先の 2 倍が溢れる)
@@ -822,7 +825,12 @@ struct NumberSurfaceTests {
         #expect(lerp(m, 0, 2) == -m)
         #expect(lerp(-m, 0, 2) == m)
         #expect(lerp(m, m / 2, 4) == -m)
+        // 積が Float の最大ちょうどの組 (溢れないので元の式のまま)
         #expect(lerp(0, m / 2, -2) == -m)
+        // 幅 1.5p (p = 2^127) は収まり、積 2.25p だけが溢れる組。真の値 1.25p は Float でちょうど表せる
+        let p = Float(sign: .plus, exponent: 127, significand: 1)
+        #expect(lerp(-p, p / 2, 1.5) == 1.25 * p)
+        #expect(lerp(p, -p / 2, 1.5) == -1.25 * p)
         // 写した先の外挿も同じ
         #expect(map(2, 0, 1, m, 0) == -m)
         #expect(map(m, -m, 0, 1e38, 0) == -1e38)
@@ -832,6 +840,57 @@ struct NumberSurfaceTests {
         #expect(lerp(m, 0, 1) == 0)
         #expect(lerp(m, 0, 0) == m)
         #expect(lerp(m, 0, 0.5) == m / 2)
+    }
+
+    /// 比が溢れて ±∞ で届いた `amount` を、幅の小さな組で外挿する ([#3952] の反証)。積は ±∞ だが、
+    /// 幅の半分は最小の非正規化数で 0 に丸まるので、半分にして計算し直すと `0 × ∞` の NaN になる。
+    /// 非有限の `amount` は元の式のまま ±∞ を返す。
+    ///
+    /// [#3952]: https://github.com/mokume-metal/mokume/issues/3952
+    @Test("比が ∞ で届いても、幅の小さな組の外挿は ±∞ で、数でない値は返らない")
+    func anInfiniteRatioOverATinySpanGivesInfinity() {
+        let tiny = Float.leastNonzeroMagnitude
+        #expect(map(1e30, 0, 1e-30, 0, tiny) == .infinity)
+        #expect(map(1e30, 0, 1e-30, 0, -tiny) == -.infinity)
+        #expect(map(-1e30, 0, 1e-30, 0, tiny) == -.infinity)
+        #expect(map(1e30, 0, 1e-30, tiny, 0) == -.infinity)
+        #expect(Vector2(0, 0).interpolated(to: Vector2(tiny, 0), amount: Float.infinity).x == .infinity)
+        #expect(Vector2(0, 0).interpolated(to: Vector2(-tiny, 0), amount: Float.infinity).x == -.infinity)
+        #expect(Vector3(0, 0, 0).interpolated(to: Vector3(0, 0, tiny), amount: -Float.infinity).z == -.infinity)
+    }
+
+    /// 直す前の `interpolate` (``valuesWithoutAnOverflowAreUnchanged()`` の式に、幅が溢れる組と幅 0・
+    /// `amount` が 1 の扱いを足したもの)。
+    private static func interpolateBefore(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
+        let span = stop - start
+        guard span.isFinite else { return (1 - amount) * start + amount * stop }
+        guard span != 0 else { return start }
+        return amount == 1 ? stop : start + span * amount
+    }
+
+    @Test("amount が ±∞・NaN の組では、間の値が直す前の式とビットまで一致する")
+    func nonFiniteAmountsAreUnchanged() {
+        var randomness = Randomness(seed: 39520)
+        var moved: [String] = []
+        var count = 0
+        let tiny = Float.leastNonzeroMagnitude
+        var pairs: [(Float, Float)] = [(0, tiny), (0, -tiny), (tiny, 0), (1, 1), (-3e38, 3e38), (5, 5)]
+        for _ in 0..<20_000 {
+            let a = Float(bitPattern: UInt32(truncatingIfNeeded: randomness.next()))
+            let b = Float(bitPattern: UInt32(truncatingIfNeeded: randomness.next()))
+            if a.isFinite, b.isFinite { pairs.append((a, b)) }
+        }
+        for (start, stop) in pairs {
+            for amount in [Float.infinity, -.infinity, .nan] {
+                count += 1
+                let now = interpolate(start, stop, amount)
+                let before = Self.interpolateBefore(start, stop, amount)
+                let same = now.bitPattern == before.bitPattern || (now.isNaN && before.isNaN)
+                if !same { moved.append("interpolate(\(start), \(stop), \(amount)) = \(now), 前は \(before)") }
+            }
+        }
+        #expect(moved.isEmpty, "動いた組 \(moved.count): \(moved.prefix(3))")
+        #expect(count > 30_000)
     }
 
     /// 溢れない組の値は 1 ビットも変えない ([#3952])。比は `(value - low) / (high - low)`、間は
