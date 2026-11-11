@@ -528,6 +528,38 @@ struct FrameSenderTests {
         #expect(harness.sender.receiverCount == 1)
     }
 
+    /// 知らせ損ねた大きさの変更を送り直す前に、受け手が新しい大きさで繋ぎ直して受け入れられたら、もう送らない
+    /// ([#3947])。受け入れが大きさを運ぶので、遅れて届く `resized` は面を捨てさせるだけになる。
+    ///
+    /// [#3947]: https://github.com/mokume-metal/mokume/issues/3947
+    @Test("知らせ損ねた大きさの変更は、新しい大きさで繋ぎ直して受け入れられたら送り直さない")
+    func aReconnectSettlesAMissedResize() throws {
+        let harness = try makeHarness()
+        defer { harness.sender.stop() }
+        let receiver = ModelReceiver(width: Self.width, height: Self.height, count: 8)
+        defer { receiver.die() }
+        receiver.connect(to: harness.service)
+        harness.sender.drain()
+        _ = receiver.receiveAll()
+        for frame in Int64(1)...8 { try harness.step(frame: frame) }
+        // 待ち行列が埋まった間に 32×8 へ。知らせは落ちる
+        harness.sender.resize(width: 32, height: Self.height)
+        let queued = receiver.receiveAll()
+        #expect(!queued.contains { $0.kind == FrameLink.Kind.resized.rawValue }, "前提: 満杯で落ちる")
+
+        // 送り手が送り直す前に、受け手が (目録などで) 新しい大きさを知って繋ぎ直す
+        receiver.reconnect(to: harness.service, width: 32, height: Self.height)
+        harness.sender.drain()
+        var later = receiver.receiveAll()
+        for frame in Int64(9)...11 {
+            try harness.step(frame: frame, width: 32)
+            later += receiver.receiveAll()
+        }
+        #expect(later.first?.kind == FrameLink.Kind.accepted.rawValue)
+        #expect(!later.contains { $0.kind == FrameLink.Kind.resized.rawValue }, "受け入れた後に大きさの変更を送り直した")
+        #expect(!ModelReceiver.frames(in: later).isEmpty)
+    }
+
     @Test("受け手が消えると dead-name の知らせで外し、切ると言われても外す")
     func removesReceiversThatGoAway() throws {
         let harness = try makeHarness()

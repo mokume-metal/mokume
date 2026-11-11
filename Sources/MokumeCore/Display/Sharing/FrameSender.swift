@@ -48,6 +48,9 @@ package final class FrameSender {
         var lastFrameCount: Int64?
         /// 面が全部掴まれていて見送ったフレームの番号。同じ番号を何度呼ばれても 1 枚と数える。
         var lastSkippedFrameCount: Int64?
+        /// 大きさの変更を知らせ損ねている (待ち行列が埋まっていた)。送れるまで、以後のリフレッシュで最新の大きさを
+        /// 送り直す。繋ぎ直しを受け入れたら下ろす (`accepted` が大きさを運ぶ・#3947)。
+        var owesResized = false
 
         init(id: UInt32, name: String, port: mach_port_t, surfaces: [HandedSurface]) {
             self.id = id
@@ -207,6 +210,8 @@ package final class FrameSender {
             existing.held = Array(repeating: false, count: handed.count)
             existing.pending.removeAll()
             existing.lastFrameCount = nil
+            // 受け入れが大きさを運ぶので、知らせ損ねた大きさの変更はもう要らない (#3947)
+            existing.owesResized = false
             accept(existing)
             return
         }
@@ -277,8 +282,10 @@ package final class FrameSender {
         width: Int, height: Int, frameCount: Int64, hostTime: UInt64,
         write: (any MTLTexture) throws(RenderFailure) -> UInt64
     ) throws(RenderFailure) {
-        guard !receivers.isEmpty else { return }
+        // **大きさは受け手が居なくても覚える** (#3946)。覚えないと、後から新しい大きさの面で繋いだ受け手を
+        // 古い大きさで断る。覚えるだけで写しはしない
         if width != self.width || height != self.height { resize(width: width, height: height) }
+        guard !receivers.isEmpty else { return }
         for receiver in receivers {
             announce(receiver)
             guard receiver.lastFrameCount != frameCount, !receiver.surfaces.isEmpty else { continue }
@@ -307,8 +314,8 @@ package final class FrameSender {
     ///   - source: 子の面のテクスチャ。常駐の集合に入っていること (台が入れている)。
     ///   - frameCount: 道具が数えるフレームの番号 (保存で子が入れ替わっても途切れない)。
     package func deliver(copying source: any MTLTexture, frameCount: Int64, hostTime: UInt64) throws(RenderFailure) {
-        guard !receivers.isEmpty else { return }
-        if let surface = source.iosurface {
+        // 受け手が居なくても大きさは覚える (#3946・下の `deliver` の入口)。面の属性を読むのは居るときだけ
+        if !receivers.isEmpty, let surface = source.iosurface {
             if let name = IOSurfaceCopyValue(surface, FrameLink.Attribute.colorSpace as CFString) as? String {
                 colorSpace = name
             }
@@ -342,8 +349,10 @@ package final class FrameSender {
         for receiver in receivers { announce(receiver) }
     }
 
-    /// 控えた焼きのうち、GPU が無事に終えたものを知らせる。結末がまだなら次へ回す。
+    /// 控えた焼きのうち、GPU が無事に終えたものを知らせる。結末がまだなら次へ回す。大きさの変更を知らせ損ねて
+    /// いれば、先に送り直す (#3947)。
     private func announce(_ receiver: Receiver) {
+        if receiver.owesResized { sendResized(to: receiver) }
         while let burn = receiver.pending.first {
             switch gpu.undelivered(burn.submission) {
             case nil:
@@ -381,6 +390,11 @@ package final class FrameSender {
     }
 
     /// 描く解像度が変わった。受け手の面を手放し、新しい大きさを知らせる。受け手は面を作り直して繋ぎ直す。
+    ///
+    /// **大きさは受け手の数と関係なく送り手の状態である** (#3946)。受け手が居なければ覚えるだけで、写しも送りもしない。
+    /// **知らせは受け手に届くまで送り手の状態である** (#3947)。待ち時間 0 の送りが待ち行列の満杯で落ちたら、受け手ごとに
+    /// 覚えて、以後のリフレッシュで最新の大きさを送り直す (``announce(_:)``)。受け手は新しい大きさを知るまで面を作り
+    /// 直さない約束なので、落としたままにすると二度と繋ぎ直さない。
     package func resize(width: Int, height: Int) {
         guard width != self.width || height != self.height else { return }
         self.width = width
@@ -391,11 +405,16 @@ package final class FrameSender {
             receiver.held = []
             receiver.pending.removeAll()
             receiver.lastFrameCount = nil
-            var payload = FrameLink.Payload()
-            payload.append(UInt32(width))
-            payload.append(UInt32(height))
-            FrameLink.send(.resized, to: receiver.port, payload: payload)
+            sendResized(to: receiver)
         }
+    }
+
+    /// いまの大きさを受け手へ知らせる。送れなければ ``Receiver/owesResized`` を立てたままにし、送れたら下ろす。待たない。
+    private func sendResized(to receiver: Receiver) {
+        var payload = FrameLink.Payload()
+        payload.append(UInt32(width))
+        payload.append(UInt32(height))
+        receiver.owesResized = FrameLink.send(.resized, to: receiver.port, payload: payload) != KERN_SUCCESS
     }
 }
 
