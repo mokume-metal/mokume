@@ -91,6 +91,10 @@ nonisolated final class ReplayClaim {
     /// - Returns: 消せなかったときの理由。
     func discardPrevious() -> String? {
         let manager = FileManager.default
+        // 錠を取る前に ``take(destination:)`` が見てから、ここまでの間に替わっていないかを見直す (#3943)
+        if AtomicFile.isDirectory(destination, following: true) {
+            return "\(destination.path) is a directory, not a file"
+        }
         if manager.fileExists(atPath: destination.path) {
             do { try manager.removeItem(at: destination) } catch {
                 return "Could not replace \(destination.path): \(error.localizedDescription)"

@@ -170,8 +170,9 @@ package enum AtomicFile {
                     }
                 }
             } catch {
-                // **自分の分は自分で消す。** 名前が書き込みごとに違うので、誰も上書きしない
-                try? FileManager.default.removeItem(at: temporary)
+                // **自分の分は自分で消す。** 名前が書き込みごとに違うので、誰も上書きしない。書き手が作るのは
+                // 通常ファイルだけなので、フォルダなら消さない (``AtomicFile/remove(_:)``・#3943)
+                AtomicFile.remove(temporary)
                 throw error
             }
         }
@@ -196,7 +197,7 @@ package enum AtomicFile {
                 try AtomicFile.refuseDirectory(url)
                 guard rename(temporary.path, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             } catch {
-                try? FileManager.default.removeItem(at: temporary)
+                AtomicFile.remove(temporary)
                 throw error
             }
         }
@@ -211,9 +212,20 @@ package enum AtomicFile {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try refuseDirectory(url)
         sweepAbandonedTemporaries(of: url)
-        sequence += 1
-        return Placement(
-            url: url, temporary: temporaryURL(for: url, writer: getpid(), sequence: sequence))
+        // **在る名前は選ばない** (#3943)。片付けは一時ファイルの名前のフォルダを残すので、pid と連番が前の
+        // 書き手と一致すると、選んだ名前にそのフォルダが在りうる。種類を問わず、何も無い名前まで連番を進める
+        var temporary: URL
+        repeat {
+            sequence += 1
+            temporary = temporaryURL(for: url, writer: getpid(), sequence: sequence)
+        } while exists(temporary)
+        return Placement(url: url, temporary: temporary)
+    }
+
+    /// その名前に何か (種類を問わない・宛先の無い symlink も) が在るか。
+    nonisolated static func exists(_ url: URL) -> Bool {
+        var status = stat()
+        return lstat(url.path, &status) == 0
     }
 
     /// 書く先がディレクトリなら、`EISDIR` (`Is a directory`) で断る。

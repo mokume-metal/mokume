@@ -309,6 +309,24 @@ struct ReplayRecordFormatTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
     }
 
+    @Test("錠を取った後に行き先がフォルダへ替わっていたら、前の回の完成品として消さずに理由を返す")
+    func aDestinationThatBecameAFolderIsKept() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        try Data("{\"complete\":true}".utf8).write(to: destination)
+        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        defer { claim.release() }
+        // 錠を取ってから消すまでの間に、同じ名前がフォルダになる
+        try FileManager.default.removeItem(at: destination)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+        let kept = destination.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+
+        let failure = claim.discardPrevious()
+        #expect(failure == "\(destination.path) is a directory, not a file")
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
+    }
+
     @Test("ReplayClaim.isPartial は <名前>.<プロセス番号>.partial の形だけを指す")
     func thePartialNameIsRecognised() {
         #expect(ReplayClaim.isPartial("take.json.123.partial", of: "take.json"))
