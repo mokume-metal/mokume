@@ -191,6 +191,28 @@ struct AtomicFileTests {
             == [inFlight.lastPathComponent, otherName.lastPathComponent].sorted())
     }
 
+    /// 片付けが消してよいのは、書き手が作る形 (通常ファイル) の一時ファイルだけ ([#3943] と同じ根)。
+    ///
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    @Test("居なくなった書き手の一時ファイルの名前でも、フォルダは中身ごと残す")
+    func theSweepKeepsFoldersNamedLikeATemporary() throws {
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("frame-000.png")
+        let (gone, goneExit) = try launch("/usr/bin/true")
+        goneExit.wait()
+        let file = AtomicFile.temporaryURL(for: url, writer: gone.processIdentifier, sequence: 1)
+        try Data("half".utf8).write(to: file)
+        let folder = AtomicFile.temporaryURL(for: url, writer: gone.processIdentifier, sequence: 2)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let kept = folder.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+
+        try AtomicFile.write(Data("frame".utf8), to: url)
+
+        #expect(try temporaries(in: facet) == [folder.lastPathComponent])
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
+    }
+
     // MARK: - 片付けの読みは、呼んだ糸で件数に上限を持つ (#3176)
 
     /// 終わって回収した子の番号 (= もう居ない書き手)。

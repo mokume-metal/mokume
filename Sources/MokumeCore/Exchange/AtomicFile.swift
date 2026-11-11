@@ -505,8 +505,9 @@ package enum AtomicFile {
                 if let name = abandonedTemporary(entry) { abandoned.append(name) }
             }
             if finished { close() }
+            // 書き手が作るのは通常ファイルだけ。同じ名前のフォルダは書き手のものではない (``AtomicFile/remove(_:)``・#3943)
             for name in abandoned {
-                try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+                AtomicFile.remove(directory.appendingPathComponent(name))
             }
             return finished
         }
@@ -560,7 +561,7 @@ package enum AtomicFile {
     ///
     /// - Returns: 消した (または無かった) なら `true`。ディレクトリなので残したなら `false`。
     @discardableResult
-    static func remove(_ url: URL) -> Bool {
+    nonisolated static func remove(_ url: URL) -> Bool {
         guard !isDirectory(url, following: false) else { return false }
         try? FileManager.default.removeItem(at: url)
         return true

@@ -82,7 +82,8 @@ nonisolated final class ReplayClaim {
     /// 書き途中のファイルの名前の末尾。
     static let partialSuffix = ".partial"
 
-    /// 前の回が行き先に残した完成品と、落ちた回の `.partial` を消す。**錠を取った後にだけ呼ぶ。**
+    /// 前の回が行き先に残した完成品と、落ちた回の `.partial` を消す。**錠を取った後にだけ呼ぶ。** `.partial` の名前の
+    /// フォルダは記録が作ったものではないので残す (``removePartial(_:)``)。
     ///
     /// 前の回の完成品を残すと、今回の回が落ちたときに今回のものと取り違えられる。**記録を始めない回
     /// (実時間の時計) も、これは先に済ませる** — 古い完成品が「今回の記録」として残らない。
@@ -100,9 +101,22 @@ nonisolated final class ReplayClaim {
         let name = destination.lastPathComponent
         for entry in (try? manager.contentsOfDirectory(atPath: directory)) ?? []
         where Self.isPartial(entry, of: name) {
-            try? manager.removeItem(atPath: directory + "/" + entry)
+            Self.removePartial(URL(fileURLWithPath: directory + "/" + entry))
         }
         return nil
+    }
+
+    /// `.partial` の名前のものを消す。**記録が作るのは通常ファイルだけなので、フォルダは中身ごと残す**
+    /// ([#3943]) — 名前の形だけで選ぶと、行き先の隣にたまたま同じ形の名前のフォルダが在れば中身ごと消える。
+    /// シンボリックリンクは外すだけで、指す先は壊さない (``AtomicFile/remove(_:)``)。
+    ///
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    ///
+    /// - Returns: 消したなら `true`。フォルダなので残した・消せなかったなら `false`。
+    @discardableResult
+    static func removePartial(_ url: URL) -> Bool {
+        guard !AtomicFile.isDirectory(url, following: false) else { return false }
+        return (try? FileManager.default.removeItem(at: url)) != nil
     }
 
     /// `<名前>.<プロセス番号>.partial` の形か。
