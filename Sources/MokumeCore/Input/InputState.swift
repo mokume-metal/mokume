@@ -34,7 +34,7 @@ import Foundation
 ///
 /// **範囲の外の位置は丸めない** — 極端でも有限に収まる値は、ウィンドウから来る値と同じに当てて配る。
 @MainActor
-public final class InputState {
+package final class InputState {
     /// 溜める上限。描画が停滞しても際限なく伸びないようにする。
     static let queueLimit = 4096
 

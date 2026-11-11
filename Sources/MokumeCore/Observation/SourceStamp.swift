@@ -11,7 +11,7 @@ import Foundation
 ///
 /// これがあると、「保存した内容が反映されたか」を待ち時間ではなく**刻印の変化**で
 /// 判定できる。壁時計で待つ判定は、遅い機械では古い絵を、速い機械では無駄待ちを掴む。
-public enum SourceStamp {
+package enum SourceStamp {
     /// 環境変数の名前 (``StartupReads`` が正典)。
     static let environmentKey = StartupReads.sourceStamp.key
 
