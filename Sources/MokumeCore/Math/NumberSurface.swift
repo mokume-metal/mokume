@@ -51,6 +51,8 @@ nonisolated enum NumberValues {
             case mod
             case bezierPoint
             case bezierTangent
+            case curvePoint
+            case curveTangent
             case phase
         }
     }
@@ -259,6 +261,23 @@ public nonisolated func map(
     return interpolate(outLow, outHigh, proportion(value, inLow, inHigh))
 }
 
+/// ある範囲の値を、別の範囲の値へ対応づける。元の範囲の端と対応づけた先の端を、ラベルを付けて渡す。
+///
+/// ``map(_:_:_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。範囲の外を丸めないこと・逆向きの範囲
+/// (`fromLow > fromHigh`) を受けること・幅 0 や数でない値で対応づけた先の下端を返すことも同じで、違うのは
+/// **どの値が元の範囲の端で、どれが対応づけた先の端かを呼び出しの行で読める**ことだけである。
+///
+/// ```swift
+/// // map(mouseX, 0, width, 6, 60) と同じ値
+/// let pointCount = map(mouseX, fromLow: 0, fromHigh: width, toLow: 6, toHigh: 60)
+/// ```
+public nonisolated func map(
+    _ value: some ScalarConvertible, fromLow: some ScalarConvertible, fromHigh: some ScalarConvertible,
+    toLow: some ScalarConvertible, toHigh: some ScalarConvertible
+) -> Float {
+    map(value, fromLow, fromHigh, toLow, toHigh)
+}
+
 /// 値が範囲のどこにあるかの比 (0…1 の外もありうる)。``map(_:_:_:_:_:)``・``norm(_:_:_:)``・
 /// ``smoothstep(_:_:_:)`` が共有する。**注意は言わない** — 中で他の口を呼ぶと、呼んだ先の名で
 /// 注意が鳴る ([#1283])。値と端は有限で、幅は 0 でないこと。
@@ -318,6 +337,19 @@ public nonisolated func lerp(_ start: some ScalarConvertible, _ stop: some Scala
         return start.isFinite ? start : 0
     }
     return interpolate(start, stop, amount)
+}
+
+/// 2 つの値の間を取る。その間のどこかを、ラベルを付けて渡す。
+///
+/// ``lerp(_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。0…1 の外を締めないこと・数でない値で
+/// `start` を返すことも同じで、違うのは**どの値が割合かを呼び出しの行で読める**ことだけである。
+///
+/// ```swift
+/// // lerp(20, width - 20, 0.25) と同じ値
+/// let x = lerp(20, width - 20, amount: 0.25)
+/// ```
+public nonisolated func lerp(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, amount: some ScalarConvertible) -> Float {
+    lerp(start, stop, amount)
 }
 
 /// 間を取る計算。``lerp(_:_:_:)`` と ``map(_:_:_:_:_:)`` が共有し、``lerpColor(_:_:_:)`` も
@@ -481,6 +513,20 @@ public nonisolated func smoothstep(_ edge0: some ScalarConvertible, _ edge1: som
     return t * t * (3 - 2 * t)
 }
 
+/// ウィンドウの中で 0 から 1 へ、両端で速さが 0 になる曲線で移る。曲線に通す値を、ラベルを付けて渡す。
+///
+/// ``smoothstep(_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。ウィンドウの外を締めること・逆向きの
+/// ウィンドウが下り坂になること・幅 0 で段になること・数でない値で 0 を返すことも同じで、違うのは
+/// **どの値がウィンドウの縁で、どれが曲線に通す値かを呼び出しの行で読める**ことだけである。
+///
+/// ```swift
+/// // smoothstep(2.4, 5.4, time) と同じ値
+/// let fade = smoothstep(2.4, 5.4, x: time)
+/// ```
+public nonisolated func smoothstep(_ edge0: some ScalarConvertible, _ edge1: some ScalarConvertible, x: some ScalarConvertible) -> Float {
+    smoothstep(edge0, edge1, x)
+}
+
 // MARK: - 目標へ寄る・往復する・角を混ぜる
 
 /// 目標へ、フレームの長さに依らない硬さで寄る。
@@ -556,6 +602,24 @@ public nonisolated func damp(
     // 掛けた積が溢れて ∞ になっても、exp(-∞) は 0 で割合は 1 (目標へちょうど着く)
     let amount = 1 - RuntimeMath.exp(-lambda * dt)
     return interpolate(current, target, amount)
+}
+
+/// 目標へ、フレームの長さに依らない硬さで寄る。目標・硬さ・経った秒を、ラベルを付けて渡す。
+///
+/// ``damp(_:_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。負の `lambda`・`deltaTime` で動かないこと・
+/// 数でない値で今の値を返すことも同じで、違うのは**どの値が目標で、どれが硬さと経った秒かを呼び出しの
+/// 行で読める**ことだけである。
+///
+/// <!-- example: 文脈 var eyeX: Float = 200 -->
+/// ```swift
+/// // damp(eyeX, mouseX, 6, deltaTime) と同じ値
+/// eyeX = damp(eyeX, toward: mouseX, lambda: 6, deltaTime: deltaTime)
+/// ```
+public nonisolated func damp(
+    _ current: some ScalarConvertible, toward target: some ScalarConvertible, lambda: some ScalarConvertible,
+    deltaTime: some ScalarConvertible
+) -> Float {
+    damp(current, target, lambda, deltaTime)
 }
 
 /// 0 から `length` まで上がって 0 へ戻る、三角の波。
@@ -650,6 +714,23 @@ public nonisolated func lerpAngle(_ start: some ScalarConvertible, _ stop: some 
     guard delta.isFinite else { return start }
     if delta > .pi { delta -= turn } else if delta < -.pi { delta += turn }
     return interpolate(start, start + delta, amount)
+}
+
+/// 最短の弧で、角を混ぜる (ラジアン)。その間のどこかを、ラベルを付けて渡す。
+///
+/// ``lerpAngle(_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。±π にラップしないこと・0…1 の外を
+/// 締めないこと・数でない値で `start` を返すことも同じで、違うのは**どの値が割合かを呼び出しの行で
+/// 読める**ことだけである。
+///
+/// <!-- example: 文脈 var look: Float = 0 -->
+/// <!-- example: 文脈 var eyeX: Float = 200 -->
+/// <!-- example: 文脈 var eyeY: Float = 150 -->
+/// ```swift
+/// // lerpAngle(look, atan2(mouseY - eyeY, mouseX - eyeX), 0.2) と同じ値
+/// look = lerpAngle(look, atan2(mouseY - eyeY, mouseX - eyeX), amount: 0.2)
+/// ```
+public nonisolated func lerpAngle(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, amount: some ScalarConvertible) -> Float {
+    lerpAngle(start, stop, amount)
 }
 
 // MARK: - 2 点の距離・二乗

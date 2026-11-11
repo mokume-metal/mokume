@@ -102,6 +102,74 @@ extension SketchPart {
         canvas.bezier(from: start, control1: control1, control2: control2, to: end)
     }
 
+    /// 通過点を結ぶ曲線の 1 区間を引く。
+    ///
+    /// **4 つの点を順に渡し (`x1, y1, x2, y2, x3, y3, x4, y4`)、引かれるのは 2 つ目から 3 つ目までの
+    /// 1 区間だけである。** 1 つ目と 4 つ目の点は通らず、両端での曲がり方を決める。
+    /// ``beginShape(_:)`` と ``curveVertex(_:_:)`` を同じ 4 点で 4 回と ``endShape(_:)`` を順に呼んだのと
+    /// **同じ絵**になる — 線の太さ・色・端の形、``curveDetail(_:)`` の刻み、``curveTightness(_:)`` の
+    /// 張りも同じに効く。3 つ以上の点を続けて通したいときは ``curveVertex(_:_:)`` を並べる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(89, 97, 115)
+    ///     circle(60, 230, 12)
+    ///     circle(350, 60, 12)
+    ///     noFill()
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(4)
+    ///     curve(60, 230, 140, 80, 260, 220, 350, 60)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の曲線が 2 つの灰色の点の間ではなく、その内側の 2 点の間に S 字を描いている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **曲線の上の点と、そこでの向きは ``curvePoint(_:_:_:_:_:)`` と ``curveTangent(_:_:_:_:_:)`` が
+    /// 返す。** 同じ 4 点を、`x` と `y` に分けて渡す。
+    ///
+    /// 塗りの色が有効なら、``bezier(_:_:_:_:_:_:_:_:)`` と同じく、始点と終点を結ばない開いた形のまま塗る。
+    /// 曲線だけを引きたいときは ``noFill()`` を呼ぶ。``beginShape(_:)`` と ``endShape(_:)`` の間で呼んでも、
+    /// 組み立て中の形には点を足さず、その形と別の 1 本として引く。
+    // shot: 後で撮る
+    public func curve(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
+        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
+    ) {
+        guard let canvas = liveCanvas() else { return }
+        let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
+        canvas.curve(x1, y1, x2, y2, x3, y3, x4, y4)
+    }
+
+    /// 通過点を結ぶ曲線の 1 区間を `start` から `end` まで引く。4 つの点を `Vector2` で、ラベルを付けて渡す。
+    ///
+    /// **`control1` は `start` の手前、`control2` は `end` の先にある点**で、どちらも通らずに両端での
+    /// 曲がり方を決める。``curve(_:_:_:_:_:_:_:_:)`` に `control1`・`start`・`end`・`control2` の成分を
+    /// この順で渡すのと同じ曲線になる。並べる順が位置引数の形と違うのは、ラベルの綴りを
+    /// ``bezier(from:control1:control2:to:)`` に揃え、描く区間の両端を `from:`・`to:` で読めるようにしたからである。
+    ///
+    /// ```swift
+    /// // curve(60, 230, 140, 80, 260, 220, 350, 60) と同じ曲線
+    /// noFill()
+    /// curve(from: Vector2(140, 80), control1: Vector2(60, 230), control2: Vector2(350, 60), to: Vector2(260, 220))
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - start: 描く区間の始点。
+    ///   - control1: 始点の手前の点。曲線はここを通らない。
+    ///   - control2: 終点の先の点。曲線はここを通らない。
+    ///   - end: 描く区間の終点。
+    // shot: 参照 curve(_:_:_:_:_:_:_:_:)
+    public func curve(from start: Vector2, control1: Vector2, control2: Vector2, to end: Vector2) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.curve(from: start, control1: control1, control2: control2, to: end)
+    }
+
     /// 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
     ///
     /// **2 つの制御点は通らない** — 曲線を引っぱる位置である。下の例では灰色の丸が
@@ -523,5 +591,89 @@ extension SketchPart {
         guard let canvas = liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.curveTightness(amount)
+    }
+
+    /// 通過点を結ぶ曲線の上の点を、1 つの軸について返す。
+    ///
+    /// 下の例は、``curve(_:_:_:_:_:_:_:_:)`` で引いた区間の上の `t` が 0.4 の所に、``curveTangent(_:_:_:_:_:)``
+    /// で求めた進む向きへ頭を向けた三角形を置いている。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(18, 20, 26)
+    ///     noFill()
+    ///     stroke(120)
+    ///     strokeWeight(2)
+    ///     curve(60, 230, 140, 80, 260, 220, 350, 60)
+    ///     let t: Float = 0.4
+    ///     let x = curvePoint(60, 140, 260, 350, t)
+    ///     let y = curvePoint(230, 80, 220, 60, t)
+    ///     let angle = atan2(curveTangent(230, 80, 220, 60, t), curveTangent(60, 140, 260, 350, t))
+    ///     push {
+    ///         translate(x, y)
+    ///         rotate(angle)
+    ///         noStroke()
+    ///         fill(255)
+    ///         triangle(14, 0, -10, -8, -10, 8)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の細い曲線が左上から右下へ弧を描き、その途中に白い小さな三角形が曲線の向きへ頭を向けて乗っている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 引数は手本と同じ並びで、``curve(_:_:_:_:_:_:_:_:)`` に渡す 4 つの点の 1 つの軸の値 (`a, b, c, d`) と、
+    /// 曲線の上の位置 `t` である。平面の曲線なら、`x` の 4 つと `y` の 4 つで 2 回呼ぶ。
+    /// **`t` が 0 なら `b` (2 つ目の点)、1 なら `c` (3 つ目の点) がちょうど返る** — 描かれる区間の両端である。
+    /// `curvePoint(60, 140, 260, 350, 0)` は 140 を返す。
+    ///
+    /// **いまの張り (``curveTightness(_:)``) を読む** (Processing と同じ)。だから ``bezierPoint(_:_:_:_:_:)``
+    /// と違って、スケッチのメソッドである。`curveTightness(1)` の後なら点と点を直線で結んだ上の値になり、
+    /// `curvePoint(60, 140, 260, 350, 0.5)` は真ん中の 200 を返す。`createGraphics(_:_:)` で作った描画先の
+    /// 張りで読むときは、その描画先の `curvePoint` を呼ぶ。
+    ///
+    /// **`t` は曲線の長さの割合ではなく、0…1 の外は締めずに曲線を延ばす** (``bezierPoint(_:_:_:_:_:)`` と同じ)。
+    /// 数でない値・無限の値が混じったときは `b` を返し (`b` も数でないときは 0)、注意は 1 度だけ言う。
+    /// `setup()`・`draw()`・入力のコールバックの外 (部品の `init()` など) で呼ぶと、張りを読む先が無いので、
+    /// 1 度だけ知らせて既定の張り 0 で求めた値を返す。
+    // shot: 後で撮る
+    public func curvePoint(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ t: some ScalarConvertible
+    ) -> Float {
+        guard let canvas = liveCanvas(.read(returning: "the value at the default curve tightness 0")) else {
+            return curvePointValue(a.asFloat, b.asFloat, c.asFloat, d.asFloat, t.asFloat, tightness: 0)
+        }
+        return canvas.curvePoint(a, b, c, d, t)
+    }
+
+    /// 通過点を結ぶ曲線の、1 つの軸についての傾き (`t` で微分した値) を返す。
+    ///
+    /// ```swift
+    /// // 曲線 curve(60, 230, 140, 80, 260, 220, 350, 60) の上で、進む向きへ頭を向ける
+    /// let t: Float = 0.5
+    /// let angle = atan2(curveTangent(230, 80, 220, 60, t), curveTangent(60, 140, 260, 350, t))
+    /// rotate(angle)
+    /// ```
+    ///
+    /// 引数は ``curvePoint(_:_:_:_:_:)`` と同じ。**`x` の傾きと `y` の傾きを別々に求め、
+    /// `atan2(y の傾き, x の傾き)` で向きにする。** 返るのは向きではなく `t` を 1 進めたときの進み量で、
+    /// 張りも ``curvePoint(_:_:_:_:_:)`` と同じく、いまの ``curveTightness(_:)`` を読む。張りが 0 なら、
+    /// 区間の始点 (`t` が 0) での傾きは `(c - a) / 2` になる。
+    ///
+    /// **0…1 の外は締めない。** 数でない値・無限の値が混じったときは 0 を返し、注意は 1 度だけ言う。
+    /// `setup()`・`draw()`・入力のコールバックの外で呼ぶと、1 度だけ知らせて既定の張り 0 で求めた値を返す。
+    // shot: 参照 curvePoint(_:_:_:_:_:)
+    public func curveTangent(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ t: some ScalarConvertible
+    ) -> Float {
+        guard let canvas = liveCanvas(.read(returning: "the value at the default curve tightness 0")) else {
+            return curveTangentValue(a.asFloat, b.asFloat, c.asFloat, d.asFloat, t.asFloat, tightness: 0)
+        }
+        return canvas.curveTangent(a, b, c, d, t)
     }
 }

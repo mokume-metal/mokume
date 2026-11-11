@@ -158,16 +158,40 @@ nonisolated struct EnvelopeShape: Equatable {
     }
 
     /// 秒で与えられた形を、標本の数の形にする。負の値は 0 秒として扱う。
+    ///
+    /// 区間か合計が `Int` に収まらない形は、長さ 0 (鳴らない) にする。**呼ぶ側
+    /// (``SynthSource``・`Env.play`) が ``sampleCounts(attack:sustain:release:sampleRate:)`` で先に
+    /// 拒む** (#3951) ので、ここは音の側で落ちないための守りにすぎない。
     init(attack: Float, sustain: Float, level: Float, release: Float, sampleRate: Double) {
-        func samples(_ seconds: Float) -> Int {
-            guard seconds.isFinite, seconds > 0 else { return 0 }
-            return Int((Double(seconds) * sampleRate).rounded())
-        }
-        self.attack = samples(attack)
-        self.sustain = samples(sustain)
-        self.release = samples(release)
+        let counts = Self.sampleCounts(
+            attack: attack, sustain: sustain, release: release, sampleRate: sampleRate)
+        self.attack = counts?.attack ?? 0
+        self.sustain = counts?.sustain ?? 0
+        self.release = counts?.release ?? 0
         self.level = level.isFinite ? min(max(level, 0), 1) : 0
     }
 
     init() {}
+
+    /// 秒の長さを標本の数にする。負・数でない値は 0。**`Int` に収まらなければ `nil`。**
+    static func sampleCount(_ seconds: Float, sampleRate: Double) -> Int? {
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        return Int(exactly: (Double(seconds) * sampleRate).rounded())
+    }
+
+    /// 3 区間の標本の数。どれかの区間、または合計 (``length``) が `Int` に収まらなければ `nil`。
+    static func sampleCounts(
+        attack: Float, sustain: Float, release: Float, sampleRate: Double
+    ) -> (attack: Int, sustain: Int, release: Int)? {
+        guard
+            let attack = sampleCount(attack, sampleRate: sampleRate),
+            let sustain = sampleCount(sustain, sampleRate: sampleRate),
+            let release = sampleCount(release, sampleRate: sampleRate)
+        else { return nil }
+        let held = attack.addingReportingOverflow(sustain)
+        guard !held.overflow, !held.partialValue.addingReportingOverflow(release).overflow else {
+            return nil
+        }
+        return (attack, sustain, release)
+    }
 }
