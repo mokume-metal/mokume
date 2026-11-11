@@ -231,6 +231,66 @@ extension SketchPart {
         canvas.spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
 
+    /// 向きだけを持つ光を置く。色と、光が進む向きをラベルを付けて渡す。
+    ///
+    /// ``directionalLight(_:_:_:_:)`` に `direction` の成分を同じ順で渡すのと同じ光になる。色の目盛り・
+    /// 向きの読み方・受けない色の扱いもそちらと同じで、違うのは**どの値が色でどれが向きかを呼び出しの
+    /// 行で読める**ことだけである。
+    ///
+    /// ```swift
+    /// // directionalLight(.linear(red: 0.95, green: 0.95, blue: 0.95), 0, 1, -1) と同じ光
+    /// directionalLight(color: .linear(red: 0.95, green: 0.95, blue: 0.95), direction: Vector3(0, 1, -1))
+    /// ```
+    ///
+    /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    // shot: 参照 directionalLight(_:_:_:_:)
+    public func directionalLight(color: LinearRGBA, direction: Vector3) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.directionalLight(color: color, direction: direction)
+    }
+
+    /// 位置を持つ光を置く。色と光源の位置をラベルを付けて渡す。
+    ///
+    /// ``pointLight(_:_:_:_:)`` に `position` の成分を同じ順で渡すのと同じ光になる。色の目盛り・
+    /// 位置の読み方 (いまの変換を受ける)・受けない色の扱いもそちらと同じで、違うのは**どの値が色で
+    /// どれが位置かを呼び出しの行で読める**ことだけである。
+    ///
+    /// ```swift
+    /// // pointLight(255, 200, 150, 200, 100, 80) と同じ光
+    /// pointLight(color: color(255, 200, 150), position: Vector3(200, 100, 80))
+    /// ```
+    ///
+    /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    // shot: 参照 pointLight(_:_:_:_:)
+    public func pointLight(color: LinearRGBA, position: Vector3) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.pointLight(color: color, position: position)
+    }
+
+    /// 位置と向きと広がりを持つ光を置く。色・光源の位置・光が進む向きをラベルを付けて渡す。
+    ///
+    /// ``spotLight(_:_:_:_:_:_:_:angle:)`` に `position`・`direction` の成分を同じ順で渡すのと同じ光に
+    /// なる。`angle` (広がりの半分の角) の既定値 π/6 と受ける範囲、色の目盛り、受けない色の扱いも
+    /// そちらと同じで、違うのは**どの値が位置でどれが向きかを呼び出しの行で読める**ことだけである。
+    ///
+    /// ```swift
+    /// // spotLight(.linear(red: 1.2, green: 1.2, blue: 1.2), 160, 120, 200, 0, 0, -1, angle: Float.pi / 7) と同じ光
+    /// spotLight(
+    ///     color: .linear(red: 1.2, green: 1.2, blue: 1.2),
+    ///     position: Vector3(160, 120, 200),
+    ///     direction: Vector3(0, 0, -1),
+    ///     angle: Float.pi / 7)
+    /// ```
+    ///
+    /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    // shot: 参照 spotLight(_:_:_:_:_:_:_:angle:)
+    public func spotLight(
+        color: LinearRGBA, position: Vector3, direction: Vector3, angle: some ScalarConvertible = Float.pi / 6
+    ) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.spotLight(color: color, position: position, direction: direction, angle: angle.asFloat)
+    }
+
     /// ひととおりの光を置く — 底上げの光と、斜め上から差す光。
     ///
     /// 立体を「とりあえず立体らしく」見せるための組み合わせ。細かく決めたくなったら

@@ -52,12 +52,27 @@ final class WatchFrameListing {
         self.announce = announce
     }
 
-    /// 作品のウィンドウが映す世代の新しい絵を、繋いできた受け手の面へ写す ([ADR-0049] 決定 2・[#3920])。
+    /// 作品のウィンドウの台の知らせに繋ぐ。**作品のウィンドウが映す世代に従う** ([ADR-0049] 決定 2) — プレビューは
+    /// 試聴の子を映すことがあるので繋がない。検査も同じ口で繋ぐ。**ウィンドウが名乗りを持つ** (名乗りはウィンドウを
+    /// 持たないので環にならない)。
+    func attach(to window: SharedFrameWindow) {
+        window.onFrameShareRead = { share in self.follow(share) }
+        window.onFrame = { texture, isNew in self.handOver(texture, isNew: isNew) }
+    }
+
+    /// 作品のウィンドウが映す世代のいまの絵を、繋いできた受け手の面へ写す ([ADR-0049] 決定 2・[#3920])。
+    /// **リフレッシュごとに呼ぶ** ([#3945])。番号を進めるのは新しい絵のときだけで、受け手ごとに同じ番号の絵は
+    /// 写し直さない (後から繋いだ受け手には今の 1 枚を写す)。写した絵の GPU の完了は、絵が無くても毎回見て知らせる。
     /// 名乗っていなければ何もしない。受け手の頼みは、名乗った後の最初の絵から受け始める。
     ///
     /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
-    func handOver(_ texture: any MTLTexture) {
+    /// [#3945]: https://github.com/mokume-metal/mokume/issues/3945
+    func handOver(_ texture: (any MTLTexture)?, isNew: Bool) {
         guard let announcement, let gpu else { return }
+        guard let texture else {
+            announcement.sender?.announceCompleted()
+            return
+        }
         let fresh = announcement.sender == nil
         guard let sender = announcement.startSending(gpu: gpu, width: texture.width, height: texture.height)
         else { return }
@@ -65,7 +80,9 @@ final class WatchFrameListing {
             sender.warn = { [weak self] line in self?.say(line) }
             sender.onReceiversChanged = { [weak self] names in self?.onReceiversChanged?(names) }
         }
-        frameCount += 1
+        // 名乗るのは台が新しい絵から名乗りの中身を読んだ回 (``follow(_:)``) で、同じリフレッシュの絵は新しいと
+        // 知らされる。だから名乗った後の最初の絵は必ず番号を進める (0 を渡さない)
+        if isNew { frameCount += 1 }
         do {
             try sender.deliver(copying: texture, frameCount: frameCount, hostTime: mach_absolute_time())
             saidCopyFailure = false

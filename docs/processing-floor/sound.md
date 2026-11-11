@@ -9,8 +9,8 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 105 |
-| 入れる | 15 |
+| 同等 | 111 |
+| 入れる | 9 |
 | 作例待ち | 34 |
 | 持たない | 11 |
 | 計 | 165 |
@@ -27,14 +27,14 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 ## 入れるの束
 
-「入れる」の 15 件は、近い API ごとに 4 本の束で入れる。うち 1 本 (#3473) は、表より前から Issue がある。
+「入れる」に選んだ 15 件は、近い API ごとに 4 本の束で入れる。うち 1 本 (#3473) は、表より前から Issue がある。入れ終えた束は「入れた」と書き、その API の行は節の表で「同等」に直した (上の件数は直した後の数)。
 
 | 束 | API | 件数 |
 | --- | --- | --- |
 | [#3473] `SoundFile` の再生速度と定位 (既存の Issue。意味は決定済みで、型を `Feature` に替えてラベルを付ければ着手できる。`pan` と `rate` は別の PR でよい) | `SoundFile.rate()`・`pan()`・`AudioSample.rate()`・`pan()` | 4 |
 | [#3705] `SoundFile` のチャンネルの数と標本の数 | `SoundFile.channels()`・`frames()`・`AudioSample.channels()`・`frames()` | 4 |
 | [#3706] `BandPass` を Q で決める | `BandPass.res()` | 1 |
-| [#3718] `BrownNoise` | `BrownNoise` (クラス)・`amp()`・`pan()`・`play()`・`set()`・`stop()` | 6 |
+| [#3718] `BrownNoise` (入れた。行は「ノイズ」の節で同等) | `BrownNoise` (クラス)・`amp()`・`pan()`・`play()`・`set()`・`stop()` | 6 |
 
 件数に入らない行が 1 つある。`Env.play()` が `SoundFile` を受ける形は、`Env.play()` (同等) の「無い形」で、参照の項目ではないので件数に数えず、「Env」の節に子の行として置いた。これも「入れる」で、束は既存の [#3099] (型を `Feature` に替えて着手できる)。
 
@@ -52,22 +52,22 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 ## ノイズ
 
-12 件。
+18 件。
 
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `WhiteNoise`・`PinkNoise` (クラス 2 件) | `WhiteNoise`・`PinkNoise` (`Sketch.createWhiteNoise()`・`createPinkNoise()` が作る。基底は `Noise`・`SynthSource`) | 同等 | ノイズの列は決まっていて、同じ順に作れば何度鳴らしても書き出しても同じ音になる (種を選ぶ API は持たない) | [#1980]・PR [#2221] |
-| `WhiteNoise`・`PinkNoise` の `amp()`・`pan()`・`stop()` (2 クラス × 3 = 6 件) | `SynthSource.amp(_:)`・`pan(_:)`・`stop()` | 同等 | オシレータの同じ名前の API と同じ | PR [#2221] |
-| `WhiteNoise`・`PinkNoise` の `play()`・`set()` (2 クラス × 2 = 4 件) | `Noise.play(_:_:_:)`・`Noise.set(_:_:_:)` | 同等 | 音量・足す値・定位を決めて鳴らす (`set` は鳴らさない)。`play(amp, add, pos)` の形は参照と同じ。**違い:** 参照の `play(amp, pos)`・`set(amp, pos)` (2 引数) の第 2 引数は定位だが、mokume の第 2 引数は `add` で、定位は 3 つ目 | PR [#2221] |
+| `BrownNoise` (クラス) | `BrownNoise` (`Sketch.createBrownNoise()` が作る。基底は `Noise`・`SynthSource`) | 同等 | 白色雑音を漏れのある積分器 (切れ目 約 150 Hz) に通す。切れ目より上は 1 オクターブごとに 6 dB 下がり、下は平らなので直流が溜まらない。標本は -1〜1。列は `WhiteNoise`・`PinkNoise` と同じく決まった種で固定する | [#3718]・[#3684 のコメント](https://github.com/mokume-metal/mokume/issues/3684#issuecomment-6586701566) |
+| `WhiteNoise`・`PinkNoise`・`BrownNoise` の `amp()`・`pan()`・`stop()` (3 クラス × 3 = 9 件) | `SynthSource.amp(_:)`・`pan(_:)`・`stop()` | 同等 | オシレータの同じ名前の API と同じ | PR [#2221]・[#3718] |
+| `WhiteNoise`・`PinkNoise`・`BrownNoise` の `play()`・`set()` (3 クラス × 2 = 6 件) | `Noise.play(_:_:_:)`・`Noise.set(_:_:_:)` | 同等 | 音量・足す値・定位を決めて鳴らす (`set` は鳴らさない)。`play(amp, add, pos)` の形は参照と同じ。**違い:** 参照の `play(amp, pos)`・`set(amp, pos)` (2 引数) の第 2 引数は定位だが、mokume の第 2 引数は `add` で、定位は 3 つ目 | PR [#2221]・[#3718] |
 
 ## 見送った音源とエフェクト
 
-18 件。PR [#2221] が「Issue ([#1980]) の範囲外・作例に要らない」として作らなかった 3 つ。`Pulse` と `AllPass` は割れる点があるので、見送りを写して作例待ちとした。`BrownNoise` は割れる点が無いので、2026-11-03 の決定 ([#3684 のコメント](https://github.com/mokume-metal/mokume/issues/3684#issuecomment-6586701566)) で選び直し、「入れる」とした。
+12 件。PR [#2221] が「Issue ([#1980]) の範囲外・作例に要らない」として作らなかった 3 つ。`Pulse` と `AllPass` は割れる点があるので、見送りを写して作例待ちとした。`BrownNoise` は割れる点が無いので、2026-11-03 の決定 ([#3684 のコメント](https://github.com/mokume-metal/mokume/issues/3684#issuecomment-6586701566)) で選び直して入れ ([#3718])、行は「ノイズ」の節へ移した。
 
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `Pulse` (クラス)・`amp()`・`freq()`・`pan()`・`play()`・`set()`・`stop()`・`width()` (8 件) | — | 作例待ち | #2221 は作らなかった (範囲の外・作例に要らない)。割れる点: パルス幅 (`width`) を持つ別の型にするか、`SqrOsc` に幅を足すか。`Pulse.set(freq, width, amp, add, pos)` は引数が 5 つで、`Oscillator.set(_:_:_:_:)` の形とも違う | [#1980]・PR [#2221] |
-| `BrownNoise` (クラス)・`amp()`・`pan()`・`play()`・`set()`・`stop()` (6 件) | — | 入れる | #2221 の見送りのうち `BrownNoise` だけを選び直した (2026-11-03 の決定・[#3684 のコメント](https://github.com/mokume-metal/mokume/issues/3684#issuecomment-6586701566))。割れる点は無い: `Noise` を継ぐ色を 1 つ足すだけで、列は `WhiteNoise`・`PinkNoise` と同じく決まった種で固定する | [#3718]・[#1980]・PR [#2221] |
 | `AllPass` (クラス)・`gain()`・`process()`・`stop()` (4 件) | — | 作例待ち | #2221 は作らなかった (範囲の外・作例に要らない)。割れる点: 参照の `AllPass` は `gain` だけを持ち、遅れの長さを持たない。位相の変え方 (段の次数・遅れ) を mokume の側で選ぶ必要がある。`Reverb` の中の全域通過とは別の API になる | [#1980]・PR [#2221] |
 
 ## Env

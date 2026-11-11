@@ -407,9 +407,9 @@ nonisolated final class MovieFile: MovieOutput {
         path: String, width: Int, height: Int, frameRate: Int, format: Format = .proRes4444,
         soundStart: Int? = nil, placement: AtomicFile.Placement? = nil
     ) throws(MovieWriteFailure) {
-        // **書き出し先がディレクトリなら、消さずに断る。** 下の「同じ名前が残っていると開けない」の
-        // `removeItem` はディレクトリを中身ごと消す。出力先は利用者が指定するパスなので、取り違えて
-        // ディレクトリを指すと、そのディレクトリが黙って消える ([#2859](https://github.com/mokume-metal/mokume/issues/2859))
+        // **書き出し先がディレクトリなら、消さずに断る。** 出力先は利用者が指定するパスなので、取り違えて
+        // ディレクトリを指すことがある ([#2859](https://github.com/mokume-metal/mokume/issues/2859))。下の
+        // ``AtomicFile/remove(_:)`` (`unlink(2)`) はディレクトリを消さないので、ここは理由を先に名乗るための守り
         if AtomicFile.isDirectory(URL(fileURLWithPath: path), following: false) {
             throw .writeFailed(path: path, reason: Diagnostics.posixReason(EISDIR))
         }
@@ -450,13 +450,13 @@ nonisolated final class MovieFile: MovieOutput {
         // 何も無く、**行き先の前のファイルは、閉じ終えるまで残る** (#3426)。一時ファイルの無い従来の形では、
         // 書く場所が行き先なので、撮り直しは上書きになる。形式は `fileType` が決めるので、拡張子が `.tmp` でも
         // 同じに書ける (`.mov`・`.mp4` とも測った)
-        try? FileManager.default.removeItem(at: writtenURL)
+        AtomicFile.remove(writtenURL)
         // **ここから先で投げるなら、書く場所に作ったものを残さない** (#3426)。`startWriting` や `canAdd` が断って
         // 投げても、隣の隠した一時ファイルは誰も開いておらず、`MovieWriter` は開けなかった書き手に `abandon()` を
         // 呼ばない。次の回の片付けまで残る
         let written = writtenURL
         var opened = false
-        defer { if !opened { try? FileManager.default.removeItem(at: written) } }
+        defer { if !opened { AtomicFile.remove(written) } }
 
         guard let writer = try? AVAssetWriter(outputURL: writtenURL, fileType: format == .h264 ? .mp4 : .mov)
         else {
@@ -654,12 +654,12 @@ nonisolated final class MovieFile: MovieOutput {
             // 利用者に届くのは最後に決着した理由なので、「1 枚も無い」で覆わない。転んだ writer には
             // 取り消しを呼ばない
             if writerStatus != .writing || writerError != nil {
-                try? FileManager.default.removeItem(at: writtenURL)
+                AtomicFile.remove(writtenURL)
                 throw .writeFailed(path: path, reason: failureReason)
             }
             // 1 枚も受け取っていない。中身の無いファイルを残さない
             writer.cancelWriting()
-            try? FileManager.default.removeItem(at: writtenURL)
+            AtomicFile.remove(writtenURL)
             throw .writeFailed(path: path, reason: "not a single frame was recorded")
         }
         input.markAsFinished()
@@ -669,7 +669,7 @@ nonisolated final class MovieFile: MovieOutput {
         guard writer.status == .completed else {
             // 閉じ切れなかった書きかけは捨てる。行き先の前のファイルはそのまま (#3426)
             let reason = failureReason
-            try? FileManager.default.removeItem(at: writtenURL)
+            AtomicFile.remove(writtenURL)
             throw .writeFailed(path: path, reason: reason)
         }
         readsForTesting.closed?(writtenURL.path)
@@ -683,7 +683,7 @@ nonisolated final class MovieFile: MovieOutput {
             read: { await Self.readClosedFile(atPath: $0, mimeType: mime) })
         if let reason = check.hollow {
             // 中身の無いファイルを残さない (1 枚も受け取っていないときの取り消しと同じ)。行き先の前のファイルはそのまま
-            try? FileManager.default.removeItem(at: writtenURL)
+            AtomicFile.remove(writtenURL)
             throw .writeFailed(path: path, reason: reason)
         }
         // **ここまで来たら、1 回の置き換えで行き先に置く** (#3426)。置けなかったら (置く直前に行き先が
@@ -713,7 +713,7 @@ nonisolated final class MovieFile: MovieOutput {
     /// 転んだ理由が失われる。
     func abandon() {
         if writerStatus == .writing, writerError == nil { writer.cancelWriting() }
-        try? FileManager.default.removeItem(at: writtenURL)
+        AtomicFile.remove(writtenURL)
     }
 
     /// 頼んだ縦横と違う縦横でファイルが書けたときの、名乗りの 1 行。同じなら (読めなかったときも) `nil`。
