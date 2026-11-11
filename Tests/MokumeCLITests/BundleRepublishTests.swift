@@ -45,6 +45,24 @@ struct BundleRepublishTests {
         return try Data(contentsOf: published.note)
     }
 
+    /// 終わって回収した子の pid (= もう居ない持ち主。落ちた `mokume bundle` の代わり)。
+    private func goneOwner() throws -> pid_t {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try process.run()
+        process.waitUntilExit()
+        return process.processIdentifier
+    }
+
+    /// 生きている子 (= 同じ `--out` へ同時に走っている別の `mokume bundle` の代わり)。呼び元が止める。
+    private func liveOwner() throws -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["60"]
+        try process.run()
+        return process
+    }
+
     /// `--out` に在るものの姿。
     private struct Published: Equatable {
         /// `Grain.app` の版 (無ければ `nil`)。
@@ -53,7 +71,7 @@ struct BundleRepublishTests {
         var verifies: Bool
         /// 紙の中身。
         var note: Data?
-        /// 残った一時の置き場の名前。
+        /// 残った一時の置き場 (と、その兄弟) の名前。
         var leftovers: [String]
     }
 
@@ -135,158 +153,327 @@ struct BundleRepublishTests {
 
     // MARK: - 公開の手の前後で止まる
 
-    /// 公開の手に失敗を差し込む。`at` 番目 (0 から) の手で、`dies` なら手を済ませた直後に強制終了した
-    /// ことにし (後片付けをしない)、そうでなければ手を打たずに失敗させる。`swapUnsupported` なら、
-    /// 入れ替え (`RENAME_SWAP`) を持たないボリュームのように `ENOTSUP` で断る。
-    private final class Injection {
-        let at: Int
-        let dies: Bool
-        var count = 0
-        var died = false
+    /// 公開先のボリュームの性質。
+    enum Volume: String, CaseIterable, CustomTestStringConvertible {
+        /// `RENAME_SWAP` を持つ (APFS・HFS+)。
+        case swaps
+        /// `RENAME_SWAP` を `ENOTSUP` で断る。
+        case noSwap
+        /// `RENAME_SWAP` も `RENAME_EXCL` も `ENOTSUP` で断る。
+        case noSwapNoExclusive
 
-        init(at: Int, dies: Bool) {
+        var testDescription: String { rawValue }
+    }
+
+    /// 差し込む失敗の形。
+    enum Fault: String, CaseIterable {
+        /// その手だけを、打たずに失敗させる。
+        case fails
+        /// その手と、それより後の手を全部、打たずに失敗させる (片付けは打たれない)。新しい版を置く手と
+        /// 前の版を戻す手がどちらも失敗する回を含む。
+        case failsFromHere
+        /// その手を打った (か、打とうとした) 直後に強制終了したことにする。後の手は何も走らない。
+        case dies
+    }
+
+    /// 公開の手に失敗を差し込む。`at` が `nil` なら何も差し込まず、手の数だけを数える。
+    private final class Injection {
+        let at: Int?
+        let fault: Fault
+        /// ここまでに呼ばれた手の数。
+        private(set) var count = 0
+        /// 差し込みが実際に効いたか。
+        private(set) var fired = false
+        private(set) var died = false
+
+        init(at: Int?, fault: Fault) {
             self.at = at
-            self.dies = dies
+            self.fault = fault
         }
 
-        func steps(swapUnsupported: Bool) -> BundleCommand.PublishSteps {
+        func steps(on volume: Volume) -> BundleCommand.PublishSteps {
             let live = BundleCommand.PublishSteps.live
-            let swap: (URL, URL) throws -> Void =
-                swapUnsupported
-                ? { _, _ in throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)) }
-                : live.swap
-            let replace = step(live.replace)
-            let swapping = step(swap)
-            let move = step(live.move)
-            let remove = step { directory, _ in live.remove(directory) }
+            let unsupported: (URL, URL) throws -> Void = { _, _ in
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP))
+            }
+            let remove = step { url, _ in live.remove(url) }
             return BundleCommand.PublishSteps(
-                replace: replace, swap: swapping, move: move,
-                remove: { directory in try? remove(directory, directory) })
+                replace: step(live.replace),
+                swap: step(volume == .swaps ? live.swap : unsupported),
+                move: step(volume == .noSwapNoExclusive ? unsupported : live.move),
+                remove: { url in try? remove(url, url) })
         }
 
         private func step(_ action: @escaping (URL, URL) throws -> Void) -> (URL, URL) throws -> Void {
             { from, to in
-                defer { self.count += 1 }
-                guard self.count == self.at, !self.died else {
-                    if self.died { throw CancellationError() }
-                    return try action(from, to)
-                }
-                if self.dies {
-                    try action(from, to)
+                // 強制終了の後は、どの手も走らない
+                if self.died { throw CancellationError() }
+                let index = self.count
+                self.count += 1
+                guard let at = self.at,
+                    index == at || (self.fault == .failsFromHere && index > at)
+                else { return try action(from, to) }
+                self.fired = true
+                switch self.fault {
+                case .fails, .failsFromHere:
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))
+                case .dies:
+                    try? action(from, to)
                     self.died = true
                     throw CancellationError()
                 }
-                throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))
             }
         }
     }
 
+    /// 前の版を `--out` に置き、新しい版を落ちた持ち主の置き場で仕上げて、差し込みつきで公開する。
+    private func publishNew(
+        _ executable: URL, into out: URL, on volume: Volume, injection: Injection
+    ) throws -> BundleCommand.Staging {
+        let staging = try BundleCommand.stage(
+            executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
+            owner: try goneOwner())
+        _ = try BundleCommand.finish(staging.app, identity: new, bundles: [], signing: realSigning)
+        do {
+            _ = try BundleCommand.publish(
+                staging, identity: new, into: out, steps: injection.steps(on: volume))
+        } catch {
+            // 強制終了なら後片付けは走らない。失敗なら `distribute` と同じく片付ける
+            if !injection.died { BundleCommand.discard(staging) }
+        }
+        return staging
+    }
+
     /// **公開のどの手の前後で止まっても、`--out` には前の版か新しい版のどちらかが、署名を通る姿で紙と
-    /// 揃って残る。** 次の回は、残った一時の置き場を片付け (入れ替えを持たないボリュームで退けたまま
-    /// 止まった前の版は元へ戻し)、打ち直せば新しい版が揃う。
+    /// 揃って残る。** 次の回は、落ちた持ち主の残りを片付け (退けたまま止まった前の版は元へ戻し)、打ち直せば
+    /// 新しい版が揃う。
     ///
-    /// 手は、入れ替えを持つボリュームで 3 つ (紙・入れ替え・片付け)、持たないボリュームで 5 つ
-    /// (紙・入れ替えの断り・退ける・置く・片付け)。6 番目以降は差し込まれない (通る回) も含めて回す。
+    /// 手の数は決め打ちしない。差し込み無しで 1 度公開して数え、その数だけ回す。各回で差し込みが実際に
+    /// 効いたことも確かめる (手を足しても、最後の手を黙って見なくならない)。
     @Test(
         "公開の手のどこで失敗・強制終了しても、前の版か新しい版が紙と揃って残り、次の回で元に戻る",
-        arguments: [false, true], Array(0..<6))
-    func everyStepLeavesAWholeVersion(swapUnsupported: Bool, at: Int) throws {
-        for dies in [false, true] {
+        arguments: Volume.allCases)
+    func everyStepLeavesAWholeVersion(volume: Volume) throws {
+        let total: Int
+        do {
             let (root, executable, out) = try makeWorkspace()
             defer { try? FileManager.default.removeItem(at: root) }
-            let note = try publishOld(executable, into: out)
-            let label = "入れ替え\(swapUnsupported ? "無し" : "有り")・\(at) 番目・\(dies ? "強制終了" : "失敗")"
+            _ = try publishOld(executable, into: out)
+            let counting = Injection(at: nil, fault: .fails)
+            _ = try publishNew(executable, into: out, on: volume, injection: counting)
+            #expect(look(at: out).version == "3.0", "差し込み無しで公開できない (\(volume))")
+            total = counting.count
+        }
+        #expect(total >= 4, "手が少なすぎる (\(volume)): \(total)")
 
-            let injection = Injection(at: at, dies: dies)
-            let staging = try BundleCommand.stage(
-                executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [])
-            _ = try BundleCommand.finish(
-                staging.app, identity: new, bundles: [], signing: realSigning)
-            do {
-                _ = try BundleCommand.publish(
-                    staging, identity: new, into: out,
-                    steps: injection.steps(swapUnsupported: swapUnsupported))
-            } catch {
-                // 強制終了なら後片付けは走らない。失敗なら `distribute` と同じく片付ける
-                if !injection.died { BundleCommand.discard(staging) }
+        for fault in Fault.allCases {
+            for at in 0..<total {
+                let (root, executable, out) = try makeWorkspace()
+                defer { try? FileManager.default.removeItem(at: root) }
+                let note = try publishOld(executable, into: out)
+                let label = "\(volume)・\(at) 番目・\(fault)"
+
+                let injection = Injection(at: at, fault: fault)
+                let staging = try publishNew(executable, into: out, on: volume, injection: injection)
+                #expect(injection.fired, "差し込みが効いていない (\(label))")
+
+                let now = look(at: out)
+                #expect(now.note == note, "紙が揃っていない (\(label))")
+                if now.version == nil {
+                    // 入れ替えを持たないボリュームで、退けてから置くまでの間に止まり、戻せなかった回だけ
+                    #expect(volume != .swaps && fault != .fails, "Grain.app が無い (\(label))")
+                    #expect(
+                        version(of: staging.previous) == "2.0" && verifies(staging.previous),
+                        "前の版が揃っていない (\(label))")
+                } else {
+                    #expect(["2.0", "3.0"].contains(now.version), "\(label)")
+                    #expect(now.verifies, "署名を通らない姿が残った (\(label))")
+                }
+
+                // 次の回が署名で止まっても、前の版 (か入れ替わった新しい版) が揃って使える
+                #expect(throws: CommandFailure.self) {
+                    try BundleCommand.distribute(
+                        executable: executable, identity: new, minimumSystemVersion: "26.0",
+                        into: out, excluding: [], bundles: [], signing: failingSigning)
+                }
+                let recovered = look(at: out)
+                #expect(["2.0", "3.0"].contains(recovered.version), "次の回で戻っていない (\(label))")
+                #expect(recovered.verifies && recovered.note == note, "\(label)")
+                #expect(recovered.leftovers.isEmpty, "一時の置き場が残った (\(label)): \(recovered.leftovers)")
+
+                // 打ち直せば新しい版が揃う
+                _ = try BundleCommand.distribute(
+                    executable: executable, identity: new, minimumSystemVersion: "26.0", into: out,
+                    excluding: [], bundles: [], signing: realSigning)
+                #expect(
+                    look(at: out) == Published(version: "3.0", verifies: true, note: note, leftovers: []),
+                    "\(label)")
             }
+        }
+    }
 
-            let now = look(at: out)
-            #expect(now.note == note, "紙が揃っていない (\(label))")
-            if now.version == nil {
-                // 入れ替えを持たないボリュームで、退けてから置くまでの間に強制終了した回だけ
-                #expect(swapUnsupported && dies, "Grain.app が無い (\(label))")
-                let previous = staging.directory
-                    .appendingPathComponent(BundleCommand.previousDirectoryName)
-                    .appendingPathComponent("Grain.app")
-                #expect(version(of: previous) == "2.0" && verifies(previous), "前の版が揃っていない (\(label))")
-            } else {
-                #expect(["2.0", "3.0"].contains(now.version), "\(label)")
-                #expect(now.verifies, "署名を通らない姿が残った (\(label))")
-            }
+    /// **前の版を戻せなかった回も、前の版を消さない。** 入れ替えを持たないボリュームで、新しい版を置く手と
+    /// 前の版を戻す手がどちらも失敗すると、前の版は退けた場所に残る。`distribute` の片付けはそこに触れず、
+    /// 失敗の文はその在処を名乗る。次の回はビルドの前に元の場所へ戻す。
+    @Test("新しい版を置けず前の版も戻せなかった回は、前の版を退けた場所に残して在処を名乗り、次の回で戻る")
+    func aFailedRestoreKeepsThePreviousVersion() throws {
+        let (root, executable, out) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let note = try publishOld(executable, into: out)
+        let app = out.appendingPathComponent("Grain.app", isDirectory: true)
 
-            // 次の回が署名で止まっても、前の版 (か入れ替わった新しい版) が揃って使える
-            #expect(throws: CommandFailure.self) {
-                try BundleCommand.distribute(
-                    executable: executable, identity: new, minimumSystemVersion: "26.0",
-                    into: out, excluding: [], bundles: [], signing: failingSigning)
-            }
-            let recovered = look(at: out)
-            #expect(["2.0", "3.0"].contains(recovered.version), "次の回で戻っていない (\(label))")
-            #expect(recovered.verifies && recovered.note == note, "\(label)")
-            #expect(recovered.leftovers.isEmpty, "一時の置き場が残った (\(label)): \(recovered.leftovers)")
-
-            // 打ち直せば新しい版が揃う
+        // 入れ替えを持たないボリュームで、`Grain.app` へ動かす手 (新しい版を置く・前の版を戻す) を全部失敗させる
+        let live = BundleCommand.PublishSteps.live
+        let steps = BundleCommand.PublishSteps(
+            replace: live.replace,
+            swap: { _, _ in throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)) },
+            move: { from, to in
+                guard to.lastPathComponent != app.lastPathComponent else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))
+                }
+                try live.move(from, to)
+            },
+            remove: live.remove)
+        let owner = try goneOwner()
+        do {
             _ = try BundleCommand.distribute(
                 executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
-                bundles: [], signing: realSigning)
-            #expect(
-                look(at: out)
-                    == Published(version: "3.0", verifies: true, note: note, leftovers: []),
-                "\(label)")
+                bundles: [], signing: realSigning, steps: steps, owner: owner)
+            Issue.record("投げなかった")
+        } catch {
+            guard case .cannotCreate(let path, let reason) = error else {
+                Issue.record("cannotCreate で投げていない: \(error)")
+                return
+            }
+            #expect(path == app.path)
+            let previous = look(at: out).leftovers.filter { $0.hasSuffix(BundleCommand.previousSuffix) }
+            #expect(previous.count == 1, "前の版を退けた場所が無い: \(look(at: out).leftovers)")
+            if let name = previous.first {
+                let kept = out.appendingPathComponent(name, isDirectory: true)
+                #expect(reason.contains(kept.path), "前の版の在処を名乗っていない: \(reason)")
+                #expect(version(of: kept) == "2.0" && verifies(kept), "前の版が消えた")
+            }
         }
+        #expect(look(at: out).version == nil)
+
+        #expect(throws: CommandFailure.self) {
+            try BundleCommand.distribute(
+                executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
+                bundles: [], signing: failingSigning)
+        }
+        #expect(look(at: out) == Published(version: "2.0", verifies: true, note: note, leftovers: []))
+    }
+
+    // MARK: - 前の版の書き込み権
+
+    /// **前の `.app` の最上位に書き込み権が無くても束ね直せる** (`chmod a-w`・`sudo` で束ねたもの)。
+    /// 親の違う場所へディレクトリを rename するには、そのディレクトリ自身の書き込み権が要る。前の版は
+    /// `--out` の中の兄弟どうしでしか動かさないので、`--out` の書き込み権だけで済む。
+    @Test("前の Grain.app の最上位に書き込み権が無くても、束ね直せる", arguments: [Volume.swaps, .noSwap])
+    func aReadOnlyPreviousAppIsReplaced(volume: Volume) throws {
+        let (root, executable, out) = try makeWorkspace()
+        defer {
+            for entry in (try? FileManager.default.contentsOfDirectory(atPath: out.path)) ?? [] {
+                chmod(out.appendingPathComponent(entry).path, 0o755)
+            }
+            try? FileManager.default.removeItem(at: root)
+        }
+        let note = try publishOld(executable, into: out)
+        let app = out.appendingPathComponent("Grain.app", isDirectory: true)
+        #expect(chmod(app.path, 0o555) == 0)
+
+        _ = try BundleCommand.distribute(
+            executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
+            bundles: [], signing: realSigning, steps: Injection(at: nil, fault: .fails).steps(on: volume))
+        let now = look(at: out)
+        #expect(now.version == "3.0" && now.verifies && now.note == note)
+    }
+
+    // MARK: - 初回
+
+    /// **初回に `.app` を置けなければ、いま置いた紙も片付ける** (紙だけを残さない)。前から在った紙には触れない。
+    @Test("初回に Grain.app を置けなければ、いま置いた紙を片付け、前から在った紙は残す", arguments: [false, true])
+    func aFailedFirstPublishLeavesNoLoneNote(noteExisted: Bool) throws {
+        let (root, executable, out) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let note = out.appendingPathComponent(BundleCommand.noteFileName(for: new))
+        if noteExisted {
+            try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+            try BundleCommand.openingNote(for: old).write(to: note, atomically: true, encoding: .utf8)
+        }
+        let live = BundleCommand.PublishSteps.live
+        let steps = BundleCommand.PublishSteps(
+            replace: live.replace, swap: live.swap,
+            move: { _, _ in throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO)) },
+            remove: live.remove)
+
+        #expect(throws: CommandFailure.self) {
+            try BundleCommand.distribute(
+                executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
+                bundles: [], signing: realSigning, steps: steps)
+        }
+        #expect(FileManager.default.fileExists(atPath: note.path) == noteExisted)
+        #expect(look(at: out).version == nil)
+        #expect(look(at: out).leftovers.isEmpty)
     }
 
     // MARK: - 残った一時の置き場
 
+    /// 片付けの対象の名前を作る。
+    private func remnantName(
+        owner: pid_t, role: BundleCommand.RemnantRole = .staging, identity: AppIdentity? = nil
+    ) -> String {
+        let base = BundleCommand.stagingName(for: identity ?? old, owner: owner)
+        switch role {
+        case .staging: return base
+        case .incoming: return base + BundleCommand.incomingSuffix
+        case .previous: return base + BundleCommand.previousSuffix
+        }
+    }
+
+    /// `out` の直下に、`entries` を持つディレクトリを置く (`.app` と点の無い名前はディレクトリ、他はファイル)。
+    private func place(_ name: String, holding entries: [String], in out: URL) throws -> URL {
+        let directory = out.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for entry in entries {
+            let url = directory.appendingPathComponent(entry)
+            if entry.hasSuffix(".app") || !entry.contains(".") {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            } else {
+                try "x".write(to: url, atomically: true, encoding: .utf8)
+            }
+        }
+        return directory
+    }
+
     /// **次の回が片付けるのは、この作品の残りだけ** (#2500・#3054 の持ち主の確かめと同じ考え方)。
-    /// 置き場の名前に作品名は入らない (名前の上限まで使えるように) ので、中身で確かめる。
-    @Test("残った一時の置き場は、中身がこの作品のものだけを片付け、他は残す")
+    /// 置き場の名前に作品名そのものは入らない (名前の上限まで使えるように) ので、作品名の印と中身で確かめる。
+    @Test("残った一時の置き場は、この作品のものだけを片付け、他は残す")
     func onlyOwnLeftoversAreSwept() throws {
         let (root, executable, out) = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-        let prefix = BundleCommand.stagingPrefix
-        func place(_ name: String, holding entries: [String]) throws -> URL {
-            let directory = out.appendingPathComponent(name, isDirectory: true)
-            for entry in entries {
-                let url = directory.appendingPathComponent(entry)
-                if entry.hasSuffix(".app") || !entry.contains(".") {
-                    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-                } else {
-                    try FileManager.default.createDirectory(
-                        at: directory, withIntermediateDirectories: true)
-                    try "x".write(to: url, atomically: true, encoding: .utf8)
-                }
-            }
-            if entries.isEmpty {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            }
-            return directory
-        }
+        // 入れ替えの相手を片付けるのは `Grain.app` が在るときだけなので、先に 1 度束ねておく
+        _ = try BundleCommand.assemble(
+            executable: executable, identity: old, minimumSystemVersion: "26.0", into: out, excluding: [])
+        let gone = try goneOwner()
+        let other = AppIdentity(name: "Other", identifier: "org.example.other", version: "1.0")
         let mine = [
-            try place("\(prefix)\(UUID().uuidString)", holding: ["Grain.app"]),
-            try place("\(prefix)\(UUID().uuidString)", holding: ["Grain.app", "How to open Grain.txt"]),
-            try place("\(prefix)\(UUID().uuidString)", holding: []),
+            try place(remnantName(owner: gone), holding: ["Grain.app"], in: out),
+            try place(remnantName(owner: gone), holding: ["Grain.app", "How to open Grain.txt"], in: out),
+            try place(remnantName(owner: gone), holding: [], in: out),
+            try place(remnantName(owner: gone, role: .incoming), holding: ["Contents"], in: out),
         ]
+        let prefix = BundleCommand.stagingPrefix
         let others = [
-            try place("\(prefix)\(UUID().uuidString)", holding: ["Other.app"]),  // 別の作品
-            try place("\(prefix)\(UUID().uuidString)", holding: ["Grain.app", "keep.txt"]),  // 知らない物
-            try place("\(prefix)notauuid", holding: ["Grain.app"]),  // 形が違う
-            try place(".mokume-bundle", holding: ["Grain.app"]),
+            try place(remnantName(owner: gone, identity: other), holding: ["Other.app"], in: out),  // 別の作品
+            try place(
+                remnantName(owner: gone, role: .incoming, identity: other), holding: ["Contents"], in: out),
+            try place(remnantName(owner: gone), holding: ["Grain.app", "keep.txt"], in: out),  // 知らない物
+            try place("\(prefix)\(UUID().uuidString)", holding: ["Grain.app"], in: out),  // 形が違う
+            try place(".mokume-bundle", holding: ["Grain.app"], in: out),
         ]
-        let target = try place("elsewhere", holding: ["Grain.app"])
-        let link = out.appendingPathComponent("\(prefix)\(UUID().uuidString)")
+        let target = try place("elsewhere", holding: ["Grain.app"], in: out)
+        let link = out.appendingPathComponent(remnantName(owner: gone))
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
 
         _ = try BundleCommand.assemble(
@@ -308,8 +495,59 @@ struct BundleRepublishTests {
                 atPath: target.appendingPathComponent("Grain.app").path), "リンクの先が消えた")
     }
 
+    /// **同じ `--out` へ同時に走っている別の `mokume bundle` の置き場は、片付けで消さない** (持ち主が生きている)。
+    /// 落ちた持ち主のものだけを片付ける (``AtomicFile`` と同じ作法)。
+    @Test("持ち主が生きている一時の置き場は片付けず、落ちた持ち主のものだけ片付ける")
+    func aRunningOwnersStagingIsKept() throws {
+        let (root, executable, out) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let alive = try liveOwner()
+        defer { alive.terminate() }
+        _ = try publishOld(executable, into: out)
+        let running = try BundleCommand.stage(
+            executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
+            owner: alive.processIdentifier)
+        let runningIncoming = try place(running.incoming.lastPathComponent, holding: ["Contents"], in: out)
+        let crashed = try BundleCommand.stage(
+            executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
+            owner: try goneOwner())
+
+        _ = try BundleCommand.distribute(
+            executable: executable, identity: new, minimumSystemVersion: "26.0", into: out, excluding: [],
+            bundles: [], signing: realSigning)
+
+        #expect(FileManager.default.fileExists(atPath: running.app.path), "生きている持ち主の置き場が消えた")
+        #expect(FileManager.default.fileExists(atPath: runningIncoming.path), "生きている持ち主の兄弟が消えた")
+        #expect(!FileManager.default.fileExists(atPath: crashed.directory.path), "落ちた持ち主の置き場が残った")
+        #expect(look(at: out).version == "3.0")
+    }
+
+    /// **退けたまま止まった前の版は、ビルドの前に戻す。** ビルドが通った後だけにすると、コンパイルの誤りで
+    /// 止まる回が続くあいだ、前の版が隠れたまま残る。中身の無い `Package.swift` なので、ビルドへ進めば
+    /// `dump-package` で止まる — 止まった後に戻っていれば、戻したのはビルドの前である。
+    @Test("run は、退けたまま止まった前の版をビルドの前に元の場所へ戻す")
+    func runRestoresThePreviousVersionBeforeBuilding() throws {
+        let (root, executable, _) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "// 中身の無い宣言\n".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try #"{"name": "Grain", "identifier": "org.example.grain", "version": "2.0"}"#
+            .write(
+                to: root.appendingPathComponent(AppIdentity.fileName), atomically: true, encoding: .utf8)
+        let bundled = root.appendingPathComponent(BundleCommand.defaultOutputDirectory, isDirectory: true)
+        let note = try publishOld(executable, into: bundled)
+        let app = bundled.appendingPathComponent("Grain.app", isDirectory: true)
+        let previous = bundled.appendingPathComponent(
+            remnantName(owner: try goneOwner(), role: .previous), isDirectory: true)
+        try FileManager.default.moveItem(at: app, to: previous)
+
+        #expect(throws: CommandFailure.self) { try BundleCommand.run([root.path]) }
+
+        #expect(look(at: bundled) == Published(version: "2.0", verifies: true, note: note, leftovers: []))
+    }
+
     /// 置き場の名前は作品名を含まず短い。名前の上限まで使った作品も束ねられる (#2773 の線を保つ)。
-    @Test("一時の置き場の名前は作品名を含まない")
+    @Test("一時の置き場の名前は作品名を含まず、作品名の印と持ち主の pid を持つ")
     func theStagingNameDoesNotCarryTheName() throws {
         let (root, executable, out) = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -318,8 +556,13 @@ struct BundleRepublishTests {
         defer { BundleCommand.discard(staging) }
         let name = staging.directory.lastPathComponent
         #expect(name.hasPrefix(BundleCommand.stagingPrefix))
-        #expect(UUID(uuidString: String(name.dropFirst(BundleCommand.stagingPrefix.count))) != nil)
+        #expect(!name.contains("Grain"))
+        #expect(BundleCommand.remnant(name, identity: old)?.owner == getpid())
+        #expect(BundleCommand.remnant(name, identity: old)?.role == .staging)
+        #expect(BundleCommand.remnant(name, identity: AppIdentity(name: "Other", identifier: "o", version: "1")) == nil)
         #expect(staging.app.lastPathComponent == "Grain.app")
         #expect(staging.directory.deletingLastPathComponent().path == out.path)
+        #expect(staging.incoming.deletingLastPathComponent().path == out.path)
+        #expect(staging.previous.deletingLastPathComponent().path == out.path)
     }
 }
