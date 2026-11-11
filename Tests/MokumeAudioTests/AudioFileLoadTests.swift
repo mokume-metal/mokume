@@ -118,7 +118,8 @@ struct AudioFileLoadTests {
         let url = try write(channels: 1, frames: 100_000, pathExtension: pathExtension) { _, frame in Float(frame) }
         defer { try? FileManager.default.removeItem(at: url) }
         // 終わりの 200,000 バイト (50,000 標本) を削る。CAF は見出しに長さ 100,000 を残したままで、1 回目の read が
-        // 求めた数より少ない 50,000 標本を返し、次の read が終わりの誤りを投げる。WAV は長さを残りから数え直す
+        // 求めた数より少ない 50,000 標本を返し、次の read が終わりの誤りを投げる。WAV は長さを残りから 50,000 と
+        // 数え直すが、1 回目の read は 49,152 標本しか返さず、続きは次の read で届く
         let handle = try FileHandle(forUpdating: url)
         let size = try handle.seekToEnd()
         try handle.truncate(atOffset: size - 200_000)
@@ -130,6 +131,16 @@ struct AudioFileLoadTests {
         #expect(buffer.frameLength == 50_000)
         let data = UnsafeBufferPointer(start: try #require(buffer.floatChannelData)[0], count: 50_000)
         #expect(data.elementsEqual((0..<50_000).map(Float.init)))
+
+        // 直す前の読み方 (1 回の read) で読めていた標本は、すべて同じ値で読める
+        let file = try AVAudioFile(forReading: url)
+        let once = try #require(
+            AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
+        try file.read(into: once)
+        let before = Int(once.frameLength)
+        #expect(before > 0 && before <= 50_000, "1 回の read で読めた数: \(before)")
+        let onceData = UnsafeBufferPointer(start: try #require(once.floatChannelData)[0], count: before)
+        #expect(onceData.elementsEqual(data.prefix(before)))
     }
 
     @Test("器の容量は UInt32 に収まる長さだけ。2^32 標本以上は落ちずに nil (読み込みは unreadable)")
