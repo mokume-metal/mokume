@@ -148,8 +148,10 @@ nonisolated final class SynthRack: @unchecked Sendable {
     /// 捨ててはならない操作 (``SynthCommand/mustArrive``) だけは、上限を越えて控える。
     private static let heldLimit = 1 << 14
     /// 列の空きがこれより少ないとき、**詰まっている**とみなす (``isCongested``)。1 回の呼び出しが載せる操作
-    /// (節を足す・入力に選ぶ・区切りを始める・音量を伝える) の数より多い。
-    private static let congestionMargin = 8
+    /// (節を足す・入力に選ぶ・区切りを始める・音量を伝える) の数より多い。いちばん多いのは、包絡を掛けて鳴っている
+    /// ``SoundFile`` をエフェクトへ通す呼び出しの 8 つ (節を足す・入力に選ぶ・区切りを始める・包絡の値 4 つと
+    /// 位置のずれ。#3099) で、倍の余裕を取る。数は検査が固定する。
+    static let congestionMargin = 16
 
     let sampleRate: Double
 
