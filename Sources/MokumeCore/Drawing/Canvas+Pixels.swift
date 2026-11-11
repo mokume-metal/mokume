@@ -103,6 +103,11 @@ extension Canvas {
         target.pixels[x, y] = color
     }
 
+    /// 画素を 1 つ書く。``set(_:_:_:)`` に同じ値を同じ順で渡すのと同じ (#3783)。
+    public func set(x: Int, y: Int, to color: LinearRGBA) {
+        set(x, y, color)
+    }
+
     /// 画素を書いてよいか。だめなら 1 度だけ言う ([ADR-0021] 決定 4 の追補 (2026-09-27)・[#1672])。
     ///
     /// **書いた画素も、置いた図形と同じく次の描き切りで面に載る**ので、属する先の規則が同じで

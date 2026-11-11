@@ -333,4 +333,17 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=e62332bb
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) { liveCanvas()?.set(x, y, color) }
+
+    /// 1 画素の色を書き換える。座標と色にラベルを付けて渡す。
+    ///
+    /// ``set(_:_:_:)`` に同じ値を同じ順で渡すのと同じ画素になる。範囲の外の扱い・色を検めないことも
+    /// そちらと同じで、違うのは**どの値が座標でどれが色かを呼び出しの行で読める**ことだけである。
+    /// 座標は手本の形と同じ `Int` で取る。
+    ///
+    /// ```swift
+    /// // set(120, 80, color(242, 217, 89)) と同じ画素
+    /// set(x: 120, y: 80, to: color(242, 217, 89))
+    /// ```
+    // shot: 参照 set(_:_:_:)
+    public func set(x: Int, y: Int, to color: LinearRGBA) { liveCanvas()?.set(x: x, y: y, to: color) }
 }
