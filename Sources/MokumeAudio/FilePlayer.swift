@@ -133,10 +133,15 @@ final class FilePlayer {
 ///   区切りの世代は 1 語に収まらないので、版の番号で挟む (seqlock)。主スレッドは版を奇数にしてから各値を書き、
 ///   偶数に戻す (どれも release)。音の側は版・各値・版の順に読み (値は acquire)、版が偶数で前後が同じときだけ
 ///   受ける。書いている途中に読んだら受けず、次の描き出しで読み直す — **待たない**。包絡を掛けていないファイルは
-///   版が 0 のまま読まれず、標本は器の標本そのまま (掛ける前と 1 つも変わらない)。
+///   版が 0 のままで包絡を受けず待ちもせず、標本は器の標本そのまま (掛ける前と 1 つも変わらない)。
 ///
 /// 包絡は、区切りの世代が同じときだけ受ける。主スレッドは区切りを始める命令 (``command``) より先に、その世代の
-/// 包絡を書く (``FilePlayer/play(from:looping:envelope:)``) ので、新しい区切りを読んだ描き出しで、その包絡も受けられる。
+/// 包絡を書く (``FilePlayer/play(from:looping:envelope:)``) ので、新しい区切りを読んだ描き出しで、ふつうはその包絡も
+/// 受けられる。**受けられなかった描き出しは無音にする** — 一度でも包絡が書かれたファイル (版が 0 でない) は、どの
+/// 区切りにも主スレッドが包絡を書くので、受けられないのは主スレッドが次の包絡を書いている途中 (版が奇数) か、
+/// 次の区切りの包絡が命令より先に見えた (世代が 1 つ先) ときだけ。前の区切りの包絡を持ち越すと、その位置のずれは
+/// 前の区切りの頭からの数なので、立ち上がりの頭 (倍率 0 のはず) や形の後 (無音のはず) に保つ高さを出しうる。
+/// 無音にすれば、ずれるのは最大 1 描き出しの音が欠けることだけで、区切りの頭で音が飛び出さない。
 ///
 /// **音の側は待たず、確保しない** ([ADR-0042] 決定 7)。原子値の読み書きと `memcpy` 相当の複写だけで、
 /// ロック・配列の追加・Objective-C の呼び出しをしない。ポインタの表は init で 1 度だけ作る。
@@ -194,6 +199,9 @@ nonisolated final class FileVoice: @unchecked Sendable {
     private var envelope: FileEnvelope?
     /// 受けた包絡の版。
     private var envelopeApplied: UInt64 = 0
+    /// いまの区切りが包絡を待っているか (一度でも包絡が書かれたファイルの区切り)。待っている間、描いた標本は
+    /// 無音にする。包絡を掛けていないファイルは常に `false`。
+    private var awaitsEnvelope = false
 
     /// - Returns: 標本が浮動小数点・チャンネルごとの並びでなければ (読み込みの形式では起きない) `nil`。
     init?(buffer: AVAudioPCMBuffer) {
@@ -230,12 +238,18 @@ nonisolated final class FileVoice: @unchecked Sendable {
     /// 世代 `generation` の区切りに掛ける包絡を音の側へ渡す (#3099)。次の描き出しの先頭で効く。
     ///
     /// 版を奇数にしてから値を書き、偶数に戻す。書くのは主スレッドだけなので、版の読み書きは競わない。
-    func send(_ envelope: FileEnvelope, generation: Int) {
+    ///
+    /// - Parameter whileWriting: **検査だけが使う。** 値を半分書いたところ (版が奇数の間) で呼ぶ。音の側の描き出しが
+    ///   書いている途中に入る順を、1 本のスレッドで再現する。
+    func send(
+        _ envelope: FileEnvelope, generation: Int, whileWriting: (() -> Void)? = nil
+    ) {
         let version = envelopeSequence.load(ordering: .relaxed)
         envelopeSequence.store(version &+ 1, ordering: .releasing)
         envelopeAttack.store(UInt64(max(0, envelope.shape.attack)), ordering: .releasing)
         envelopeSustain.store(UInt64(max(0, envelope.shape.sustain)), ordering: .releasing)
         envelopeRelease.store(UInt64(max(0, envelope.shape.release)), ordering: .releasing)
+        whileWriting?()
         envelopeLevel.store(UInt64(envelope.shape.level.bitPattern), ordering: .releasing)
         envelopeOffset.store(UInt64(bitPattern: Int64(envelope.offset)), ordering: .releasing)
         envelopeGeneration.store(
@@ -282,7 +296,12 @@ nonisolated final class FileVoice: @unchecked Sendable {
             made += run
         }
         position = place
-        if let envelope { shape(output, channels: copied, made: made, by: envelope) }
+        if let envelope {
+            shape(output, channels: copied, made: made, by: envelope)
+        } else if awaitsEnvelope {
+            // 受けるはずの包絡がまだ読めない (書いている途中・世代が先)。全音量を出さない
+            Self.silence(output, channels: 0..<copied, from: 0, to: made)
+        }
         // 器の終わりで 1 度だけの区切りが尽きたぶんと、器に無いチャンネルは無音
         Self.silence(output, channels: 0..<copied, from: made, to: frames)
         Self.silence(output, channels: copied..<output.count, from: 0, to: frames)
@@ -296,8 +315,10 @@ nonisolated final class FileVoice: @unchecked Sendable {
     private func begin(_ word: UInt64) {
         applied = word
         generation = (word >> Self.generationShift) & Self.generationMask
-        // 包絡は区切りごとに受け直す (``receiveEnvelope()``)
+        // 包絡は区切りごとに受け直す (``receiveEnvelope()``)。一度でも包絡が書かれていれば、この区切りの包絡も
+        // 主スレッドが命令より先に書いている — 受けるまで無音で待つ。版は命令 (acquire で読んだ) より先に書かれる
         envelope = nil
+        awaitsEnvelope = envelopeSequence.load(ordering: .relaxed) != 0
         active = word & Self.haltedBit == 0 && length > 0
         guard active else { return }
         let start = Int(word & Self.startMask)
