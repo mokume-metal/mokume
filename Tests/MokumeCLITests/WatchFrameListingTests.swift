@@ -176,7 +176,7 @@ struct WatchFrameHandOverTests {
         #expect(Set(counts).count == counts.count)
     }
 
-    // MARK: - 作品のウィンドウの台から受け手まで (#3945・#3947)
+    // MARK: - 作品のウィンドウの台から受け手まで (#3945・#3948)
 
     /// 本物の作品のウィンドウの台と子の面を、見張りと同じ口 (``WatchFrameListing/attach(to:)``) で繋いだ組。
     private struct Watched {
@@ -284,10 +284,10 @@ struct WatchFrameHandOverTests {
         #expect((late + redrawn) == (late + redrawn).sorted() && Set(late + redrawn).count == 2, "\(late + redrawn)")
     }
 
-    /// **子の番号は子ごとに 1 から数える** ([#3947])。保存の前後の子がどちらも 3 枚目で止まっても、新しい世代の絵を
+    /// **子の番号は子ごとに 1 から数える** ([#3948])。保存の前後の子がどちらも 3 枚目で止まっても、新しい世代の絵を
     /// 受け手へ渡す。
     ///
-    /// [#3947]: https://github.com/mokume-metal/mokume/issues/3947
+    /// [#3948]: https://github.com/mokume-metal/mokume/issues/3948
     @Test("保存の前後の子が同じ番号で止まっても、新しい世代の絵を受け手へ渡す")
     func aNewGenerationWithTheSameFrameNumberIsHandedOver() throws {
         let facet = try TestScratch.directory("mokume-viewport")

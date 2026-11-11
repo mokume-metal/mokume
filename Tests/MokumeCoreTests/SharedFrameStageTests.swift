@@ -1390,12 +1390,12 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// **受け手へ渡す絵は、リフレッシュごとに新しいかを添えて知らせる** ([#3945]・[#3947])。止まった作品でも毎回呼び
+    /// **受け手へ渡す絵は、リフレッシュごとに新しいかを添えて知らせる** ([#3945]・[#3948])。止まった作品でも毎回呼び
     /// (見張りが後から繋いだ受け手へ今の絵を写し、写した絵の完了を知らせる)、新しいのは絵が変わった回だけである。
     /// 子の番号は子ごとに 1 から数えるので、乗り換え・映し直しの後は同じ番号でも新しい。
     ///
     /// [#3945]: https://github.com/mokume-metal/mokume/issues/3945
-    /// [#3947]: https://github.com/mokume-metal/mokume/issues/3947
+    /// [#3948]: https://github.com/mokume-metal/mokume/issues/3948
     @Test("映す世代の絵をリフレッシュごとに知らせ、新しいのは絵が変わった回と、同じ番号でも世代が替わった回だけ")
     func theShownFrameIsHandedEveryRefresh() throws {
         try withFacet { facet in

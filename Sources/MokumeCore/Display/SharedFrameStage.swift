@@ -276,9 +276,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **差し出しを投入した直後に記し、結末は後で見る** ([#2735])。投入を GPU が打ち切ったら、
     /// 結末が届いた後のリフレッシュで記しを戻し (``submissionSettled(_:dropped:)``)、同じ枚を
     /// 出し直す。戻さないと、書き手が書くのをやめたとき (子の終了・異常終了・詰まり・とても低い
-    /// フレームレート) は枚数が進まず、ウィンドウは打ち切られる前の絵のままになる。子は `noLoop()` や一時停止の
-    /// 間も毎リフレッシュ書いて枚数を進めるので、生きて書いている間は次の枚で上書きされる。
+    /// フレームレート・`noLoop()` や一時停止で絵が変わらない間) は枚数が進まず、ウィンドウは打ち切られる前の
+    /// 絵のままになる。**止まっている子は、絵が変わらない限り面へ書かない** ([#2367]) — 次の枚で上書きされる
+    /// のを当てにしない。
     ///
+    /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
     private var lastFrame = 0
     /// ``lastFrame`` を記した差し出しの投入の番号。**この番号の打ち切りだけが記しを戻す** —
@@ -323,7 +325,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **ウィンドウが見えなくても呼ぶ。**
     ///
     /// - `texture`: 子の面のテクスチャ (面は `iosurface` で引ける)。出せる絵が無いリフレッシュは `nil`
-    /// - `isNew`: 前に知らせた絵から変わったか。**世代が替われば、子の番号が同じでも新しい** ([#3947]) — 子の番号は
+    /// - `isNew`: 前に知らせた絵から変わったか。**世代が替われば、子の番号が同じでも新しい** ([#3948]) — 子の番号は
     ///   子ごとに 1 から数える
     ///
     /// **新しい絵のときだけ呼ぶ形にしない。** 止まった作品 (`noLoop()` の子は絵が変わらない限り面へ書かない) では、
@@ -332,11 +334,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
     /// [#3945]: https://github.com/mokume-metal/mokume/issues/3945
-    /// [#3947]: https://github.com/mokume-metal/mokume/issues/3947
+    /// [#3948]: https://github.com/mokume-metal/mokume/issues/3948
     var onFrame: ((_ texture: (any MTLTexture)?, _ isNew: Bool) -> Void)?
-    /// ``onFrame`` で最後に新しいと知らせた枚数。**世代を乗り換えたら戻す** (``lastFrame`` と同じ・[#3947])。
+    /// ``onFrame`` で最後に新しいと知らせた枚数。**世代を乗り換えたら戻す** (``lastFrame`` と同じ・[#3948])。
     ///
-    /// [#3947]: https://github.com/mokume-metal/mokume/issues/3947
+    /// [#3948]: https://github.com/mokume-metal/mokume/issues/3948
     private var lastHandedFrame = 0
     /// ファイルを選ばせるダイアログの出し方。**検査から差し替える** — 本物の `NSOpenPanel` は人の操作を待つ。
     var filePicker: any FilePicker = OpenPanelPicker()
@@ -856,7 +858,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // いない世代なら、そこで外れる
         lastFrame = 0
         lastSeenFrame = 0
-        // 受け手へ渡す絵の新しさも同じ理由で数え直す。前の子と同じ番号で止まった新しい子の絵を渡し損ねる (#3947)
+        // 受け手へ渡す絵の新しさも同じ理由で数え直す。前の子と同じ番号で止まった新しい子の絵を渡し損ねる (#3948)
         lastHandedFrame = 0
         shownCurrentGeneration = false
         onGenerationPromoted?(waiting.pid)
@@ -1054,7 +1056,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // もう 1 枚目を出している (出していなければ見張りは戻さない) ので、合図は鳴らし直さない
         lastFrame = 0
         lastSeenFrame = 0
-        // 映し直した前の版の絵も、受け手へは新しい絵として渡す (#3947)
+        // 映し直した前の版の絵も、受け手へは新しい絵として渡す (#3948)
         lastHandedFrame = 0
         shownCurrentGeneration = true
         view?.setCanvasSize((previous.width, previous.height))
