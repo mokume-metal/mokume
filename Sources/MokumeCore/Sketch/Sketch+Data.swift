@@ -313,6 +313,45 @@ extension SketchPart {
             try JSONFile.parseObject(try readText(path), path: path, instead: "loadJSONArray(_:)"))
     }
 
+    /// オブジェクトを JSON のファイルにする。書き終わるまで返らない。
+    ///
+    /// <!-- example: 文脈 var points: [Float] = [] -->
+    /// ```swift
+    /// func keyPressed() {
+    ///     guard key == "s" else { return }
+    ///     var summary = JSONObject()
+    ///     summary.setInt("count", points.count)
+    ///     summary.setFloat("mean", points.isEmpty ? 0 : points.reduce(0, +) / Float(points.count))
+    ///     summary.setString("savedAt", "frame \(frameCount)")
+    ///     try? saveJSONObject(summary, "out/summary.json")
+    /// }
+    /// ```
+    ///
+    /// 例の `keyPressed()` は投げ返せない所で、書けなくても絵は続くので `try?` で受けている。
+    ///
+    /// ## 書き方
+    ///
+    /// - **同じオブジェクトからは同じバイト列のファイルになる。** キーは ``JSONObject/keys`` と同じ
+    ///   文字の順で書く (書いた順によらない)
+    /// - 文字は UTF-8 (BOM なし)、行の終わりは LF、字下げは 2 (Processing の既定)
+    /// - 数は ``JSONObject/setInt(_:_:)`` で書いたものが整数の綴り (`2`)、``JSONObject/setFloat(_:_:)``
+    ///   で書いたものが `Float` の最も短い綴り (`-3.5`)。読んだオブジェクトの数は、読んだ値のまま書く
+    ///   (桁の多い数 `-9223372036854775809` も綴りのまま)
+    ///
+    /// 書いたファイルを ``loadJSONObject(_:)`` で読み直すと、同じオブジェクトに戻る。
+    ///
+    /// 引数は書く値が先で、置き場が後 (``saveTable(_:_:)`` と同じ順。Processing の
+    /// `saveJSONObject(json, filename)` も同じ)。置き場は**作業ディレクトリが基準**で、途中の
+    /// ディレクトリは無ければ作り、**書きかけを残さない**ことも ``saveTable(_:_:)`` と同じ。
+    ///
+    /// **書き出しは投げる。** 書けなかったときに別の道を選ぶ判断が要るので、黙って捨てない。
+    ///
+    /// - Throws: 書けなかったときに ``DataFailure/unwritable(path:reason:)``。
+    // shot: 撮れない 結果が絵ではなくファイルになる
+    public func saveJSONObject(_ json: JSONObject, _ path: String) throws(DataFailure) {
+        try TextFile.write(JSONFile.format(.object(json.members)), to: path)
+    }
+
     /// JSON のファイルか URL を読み、オブジェクトにする。**読んでいる間、他の仕事を止めない。**
     ///
     /// <!-- example: 文脈 var temp: Float?; var reason = "" -->
