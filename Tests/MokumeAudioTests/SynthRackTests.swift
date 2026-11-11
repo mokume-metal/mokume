@@ -503,6 +503,60 @@ struct SynthRackTests {
         #expect(rack.set(node.id, .frequency, 880))
     }
 
+    @Test("控えが上限に達しても、止める・入力を外す・手放す操作は受け付けて届き、同じ止める操作は積み増さない (#3944)")
+    func settlingCommandsSurviveTheHeldLimit() throws {
+        let rack = makeRack()
+        let source = try addSource(rack, .wave(.sine), [.frequency: 500, .amplitude: 0.5])
+        let other = try addSource(rack, .wave(.sine), [.frequency: 700, .amplitude: 0.5])
+        let filter = try #require(rack.addFilter(.lowPass))
+        rack.set(filter.id, .cutoff, 20_000)
+        connect(rack, filter, to: [source])
+        _ = render(rack, 2000)
+        #expect(filter.meter.latest(500).map { abs($0) }.max() ?? 0 > 0.1)
+        #expect(other.meter.latest(500).map { abs($0) }.max() ?? 0 > 0.1)
+
+        // 控えを上限まで埋める。その先の値を変える操作は捨てて数える
+        while rack.set(source.id, .frequency, 500) {}
+        let full = rack.heldCount
+        #expect(full == 16_384)
+        #expect(rack.rejectedCount == 1)
+        // 繋ぎ替え (入力を選ぶ) は捨て、主スレッドの写しも変えない
+        #expect(!rack.setInputs(filter.id, 1 << UInt64(other.id)))
+        #expect(rack.inputs(of: filter.id) == 1 << UInt64(source.id))
+        // 止める操作は上限を越えて受け付ける。続けて何度呼んでも 1 つしか積まない
+        var stops = 0
+        for _ in 0..<10_000 where rack.post(SynthCommand(op: .stop, node: UInt8(other.id))) { stops += 1 }
+        #expect(stops == 10_000)
+        #expect(rack.heldCount == full + 1)
+        // 入力を外す操作も同じ (2 度目は積まない)。写しも外れる
+        #expect(rack.setInputs(filter.id, 0))
+        #expect(rack.setInputs(filter.id, 0))
+        #expect(rack.inputs(of: filter.id) == 0)
+        #expect(rack.heldCount == full + 2)
+        // 手放す操作は置き場の数で抑えられているので、上限を越えて受け付ける
+        #expect(rack.release(other.id))
+        #expect(rack.heldCount == full + 3)
+        // 鳴らす操作は捨てる (止めた音が鳴り直さない)
+        #expect(!rack.post(SynthCommand(op: .play, node: UInt8(other.id))))
+        #expect(rack.rejectedCount == 3)
+
+        while rack.heldCount > 0 {
+            rack.retryHeld()
+            _ = render(rack, 64)
+        }
+        let heard = render(rack, 4000)
+        // 入力を外したエフェクトは無音。聞こえるのは、入力を外されて直に出る音源 (音量 0.5・中央) だけで、
+        // 止めた音源は混ざっていない
+        #expect(filter.meter.latest(1000).allSatisfy { $0 == 0 }, "入力を外したエフェクトが鳴っている")
+        #expect(source.meter.latest(1000).map { abs($0) }.max() ?? 0 > 0.4)
+        let alone = source.meter.latest(1000).map { $0 * Float(0.5).squareRoot() }
+        let residue = zip(heard.left.suffix(1000), alone).map { abs($0 - $1) }.max() ?? 1
+        #expect(residue < 1e-5, "止めた音か、エフェクトの音が混ざっている: \(residue)")
+        // 手放した音源は鳴り終えて置き場が戻る
+        rack.collectFreed()
+        #expect(rack.occupiedCount == 2)
+    }
+
     @Test("列が満杯のとき、控えに回った操作は、頼んだ順に 1 つも落とさず載る")
     func heldCommandsKeepTheirOrder() throws {
         let rack = makeRack()

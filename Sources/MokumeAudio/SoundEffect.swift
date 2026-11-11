@@ -113,7 +113,12 @@ public class SoundEffect: SynthSound {
                     + "connection would loop. This \(name) keeps its other inputs")
             return false
         }
-        stage.rack.setInputs(node.id, stage.rack.inputs(of: node.id) | (1 << UInt64(source.id)))
+        // 操作が溢れて受け付けられなければ、繋がず (入力の写しも変えず)、ステージが 1 度だけ知らせる (#3944)
+        guard stage.rack.setInputs(node.id, stage.rack.inputs(of: node.id) | (1 << UInt64(source.id)))
+        else {
+            routed = nil
+            return false
+        }
         isActive = true
         return true
     }
