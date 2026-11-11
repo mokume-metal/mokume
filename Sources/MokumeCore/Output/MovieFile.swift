@@ -407,9 +407,9 @@ nonisolated final class MovieFile: MovieOutput {
         path: String, width: Int, height: Int, frameRate: Int, format: Format = .proRes4444,
         soundStart: Int? = nil, placement: AtomicFile.Placement? = nil
     ) throws(MovieWriteFailure) {
-        // **書き出し先がディレクトリなら、消さずに断る。** 下の「同じ名前が残っていると開けない」の
-        // `removeItem` はディレクトリを中身ごと消す。出力先は利用者が指定するパスなので、取り違えて
-        // ディレクトリを指すと、そのディレクトリが黙って消える ([#2859](https://github.com/mokume-metal/mokume/issues/2859))
+        // **書き出し先がディレクトリなら、消さずに断る。** 出力先は利用者が指定するパスなので、取り違えて
+        // ディレクトリを指すことがある ([#2859](https://github.com/mokume-metal/mokume/issues/2859))。下の
+        // ``AtomicFile/remove(_:)`` (`unlink(2)`) はディレクトリを消さないので、ここは理由を先に名乗るための守り
         if AtomicFile.isDirectory(URL(fileURLWithPath: path), following: false) {
             throw .writeFailed(path: path, reason: Diagnostics.posixReason(EISDIR))
         }

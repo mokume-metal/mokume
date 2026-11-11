@@ -248,6 +248,71 @@ struct AtomicFileTests {
         #expect(folderContents([folder]) == [".taken.tmp": "mine"])
     }
 
+    @Test("リンクの行き先へ置けなかった後始末も、一時ファイルの場所にフォルダが在れば消さず、リンクも残す")
+    func theCleanupAfterAFailedPlacementOverALinkKeepsAFolder() throws {
+        let facet = try makeFacet()
+        let target = facet.appendingPathComponent("target.bin")
+        try Data("previous".utf8).write(to: target)
+        let url = facet.appendingPathComponent("link.mp4")
+        try FileManager.default.createSymbolicLink(at: url, withDestinationURL: target)
+        let folder = facet.appendingPathComponent(".taken.tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        try Data("mine".utf8).write(to: folder.appendingPathComponent("keep.txt"))
+        // フォルダはリンク (通常ファイルを指す) の上へ `rename(2)` できない (`ENOTDIR`) ので、置く段が失敗する
+        let placement = AtomicFile.Placement(url: url, temporary: folder)
+        #expect(throws: (any Error).self) { try placement.placeWritten() }
+        #expect(folderContents([folder]) == [".taken.tmp": "mine"])
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == target.path)
+        #expect(try Data(contentsOf: target) == Data("previous".utf8))
+    }
+
+    /// 消すのは `unlink(2)` 1 回 ([#3943] の 2 回目の反証の指摘 1・2)。見てから消すのではないので、見てから消すまでの
+    /// 間にフォルダへ替わる窓が無い。ここでは種類ごとに、残るもの・外れるものと戻り値を固定する。
+    ///
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    @Test("remove はフォルダを中身ごと残して false、リンクはリンクだけを外して true、通常ファイルと無い名前は true")
+    func removeUnlinksOnlyWhatIsNotAFolder() throws {
+        let manager = FileManager.default
+        let facet = try makeFacet()
+        let folder = facet.appendingPathComponent("folder", isDirectory: true)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: false)
+        let kept = folder.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+        let linkToFolder = facet.appendingPathComponent("link-to-folder")
+        try manager.createSymbolicLink(at: linkToFolder, withDestinationURL: folder)
+        let brokenLink = facet.appendingPathComponent("broken-link")
+        try manager.createSymbolicLink(
+            at: brokenLink, withDestinationURL: facet.appendingPathComponent("nowhere"))
+        let file = facet.appendingPathComponent("file.tmp")
+        try Data("half".utf8).write(to: file)
+        let missing = facet.appendingPathComponent("missing.tmp")
+
+        #expect(AtomicFile.remove(folder) == false, "フォルダは消えないので false")
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8), "フォルダの中身が残る")
+        #expect(AtomicFile.remove(linkToFolder))
+        #expect(!AtomicFile.exists(linkToFolder), "リンク自身は外れる")
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8), "リンクの指す先は残る")
+        #expect(AtomicFile.remove(brokenLink))
+        #expect(!AtomicFile.exists(brokenLink))
+        #expect(AtomicFile.remove(file))
+        #expect(!AtomicFile.exists(file))
+        #expect(AtomicFile.remove(missing), "もともと無いなら true")
+    }
+
+    @Test("remove は消せなかった (書き込めないフォルダの中の) ファイルに false を返す")
+    func removeReportsAFileItCouldNotRemove() throws {
+        let facet = try makeFacet()
+        let locked = facet.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: false)
+        let file = locked.appendingPathComponent("file.tmp")
+        try Data("half".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+
+        #expect(AtomicFile.remove(file) == false)
+        #expect(AtomicFile.exists(file))
+    }
+
     @Test("GIF の書き手は、一時ファイルの場所にフォルダが在れば消さずに断る")
     func theGIFWriterKeepsAFolderAtItsTemporaryName() throws {
         let facet = try makeFacet()
