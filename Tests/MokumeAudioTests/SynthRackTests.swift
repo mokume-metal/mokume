@@ -557,6 +557,71 @@ struct SynthRackTests {
         #expect(rack.occupiedCount == 2)
     }
 
+    /// 止める操作 (と入力を外す操作) の間に、同じ節へ受け付けた別の操作を挟む形。
+    enum Between: CaseIterable {
+        /// すぐ鳴らす (`post` の道)
+        case play
+        /// 予約のまとまりで鳴らす (`postReservation` の道)
+        case reservation
+        /// エフェクトの入力に選び直す (入力を外す操作の間に挟む)
+        case connect
+    }
+
+    @Test(
+        "同じ節へ別の操作を受け付けた後なら、控えの上限を越えた後の止める・入力を外す操作も積み、音が消える (#3944)",
+        arguments: Between.allCases)
+    func settlingAfterAnotherCommandIsHeld(_ between: Between) throws {
+        let rack = makeRack()
+        let voice = try addSource(rack, .wave(.sine), [.frequency: 500, .amplitude: 0.5], playing: false)
+        let filler = try addSource(rack, .wave(.sine), playing: false)
+        let filter = try #require(rack.addFilter(.lowPass))
+        rack.set(filter.id, .cutoff, 20_000)
+        let settle: SynthCommand
+        let sounding: RackNode
+        switch between {
+        case .play, .reservation:
+            settle = SynthCommand(op: .stop, node: UInt8(voice.id))
+            sounding = voice
+        case .connect:
+            rack.post(SynthCommand(op: .play, node: UInt8(voice.id)))
+            settle = SynthCommand(op: .inputs, node: UInt8(filter.id), bits: 0)
+            sounding = filter
+        }
+        // 止める (外す) → 同じ節へ別の操作を受け付ける。どちらも上限の手前で、すぐ載る
+        #expect(rack.post(settle))
+        switch between {
+        case .play:
+            #expect(rack.post(SynthCommand(op: .play, node: UInt8(voice.id))))
+        case .reservation:
+            let amp = SynthCommand(
+                op: .set, node: UInt8(voice.id), param: .amplitude, bits: UInt64(Float(0.5).bitPattern))
+            #expect(rack.postReservation([amp, SynthCommand(op: .play, node: UInt8(voice.id))]))
+        case .connect:
+            #expect(rack.setInputs(filter.id, 1 << UInt64(voice.id)))
+        }
+        #expect(rack.heldCount == 0)
+        _ = render(rack, 2000)
+        #expect(sounding.meter.latest(500).map { abs($0) }.max() ?? 0 > 0.1, "鳴り直していない")
+
+        // 別の節への操作で控えを上限まで埋めてから、もう一度止める (外す)
+        while rack.set(filler.id, .frequency, 440) {}
+        let full = rack.heldCount
+        #expect(rack.post(settle))
+        #expect(rack.heldCount == full + 1, "2 つ目の止める (外す) 操作が積まれていない")
+
+        while rack.heldCount > 0 {
+            rack.retryHeld()
+            _ = render(rack, 64)
+        }
+        let heard = render(rack, 48_000)
+        switch between {
+        case .play, .reservation:
+            #expect(heard.left.suffix(1000).allSatisfy { $0 == 0 }, "止めた音が鳴り続けている: \(heard.left.suffix(1000).map { abs($0) }.max() ?? 0)")
+        case .connect:
+            #expect(filter.meter.latest(1000).allSatisfy { $0 == 0 }, "入力を外したエフェクトが鳴り続けている")
+        }
+    }
+
     @Test("列が満杯のとき、控えに回った操作は、頼んだ順に 1 つも落とさず載る")
     func heldCommandsKeepTheirOrder() throws {
         let rack = makeRack()
