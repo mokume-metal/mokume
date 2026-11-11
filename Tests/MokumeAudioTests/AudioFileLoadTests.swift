@@ -129,6 +129,7 @@ struct AudioFileLoadTests {
         if pathExtension == "caf" {
             #expect(try AVAudioFile(forReading: url).length == 100_000, "見出しの長さが残っていない")
         }
+        probeReads(url, tag: pathExtension)
         let buffer = try AudioFile.load(url, path: "cut.\(pathExtension)")
         #expect(buffer.frameLength == 50_000)
         let data = UnsafeBufferPointer(start: try #require(buffer.floatChannelData)[0], count: 50_000)
@@ -149,6 +150,58 @@ struct AudioFileLoadTests {
         #expect(before <= 50_000, "1 回の read で読めた数: \(before)")
         let onceData = UnsafeBufferPointer(start: try #require(once.floatChannelData)[0], count: before)
         #expect(onceData.elementsEqual(data.prefix(before)))
+    }
+
+    /// 削ったファイルの `read` の返し方を記録に出す (下限の OS の確かめ。検査の成否には関わらない)。
+    private func probeReads(_ url: URL, tag: String) {
+        let prefix = "PROBE[\(tag)]"
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: url)
+        } catch {
+            let error = error as NSError
+            print("\(prefix) open threw domain=\(error.domain) code=\(error.code) \(error.localizedDescription)")
+            return
+        }
+        print("\(prefix) length=\(file.length)")
+        print("\(prefix) fileFormat=\(file.fileFormat)")
+        print("\(prefix) processingFormat=\(file.processingFormat)")
+        guard let piece = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 100_000) else {
+            print("\(prefix) buffer failed")
+            return
+        }
+        func rewind() {
+            let before = file.framePosition
+            file.framePosition = 0
+            print("\(prefix) rewind framePosition \(before) -> \(file.framePosition)")
+        }
+        @discardableResult
+        func attempt(_ count: AVAudioFrameCount) -> Bool {
+            piece.frameLength = 0
+            do {
+                try file.read(into: piece, frameCount: count)
+                print(
+                    "\(prefix) read(\(count)) ok frameLength=\(piece.frameLength) framePosition=\(file.framePosition)")
+                return piece.frameLength > 0
+            } catch {
+                let error = error as NSError
+                print(
+                    "\(prefix) read(\(count)) threw domain=\(error.domain) code=\(error.code) "
+                        + "\(error.localizedDescription) frameLength=\(piece.frameLength) "
+                        + "framePosition=\(file.framePosition)")
+                return false
+            }
+        }
+        attempt(100_000)
+        for count: AVAudioFrameCount in [50_000, 49_152] {
+            rewind()
+            attempt(count)
+        }
+        rewind()
+        var steps = 0
+        while attempt(4_096), steps < 40 { steps += 1 }
+        rewind()
+        attempt(1)
     }
 
     /// `read` の返し方を差し替えた読み手。見出しの長さは 100,000 で、実際にあるのは `actual` 標本。標本の値は番号。
