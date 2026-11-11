@@ -79,6 +79,29 @@ extension SketchPart {
         canvas.bezier(x1, y1, x2, y2, x3, y3, x4, y4)
     }
 
+    /// 3 次の曲線を 1 本引く。始点・制御点 2 つ・終点を `Vector2` で、ラベルを付けて渡す。
+    ///
+    /// ``bezier(_:_:_:_:_:_:_:_:)`` に 4 つの点の成分を同じ順で渡すのと同じ曲線になる。塗り方・
+    /// 形の組み立ての中での扱いもそちらと同じで、違うのは**どの点が端でどれが制御点かを呼び出しの
+    /// 行で読める**ことだけである。
+    ///
+    /// ```swift
+    /// // bezier(40, 200, 120, 40, 280, 40, 360, 200) と同じ曲線
+    /// noFill()
+    /// bezier(from: Vector2(40, 200), control1: Vector2(120, 40), control2: Vector2(280, 40), to: Vector2(360, 200))
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - start: 始点。
+    ///   - control1: 始点の側の制御点。
+    ///   - control2: 終点の側の制御点。
+    ///   - end: 終点。
+    // shot: 参照 bezier(_:_:_:_:_:_:_:_:)
+    public func bezier(from start: Vector2, control1: Vector2, control2: Vector2, to end: Vector2) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.bezier(from: start, control1: control1, control2: control2, to: end)
+    }
+
     /// 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
     ///
     /// **2 つの制御点は通らない** — 曲線を引っぱる位置である。下の例では灰色の丸が
@@ -146,6 +169,30 @@ extension SketchPart {
         canvas.bezierVertex(cx1, cy1, cx2, cy2, x, y)
     }
 
+    /// 3 次の曲線で、いまの点から `end` まで繋ぐ。制御点 2 つと終点を `Vector2` で、ラベルを付けて渡す。
+    ///
+    /// ``bezierVertex(_:_:_:_:_:_:)`` に 3 つの点の成分を同じ順で渡すのと同じ形になる。始点が無いとき・
+    /// 形の外で呼んだときの扱いもそちらと同じで、違うのは**どの点が制御点でどれが終点かを呼び出しの
+    /// 行で読める**ことだけである。
+    ///
+    /// ```swift
+    /// // bezierVertex(100, 40, 200, 90, 340, 220) と同じ形
+    /// beginShape()
+    /// vertex(60, 250)
+    /// bezierVertex(control1: Vector2(100, 40), control2: Vector2(200, 90), to: Vector2(340, 220))
+    /// endShape()
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - control1: いまの点の側の制御点。
+    ///   - control2: 終点の側の制御点。
+    ///   - end: 終点。次の区間の始点になる。
+    // shot: 参照 bezierVertex(_:_:_:_:_:_:)
+    public func bezierVertex(control1: Vector2, control2: Vector2, to end: Vector2) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.bezierVertex(control1: control1, control2: control2, to: end)
+    }
+
     /// 2 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
     ///
     /// **制御点は 1 つ。** ``bezierVertex(_:_:_:_:_:_:)`` より書くことが少ない代わりに、
@@ -182,6 +229,28 @@ extension SketchPart {
         guard let canvas = liveCanvas() else { return }
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         canvas.quadraticVertex(cx, cy, x, y)
+    }
+
+    /// 2 次の曲線で、いまの点から `end` まで繋ぐ。制御点と終点を `Vector2` で、ラベルを付けて渡す。
+    ///
+    /// ``quadraticVertex(_:_:_:_:)`` に 2 つの点の成分を同じ順で渡すのと同じ形になる。始点が無いとき・
+    /// 形の外で呼んだときの扱いもそちらと同じで、違うのは**どの点が制御点でどれが終点かを呼び出しの
+    /// 行で読める**ことだけである。
+    ///
+    /// ```swift
+    /// beginShape()
+    /// vertex(60, 250)
+    /// quadraticVertex(control: Vector2(200, 30), to: Vector2(340, 250))
+    /// endShape()
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - control: 制御点。
+    ///   - end: 終点。次の区間の始点になる。
+    // shot: 参照 quadraticVertex(_:_:_:_:)
+    public func quadraticVertex(control: Vector2, to end: Vector2) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.quadraticVertex(control: control, to: end)
     }
 
     /// 通過点を結ぶ曲線の制御点を置く。

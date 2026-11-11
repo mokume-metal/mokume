@@ -159,6 +159,130 @@ public struct Table: Equatable, Sendable {
         write(row, index, value, call: "setString")
     }
 
+    /// 行の番号と列の名前で、セルを文字のまま読む。`row` は 0 から数えた行の番号。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// for i in 0..<table.rowCount {
+    ///     text(table.getString(i, "date"), 20, 20 + Float(i) * 16)
+    /// }
+    /// ```
+    ///
+    /// **番号で回すときは ``rows`` ではなくこの口で読む。** ``rows`` は呼ぶたびに全行の写しを作るので、
+    /// ループの中で `rows[i]` と引くと、行の数の 2 乗の手間になる。この口は行を写さずにセルを読む。
+    ///
+    /// **無い列・表の外の行なら空の文字を返し、初回だけ理由を知らせる** (``TableRow/getString(_:)-(String)``
+    /// と同じ空の値)。読み取りは落ちない ([ADR-0020] 決定 5)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func getString(_ row: Int, _ column: String) -> String {
+        let index = TableValues.column(named: column, in: titles, call: "getString")
+        return read(row, index, call: "getString", reading: "an empty string") ?? ""
+    }
+
+    /// 行の番号と列の番号 (どちらも 0 から) で、セルを文字のまま読む。見出しの無い表はこちらで読む。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// for i in 0..<table.rowCount {
+    ///     text(table.getString(i, 0), 20, 20 + Float(i) * 16)
+    /// }
+    /// ```
+    ///
+    /// 無い列・表の外の行の扱いは ``getString(_:_:)-(_,String)`` と同じ。
+    public func getString(_ row: Int, _ column: Int) -> String {
+        let index = TableValues.column(numbered: column, width: columnCount, call: "getString")
+        return read(row, index, call: "getString", reading: "an empty string") ?? ""
+    }
+
+    /// 行の番号と列の名前で、セルを数として読む。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// for i in 0..<table.rowCount {
+    ///     let high = table.getFloat(i, "high") * 10
+    ///     rect(Float(i) * 3, height - high, 2, high)
+    /// }
+    /// ```
+    ///
+    /// 数とする綴りと、数にならないときの扱い (NaN と、列ごとに 1 度の知らせ) は
+    /// ``TableRow/getFloat(_:)-(String)`` と同じ。番号で回すときに ``rows`` を経ない理由は
+    /// ``getString(_:_:)-(_,String)`` にある。
+    ///
+    /// **無い列・表の外の行なら NaN を返し、初回だけ理由を知らせる。**
+    public func getFloat(_ row: Int, _ column: String) -> Float {
+        let index = TableValues.column(named: column, in: titles, call: "getFloat")
+        let text = read(row, index, call: "getFloat", reading: "NaN")
+        return TableValues.number(text, row: row, named: "\"\(column)\"")
+    }
+
+    /// 行の番号と列の番号 (どちらも 0 から) で、セルを数として読む。見出しの無い表はこちらで読む。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// for i in 0..<table.rowCount {
+    ///     point(table.getFloat(i, 0), table.getFloat(i, 1))
+    /// }
+    /// ```
+    ///
+    /// 扱いは ``getFloat(_:_:)-(_,String)`` と同じ。
+    public func getFloat(_ row: Int, _ column: Int) -> Float {
+        let index = TableValues.column(numbered: column, width: columnCount, call: "getFloat")
+        let text = read(row, index, call: "getFloat", reading: "NaN")
+        return TableValues.number(text, row: row, named: "\(column)")
+    }
+
+    /// 行の番号と列の名前で、セルを整数として読む。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// for i in 0..<table.rowCount {
+    ///     let count = table.getInt(i, "count")
+    ///     rect(20 + Float(i) * 30, height - 20, 24, -Float(count) * 4)
+    /// }
+    /// ```
+    ///
+    /// 読み方は ``TableRow/getInt(_:)-(String)`` と同じ (**丸めない**。`"2"`・`"2.0"`・`"1e3"` は整数で、
+    /// `"2.5"` は 0 を返して知らせる)。番号で回すときに ``rows`` を経ない理由は
+    /// ``getString(_:_:)-(_,String)`` にある。
+    ///
+    /// **無い列・表の外の行なら 0 を返し、初回だけ理由を知らせる。**
+    public func getInt(_ row: Int, _ column: String) -> Int {
+        let index = TableValues.column(named: column, in: titles, call: "getInt")
+        let text = read(row, index, call: "getInt", reading: "0")
+        return TableValues.integer(text, row: row, named: "\"\(column)\"")
+    }
+
+    /// 行の番号と列の番号 (どちらも 0 から) で、セルを整数として読む。見出しの無い表はこちらで読む。
+    ///
+    /// <!-- example: 文脈 var table: Table! -->
+    /// ```swift
+    /// for i in 0..<table.rowCount {
+    ///     circle(width / 2, height / 2, Float(table.getInt(i, 0)))
+    /// }
+    /// ```
+    ///
+    /// 扱いは ``getInt(_:_:)-(_,String)`` と同じ。
+    public func getInt(_ row: Int, _ column: Int) -> Int {
+        let index = TableValues.column(numbered: column, width: columnCount, call: "getInt")
+        let text = read(row, index, call: "getInt", reading: "0")
+        return TableValues.integer(text, row: row, named: "\(column)")
+    }
+
+    /// 読む口の共通の道。セルの文字か、読めなければ `nil`。列が解けなかったときは、解く側が既に
+    /// 知らせている。表の外の行は、口ごとに 1 度知らせる。
+    private func read(_ row: Int, _ column: Int?, call: String, reading empty: String) -> String? {
+        guard let column else { return nil }
+        guard cells.indices.contains(row) else {
+            TableValues.warnOnce(
+                .rowOutOfRange(call: call),
+                "\(call)(): there is no row \(row) — \(TableValues.extent(rowCount, "row")). "
+                    + "Reading it as \(empty)")
+            return nil
+        }
+        return cells[row][column]
+    }
+
     /// 書く口の共通の道。列が解けなかったときは、解く側が既に知らせている。
     private mutating func write(_ row: Int, _ column: Int?, _ value: String, call: String) {
         guard let column else { return }
@@ -237,19 +361,50 @@ public struct TableRow: Sendable {
         return number(index, named: "\(column)")
     }
 
+    /// 列の名前で、セルを整数として読む。
+    ///
+    /// <!-- example: 文脈 var row: TableRow! -->
+    /// ```swift
+    /// let stations = row.getInt("stations")
+    /// for i in 0..<stations {
+    ///     circle(20 + Float(i) * 12, height / 2, 8)
+    /// }
+    /// ```
+    ///
+    /// **丸めない** — `"2"`・`"2.0"`・`"1e3"` は整数で、`"2.5"` は 0 を返して知らせる (黙って別の値を
+    /// 返さない。``JSONObject/getInt(_:)`` と同じ)。数とする綴りは ``getFloat(_:)-(String)`` と同じ
+    /// 10 進だけで、前後の空白は落とす。小数が要るときは ``getFloat(_:)-(String)``。
+    ///
+    /// **整数にならないときは 0 を返し、初回だけ理由を知らせる** — セルが空・整数でない数・`Int` に
+    /// 収まらない数・数でない文字 (`"N/A"` など)・無い列のどれでも (列ごとに 1 度)。読み取りは落ちない
+    /// ([ADR-0020] 決定 5)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func getInt(_ column: String) -> Int {
+        let index = TableValues.column(named: column, in: titles, call: "getInt")
+        return TableValues.integer(cell(index), row: self.index, named: "\"\(column)\"")
+    }
+
+    /// 列の番号 (0 から) で、セルを整数として読む。見出しの無い表はこちらで読む。
+    ///
+    /// <!-- example: 文脈 var row: TableRow! -->
+    /// ```swift
+    /// circle(width / 2, height / 2, Float(row.getInt(0)))
+    /// ```
+    ///
+    /// 読み方と、整数にならないときの扱いは ``getInt(_:)-(String)`` と同じ。
+    public func getInt(_ column: Int) -> Int {
+        let index = TableValues.column(numbered: column, width: cells.count, call: "getInt")
+        return TableValues.integer(cell(index), row: self.index, named: "\(column)")
+    }
+
     private func cell(_ column: Int?) -> String? {
         guard let column else { return nil }
         return cells[column]
     }
 
     private func number(_ column: Int?, named name: String) -> Float {
-        guard let text = cell(column) else { return .nan }
-        if let value = DecimalText.float(text) { return value }
-        TableValues.warnOnce(
-            .notANumber(column: name),
-            "getFloat(): row \(index), column \(name) holds \"\(text)\", which is not a number. "
-                + "Reading it as NaN (said once per column)")
-        return .nan
+        TableValues.number(cell(column), row: index, named: name)
     }
 }
 
@@ -273,6 +428,33 @@ enum TableValues {
         /// 数として読めないセルがあった。**列ごとに数える** — 欠けた値の多い列が、
         /// 他の列の注意を黙らせない。
         case notANumber(column: String)
+        /// 整数として読めないセルがあった。**列ごとに数える** (``notANumber(column:)`` と同じ理由)。
+        case notAnInteger(column: String)
+    }
+
+    /// セルの文字を数にする (`getFloat` の口が共有する)。`text` が `nil` (無い列・表の外の行) なら、
+    /// 解く側が既に知らせているので黙って NaN。数でない文字は、列ごとに 1 度知らせて NaN。
+    static func number(_ text: String?, row: Int, named name: String) -> Float {
+        guard let text else { return .nan }
+        if let value = DecimalText.float(text) { return value }
+        warnOnce(
+            .notANumber(column: name),
+            "getFloat(): row \(row), column \(name) holds \"\(text)\", which is not a number. "
+                + "Reading it as NaN (said once per column)")
+        return .nan
+    }
+
+    /// セルの文字を整数にする (`getInt` の口が共有する)。丸めずに、綴りの値が整数で `Int` に収まる
+    /// ときだけ読む (``DecimalText/int(_:)``)。`text` が `nil` なら黙って 0、読めなければ列ごとに
+    /// 1 度知らせて 0。
+    static func integer(_ text: String?, row: Int, named name: String) -> Int {
+        guard let text else { return 0 }
+        if let value = DecimalText.int(text) { return value }
+        warnOnce(
+            .notAnInteger(column: name),
+            "getInt(): row \(row), column \(name) holds \"\(text)\", which is not an integer that "
+                + "fits in an Int. Reading it as 0 (said once per column)")
+        return 0
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。

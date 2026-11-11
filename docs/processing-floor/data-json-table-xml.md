@@ -9,8 +9,8 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 40 |
-| 入れる | 35 |
+| 同等 | 44 |
+| 入れる | 31 |
 | 作例待ち | 12 |
 | 持たない | 21 |
 | 計 | 108 |
@@ -24,11 +24,10 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 ## 入れるの束
 
-「入れる」の 35 件は、近い口ごとに 5 本の `Feature` で入れる。
+「入れる」の 31 件は、近い口ごとに 4 本の `Feature` で入れる。入れ終えた束 ([#3641] の 4 件) は行を「同等」に直し、ここから外した。
 
 | 束 | 口 | 件数 |
 | --- | --- | --- |
-| [#3641] 表から番号で読む | `Table.getFloat()`・`Table.getInt()`・`Table.getString()`・`TableRow.getInt()` | 4 |
 | [#3642] 表の行と列を書き換える | `Table.clearRows()`・`removeColumn()`・`removeRow()`・`removeTokens()`・`setInt()`・`trim()` | 6 |
 | [#3643] JSON のオブジェクトを作って書き出す | `JSONObject.setBoolean()`・`setFloat()`・`setInt()`・`setJSONArray()`・`setJSONObject()`・`setString()`・`saveJSONObject()` (空から作る `new JSONObject()` を含む) | 7 |
 | [#3644] JSON の配列を作って書き出す | `JSONArray.append()`・`remove()`・`setBoolean()`・`setFloat()`・`setInt()`・`setJSONArray()`・`setJSONObject()`・`setString()`・`saveJSONArray()` (空から作る `new JSONArray()` を含む) | 9 |
@@ -75,7 +74,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 | `Table.clearRows()`・`removeColumn()`・`removeRow()`・`removeTokens()`・`setInt()`・`trim()` (6 件) | — | 入れる | 表の行と列を書き換える口。表は値の型で、行の写しからは書き換えられないので、表の上に口が要る。セルの文字を整える `trim`・`removeTokens` は、いまは行の数だけ `setString` を回して Foundation で整えるしかない。`setInt` は `setFloat` と同じ形で、整数の綴りで書く | [#3642] |
 | `Table.findRow()`・`findRows()`・`matchRow()`・`matchRowIterator()`・`matchRows()` (5 件) | `table.rows.first(where:)`・`filter`・`firstIndex(where:)` (正規表現は Swift の `Regex` と `wholeMatch(of:)`) | 持たない | Swift の標準の口で 1 度に回せる。返る行は読むための写しなので、見つけた行を書き換えるときは `firstIndex(where:)` の番号で表に書く | [#2468] |
 | `Table.getColumnCount()` | `Table.columnCount` | 同等 | プロパティ | — |
-| `Table.getFloat()`・`getInt()`・`getString()` (3 件) | — (いまは `table.rows[row].getFloat(column)`) | 入れる | 表から行の番号と列で 1 つのセルを読む。書く側 (`setFloat(_:_:_:)`) は表にあり、読む側だけが行を経る。`rows` は呼ぶたびに全行の写しを作るので、番号で読むループが行の数の 2 乗になる。`getInt` は `JSONObject.getInt(_:)` と同じく丸めない | [#3641] |
+| `Table.getFloat()`・`getInt()`・`getString()` (3 件) | `Table.getFloat(_:_:)`・`getInt(_:_:)`・`getString(_:_:)` | 同等 | 表から行の番号と列で 1 つのセルを読む。列は名前と番号の 2 つの形。`rows` は呼ぶたびに全行の写しを作るので、番号で回すループは行を経ずにこの API で読む。`getInt` は `JSONObject.getInt(_:)` と同じく丸めない。無い列・表の外の行は行の API と同じ空の値と、1 度だけの知らせ | [#3641] |
 | `Table.getRow()` | `Table.rows[row]` | 同等 | 返るのは読むための写しで、参照ではない (書き換えは表へ) | [#2468] |
 | `Table.getRowCount()` | `Table.rowCount` | 同等 | プロパティ。見出しの行は数えない | — |
 | `Table.getStringColumn()` | `table.rows.map { $0.getString(column) }` | 持たない | Swift の `map` で 1 度に回せる | — |
@@ -93,7 +92,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 | `TableRow` (クラス) | `TableRow` | 同等 | `Table.rows` から取り出す、読むための写し。書き換える口を持たない | [#2468]・PR [#2861] |
 | `TableRow.getColumnCount()`・`getColumnTitle()` (2 件) | `Table.columnCount`・`Table.columnTitles[column]` | 持たない | 行は表の写しで、どの行も同じ列を持つ。列の数と名前は表が持つ | — |
 | `TableRow.getFloat()` | `TableRow.getFloat(_:)` | 同等 | 列は名前と番号の 2 つの形。10 進の綴りだけを数とし、数でなければ NaN と知らせ | — |
-| `TableRow.getInt()` | — | 入れる | 整数として読む口が行に無い。`Table.getInt()` と同じく丸めない | [#3641] |
+| `TableRow.getInt()` | `TableRow.getInt(_:)` | 同等 | 列は名前と番号の 2 つの形。丸めない (`"2.0"`・`"1e3"` は整数、`"2.5"` は 0 と列ごとに 1 度の知らせ)。綴りは `getFloat` と同じ 10 進だけ | [#3641] |
 | `TableRow.getString()` | `TableRow.getString(_:)` | 同等 | 列は名前と番号の 2 つの形。無い列は空の文字と知らせ | — |
 | `TableRow.setFloat()`・`setInt()`・`setString()` (3 件) | `Table.setFloat(_:_:_:)`・`Table.setString(_:_:_:)` (整数は [#3642] の `Table.setInt()`) | 持たない | 行は読むための写しで、書き換えは表に行の番号を渡して行う | [#2468]・PR [#2861] |
 

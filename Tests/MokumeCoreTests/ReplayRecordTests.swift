@@ -246,6 +246,54 @@ struct ReplayRecordFormatTests {
         #expect(next.partial.lastPathComponent == stale.lastPathComponent, "同じプロセスなので同じ名前になる")
     }
 
+    /// 後始末が消してよいのは、記録が作った形 (通常ファイル) の `.partial` だけ ([#3943])。
+    ///
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    @Test("前の回の後始末は .partial の名前の通常ファイルだけを消し、同じ名前のフォルダは中身ごと残し、リンクは外すだけで指す先を残す")
+    func theCleanupRemovesOnlyFilesNamedLikeAPartial() throws {
+        let manager = FileManager.default
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        // 落ちた前回の残り (記録が作る形の通常ファイル)
+        let stale = directory.appendingPathComponent("take.json.124.partial")
+        try Data("half".utf8).write(to: stale)
+        // 記録が作ったことのないフォルダ
+        let folder = directory.appendingPathComponent("take.json.123.partial", isDirectory: true)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: false)
+        let kept = folder.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+        // フォルダを指すシンボリックリンク
+        let elsewhere = directory.appendingPathComponent("elsewhere", isDirectory: true)
+        try manager.createDirectory(at: elsewhere, withIntermediateDirectories: false)
+        let pointed = elsewhere.appendingPathComponent("keep.txt")
+        try Data("theirs".utf8).write(to: pointed)
+        let link = directory.appendingPathComponent("take.json.125.partial")
+        try manager.createSymbolicLink(at: link, withDestinationURL: elsewhere)
+
+        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        #expect(!manager.fileExists(atPath: stale.path), "落ちた前回の .partial は片付ける")
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8), "フォルダとその中のバイトは残る")
+        #expect((try? Data(contentsOf: pointed)) == Data("theirs".utf8), "リンクの指す先は残る")
+        #expect((try? manager.destinationOfSymbolicLink(atPath: link.path)) == nil, "リンク自身は外す")
+        #expect(manager.fileExists(atPath: recorder.partial.path))
+    }
+
+    @Test("今回の .partial の名前にフォルダが在れば、消さずに記録を始めず理由を返す")
+    func aFolderAtThisRunsPartialNameIsKept() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let folder = directory.appendingPathComponent("take.json.\(getpid()).partial", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let kept = folder.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+
+        let opened = ReplayRecorder.open(destination: destination)
+        #expect(opened.recorder == nil)
+        // 理由はその名前がフォルダで占められていることを名指す (`take()` と同じ言い方・#3943)
+        #expect(opened.failure == "\(folder.path) is a directory, not a file")
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
+    }
+
     @Test("前の回の残りを消すのは錠を取った実行だけで、取れなかった実行は先の実行の完成品に触らない")
     func onlyTheLockHolderDiscardsThePreviousRun() throws {
         let directory = try scratch()
@@ -260,6 +308,24 @@ struct ReplayRecordFormatTests {
         #expect(!FileManager.default.fileExists(atPath: destination.path))
         claim.release()
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    @Test("錠を取った後に行き先がフォルダへ替わっていたら、前の回の完成品として消さずに理由を返す")
+    func aDestinationThatBecameAFolderIsKept() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        try Data("{\"complete\":true}".utf8).write(to: destination)
+        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        defer { claim.release() }
+        // 錠を取ってから消すまでの間に、同じ名前がフォルダになる
+        try FileManager.default.removeItem(at: destination)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+        let kept = destination.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+
+        let failure = claim.discardPrevious()
+        #expect(failure == "\(destination.path) is a directory, not a file")
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
     }
 
     @Test("ReplayClaim.isPartial は <名前>.<プロセス番号>.partial の形だけを指す")
@@ -323,6 +389,22 @@ struct ReplayRecordFormatTests {
         let one = directory.appendingPathComponent("take-1")
         try writeRecordHead(one)
         #expect(ReplayRequest.discardGenerations(of: base.path) == ["take-1"])
+    }
+
+    @Test("watch の始まりも、世代の .partial の名前のフォルダは中身ごと残し、消したものに数えない (#3943)")
+    func generationCleanupKeepsFoldersNamedLikeAPartial() throws {
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json")
+        let stale = directory.appendingPathComponent("take-3.json.4242.partial")
+        try Data("half".utf8).write(to: stale)
+        let folder = directory.appendingPathComponent("take-3.json.4243.partial", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let kept = folder.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+
+        #expect(ReplayRequest.discardGenerations(of: base.path) == ["take-3.json.4242.partial"])
+        #expect(!FileManager.default.fileExists(atPath: stale.path))
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
     }
 
     @Test("合図は使わなくても環境から消す: 記録しない実行 (ホストのアプリ・書き出しの子) が孫へ継がせない")

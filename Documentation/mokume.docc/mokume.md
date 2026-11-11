@@ -628,6 +628,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/line(_:_:_:_:)``
 - ``SketchPart/line(_:_:)-(Vector2,_)``
 - ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
+- ``SketchPart/bezier(from:control1:control2:to:)``
 
 ### 座標の読み方
 
@@ -651,11 +652,15 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/vertex(_:_:_:)``
 - ``SketchPart/vertex(_:)-(Vector3)``
 - ``SketchPart/vertex(_:_:_:_:)``
+- ``SketchPart/vertex(_:uv:)-(Vector2,_)``
 - ``SketchPart/vertex(_:_:_:_:_:)``
+- ``SketchPart/vertex(_:uv:)-(Vector3,_)``
 - ``SketchPart/index(_:)``
 - ``SketchPart/normal(_:_:_:)``
 - ``SketchPart/bezierVertex(_:_:_:_:_:_:)``
+- ``SketchPart/bezierVertex(control1:control2:to:)``
 - ``SketchPart/quadraticVertex(_:_:_:_:)``
+- ``SketchPart/quadraticVertex(control:to:)``
 - ``SketchPart/curveVertex(_:_:)``
 - ``SketchPart/curveDetail(_:)``
 - ``SketchPart/curveTightness(_:)``
@@ -901,11 +906,14 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``PNGFile``
 - ``ImageWriteFailure``
 
-### 文字列と表を読み書きする
+### 文字列・バイト列・表を読み書きする
 
 - ``SketchPart/loadStrings(_:)``
 - ``SketchPart/requestStrings(_:)``
 - ``SketchPart/saveStrings(_:_:)``
+- ``SketchPart/loadBytes(_:)``
+- ``SketchPart/requestBytes(_:)``
+- ``SketchPart/saveBytes(_:_:)``
 - ``SketchPart/loadTable(_:header:)``
 - ``SketchPart/requestTable(_:header:)``
 - ``SketchPart/saveTable(_:_:)``
@@ -947,12 +955,15 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 
 - ``SketchPart/camera()``
 - ``SketchPart/camera(_:_:_:_:_:_:_:_:_:)``
+- ``SketchPart/camera(eye:center:up:)``
 - ``SketchPart/currentCamera``
 - ``SketchPart/setCamera(_:)``
 - ``SketchPart/perspective()``
 - ``SketchPart/perspective(_:_:_:_:)``
+- ``SketchPart/perspective(fieldOfView:aspect:near:far:)``
 - ``SketchPart/ortho()``
 - ``SketchPart/ortho(_:_:_:_:_:_:)``
+- ``SketchPart/ortho(left:right:bottom:top:near:far:)``
 - ``SketchPart/orbitControl(_:_:_:)``
 - ``SketchPart/orbit``
 - ``Camera``
@@ -974,10 +985,13 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/ambientLight(_:_:_:)``
 - ``SketchPart/directionalLight(_:_:_:_:)``
 - ``SketchPart/directionalLight(_:_:_:_:_:_:)``
+- ``SketchPart/directionalLight(color:direction:)``
 - ``SketchPart/pointLight(_:_:_:_:)``
 - ``SketchPart/pointLight(_:_:_:_:_:_:)``
+- ``SketchPart/pointLight(color:position:)``
 - ``SketchPart/spotLight(_:_:_:_:_:_:_:angle:)``
 - ``SketchPart/spotLight(_:_:_:_:_:_:_:_:_:angle:)``
+- ``SketchPart/spotLight(color:position:direction:angle:)``
 - ``SketchPart/lights()``
 - ``SketchPart/noLights()``
 - ``SketchPart/shininess(_:)``

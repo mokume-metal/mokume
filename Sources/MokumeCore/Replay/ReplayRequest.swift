@@ -89,7 +89,8 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     /// 完成品を消すのと同じ扱い)。
     ///
     /// 消すのは、**記録の頭 (`{"schemaVersion":`) で始まる完成品** と、``ReplayClaim`` の名前の形の `.partial` だけ
-    /// — 同じ並びの名前の、記録でないファイルには触らない。世代ごとの錠を取れない行き先 (今、別の実行が書いている)
+    /// — 同じ並びの名前の、記録でないファイルにも、`.partial` の名前のフォルダ (``AtomicFile/remove(_:)``・#3943)
+    /// にも触らない。世代ごとの錠を取れない行き先 (今、別の実行が書いている)
     /// も飛ばす。
     ///
     /// - Parameter destination: `--record` で頼まれた行き先 (絶対パス)。
@@ -111,14 +112,13 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
             let target = directory.appendingPathComponent(name)
             guard let claim = ReplayClaim.take(destination: target).claim else { continue }
             defer { claim.release() }
-            if looksLikeARecord(target) {
-                if (try? manager.removeItem(at: target)) != nil { removed.append(name) }
+            // 見てから消すまでの間にフォルダへ替わっても消さない (``AtomicFile/remove(_:)``・#3943)
+            if looksLikeARecord(target), AtomicFile.remove(target) {
+                removed.append(name)
             }
             for entry in (try? manager.contentsOfDirectory(atPath: directory.path)) ?? []
             where ReplayClaim.isPartial(entry, of: name) {
-                if (try? manager.removeItem(at: directory.appendingPathComponent(entry))) != nil {
-                    removed.append(entry)
-                }
+                if AtomicFile.remove(directory.appendingPathComponent(entry)) { removed.append(entry) }
             }
         }
         return removed
