@@ -227,6 +227,10 @@ public final class HighPass: Filter {
 /// ```
 ///
 /// 既定は中心周波数 1000 Hz・帯域幅 500 Hz。中心周波数の音はそのまま通り、帯域幅が狭いほど細い音になる。
+///
+/// 幅の決め方は 2 通りある。``bw(_:)`` は幅を Hz で保ち、中心周波数を動かしても幅は変わらない。``res(_:)`` は
+/// Q (中心周波数 ÷ 幅) を保ち、中心周波数を動かすと幅もそれに比例して変わる (音の高さに追従する細さ)。
+/// **後に呼んだほうが効く** (``set(_:_:)``・``process(_:_:_:)`` の幅は ``bw(_:)`` と同じ)。
 public final class BandPass: SoundEffect {
     init(stage: SynthStage) {
         super.init(stage: stage, node: stage.rack.addFilter(.bandPass), name: "BandPass")
@@ -255,11 +259,35 @@ public final class BandPass: SoundEffect {
 
     /// 通す帯域の幅を設定する。単位は Hz で、1 から 20000 まで。既定は 500。
     ///
+    /// 中心周波数を動かしても、幅は Hz のまま保つ。``res(_:)`` を呼んだ後に呼ぶと、こちらが効く。
     /// 範囲の外・NaN は ``freq(_:)`` と同じに扱う。
     public func bw(_ bandwidth: Float) {
         guard let value = accept(bandwidth, 1...20_000, call: "bw", meaning: "a bandwidth")
         else { return }
         send(.bandwidth, value)
+    }
+
+    /// 帯域の細さを Q (中心周波数 ÷ 幅) で設定する。0.1 から 10 まで。
+    ///
+    /// <!-- example: 文脈 var band: BandPass? -->
+    /// ```swift
+    /// // 細さを保ったまま、マウスの左右で中心を 200〜4000 Hz に動かす (幅は中心の 1/8)
+    /// band?.res(8)
+    /// band?.freq(map(mouseX, 0, width, 200, 4000))
+    /// ```
+    ///
+    /// **中心周波数を動かすと、幅も比例して変わる** — Q 5 なら、中心 1000 Hz で幅 200 Hz、中心 2000 Hz で幅 400 Hz。
+    /// 幅を Hz で保つなら ``bw(_:)``。``bw(_:)``・``set(_:_:)`` を呼んだ後に呼ぶと、こちらが効く。
+    ///
+    /// 範囲は Processing Sound の `BandPass.res()` と同じ 0.1〜10 で、``Filter/res(_:)`` (0.1〜100) とは違う。
+    /// 範囲の外は端にクランプし、NaN・無限大は無視する。どちらもそのことを 1 度だけ警告する
+    /// (投げない — [ADR-0020] 決定 5)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func res(_ quality: Float) {
+        guard let value = accept(quality, 0.1...10, call: "res", meaning: "a resonance (Q)")
+        else { return }
+        send(.resonance, value)
     }
 
     /// 中心周波数と帯域幅を設定する。

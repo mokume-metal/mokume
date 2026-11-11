@@ -246,6 +246,22 @@ extension SketchPart {
         return runtime.randomness.gaussian() * sd + mean
     }
 
+    /// 平均と標準偏差を決めた正規分布に従う値。平均と標準偏差を、ラベルを付けて渡す。
+    ///
+    /// ``randomGaussian(_:_:)`` に同じ値を同じ順で渡すのと同じ値を返し、列の進め方 (1 回で 2 つ) も
+    /// 同じである。違うのは**どの値が平均で、どれが標準偏差かを呼び出しの行で読める**ことだけである。
+    ///
+    /// ```swift
+    /// // randomGaussian(200, 30) と同じ値
+    /// let x = randomGaussian(mean: 200, standardDeviation: 30)
+    /// ```
+    // shot: 参照 randomGaussian(_:_:)
+    public func randomGaussian(mean: some ScalarConvertible, standardDeviation: some ScalarConvertible) -> Float {
+        // 走っていないときの知らせは、呼んだこの形の名で言う。値は手本の形が引く
+        guard liveRuntime(.read(returning: "0")) != nil else { return 0 }
+        return randomGaussian(mean, standardDeviation)
+    }
+
     /// 要素を並べ替えた**新しい配列**。渡した配列は変わらない。p5.js の `shuffle(array)` と同じ名前。
     ///
     /// 結果を捨てると `unused result` の警告が出る — `shuffle(cards)` と書いても `cards` は混ざらない
@@ -579,5 +595,23 @@ extension SketchPart {
         guard let canvas = liveCanvas() else { return }
         let falloff = falloff.asFloat
         canvas.noiseDetail(lod, falloff)
+    }
+
+    /// 揺らぎの細かさを決める。重ねる枚数と 1 枚ごとの弱まりを、ラベルを付けて渡す。
+    ///
+    /// ``noiseDetail(_:_:)`` に同じ値を同じ順で渡すのと同じ細かさになる。`falloff` の既定値 0.5・受ける範囲・
+    /// 受けない値で細かさを変えずに知らせることも同じで、違うのは**どの値が枚数で、どれが弱まりかを
+    /// 呼び出しの行で読める**ことだけである。
+    ///
+    /// ```swift
+    /// // noiseDetail(4, 0.25) と同じ細かさ
+    /// noiseDetail(octaves: 4, falloff: 0.25)
+    /// ```
+    ///
+    /// - Note: 揺らぎの細かさは**フレームを越える**。一度書けば、書き換えるまで残る。
+    // shot: 参照 noiseDetail(_:_:)
+    public func noiseDetail(octaves: Int, falloff: some ScalarConvertible = 0.5) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.noiseDetail(octaves: octaves, falloff: falloff)
     }
 }

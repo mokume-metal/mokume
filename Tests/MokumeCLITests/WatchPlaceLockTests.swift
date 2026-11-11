@@ -345,6 +345,9 @@ struct WatchPlaceLockTests {
         let assets = root.appendingPathComponent("Sources/demo/assets", isDirectory: true)
         try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
         try Data("画像のつもり".utf8).write(to: assets.appendingPathComponent("picture.png"))
+        // 検査は道具立てが解いた宣言を読むので、置き場を持つ target を宣言しておく (#3984)
+        try Data(ResourceDeclarationTests.manifest().utf8)
+            .write(to: root.appendingPathComponent("Package.swift"))
 
         #expect(throws: CommandFailure.resourcesNotDeclared(directory: "Sources/demo/assets")) {
             try WatchCommand.run([root.path], watching: { _, _ in })
