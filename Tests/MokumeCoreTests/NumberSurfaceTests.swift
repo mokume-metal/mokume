@@ -458,6 +458,19 @@ struct NumberSurfaceTests {
         #expect(pingpong(1e9, 1).isFinite && pingpong(-1e9, 1).isFinite)
     }
 
+    @Test("pingpong は、大きな length でも立ち上がりの時刻をそのまま返す")
+    func pingpongKeepsTheRisingTimeUnderALargeLength() {
+        // 立ち上がりで length を引いて足し戻すと、1 - 1e8 が -1e8 に丸まって 0 になる (#3953)。
+        // 小さな負の時刻が周期端で 0 に丸まる境目 (`pingpong(-1e-9, 1)`) とは別の、正の立ち上がりの事例
+        #expect(pingpong(1, 100_000_000) == 1)
+        #expect(pingpong(2, 100_000_000) == 2)
+        #expect(pingpong(1, -100_000_000) == -1)
+        #expect(pingpong(2, -100_000_000) == -2)
+        // 折り返し点と下降はこれまでどおり
+        #expect(pingpong(100_000_000, 100_000_000) == 100_000_000)
+        #expect(pingpong(150_000_000, 100_000_000) == 50_000_000)
+    }
+
     @Test("pingpong は、負の length では負の側へ往復する")
     func pingpongWithANegativeLength() {
         #expect(pingpong(0.5, -1) == -0.5)

@@ -576,7 +576,11 @@ public nonisolated func pingpong(_ t: some ScalarConvertible, _ length: some Sca
     let reach = abs(length)
     // 周期 2 * reach の中の位置 (0 以上 2 * reach 未満)。``mod(_:_:)`` と同じ畳み方
     let position = foldedIntoPeriod(t, by: 2 * reach)
-    let rising = reach - abs(position - reach)
+    // 立ち上がりは位置をそのまま返す。全区間に `reach - abs(position - reach)` を当てると、
+    // 大きな reach を引いて足し戻す間に小さな時刻が丸めで消える (`pingpong(1, 1e8)` が 0 — #3953)。
+    // 下降の `position - reach` は position が [reach, 2 * reach) にあるので丸めずに引ける。
+    // `2 * reach - position` にしないのは、reach が Float の最大の半分を越えると 2 * reach が ∞ になるため
+    let rising = position <= reach ? position : reach - (position - reach)
     return length < 0 ? -rising : rising
 }
 
