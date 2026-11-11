@@ -118,6 +118,94 @@ extension SketchPart {
         StringLines.warnIfLossy(strings, path: path)
     }
 
+    // MARK: - バイト列
+
+    /// ファイルか URL を読み、中身をそのままバイト列にする。読み終わるまで返らない。
+    ///
+    /// <!-- example: 文脈 var bytes: [UInt8] = [] -->
+    /// ```swift
+    /// func setup() throws {
+    ///     bytes = try loadBytes("data/blob.bin")
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     for (i, byte) in bytes.prefix(400).enumerated() {
+    ///         rect(Float(i), height - Float(byte), 1, Float(byte))
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// 中身は解かない。文字として読むなら ``loadStrings(_:)``、画像なら ``loadImage(_:)`` を使う。
+    /// 空のファイルは空の並びになる。
+    ///
+    /// **名前が `http://` か `https://` で始まれば、その URL から読む。** それ以外はファイルの
+    /// 名前で、探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。URL の扱い (届くまで返らない・
+    /// 最長 60 秒・2xx 以外は届かなかったものとして投げる) は ``loadStrings(_:)`` と同じ。
+    ///
+    /// 返すのは Swift 標準の `[UInt8]`。Foundation の `Data` が要るなら `Data(bytes)` で包む。
+    ///
+    /// - Throws: 見つからないときに ``DataFailure/notFound(path:searched:)`` (探した場所が載る)、
+    ///   見つかったが開けない (ディレクトリだった・読む権利が無い) ときに
+    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)、URL から受け取れない
+    ///   (繋がらない・時間切れ・2xx 以外の状態) ときに ``DataFailure/unreachable(url:reason:)``。
+    // shot: 撮れない 読んだバイト列を返す口で、読む先のファイルがこのリポジトリの例には無い
+    public func loadBytes(_ path: String) throws(DataFailure) -> [UInt8] {
+        noticeBlockingLoad("loadBytes(_:)", instead: "requestBytes(_:)")
+        return [UInt8](try readData(path))
+    }
+
+    /// ファイルか URL を読み、中身をそのままバイト列にする。**読んでいる間、他の仕事を止めない。**
+    ///
+    /// <!-- example: 文脈 var bytes: [UInt8] = [] -->
+    /// ```swift
+    /// func setup() {
+    ///     Task { bytes = (try? await requestBytes("data/blob.bin")) ?? [] }
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     text("\(bytes.count) bytes", 40, 60)
+    /// }
+    /// ```
+    ///
+    /// 読み方と失敗は ``loadBytes(_:)`` と同じ。呼び方と届く前の扱い・呼んだ `Task` を取り消したときの
+    /// 扱いは ``requestStrings(_:)`` と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。**
+    // shot: 撮れない 読んだバイト列を返す口で、読む先のファイルがこのリポジトリの例には無い
+    public func requestBytes(_ path: String) async throws(DataFailure) -> [UInt8] {
+        if let url = try WebFile.url(path) {
+            // 本文は記録に持たない (#3570)
+            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
+            return [UInt8](try await WebFile.fetch(url, path: path))
+        }
+        let url = try dataURL(path)
+        return try await Self.readAway { () throws(DataFailure) in [UInt8](try TextFile.readData(url, path: path)) }
+    }
+
+    /// バイト列を、そのままファイルにする。書き終わるまで返らない。
+    ///
+    /// <!-- example: 文脈 var bytes: [UInt8] = [] -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     bytes.append(UInt8(constrain(mouseX, 0, 255)))
+    ///     try? saveBytes(bytes, "out/blob.bin")
+    /// }
+    /// ```
+    ///
+    /// 例の `mousePressed()` は投げ返せない所で、書けなくても `bytes` は残って次のクリックでまた書くので、
+    /// `try?` で受けている。書いたファイルを ``loadBytes(_:)`` で読み直すと、同じ並びに戻る。
+    ///
+    /// 引数は書く値が先で、置き場が後 (``saveStrings(_:_:)`` と同じ順)。Processing の
+    /// `saveBytes(filename, data)` とは逆 (型が違うのでコンパイルで止まる)。置き場・途中のディレクトリ・
+    /// 書きかけを残さないことは ``saveTable(_:_:)`` と同じ。Foundation の `Data` を書くなら
+    /// `[UInt8](data)` で渡す。
+    ///
+    /// - Throws: 書けなかったときに ``DataFailure/unwritable(path:reason:)``。
+    // shot: 撮れない 結果が絵ではなくファイルになる
+    public func saveBytes(_ bytes: [UInt8], _ path: String) throws(DataFailure) {
+        try TextFile.write(Data(bytes), to: path)
+    }
+
     // MARK: - 表
 
     /// CSV のファイルか URL を読み、表にする。読み終わるまで返らない。
@@ -588,12 +676,18 @@ extension SketchPart {
     /// URL なら受け取りを待ち、ファイルなら探して読む。どちらも同じ ``TextFile/text(of:path:)``
     /// で解くので、同じ中身は置き場によらず同じ文字になる。
     private func readText(_ path: String) throws(DataFailure) -> String {
+        try TextFile.text(of: try readData(path), path: path)
+    }
+
+    /// 名前の中身をそのまま読む。読み終わるまで返らない。URL なら受け取りを待ち、ファイルなら
+    /// 探して読む。
+    private func readData(_ path: String) throws(DataFailure) -> Data {
         if let url = try WebFile.url(path) {
             // 本文は記録に持たない (#3570)
             LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
-            return try TextFile.text(of: try WebFile.fetchWaiting(url, path: path), path: path)
+            return try WebFile.fetchWaiting(url, path: path)
         }
-        return try TextFile.read(try dataURL(path), path: path)
+        return try TextFile.readData(try dataURL(path), path: path)
     }
 
     /// 名前の中身を読んで解く。**読んでいる間、他の仕事を止めない。**

@@ -9,8 +9,8 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 35 |
-| 入れる | 6 |
+| 同等 | 37 |
+| 入れる | 4 |
 | 作例待ち | 15 |
 | 持たない | 25 |
 | 計 | 81 |
@@ -101,10 +101,10 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `loadStrings()` | `loadStrings(_:)`・`requestStrings(_:)` | 同等 | UTF-8 を 1 行ずつの `[String]` にする。名前が `http://` か `https://` で始まれば URL から読む。読めなければ `DataFailure` を投げる。無い形: `File` や `InputStream` を渡す形 | [#2470] |
-| `loadBytes()` | — | 入れる | 文字でないファイルや URL を `Data` にする API が無い。`loadStrings(_:)` と同じく、探す場所を `loadImage(_:)` と揃え (`assetURL(_:)`)、URL を受け、読めなければ投げる。`Data(contentsOf:)` では探す場所が揃わず、URL の扱い (時間切れ・2xx 以外) も自前になる | [#3708] |
+| `loadBytes()` | `loadBytes(_:)`・`requestBytes(_:)` | 同等 | ファイルか URL の中身をそのまま `[UInt8]` にする (Swift 標準の型。`Data` は面に出さない)。`loadStrings(_:)` と同じく、探す場所を `loadImage(_:)` と揃え (`assetURL(_:)`)、URL を受け、読めなければ `DataFailure` を投げる | [#3708] |
 | `selectInput()` | `selectInput(_:)` | 同等 | コールバックの代わりに `async` で `String?` を返し、取り消せば `nil`。選べるのはファイル 1 つ | [#3062] |
 | `selectFolder()` | — | 入れる | フォルダを選ばせる API が無い。仕組み (道具のウィンドウが出す・結果の入力の出来事 `fileSelected` の `paths`) は `selectInput(_:)` のものを使う。[ADR-0041](../decisions/0041-standard-scope-map.md) 決定 2 の「ファイルの受け渡し」が、同じ API の仲間として最低ラインに挙げている | [#3707]・[#3062] |
-| `createInput()` | `loadBytes()` ([#3708] で入れる)・`FileHandle`・`InputStream` | 持たない | Java の `InputStream` を返す API。全体を読むなら `loadBytes`、少しずつなら Foundation の `FileHandle`・`InputStream` | — |
+| `createInput()` | `loadBytes(_:)`・`FileHandle`・`InputStream` | 持たない | Java の `InputStream` を返す API。全体を読むなら `loadBytes`、少しずつなら Foundation の `FileHandle`・`InputStream` | — |
 | `createReader()`・`BufferedReader`・`BufferedReader.readLine()` (3 件) | `loadStrings(_:)` | 持たない | 行を 1 つずつ読む Java の `BufferedReader`。ファイルを 1 行ずつ回すなら `loadStrings(_:)` の結果を回せる。大きすぎて全体を持てないファイルは Foundation の `FileHandle` | — |
 | `launch()` | `NSWorkspace.shared.open(_:)`・`Process` | 持たない | 外のアプリやファイルを OS の標準の起動機能で開く。受け手の上に API を持たず、AppKit の `NSWorkspace.shared.open(_:)` で同じことができる (`exec()` に当たるのは Foundation の `Process`) | — |
 
@@ -115,11 +115,11 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `saveStrings()` | `saveStrings(_:_:)` | 同等 | UTF-8・行末 LF で書き、書きかけを残さない。**引数は `saveStrings(lines, path)` で、Processing の `saveStrings(filename, data)` と逆** (p5.js と同じ順。型が違うのでコンパイルで止まる) | [#2468]・[ADR-0020](../decisions/0020-api-naming-and-surface.md) |
-| `saveBytes()` | — | 入れる | バイト列をファイルに書く API が無い。`saveStrings(_:_:)` と同じく、途中のディレクトリを作り、書きかけを残さず、書けなければ投げる。`Data.write(to:)` ではこの 3 つが作者の手に残る。引数の順は `saveStrings(_:_:)` と合わせる (値が先、置き場が後) | [#3708] |
+| `saveBytes()` | `saveBytes(_:_:)` | 同等 | `[UInt8]` をそのままファイルに書く。`saveStrings(_:_:)` と同じく、途中のディレクトリを作り、書きかけを残さず、書けなければ `DataFailure` を投げる。**引数は `saveBytes(bytes, path)` で、Processing の `saveBytes(filename, data)` と逆** (`saveStrings(_:_:)` と同じ順。型が違うのでコンパイルで止まる) | [#3708] |
 | `selectOutput()` | — | 入れる | 保存先を選ばせる API が無い。#3062 が「入れない」と決めて、この表に区分を預けた。仕組みは `selectInput(_:)` のものを使い、結果は `fileSelected` の `paths` で届く | [#3707]・[#3062] |
-| `createOutput()` | `saveBytes()` ([#3708] で入れる)・`FileHandle`・`OutputStream` | 持たない | Java の `OutputStream` を返す API。全体を書くなら `saveBytes`、少しずつなら Foundation の `FileHandle`・`OutputStream` | — |
+| `createOutput()` | `saveBytes(_:_:)`・`FileHandle`・`OutputStream` | 持たない | Java の `OutputStream` を返す API。全体を書くなら `saveBytes`、少しずつなら Foundation の `FileHandle`・`OutputStream` | — |
 | `createWriter()`・`PrintWriter`・`PrintWriter.print()`・`println()`・`flush()`・`close()` (6 件) | `saveStrings(_:_:)`・`FileHandle` | 持たない | 行を 1 つずつ書き足す Java の `PrintWriter`。ためておいた `[String]` を `saveStrings(_:_:)` で書ける。追記し続けるログは Foundation の `FileHandle` | — |
-| `saveStream()` | `loadBytes()` と `saveBytes()` ([#3708] で入れる) | 持たない | `saveBytes(loadBytes(...))` を効率よく書く API、と参照自身が書く。URL を受ける `loadBytes` と組めば、ダウンロードしてファイルにできる | — |
+| `saveStream()` | `loadBytes(_:)` と `saveBytes(_:_:)` | 持たない | `saveBytes(loadBytes(...))` を効率よく書く API、と参照自身が書く。URL を受ける `loadBytes` と組めば、ダウンロードしてファイルにできる | — |
 | `beginRecord()`・`endRecord()` (2 件) | `save("plot.svg")` (SVG の 1 フレーム)。同じ名前の `beginRecord(_:)`・`endRecord()` は画素の動画か連番で、意味が違う | 持たない | **ベクター書き出し**。Processing は描く命令を PDF か SVG の描き手へ流し、呼んでから止めるまでを 1 つのファイルにする。**この形 (API の層で別の描き先へ流す) は [ADR-0023](../decisions/0023-frame-stages-and-outputs.md) の改訂 (2026-10-23) が採らないと決めた**。SVG は拡張子で振り分ける `save("plot.svg")` が書く (呼んだ時点から `draw()` の終わりまで。字・画像・保持した形・立体・効果は書かず、種類と数を 1 度知らせる)。PDF は作例が来たときに別の `Feature` で足す (同改訂)。複数のフレームにまたがって 1 枚に束ねる API も無い。手本の 2 つの引数を渡すとコンパイルで止まる | [#1967]・[#3471]・PR [#3139] |
 | `beginRaw()`・`endRaw()` (2 件) | `save("plot.svg")` | 持たない | **3D の頂点を PDF・DXF などへ流す API**で、上の行と同じく API の層で別の描き先へ流す形は採らない ([ADR-0023](../decisions/0023-frame-stages-and-outputs.md))。立体は SVG に書かない (種類と数を知らせる)。DXF は、投影した 2D の線を先に書き、3D の線と面は作例が来てから別の `Feature` で足す (同改訂) | [#1967]・[#3471] |
 
