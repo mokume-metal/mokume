@@ -40,9 +40,9 @@
     {
       "id": "2283-analysis-window-rounds-up",
       "origin": "#2278",
-      "file": "Sources/MokumeAudio/AudioSource.swift",
-      "find": "max(0, Int((time * Double(sampleRate)).rounded(.down)))",
-      "replace": "max(0, Int((time * Double(sampleRate)).rounded(.up)))",
+      "file": "Sources/MokumeAudio/FrameSamples.swift",
+      "find": "Int(min(max(position, -reach), reach).rounded(.down))",
+      "replace": "Int(min(max(position, -reach), reach).rounded(.up))",
       "gpu": false,
       "note": "時刻から区間の末尾への丸めが切り上げになり、まだ届いていない標本まで区間が 1 つずれる (AudioAnalysisTests.samplesArrivedByATimeRoundDown が殺すはず)"
     },
