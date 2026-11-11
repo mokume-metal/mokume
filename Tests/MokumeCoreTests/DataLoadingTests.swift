@@ -162,6 +162,112 @@ struct DataLoadingTests {
         #expect(TableValues.warnings.hasWarned(.columnOutOfRange))
     }
 
+    // MARK: - 表から番号で読む (#3641)
+
+    @Test("表から行の番号と列で 1 つのセルを読む: 名前と番号の 2 つの形が、行から読んだ値と同じ")
+    func tableReadsOneCell() {
+        var t = Table(columns: ["x", "y"])
+        t.addRow([10, 20])
+        #expect(t.getFloat(0, "y") == 20)
+        #expect(t.getString(0, 0) == "10.0")
+        #expect(t.getInt(0, "x") == 10)
+        #expect(t.getFloat(0, 1) == 20)
+        #expect(t.getString(0, "y") == "20.0")
+        #expect(t.getInt(0, 1) == 20)
+        // 2 行目を足しても、番号で引いた行のセルを読む (先頭の行に固定されていない)
+        t.addRow([-3, 7])
+        #expect(t.getInt(1, "x") == -3)
+        #expect(t.getFloat(1, "y") == 7)
+        #expect(t.getString(1, 1) == "7.0")
+        for row in 0..<t.rowCount {
+            for column in ["x", "y"] {
+                #expect(t.getString(row, column) == t.rows[row].getString(column))
+                #expect(t.getInt(row, column) == t.rows[row].getInt(column))
+            }
+        }
+    }
+
+    @Test("表の外の行は、行の口と同じ空の値 (空の文字・NaN・0) を返し、口ごとに 1 度だけ行を名乗って知らせる")
+    func tableReadOutsideRows() {
+        var t = Table(columns: ["x", "y"])
+        t.addRow([10, 20])
+        #expect(t.getFloat(5, "x").isNaN)
+        let floatMessage = TableValues.warnings.message(for: .rowOutOfRange(call: "getFloat"))
+        #expect(floatMessage?.contains("getFloat(): there is no row 5") == true)
+        #expect(floatMessage?.contains("numbered 0") == true)
+        #expect(floatMessage?.contains("Reading it as NaN") == true)
+        // 1 度だけ: 別の行でも文面は変わらない
+        #expect(t.getFloat(-1, 0).isNaN)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getFloat")) == floatMessage)
+        #expect(t.getString(1, "x") == "")
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getString"))?.contains("no row 1") == true)
+        // 知らせは口ごとの空の値を名乗る (空の文字・NaN・0)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getString"))?.hasSuffix("Reading it as an empty string") == true)
+        #expect(t.getInt(Int.max, 1) == 0)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getInt"))?.contains("Reading it as 0") == true)
+        // 書く口の知らせとは別に数える
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getInt")) != TableValues.warnings.message(for: .rowOutOfRange(call: "setFloat")))
+    }
+
+    @Test("無い列は、表の口でも行の口と同じ空の値と、表にある列を添えた知らせ")
+    func tableReadMissingColumns() {
+        var t = Table(columns: ["x", "y"])
+        t.addRow([10, 20])
+        let typo = "z-\(UUID().uuidString)"
+        #expect(t.getFloat(0, typo).isNaN)
+        #expect(t.getInt(0, typo) == 0)
+        #expect(t.getString(0, typo) == "")
+        #expect(TableValues.warnings.message(for: .noColumn(typo))?.contains("\"x\", \"y\"") == true)
+        #expect(t.getInt(0, 2) == 0)
+        #expect(t.getFloat(0, -1).isNaN)
+        #expect(t.getString(0, 9) == "")
+        #expect(TableValues.warnings.hasWarned(.columnOutOfRange))
+        // 無い列と無い行が重なれば、列の知らせだけで、セルの知らせは出ない
+        #expect(t.getInt(7, typo) == 0)
+        #expect(TableValues.warnings.message(for: .notAnInteger(column: "\"\(typo)\"")) == nil)
+    }
+
+    @Test("getInt は丸めない: 整数の値の綴りだけを読み、他は 0 と列ごとに 1 度の知らせ (表の口と行の口で同じ)")
+    func getIntDoesNotRound() throws {
+        defer { cleanUp() }
+        let column = "count-\(UUID().uuidString)"
+        let cells: [(text: String, expected: Int?)] = [
+            ("2", 2), ("2.0", 2), ("1e3", 1000), (" 7 ", 7), ("-0", 0), ("+5", 5),
+            ("9223372036854775807", Int.max), ("-9223372036854775808", Int.min),
+            ("9007199254740993", 9_007_199_254_740_993),
+            ("2.5", nil), ("N/A", nil), ("", nil), ("0x10", nil), ("inf", nil),
+            ("9223372036854775808", nil), ("-9223372036854775809", nil), ("1e19", nil),
+        ]
+        let csv = "day,\(column)\n" + cells.enumerated().map { "\($0.offset),\($0.element.text)" }.joined(separator: "\n")
+        let table = try Bare().loadTable(try file("counts.csv", csv), header: true)
+        #expect(table.rowCount == cells.count)
+        for (row, cell) in cells.enumerated() {
+            #expect(table.getInt(row, column) == cell.expected ?? 0, "\(cell.text)")
+            #expect(table.getInt(row, 1) == cell.expected ?? 0, "\(cell.text)")
+            #expect(table.rows[row].getInt(column) == cell.expected ?? 0, "\(cell.text)")
+            #expect(table.rows[row].getInt(1) == cell.expected ?? 0, "\(cell.text)")
+        }
+        // 列ごとに 1 度: 最初に読めなかった行 ("2.5" の行) を名乗る
+        let message = TableValues.warnings.message(for: .notAnInteger(column: "\"\(column)\""))
+        #expect(message?.contains("row 9") == true)
+        #expect(message?.contains("\"2.5\"") == true)
+        #expect(message?.contains("Reading it as 0") == true)
+        // 列の番号で引いた口は、番号を名乗る別の鍵で数える
+        #expect(TableValues.warnings.hasWarned(.notAnInteger(column: "1")))
+    }
+
+    @Test("getFloat の表の口は、行の口と同じ綴りで数を読み、数でないセルは NaN と列ごとの知らせ")
+    func tableGetFloatMatchesRow() throws {
+        defer { cleanUp() }
+        let column = "rain-\(UUID().uuidString)"
+        let table = try Bare().loadTable(try file("t.csv", "day,\(column)\n1, 2.5 \n2,N/A\n"), header: true)
+        #expect(table.getFloat(0, column) == 2.5)
+        #expect(table.getFloat(1, column).isNaN)
+        let message = TableValues.warnings.message(for: .notANumber(column: "\"\(column)\""))
+        #expect(message?.contains("row 1") == true)
+        #expect(message?.contains("\"N/A\"") == true)
+    }
+
     // MARK: - 書く
 
     @Test("作例 1: 平均の列を足して書き出し、読み直すと同じ表に戻る")
@@ -345,6 +451,79 @@ struct DataLoadingTests {
             return
         }
         #expect(path == out)
+    }
+
+    // MARK: - バイト列 (#3708)
+
+    /// 中身をバイトのまま置く。
+    private func file(_ name: String, bytes: [UInt8]) throws -> String {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(name)
+        try Data(bytes).write(to: url)
+        return url.path
+    }
+
+    /// 文字として読めないバイト・BOM・CRLF を含む中身。どれも解かずにそのまま返ることを見る。
+    private static let blob: [UInt8] = [0xEF, 0xBB, 0xBF, 0x00, 0xFF, 0x0D, 0x0A, 0x80, 0x41]
+
+    @Test("loadBytes は中身を解かずにそのまま返し、requestBytes は同じバイト列を返す")
+    func loadBytesReturnsTheContentAsIs() async throws {
+        defer { cleanUp() }
+        let path = try file("blob.bin", bytes: Self.blob)
+        let sketch = Bare()
+        #expect(try sketch.loadBytes(path) == Self.blob)
+        #expect(try await sketch.requestBytes(path) == sketch.loadBytes(path))
+    }
+
+    @Test("空のファイルは空のバイト列になる")
+    func anEmptyFileGivesNoBytes() async throws {
+        defer { cleanUp() }
+        let path = try file("empty.bin", bytes: [])
+        #expect(try Bare().loadBytes(path) == [])
+        #expect(try await Bare().requestBytes(path) == [])
+    }
+
+    @Test("無い名前・無いディレクトリの中の名前は、探した場所を添えて notFound で投げる")
+    func missingBytesNameWhereItLooked() async {
+        for name in ["no-such-blob-\(UUID().uuidString).bin", folder.appendingPathComponent("no-dir/blob.bin").path] {
+            let expected = DataFailure.notFound(path: name, searched: ImageFile.candidates(for: name).map(\.path))
+            #expect(throws: expected) { try Bare().loadBytes(name) }
+            await #expect(throws: expected) { try await Bare().requestBytes(name) }
+        }
+    }
+
+    @Test("saveBytes は無い途中のディレクトリを作って書き、loadBytes で読み直すと同じ並びに戻る。書きかけは残らない")
+    func saveBytesRoundTrips() throws {
+        defer { cleanUp() }
+        let sketch = Bare()
+        let out = folder.appendingPathComponent("out/nested/blob.bin").path
+        try sketch.saveBytes(Self.blob, out)
+        #expect(try sketch.loadBytes(out) == Self.blob)
+        // 上書きも同じ。短い中身で書き直すと、前の中身の尾は残らない
+        try sketch.saveBytes([1, 2], out)
+        #expect(try sketch.loadBytes(out) == [1, 2])
+        try sketch.saveBytes([], out)
+        #expect(try sketch.loadBytes(out) == [])
+        let left = try FileManager.default.contentsOfDirectory(atPath: folder.appendingPathComponent("out/nested").path)
+        #expect(left == ["blob.bin"], "書きかけの一時ファイルが残っている: \(left)")
+    }
+
+    @Test("saveBytes も、書けない場所 (途中がファイル・行き先がディレクトリ) へは unwritable で投げる")
+    func saveBytesToAnUnwritablePlaceThrows() throws {
+        defer { cleanUp() }
+        let blocker = try file("blocker", "x")
+        let directory = folder.appendingPathComponent("taken.bin")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for out in [blocker + "/blob.bin", directory.path] {
+            let failure = #expect(throws: DataFailure.self) { try Bare().saveBytes([1], out) }
+            guard case .unwritable(let path, let reason) = failure else {
+                Issue.record("unwritable で投げていない: \(String(describing: failure))")
+                continue
+            }
+            #expect(path == out)
+            #expect(!reason.isEmpty)
+        }
+        #expect(try String(contentsOfFile: blocker, encoding: .utf8) == "x", "途中のファイルを壊していない")
     }
 
     @Test("書けない場所へは unwritable で投げる")

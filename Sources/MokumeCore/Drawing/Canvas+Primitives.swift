@@ -492,6 +492,12 @@ extension Canvas {
         restoreOpenShape(outer)
     }
 
+    /// 3 次の曲線を 1 本引く。``bezier(_:_:_:_:_:_:_:_:)`` に始点・制御点 2 つ・終点の成分を
+    /// 同じ順で渡すのと同じ (#3781)。
+    public func bezier(from start: Vector2, control1: Vector2, control2: Vector2, to end: Vector2) {
+        bezier(start.x, start.y, control1.x, control1.y, control2.x, control2.y, end.x, end.y)
+    }
+
     // 線。塗りは持たない。
     public func line(_ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible) {
         let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
