@@ -260,14 +260,14 @@ public class SynthSound: EffectInput {
     /// 値の変更と操作を、位置 `position` の 1 つの予約にして渡す。ステージが閉じていれば捨てる。
     /// 位置が今以前 (0 を含む) なら、次に作る標本の頭で全部が順に効く。
     ///
-    /// - Returns: 操作が溢れてラックが受け付けなかったら `false` (#3944)。**呼ぶ側は、そのとき状態
-    ///   (``SynthSource/isPlaying``) を変えない** — 鳴らない音を鳴っていると読ませない。節が無い・閉じている
-    ///   ときは、これまでどおり `true`。
+    /// - Returns: 載せたら `true`。操作が溢れてラックが受け付けなかったとき (#3944)、置き場が埋まって節を
+    ///   持てなかったとき、ステージが閉じた後 (#3964) は `false`。**呼ぶ側は、そのとき状態
+    ///   (``SynthSource/isPlaying``) を変えない** — 鳴らない音を鳴っていると読ませない。
     @discardableResult
     func postReservation(
         values: [(param: SynthParam, value: Float)], ops: [SynthCommand.Op], at position: Int
     ) -> Bool {
-        guard let node, !stage.isClosed else { return true }
+        guard let node, !stage.isClosed else { return false }
         var commands: [SynthCommand] = values.map {
             SynthCommand(
                 op: .set, node: UInt8(node.id), param: $0.param, bits: UInt64($0.value.bitPattern),
@@ -323,6 +323,8 @@ public class SynthSource: SynthSound {
     ///
     /// ``Env`` のエンベロープが終わって音が 0 になっても `true` のまま (停止するのは ``stop()``)。1 フレームに
     /// 数千回の操作を頼んで受け付けられなかった ``play()`` は、音を鳴らさず、この値も変えない (1 度だけ警告する)。
+    /// 同時に存在できる数 (64 個) を越えて作った音と、スケッチが終わった後の ``play()`` も、鳴らないのでこの値を
+    /// 変えない (スケッチが終わる前から鳴らしていた音は `true` のまま)。
     public internal(set) var isPlaying = false
 
     /// 再生を始める。現在の周波数・音量・オフセット・定位のまま。
