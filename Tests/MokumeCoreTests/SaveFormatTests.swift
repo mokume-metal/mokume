@@ -53,7 +53,7 @@ struct SaveFormatNoticeTests {
     @Test("断る文面が案内する .png の名前", arguments: [
         ("out/f-####.jpg", "out/f-####.png"), ("frame", "frame.png"), ("frame.png.jpg", "frame.png"),
         ("out.d/f-##", "out.d/f-##.png"), ("f.####", "f.####.png"), (".hidden", ".hidden.png"),
-        ("/a/frame.TIF", "/a/frame.png"),
+        ("/a/frame.TIF", "/a/frame.png"), ("out/f-####.", "out/f-####.png"), ("frame.", "frame.png"),
     ])
     func theSuggestedNameEndsInPNG(given: String, suggested: String) {
         #expect(FrameRecorder.pngName(for: given) == suggested)
@@ -277,6 +277,14 @@ struct SaveFormatWriteTests {
                 try runtime.renderFrame(to: url)
                 #expect(try leadingBytes(of: url.path) == pngSignature, "\(name)")
             }
+            // 断った後に正しい名前で書いた絵は、最初から正しい名前で書いた絵と同じ (断りは時計にも絵にも触れない)
+            let fresh = try SketchRuntime(sketch: Saving(), gpu: try RenderDevice())
+            defer { fresh.closePlugins() }
+            let first = directory.appendingPathComponent("fresh.png")
+            try fresh.renderFrame(to: first)
+            #expect(
+                try Data(contentsOf: directory.appendingPathComponent("a.png")) == Data(contentsOf: first),
+                "断った後の最初の絵が、最初から書いた絵と違う")
         }
     }
 

@@ -5,12 +5,12 @@ SPDX-License-Identifier: MIT
 
 `mokume render --out` の `.png` で終わらない連番 (`out/f-####.jpg`・`out/f-####.gif`・`out/f-####.tif` など) と、`SketchRuntime.renderFrame(to:)` の `.png` で終わらない URL が、PNG の中身を別の名前で書かずに断るようになりました ([#3961](https://github.com/mokume-metal/mokume/issues/3961))。
 
-どちらも書けるのは PNG だけで、これまでは拡張子と中身の違うファイルができていました。`render` はビルドの前に使い方の誤りとして止まり、`renderFrame(to:)` は描かずに `ImageFailure.unwritable(path:reason:)` を投げてファイルを作りません。どちらの文面も、受ける名前を名指します。`.png` と `.PNG` は今までどおり受けます。
+どちらも書けるのは PNG だけで、これまでは拡張子と中身の違うファイルができていました。`render` はビルドの前に使い方の誤りとして止まり (道具を通らずに `MOKUME_RENDER` へ置いた頼みも、スケッチが同じ理由で断ります)、`renderFrame(to:)` は描かずに `ImageFailure.unwritable(path:reason:)` を投げてファイルを作りません。どちらの文面も、受ける名前を名指します。`.png` と `.PNG` は今までどおり受けます。
 
 移行:
 
 - PNG の連番にするなら、`--out out/f-####.gif` を `--out out/f-####.png` に変えます
-- アニメーション GIF にするなら、番号の場所 (`#` の並び) を外して `--out out/movie.gif` とします
+- アニメーション GIF にするなら、番号の場所 (`#` の並び) を外して `--out out/movie.gif` とします。`--out out/f-####.mp4` で動画にするつもりだったなら `--out out/movie.mp4` とします
 - `renderFrame(to:)` に `frame.jpg` や拡張子の無い `frame` を渡していたら、`frame.png` に変えます
 
 ```swift

@@ -225,17 +225,10 @@ enum RenderCommand {
                     + " (out/frame-####.png): \(out)")
         }
         // **`.png` で終わらない連番も、ビルドの前に断る** (#3961)。連番は PNG の絵を書くので、受けると PNG の中身が
-        // `.jpg`・`.gif` の名前で並ぶ (子の警告はビルドの後にしか出ない)。番号の場所を持つ `.gif` には、番号の
-        // 無いアニメーション GIF の名前も案内する
-        if RenderRequest.isSeriesNotPNG(destination: out) {
-            var text =
-                "\(outFlags[0]) writes a numbered series as PNG pictures, and a name that does not end in .png"
-                + " would hold PNGs under another name. Name it .png, as in \(RenderRequest.pngName(for: out))"
-            if out.lowercased().hasSuffix(".gif") {
-                let folder = out.lastIndex(of: "/").map { String(out[...$0]) } ?? ""
-                text += ". For an animated GIF, give a name without a run of #, as in \(folder)movie.gif"
-            }
-            throw .usage(text + ": \(out)")
+        // `.jpg`・`.gif` の名前で並ぶ (子の警告はビルドの後にしか出ない)。頼みの型も組まないので、ここで理由を
+        // 名乗る。文面は子が環境変数の頼みを断るときと同じ 1 つで、打った綴りから名前を案内する
+        if let reason = RenderRequest.seriesNotPNGReason(destination: out) {
+            throw .usage("\(outFlags[0]): \(reason): \(out)")
         }
         guard RenderRequest.accepts(destination: out),
             let request = RenderRequest(

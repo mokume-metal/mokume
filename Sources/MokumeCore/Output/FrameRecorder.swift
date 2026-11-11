@@ -414,7 +414,7 @@ final class FrameRecorder: Outlet {
     }
 
     /// `.png` で終わらない名前を、受ける名前に直したもの ([#3961])。断る文面が「どう名付ければよいか」を名指すのに
-    /// 使う。最後の部品の拡張子 (番号の場所 `#` を含まないもの) を外し、外した名前が `.png` で終わればそれ、終わらな
+    /// 使う。最後の部品の拡張子 (番号の場所 `#` を含まないもの。空の拡張子 `f-####.` の点も) を外し、外した名前が `.png` で終わればそれ、終わらな
     /// ければ `.png` を足す (`f-####.jpg` → `f-####.png`、`frame` → `frame.png`、`frame.png.jpg` → `frame.png`)。
     ///
     /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
@@ -422,8 +422,9 @@ final class FrameRecorder: Outlet {
         let nameStart = path.lastIndex(of: "/").map { path.index(after: $0) } ?? path.startIndex
         var stem = path
         if let dot = path[nameStart...].lastIndex(of: "."), dot != nameStart {
+            // 拡張子が空 (`f-####.`) でも点を外す。点を重ねて `f-####..png` と案内しない
             let ext = path[path.index(after: dot)...]
-            if !ext.isEmpty, !ext.contains("#") { stem = String(path[..<dot]) }
+            if !ext.contains("#") { stem = String(path[..<dot]) }
         }
         return isPNG(stem) ? stem : stem + ".png"
     }

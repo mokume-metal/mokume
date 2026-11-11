@@ -192,7 +192,7 @@ struct RenderCommandTests {
         arguments: [
             ("out/f-####.jpg", "out/f-####.png"), ("out/f-####.tif", "out/f-####.png"),
             ("out/f-####.gif", "out/f-####.png"), ("f-##.mp4", "f-##.png"), ("out/f-####", "out/f-####.png"),
-            ("out/f-####.JPG", "out/f-####.png"),
+            ("out/f-####.JPG", "out/f-####.png"), ("out/f-####.", "out/f-####.png"),
         ])
     func aSeriesNotEndingInPNGStops(out: String, suggested: String) {
         expectUsage(
@@ -206,7 +206,16 @@ struct RenderCommandTests {
             mentioningAll: ["out/f-####.png", "animated GIF", "out/movie.gif"])
     }
 
-    @Test(".png と .PNG で終わる連番は、従来どおり受ける", arguments: ["out/f-####.png", "out/f-####.PNG"])
+    @Test("番号の場所を持つ .mp4 には、動画なら番号の無い名前にすることも案内する")
+    func anMP4SeriesPointsToAMovie() {
+        expectUsage(
+            ["--fps", "10", "--seconds", "1", "--out", "out/f-####.mp4"],
+            mentioningAll: ["out/f-####.png", "For a movie", "out/movie.mp4"])
+    }
+
+    @Test(
+        ".png・.PNG で終わる連番と、番号の場所を持つ .mov・.MOV (動画) は、従来どおり受ける",
+        arguments: ["out/f-####.png", "out/f-####.PNG", "out/f-####.mov", "out/f-####.MOV"])
     func aPNGSeriesIsAccepted(out: String) throws {
         let options = try parse(["--fps", "10", "--seconds", "1", "--out", out])
         #expect(options.request.destination == "/tmp/typed-here/" + out)
