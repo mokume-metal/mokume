@@ -50,6 +50,23 @@ nonisolated extension SynthCommand.Op {
     }
 }
 
+nonisolated extension SynthCommand {
+    /// 控えの上限 (``SynthRack/post(_:)``) に達しても捨ててはならない操作か。
+    ///
+    /// 捨てると、主スレッドの状態 (``SynthSource/isPlaying``・繋がりの写し・置き場) と聞こえる音が食い違い、
+    /// 後から来る操作でも直らないもの: 節を足す・止める・入力を外す・手放す。**どれも数が抑えられる** — 足すのと
+    /// 手放すのは置き場の数まで、止めると入力を外すのは、同じ節へ続けて頼んでも 2 つ目を積まない
+    /// (``SynthRack/post(_:)``)。値を変える・鳴らす・入力を選ぶ操作は捨ててよい: 捨てたことを呼ぶ側へ返し、
+    /// 呼ぶ側は状態を変えない (値は次に頼んだ値で直る)。
+    var mustArrive: Bool {
+        switch op {
+        case .activate, .stop, .release: true
+        case .inputs: bits == 0
+        default: false
+        }
+    }
+}
+
 /// 1 つのスケッチの合成した音を全部持つ「ラック」。音源 (オシレータ・ノイズ) とエフェクトの節と、
 /// エフェクトの入力の繋がりを持ち、標本を作る ([ADR-0042] 決定 6 の「同じ音の流れの音源・処理」)。
 ///
@@ -63,7 +80,7 @@ nonisolated extension SynthCommand.Op {
 /// 渡す。音の側は呼ばれるたびに、列に溜まった操作をその順に適用してから標本を作る。錠は
 /// 取らず、標本を作る間は確保しない ([ADR-0042] 決定 7)。節の置き場も作るときに 1 度だけ確保する。
 ///
-/// **列が満杯のときは、操作を落とさず控え、頼んだ順に載せ直す** (``post(_:force:)``・``retryHeld()``)。
+/// **列が満杯のときは、操作を落とさず控え、頼んだ順に載せ直す** (``post(_:)``・``retryHeld()``)。
 /// 控えがある間は後から来る操作も控えの後ろに並べる — 節を足す前に節への操作が届くと、その操作は
 /// 捨てられ、入力に選ぶ前に節が鳴ると直に出てしまうので、載る順は頼んだ順のままにする。節を足せない
 /// のは置き場が埋まっているときだけ。
@@ -122,8 +139,9 @@ nonisolated final class SynthRack: @unchecked Sendable {
     static let reservationCapacity = 2048
     /// 操作の列の長さ。2 のべき乗。
     private static let queueCapacity = 4096
-    /// 列に載せられず控えておく操作の数の上限 (``post(_:force:)``)。音の側が止まっている (流れが開いていない・
-    /// 閉じた) ままで操作が積み上がり続けないための歯止めで、動いている間は届かない。
+    /// 列に載せられず控えておく操作の数の上限 (``post(_:)``)。音の側が止まっている (流れが開いていない・
+    /// 閉じた) ままか、1 フレームに数千回の操作を頼んだときに、操作が積み上がり続けないための歯止め。
+    /// 捨ててはならない操作 (``SynthCommand/mustArrive``) だけは、上限を越えて控える。
     private static let heldLimit = 1 << 14
     /// 列の空きがこれより少ないとき、**詰まっている**とみなす (``isCongested``)。1 回の呼び出しが載せる操作
     /// (節を足す・入力に選ぶ・区切りを始める・音量を伝える) の数より多い。
@@ -155,6 +173,13 @@ nonisolated final class SynthRack: @unchecked Sendable {
     /// 載せ直す** (``retryHeld()``)。控えがある間は、後から来る操作も控えに並べる — 載る順が頼んだ順から
     /// 入れ替わらないようにするため (節を足す前に節への操作が届くと、その操作は捨てられる)。
     private var held: [SynthCommand] = []
+    /// 最後に受け付けた操作が止める操作 (``SynthCommand/Op/stop``) だった節の集合。主スレッドだけが触る。
+    /// 控えの上限を越えた後、同じ節への 2 つ目の止める操作は効きが無いので積まない。
+    private var lastStopped: UInt64 = 0
+    /// 最後に受け付けた操作が入力を外す操作 (空の ``SynthCommand/Op/inputs``) だった節の集合 (``lastStopped`` と同じ使い方)。
+    private var lastDisconnected: UInt64 = 0
+    /// 控えの上限に達して捨てた操作の数 (予約のまとまりは 1 つと数える)。主スレッドだけが触り、ステージが知らせる。
+    private(set) var rejectedCount = 0
 
     // MARK: 返す番号の列 (音の側が書き手・主スレッドが読み手)
 
@@ -307,16 +332,16 @@ nonisolated final class SynthRack: @unchecked Sendable {
         let node = make(id, created)
         // 置き場へ書いてから列へ載せる。音の側は、列を読んだ後でだけ置き場を読む
         slots[id] = Unmanaged.passRetained(node)
-        // 列が満杯でも、控えに並べて頼んだ順に載せる (置き場の数は 64 で、控えの上限には数えない)。
+        // 列が満杯でも、控えに並べて頼んだ順に載せる (捨ててはならない操作 — 数は置き場の 64 で抑えられる)。
         // **節を足せないのは、置き場が埋まっているときだけ** — 呼ぶ側は、`nil` を置き場の上限と名乗ってよい
-        post(SynthCommand(op: .activate, node: UInt8(id)), force: true)
+        post(SynthCommand(op: .activate, node: UInt8(id)))
         occupied |= 1 << UInt64(id)
         created += 1
         return node
     }
 
-    /// 音源 `id` を手放した (使う側の参照が無くなった) と音の側へ伝える。受け付ければ `true`
-    /// (``post(_:force:)``)。
+    /// 音源 `id` を手放した (使う側の参照が無くなった) と音の側へ伝える。捨ててはならない操作なので、
+    /// 控えが上限でも受け付ける (``post(_:)``)。
     ///
     /// **鳴っている音は切らない。** 音の側が、鳴り終えたと見てから置き場を返す。この後その節へ操作を
     /// 渡してはならない。
@@ -352,16 +377,53 @@ nonisolated final class SynthRack: @unchecked Sendable {
     // MARK: - 主スレッド: 操作を渡す
 
     /// 操作を列へ載せる。**列が満杯なら控えて、頼んだ順に載せ直す** (``retryHeld()``)。受け付ければ
-    /// `true`。`false` は、控えが上限 (``heldLimit``) に達して捨てたとき — 音の側が長く止まっている間だけ。
+    /// `true`。`false` は、控えが上限 (``heldLimit``) に達して捨てたとき (``rejectedCount`` に数える)。
     ///
-    /// - Parameter force: `true` なら、控えの上限に数えず必ず受け付ける。置き場の数で数が抑えられている
-    ///   操作 (節を足す) だけが使う。
+    /// **捨ててはならない操作 (``SynthCommand/mustArrive``) は、上限を越えても受け付ける。** 上限を越えた後は、
+    /// 同じ節へ既に受け付けた止める・入力を外す操作を、その後に同じ節へ別の操作が無ければ積まない (2 つ目は
+    /// 効きが無い)。上限を越えて積めるのは捨ててはならない操作だけなので、越える数は節ごとに、節を足す・止める・
+    /// 入力を外す・手放すの 1 つずつ (置き場の数の 4 倍) に抑えられる。
     @discardableResult
-    func post(_ command: SynthCommand, force: Bool = false) -> Bool {
-        if held.isEmpty, postNow(command) { return true }
-        guard force || held.count < Self.heldLimit else { return false }
+    func post(_ command: SynthCommand) -> Bool {
+        if held.isEmpty, postNow(command) {
+            noteAccepted(command)
+            return true
+        }
+        if held.count >= Self.heldLimit {
+            guard command.mustArrive else {
+                rejectedCount += 1
+                return false
+            }
+            if repeatsLastSettle(command) { return true }
+        }
         held.append(command)
+        noteAccepted(command)
         return true
+    }
+
+    /// `command` が、同じ節へ最後に受け付けた止める・入力を外す操作と同じか。
+    private func repeatsLastSettle(_ command: SynthCommand) -> Bool {
+        let bit: UInt64 = 1 << UInt64(command.node)
+        switch command.op {
+        case .stop: return lastStopped & bit != 0
+        case .inputs: return command.bits == 0 && lastDisconnected & bit != 0
+        default: return false
+        }
+    }
+
+    /// 受け付けた操作で、節ごとの印を直す。止める操作と入力を外す操作は互いの効きを変えないので、互いの印を
+    /// 消さない (交互に頼まれても、上限を越えて積むのは節ごとに 1 つずつ)。ほかの操作は両方の印を消す。
+    private func noteAccepted(_ command: SynthCommand) {
+        let bit: UInt64 = 1 << UInt64(command.node)
+        switch command.op {
+        case .stop:
+            lastStopped |= bit
+        case .inputs where command.bits == 0:
+            lastDisconnected |= bit
+        default:
+            lastStopped &= ~bit
+            lastDisconnected &= ~bit
+        }
     }
 
     /// 列に空きがあれば載せる。
@@ -407,16 +469,23 @@ nonisolated final class SynthRack: @unchecked Sendable {
     /// まとまりごと捨てる — 一部だけ効くと、包絡の値だけ変わって鳴らない予約が残る。**まとまりは列へ 1 度に
     /// 載せる** (``publish(_:)``。控えに回ったときも、全部が入るまで載せ直さない) ので、音の側の取り出しが
     /// まとまりの途中に入って、先頭だけが予約され続きが即時に効く、ということが起きない。控えの上限に収まらなければ
-    /// **最初から**載せない。
+    /// **最初から**載せない (``rejectedCount`` に 1 つと数える)。まとまりは値を変える・鳴らす操作で、捨ててよい。
     @discardableResult
     func postReservation(_ commands: [SynthCommand]) -> Bool {
         guard !commands.isEmpty else { return true }
         var group = commands
         group[0].follow = UInt8(commands.count - 1)
         guard group.count > 1 else { return post(group[0]) }
-        if held.isEmpty, group.withUnsafeBufferPointer({ publish($0) }) { return true }
-        guard held.count + group.count <= Self.heldLimit else { return false }
+        if held.isEmpty, group.withUnsafeBufferPointer({ publish($0) }) {
+            noteAccepted(group[0])
+            return true
+        }
+        guard held.count + group.count <= Self.heldLimit else {
+            rejectedCount += 1
+            return false
+        }
         held += group
+        noteAccepted(group[0])
         return true
     }
 
@@ -458,11 +527,15 @@ nonisolated final class SynthRack: @unchecked Sendable {
         return true
     }
 
-    /// エフェクト `effect` の入力を `mask` (節の番号の集合) に置き換える。
+    /// エフェクト `effect` の入力を `mask` (節の番号の集合) に置き換える。受け付ければ `true`。
+    ///
+    /// **受け付けたときだけ、主スレッドの写し (``inputs(of:)``) を変える** — 捨てた繋ぎ替えを写しに残すと、
+    /// 輪の判定と聞こえる音が食い違う。入力を外す (`mask` が 0) 操作は捨てない (``SynthCommand/mustArrive``)。
     @discardableResult
     func setInputs(_ effect: Int, _ mask: UInt64) -> Bool {
+        guard post(SynthCommand(op: .inputs, node: UInt8(effect), bits: mask)) else { return false }
         wiring[effect] = mask
-        return post(SynthCommand(op: .inputs, node: UInt8(effect), bits: mask))
+        return true
     }
 
     /// いまエフェクト `effect` の入力 (主スレッドが見ているもの)。

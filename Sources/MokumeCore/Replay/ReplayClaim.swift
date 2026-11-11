@@ -84,23 +84,31 @@ nonisolated final class ReplayClaim {
 
     /// 前の回が行き先に残した完成品と、落ちた回の `.partial` を消す。**錠を取った後にだけ呼ぶ。**
     ///
+    /// **記録が作るのは通常ファイルだけなので、同じ名前のフォルダは中身ごと残す** ([#3943]) — 名前の形だけで
+    /// 選ぶと、行き先の隣にたまたま同じ形の名前のフォルダが在れば中身ごと消える。消すのは
+    /// ``AtomicFile/remove(_:)`` (`unlink(2)` 1 回) なので、見てから消すまでの間にフォルダへ替わっても消さない。
+    /// シンボリックリンクは外すだけで、指す先は壊さない。
+    ///
     /// 前の回の完成品を残すと、今回の回が落ちたときに今回のものと取り違えられる。**記録を始めない回
     /// (実時間の時計) も、これは先に済ませる** — 古い完成品が「今回の記録」として残らない。
     ///
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    ///
     /// - Returns: 消せなかったときの理由。
     func discardPrevious() -> String? {
-        let manager = FileManager.default
-        if manager.fileExists(atPath: destination.path) {
-            do { try manager.removeItem(at: destination) } catch {
-                return "Could not replace \(destination.path): \(error.localizedDescription)"
+        // 錠を取る前に ``take(destination:)`` が見てから、ここまでの間にフォルダへ替わっていても消さない (#3943)
+        if let code = AtomicFile.unlinkFile(destination) {
+            if code == EISDIR || (code == EPERM && AtomicFile.isDirectory(destination, following: false)) {
+                return "\(destination.path) is a directory, not a file"
             }
+            return "Could not replace \(destination.path): \(String(cString: strerror(code)))"
         }
         // 錠を握っているので、同じ行き先の `.partial` はどれも死んだ実行のもの
         let directory = destination.deletingLastPathComponent().path
         let name = destination.lastPathComponent
-        for entry in (try? manager.contentsOfDirectory(atPath: directory)) ?? []
+        for entry in (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
         where Self.isPartial(entry, of: name) {
-            try? manager.removeItem(atPath: directory + "/" + entry)
+            AtomicFile.remove(URL(fileURLWithPath: directory + "/" + entry))
         }
         return nil
     }

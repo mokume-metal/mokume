@@ -29,13 +29,86 @@ nonisolated enum DecimalText {
         spelled(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    /// 文字を `Double` の数にする。綴りの決まりは ``float(_:)`` と同じ (前後の空白を落とし、10 進の綴り
-    /// だけを数とする)。整数の値かを確かめる口 (``JSONObject/getInt(_:)``) が、`Float` の桁に丸めずに
-    /// 判断するために使う。
-    static func double(_ text: String) -> Double? {
+    /// 文字を整数にする。綴りの決まりは ``float(_:)`` と同じ (前後の空白を落とし、10 進の綴りだけを
+    /// 数とする) で、**綴りの値が整数で `Int` に収まるときだけ**返す (`"3"`・`"3.0"`・`"1e3"`・`"100e-2"`)。
+    /// 端数がある (`"2.5"`・`"1.0000000000000001"`) か、`Int` に収まらなければ `nil`。
+    ///
+    /// **`Double` を通さない (#3950)。** 通すと 2⁵³ を越える整数の桁が落ち (`"9007199254740993.0"` が
+    /// 9007199254740992 になる)、小さな端数が消え (`"1.0000000000000001"` が 1 になる)、`Int.min` の
+    /// 1 つ外が `Int.min` に丸まる。綴りの数字と指数から、値を桁のまま組み立てる。
+    /// 整数を丸めずに読む口 (``JSONObject/getInt(_:)``・``JSONArray/getInt(_:)``・
+    /// ``TableRow/getInt(_:)-(String)``・``Table/getInt(_:_:)-(_,String)``) が使う。
+    static func int(_ text: String) -> Int? {
         let string = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isDecimal(string.utf8) else { return nil }
-        return Double(string)
+        let bytes = Array(string.utf8)
+        guard isDecimal(bytes) else { return nil }
+        func isDigit(_ byte: UInt8) -> Bool { (0x30...0x39).contains(byte) }
+
+        var index = 0
+        var negative = false
+        if bytes[index] == 0x2B || bytes[index] == 0x2D {
+            negative = bytes[index] == 0x2D
+            index += 1
+        }
+        // 小数点を除いた数字の並びと、その並びに掛かる 10 の冪 (小数点より後ろの数字の数だけ負へ)
+        var digits: [UInt8] = []
+        var power = 0
+        while index < bytes.count, isDigit(bytes[index]) {
+            digits.append(bytes[index] - 0x30)
+            index += 1
+        }
+        if index < bytes.count, bytes[index] == 0x2E {
+            index += 1
+            while index < bytes.count, isDigit(bytes[index]) {
+                digits.append(bytes[index] - 0x30)
+                power -= 1
+                index += 1
+            }
+        }
+        if index < bytes.count {  // e / E と、符号を付けてもよい数字 (照合は済んでいる)
+            index += 1
+            var exponentNegative = false
+            if bytes[index] == 0x2B || bytes[index] == 0x2D {
+                exponentNegative = bytes[index] == 0x2D
+                index += 1
+            }
+            // 指数は桁あふれしない所で止める。2 つの冪を足しても Int に収まり、結果は収まらない側に倒れる
+            var exponent = 0
+            while index < bytes.count {
+                exponent = min(exponent * 10 + Int(bytes[index] - 0x30), 1_000_000_000)
+                index += 1
+            }
+            power += exponentNegative ? -exponent : exponent
+        }
+
+        // 0 は指数によらず 0 (`"-0"`・`"0.0e999"`)。先頭の 0 を落とし、末尾の 0 は冪へ移す
+        guard let first = digits.firstIndex(where: { $0 != 0 }) else { return 0 }
+        var last = digits.count - 1
+        while digits[last] == 0 {
+            last -= 1
+            power += 1
+        }
+        let significant = digits[first...last]
+        // 末尾が 0 でない数字の並びに負の冪が掛かれば、端数が残る
+        guard power >= 0 else { return nil }
+        // Int.max は 19 桁。それより長い整数は収まらない
+        guard significant.count + power <= 19 else { return nil }
+
+        var magnitude: UInt64 = 0
+        for digit in significant {
+            magnitude = magnitude * 10 + UInt64(digit)  // 19 桁までは UInt64 に収まる
+        }
+        for _ in 0..<power {
+            let (scaled, overflow) = magnitude.multipliedReportingOverflow(by: 10)
+            guard !overflow else { return nil }
+            magnitude = scaled
+        }
+        if negative {
+            // Int.min の大きさ (2⁶³) は Int の正の側に収まらない
+            if magnitude == UInt64(Int.max) + 1 { return Int.min }
+            return Int(exactly: magnitude).map { -$0 }
+        }
+        return Int(exactly: magnitude)
     }
 
     /// 前後の空白を落とさずに、文字が丸ごと 10 進の綴りのときだけ数にする。
