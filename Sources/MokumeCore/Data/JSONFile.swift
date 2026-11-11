@@ -27,6 +27,13 @@ nonisolated enum JSONValue: Equatable, Sendable {
     case array([JSONValue])
     case object([String: JSONValue])
 
+    /// 書く口 (``JSONObject/setFloat(_:_:)``・``JSONArray/setFloat(_:_:)``・``JSONArray/append(_:)-(Float)``) が
+    /// 持つ数。**`Float` の最も短い綴りの値で持つ** — `Double(value)` で持つと、`0.1` が
+    /// `0.10000000149011612` と書き出される。有限の数だけを渡す (NaN と無限は書く口が断る)。
+    static func number(shortest value: Float) -> JSONValue {
+        .number(Double("\(value)") ?? Double(value))
+    }
+
     /// 知らせる文面に載せる、値の短い言い方 (`true`・`18.5`・`"N/A"`・`an object`)。
     var spoken: String {
         switch self {

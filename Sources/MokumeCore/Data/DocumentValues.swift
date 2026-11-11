@@ -44,6 +44,8 @@ enum DocumentValues {
         case outOfRange
         /// 要素の種類が、読もうとした種類と違う。
         case wrongKind
+        /// 書こうとした数が NaN か無限 (書かない)。
+        case notFinite
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。

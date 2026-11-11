@@ -162,8 +162,7 @@ public struct JSONObject: Equatable, Sendable {
                     + "written (said once per key)")
             return
         }
-        // `Float` の最も短い綴りの値で持つ。`Double(value)` で持つと 0.1 が 0.10000000149011612 と書かれる
-        members[key] = .number(Double("\(value)") ?? Double(value))
+        members[key] = .number(shortest: value)
     }
 
     /// キーに整数を書く。既にあるキーなら、値を置き換える (値の種類が変わってもよい)。
