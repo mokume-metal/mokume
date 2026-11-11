@@ -38,8 +38,8 @@ nonisolated enum AudioFile {
         // 器は長さ 0 では作れないので、空のファイルは器を作る前に見分ける
         guard file.length > 0, file.processingFormat.channelCount > 0 else { throw .empty }
         guard
-            let buffer = AVAudioPCMBuffer(
-                pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
+            let capacity = capacity(forLength: file.length),
+            let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: capacity),
             buffer.floatChannelData != nil,
             readAll(file, into: buffer)
         else { throw .unreadable(path: path) }
@@ -47,15 +47,29 @@ nonisolated enum AudioFile {
         return buffer
     }
 
+    /// 長さ `length` のファイルを入れる器の容量。器の容量は `AVAudioFrameCount` (UInt32) なので、
+    /// 2^32 標本 (48 kHz で約 24.8 時間) 以上は収まらず `nil` — 変換で落とさない (#3969)。
+    static func capacity(forLength length: AVAudioFramePosition) -> AVAudioFrameCount? {
+        AVAudioFrameCount(exactly: length)
+    }
+
     /// 1 回に読む標本の数の上限。`AVAudioFile.read(into:)` は器の容量にかかわらず 1 回に 2^24 標本までしか
     /// 読まないので (#3969)、それより小さな塊で読む。
     static let readChunk: AVAudioFrameCount = 1 << 20
 
-    /// `file` の全部を、塊 (``readChunk``) ごとに読んで `buffer` の頭から並べる。**読めた数がファイルの長さに
-    /// 届かなければ `false`** — 読めた分だけを黙って返すと、長いファイルの終わりが切れたまま鳴る (#3969)。
+    /// `file` を、塊 (``readChunk``) ごとにファイルの終わりまで読んで `buffer` の頭から並べる。
     /// 塊の器は 1 つだけで、メモリの上限は塊の大きさしか増えない。
+    ///
+    /// **見出しの長さ (`file.length`) と実際が食い違うファイルも、これまで読めていたものを読めなくしない** (#3969):
+    /// - 見出しより実際が短い (終わりを削った) ファイルは、読めた所までを返す。`read` は終わりに着くと
+    ///   ファイルの終わりの誤り (`kAudioFileEndOfFileError`) を投げるので、それを終わりの合図として扱う
+    /// - 見出しより実際が長いファイルの余りは読めない。`AVAudioFile` は見出しの長さの所で終わりの誤りを投げ、
+    ///   位置を動かしても読ませない (2026-11-11 に WAV・CAF で実測)
+    ///
+    /// `false` を返すのは、`read` が終わり以外の誤りを投げたときと、1 標本も読めずに終わりの誤りを投げたとき
+    /// (1 回で読んでいた頃に `unreadable` だったもの) だけ。
     static func readAll(_ file: AVAudioFile, into buffer: AVAudioPCMBuffer) -> Bool {
-        let length = file.length
+        let length = min(file.length, AVAudioFramePosition(buffer.frameCapacity))
         guard
             let piece = AVAudioPCMBuffer(
                 pcmFormat: file.processingFormat, frameCapacity: min(readChunk, buffer.frameCapacity)),
@@ -65,7 +79,15 @@ nonisolated enum AudioFile {
         var filled = 0
         while AVAudioFramePosition(filled) < length {
             let wanted = AVAudioFrameCount(min(AVAudioFramePosition(readChunk), length - AVAudioFramePosition(filled)))
-            guard (try? file.read(into: piece, frameCount: wanted)) != nil else { return false }
+            do {
+                try file.read(into: piece, frameCount: wanted)
+            } catch let error as NSError
+                where error.domain == NSOSStatusErrorDomain && error.code == Int(kAudioFileEndOfFileError) && filled > 0
+            {
+                break
+            } catch {
+                return false
+            }
             let count = Int(piece.frameLength)
             guard count > 0 else { break }
             for channel in 0..<channelCount {
@@ -74,7 +96,7 @@ nonisolated enum AudioFile {
             filled += count
         }
         buffer.frameLength = AVAudioFrameCount(filled)
-        return AVAudioFramePosition(filled) == length
+        return true
     }
 
     /// チャンネルを平均したモノラルの標本列。
