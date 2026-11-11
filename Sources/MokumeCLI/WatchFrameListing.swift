@@ -80,8 +80,9 @@ final class WatchFrameListing {
             sender.warn = { [weak self] line in self?.say(line) }
             sender.onReceiversChanged = { [weak self] names in self?.onReceiversChanged?(names) }
         }
-        // 最初に写す絵は、新しいと知らされなくても番号を持たせる (0 は渡さない)
-        if isNew || frameCount == 0 { frameCount += 1 }
+        // 名乗るのは台が新しい絵から名乗りの中身を読んだ回 (``follow(_:)``) で、同じリフレッシュの絵は新しいと
+        // 知らされる。だから名乗った後の最初の絵は必ず番号を進める (0 を渡さない)
+        if isNew { frameCount += 1 }
         do {
             try sender.deliver(copying: texture, frameCount: frameCount, hostTime: mach_absolute_time())
             saidCopyFailure = false

@@ -371,8 +371,10 @@ package final class FrameSender {
                 if FrameLink.send(.frame, to: receiver.port, payload: payload) == KERN_SUCCESS {
                     deliveredFrames += 1
                 } else {
-                    // 受け手が読んでいない (待ち行列が埋まった)・消えた。知らせていない面は掴まれていない
+                    // 受け手が読んでいない (待ち行列が埋まった)・消えた。知らせていない面は掴まれていない。それが最後に
+                    // 書いた絵なら、後のリフレッシュで空いた面へ書き直す (止まった作品では次の番号が来ない・#3945)
                     receiver.held[burn.slot] = false
+                    if receiver.lastFrameCount == burn.frameCount { receiver.lastFrameCount = nil }
                 }
             }
         }
