@@ -403,7 +403,7 @@ extension SketchPart {
     /// である — ``Rect`` は左上で置く値なので、既定の `.center` のままでも値のとおり左上から読む。
     ///
     /// ```swift
-    /// // ellipseMode(.corner) の arc(40, 60, 200, 120, 0, .pi) と同じ絵
+    /// // ellipseMode(.corner) の arc(40, 60, 200, 120, 0, Float.pi) と同じ絵
     /// arc(in: Rect(left: 40, top: 60, width: 200, height: 120), start: 0, stop: Float.pi)
     /// ```
     // shot: 参照 arc(_:_:_:_:_:_:)
