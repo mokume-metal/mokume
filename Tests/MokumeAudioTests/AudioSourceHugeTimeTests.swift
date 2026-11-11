@@ -111,4 +111,99 @@ struct AudioSourceHugeTimeTests {
             fromPosition: 3e38, toPosition: -3e38, perSecond: 60, sampleRate: 48_000)
         #expect(back == Int.min)
     }
+
+    @Test("寄せる境目: ちょうど 9e18 はそのまま整数になり、その 1 つ上 (nextUp) と負の側も境目に寄る")
+    func theBoundaryConvertsToInt() {
+        #expect(FrameSamples.sampleIndex(FrameSamples.reach) == Self.bound)
+        #expect(FrameSamples.sampleIndex(FrameSamples.reach.nextUp) == Self.bound)
+        #expect(FrameSamples.sampleIndex(-FrameSamples.reach) == -Self.bound)
+        #expect(FrameSamples.sampleIndex(-FrameSamples.reach.nextUp) == -Self.bound)
+    }
+
+    // MARK: - 寄せた区間を解析まで実走する
+
+    /// 走らせた結果。区間ごとの `(from, to, 標本の数)` と、観測の区間の標本の数。
+    private struct Walk {
+        var spans: [(from: Int, to: Int, count: Int)] = []
+        var observed: [Int] = []
+    }
+
+    /// `body` を走らせ、取り出した区間を ``AudioAnalyzer`` に通す。**出どころも解析も main actor に属するので、
+    /// 別のスレッドへ出して待つ形にできない。** 代わりに、かかった時間 (10 秒まで) と区間の大きさ
+    /// (``largest`` まで) を縛る — 寄せた位置から先の標本を数え上げる形 (`from..<to` を 1 つずつ作る) に
+    /// 戻ると、どちらかで赤になる。
+    private func walk(
+        _ label: String, _ body: (_ take: (ExternalInput<AudioSpan>) -> Void) -> Void
+    ) -> Walk? {
+        var walk = Walk()
+        let analyzer = AudioAnalyzer()
+        let clock = ContinuousClock()
+        let elapsed = clock.measure {
+            body { input in
+                guard let span = input.take() else { return }
+                _ = analyzer.analyze(span)
+                walk.spans.append((span.from, span.to, span.samples.count))
+                if let shown = span.observation {
+                    _ = analyzer.analyze(shown.span)
+                    walk.observed.append(shown.samples.count)
+                }
+            }
+        }
+        #expect(elapsed < .seconds(10), "\(label): \(elapsed)")
+        return walk
+    }
+
+    /// 区間の標本の数の上限 (解析の上限の区間 + ウィンドウ 1 本 + 格子へ揃えるぶん)。巨大な確保をしていないことを見る。
+    private static let largest = AudioAnalysis.maxSpan + AudioAnalysis.windowSize + AudioAnalysis.hop
+
+    @Test(
+        "開いた時刻が -1e15 秒で、その後 +1e15 秒を取り出しても、解析まで落ちず固まらず、区間は上限の大きさに収まる",
+        arguments: [60, nil] as [Int?])
+    func aWalkFromAHugeNegativeOpeningToAHugeTimeIsAnalyzed(_ perSecond: Int?) {
+        let walked = walk("\(String(describing: perSecond))") { take in
+            let source = RecordedSource(samples: (0..<4800).map { Float($0 % 7) / 7 }, sampleRate: 48_000)
+            let input = ExternalInput<AudioSpan>(name: "samples", state: .running)
+            source.start(into: input, at: SourceClock(seconds: -1e15, perSecond: perSecond))
+            for seconds in [-1e15 + 1, 1e15, 1e15 + 1.0 / 60, 3e38] {
+                source.pump(into: input, at: SourceClock(seconds: seconds, perSecond: perSecond))
+                take(input)
+            }
+        }
+        guard let walked else { return }
+        #expect(!walked.spans.isEmpty)
+        #expect(walked.spans.allSatisfy { $0.count <= Self.largest && $0.from <= $0.to }, "\(walked.spans)")
+        if perSecond != nil {
+            // 固定の時計: 開いた位置 (-9e18) から寄せた位置 (9e18) までの差があふれて、Int.max に寄る
+            #expect(walked.spans.contains { $0.to == Int.max }, "\(walked.spans)")
+        }
+    }
+
+    @Test(
+        "開き直した時刻 (start) と観測の秒 (observed) が巨大でも、解析まで落ちず、区間は上限の大きさに収まる",
+        arguments: [60, nil] as [Int?])
+    func hugeReopeningAndObservedTimesAreAnalyzed(_ perSecond: Int?) {
+        let walked = walk("\(String(describing: perSecond))") { take in
+            let source = RecordedSource(samples: (0..<4800).map { Float($0 % 7) / 7 }, sampleRate: 48_000)
+            let input = ExternalInput<AudioSpan>(name: "samples", state: .running)
+            source.start(into: input, at: SourceClock(seconds: 0, perSecond: perSecond))
+            source.pump(into: input, at: SourceClock(seconds: 1.0 / 60, perSecond: perSecond))
+            take(input)
+            // 開き直す (起点は最初に開いたときのまま。巨大な時刻から数え直す)
+            source.start(into: input, at: SourceClock(seconds: 1e15, perSecond: perSecond))
+            source.pump(into: input, at: SourceClock(seconds: 1e15 + 1.0 / 60, perSecond: perSecond))
+            take(input)
+            source.start(into: input, at: SourceClock(seconds: -3e38, perSecond: perSecond))
+            // 観測の秒が巨大 (正と負)
+            for shown in [1e15, -1e15, 3e38, -3e38] {
+                source.pump(
+                    into: input, at: SourceClock(seconds: 2.0 / 60, perSecond: perSecond, observed: shown))
+                take(input)
+            }
+        }
+        guard let walked else { return }
+        #expect(walked.spans.allSatisfy { $0.count <= Self.largest && $0.from <= $0.to }, "\(walked.spans)")
+        #expect(walked.observed.allSatisfy { $0 <= Self.largest }, "\(walked.observed)")
+        // 実時間の時計は、前の区間の長さぶんを見せる (固定の時計は、寄せた端どうしで 1 フレーム前と同じ位置になり、見せる区間が空)
+        if perSecond == nil { #expect(!walked.observed.isEmpty, "観測の区間が 1 つも出ない") }
+    }
 }
