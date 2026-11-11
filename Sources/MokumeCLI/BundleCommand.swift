@@ -608,11 +608,37 @@ enum BundleCommand {
     /// `.build-held` のまま残り、次のビルドが全部やり直しになる。包む殻 `( … )` の中で EXIT に
     /// 戻す手を掛け、信号は `exit` に倒して EXIT を通す。殻の中で変数に置くので、貼った人の
     /// 殻に名前が残らず、trap の文字列にパスを写さずに済む (パスの引用は変数の代入が受け持つ)。
+    ///
+    /// **退避先は、その回が `mktemp -d` で作る一意なディレクトリの中** (#3985)。決まった名前
+    /// (`.build-held`) へ `mv` すると、同じ名前のディレクトリが既にあったとき `.build` はその
+    /// **中へ**入り、戻す手は退避先ごと `.build` の中へ入れる — 終了 0 のまま `.build/.build`
+    /// ができ、作者が置いていた物も巻き込む。その回が作った場所なら衝突せず、戻した後に
+    /// 消してよいのも空になったその場所だけ (`rmdir` は中身が残っていれば消さない)。
+    ///
+    /// **戻す手は `mv` より先に掛ける。** 後に掛けると、退避した直後に届いた信号で `.build` が
+    /// 乱数の名前の下に取り残される。戻す手は「退避した物が在るときだけ戻す」ので、`mv` の前に
+    /// 止められても `mv` が失敗しても、作った空の場所を消すだけで済む。
+    ///
+    /// **確かめている間に `.build` が作り直されていたら、戻さない。** 戻す `mv` の先が既に在る
+    /// ディレクトリだと、退避側と同じく中へ入れて入れ子にする。どちらも消さず、退避した物の在処を
+    /// 標準エラーで名乗って 0 以外で終わる。退避した物の有無もリンクとして見る (`-L`) — 切れた
+    /// シンボリックリンクの `.build` は `-e` では無いことになり、戻されずに取り残される。
+    ///
+    /// **退避先を消せなければ 0 以外で終わる。** 物が残ったまま成功で終わると、溜まっていくのに
+    /// 気付けない。`open` が先に失敗していたら、その終了コード (`s`) を潰さない。
     static func checkLine(for app: URL, package: URL) -> String {
         let build = GivenPath.shellWord(package.appendingPathComponent(".build"))
-        let held = GivenPath.shellWord(package.appendingPathComponent(".build-held"))
-        return "( build=\(build); held=\(held); mv \"$build\" \"$held\" || exit;"
-            + " trap 'mv \"$held\" \"$build\"' EXIT; trap exit HUP INT TERM;"
+        let template = GivenPath.shellWord(package.appendingPathComponent(".build-held.XXXXXX"))
+        let restore =
+            "s=$?; if [ -e \"$held/.build\" ] || [ -L \"$held/.build\" ]; then"
+            + " if [ -e \"$build\" ] || [ -L \"$build\" ]; then"
+            + " printf \"%s\\n\" \"A new .build appeared while checking;"
+            + " the one moved aside was left at $held/.build\" >&2; exit 1; fi;"
+            + " mv \"$held/.build\" \"$build\" || exit; fi;"
+            + " rmdir \"$held\" || exit $((s ? s : 1))"
+        return "( build=\(build); held=$(mktemp -d \(template)) || exit;"
+            + " trap '\(restore)' EXIT; trap exit HUP INT TERM;"
+            + " mv \"$build\" \"$held/.build\" || exit;"
             + " open -n -W \(GivenPath.shellWord(app)) )"
     }
 
