@@ -628,6 +628,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/line(_:_:_:_:)``
 - ``SketchPart/line(_:_:)-(Vector2,_)``
 - ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
+- ``SketchPart/bezier(from:control1:control2:to:)``
 
 ### 座標の読み方
 
@@ -651,11 +652,15 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/vertex(_:_:_:)``
 - ``SketchPart/vertex(_:)-(Vector3)``
 - ``SketchPart/vertex(_:_:_:_:)``
+- ``SketchPart/vertex(_:uv:)-(Vector2,_)``
 - ``SketchPart/vertex(_:_:_:_:_:)``
+- ``SketchPart/vertex(_:uv:)-(Vector3,_)``
 - ``SketchPart/index(_:)``
 - ``SketchPart/normal(_:_:_:)``
 - ``SketchPart/bezierVertex(_:_:_:_:_:_:)``
+- ``SketchPart/bezierVertex(control1:control2:to:)``
 - ``SketchPart/quadraticVertex(_:_:_:_:)``
+- ``SketchPart/quadraticVertex(control:to:)``
 - ``SketchPart/curveVertex(_:_:)``
 - ``SketchPart/curveDetail(_:)``
 - ``SketchPart/curveTightness(_:)``
