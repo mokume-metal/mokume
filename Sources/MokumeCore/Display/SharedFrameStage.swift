@@ -276,9 +276,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **差し出しを投入した直後に記し、結末は後で見る** ([#2735])。投入を GPU が打ち切ったら、
     /// 結末が届いた後のリフレッシュで記しを戻し (``submissionSettled(_:dropped:)``)、同じ枚を
     /// 出し直す。戻さないと、書き手が書くのをやめたとき (子の終了・異常終了・詰まり・とても低い
-    /// フレームレート) は枚数が進まず、ウィンドウは打ち切られる前の絵のままになる。子は `noLoop()` や一時停止の
-    /// 間も毎リフレッシュ書いて枚数を進めるので、生きて書いている間は次の枚で上書きされる。
+    /// フレームレート・`noLoop()` や一時停止で絵が変わらない間) は枚数が進まず、ウィンドウは打ち切られる前の
+    /// 絵のままになる。**止まっている子は、絵が変わらない限り面へ書かない** ([#2367]) — 次の枚で上書きされる
+    /// のを当てにしない。
     ///
+    /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
     private var lastFrame = 0
     /// ``lastFrame`` を記した差し出しの投入の番号。**この番号の打ち切りだけが記しを戻す** —
@@ -319,12 +321,24 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
     var onFrameShareRead: ((FrameShare?) -> Void)?
 
-    /// 映す世代の新しい絵が来たときの知らせ ([#3920])。引数は子の面のテクスチャ (面は `iosurface` で引ける)。
-    /// 見張りがこれを受け手の面へ写す。**ウィンドウが見えなくても呼ぶ。**
+    /// 映す世代のいまの絵を、**リフレッシュごとに**知らせる ([#3920]・[#3945])。見張りがこれを受け手の面へ写す。
+    /// **ウィンドウが見えなくても呼ぶ。**
+    ///
+    /// - `texture`: 子の面のテクスチャ (面は `iosurface` で引ける)。出せる絵が無いリフレッシュは `nil`
+    /// - `isNew`: 前に知らせた絵から変わったか。**世代が替われば、子の番号が同じでも新しい** ([#3948]) — 子の番号は
+    ///   子ごとに 1 から数える
+    ///
+    /// **新しい絵のときだけ呼ぶ形にしない。** 止まった作品 (`noLoop()` の子は絵が変わらない限り面へ書かない) では、
+    /// 後から繋いだ受け手へ今の 1 枚を写す契機も、写した 1 枚の GPU の完了を知らせる契機も無くなる ([#3945])。
+    /// 同じ絵を写し直さないのは受け手の側 (``FrameSender``) が受け手ごとに覚える。
     ///
     /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
-    var onNewFrame: ((any MTLTexture) -> Void)?
-    /// ``onNewFrame`` で最後に知らせた枚数。
+    /// [#3945]: https://github.com/mokume-metal/mokume/issues/3945
+    /// [#3948]: https://github.com/mokume-metal/mokume/issues/3948
+    var onFrame: ((_ texture: (any MTLTexture)?, _ isNew: Bool) -> Void)?
+    /// ``onFrame`` で最後に新しいと知らせた枚数。**世代を乗り換えたら戻す** (``lastFrame`` と同じ・[#3948])。
+    ///
+    /// [#3948]: https://github.com/mokume-metal/mokume/issues/3948
     private var lastHandedFrame = 0
     /// ファイルを選ばせるダイアログの出し方。**検査から差し替える** — 本物の `NSOpenPanel` は人の操作を待つ。
     var filePicker: any FilePicker = OpenPanelPicker()
@@ -519,15 +533,21 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             self.view?.followCursorHiding(requested: cursorHiddenRequested)
             self.followSelectionRequest()
         }
-        guard let source, let newest = source.lookup.newest() else { return }
+        guard let source, let newest = source.lookup.newest() else {
+            // 絵が無くても、写した絵の GPU の完了は知らせる (#3945)
+            onFrame?(nil, false)
+            return
+        }
         // **面に載ったもの (速さ・捕まえの要求) は、ウィンドウの有無と関係なく読む。** 絵を出す先が
         // 無くても、走っている側が名乗ったことは変わらない
         readNumbers(from: newest, in: source.lookup)
         // **受け手へ渡す絵も、ウィンドウの有無・見え方と関係なく渡す** ([#3920])。作品のウィンドウが映す世代の
-        // 新しい絵ごとに 1 度だけ知らせる
-        if newest.frame != lastHandedFrame, let onNewFrame, let frame = source.frames[newest.id] {
-            lastHandedFrame = newest.frame
-            onNewFrame(frame.texture)
+        // いまの絵を毎リフレッシュ知らせ、新しいかを添える (#3945)
+        if let onFrame {
+            let frame = source.frames[newest.id]
+            let isNew = frame != nil && newest.frame != lastHandedFrame
+            if isNew { lastHandedFrame = newest.frame }
+            onFrame(frame?.texture, isNew)
         }
         guard let view, let layer = view.metalLayer,
             newest.frame != lastFrame, let frame = source.frames[newest.id]
@@ -838,6 +858,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // いない世代なら、そこで外れる
         lastFrame = 0
         lastSeenFrame = 0
+        // 受け手へ渡す絵の新しさも同じ理由で数え直す。前の子と同じ番号で止まった新しい子の絵を渡し損ねる (#3948)
+        lastHandedFrame = 0
         shownCurrentGeneration = false
         onGenerationPromoted?(waiting.pid)
     }
@@ -1034,6 +1056,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // もう 1 枚目を出している (出していなければ見張りは戻さない) ので、合図は鳴らし直さない
         lastFrame = 0
         lastSeenFrame = 0
+        // 映し直した前の版の絵も、受け手へは新しい絵として渡す (#3948)
+        lastHandedFrame = 0
         shownCurrentGeneration = true
         view?.setCanvasSize((previous.width, previous.height))
         followRequestedSize(of: previous)

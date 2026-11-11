@@ -279,4 +279,54 @@ struct FrameLinkContractGPUTests {
         let removed = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
         #expect(removed, "去った受け手を外していない")
     }
+
+    /// **受け手が居ない間に作品の大きさが変わっても、目録を読んで繋いだ受け手は新しい大きさの面で 1 度で受け入れられる**
+    /// ([#3946])。約束 (`Schemas/frame-link.md`) では、受け手は大きさを `accepted` で知り、合わなければ `surfaceSize` で断られる。
+    ///
+    /// [#3946]: https://github.com/mokume-metal/mokume/issues/3946
+    @Test("受け手が居ない間に大きさが変わっても、別のプロセスの受け手は新しい大きさの面で 1 度で繋がり、絵を受ける")
+    func aReceiverConnectsAtTheSizeChangedWhileNobodyListened() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "Contract", identity: "/work/Contract", title: "Contract", in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        defer { announcement.withdraw() }
+        let sender = try #require(announcement.startSending(gpu: gpu, width: 16, height: 8, startsListening: false))
+        sender.warn = { _ in }
+        let source = try RenderTarget(gpu: gpu, width: 32, height: 8)
+        try source.fill(with: .linear(red: 2, green: 0.5, blue: 0.25))
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        var frame: Int64 = 0
+        func deliver() throws {
+            try sender.deliver(width: 32, height: 8, frameCount: frame, hostTime: UInt64(frame)) {
+                texture throws(RenderFailure) in
+                try presenter.draw(source, into: texture)
+            }
+            _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+        }
+        // 受け手が居ない間に 16×8 → 32×8
+        for _ in 0..<3 {
+            frame += 1
+            try deliver()
+        }
+
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "32", "--height", "8", "--surfaces", "3",
+            "--exit-after", "2",
+        ])
+        let received = receiver.wait(
+            upTo: 20,
+            doing: {
+                sender.drain()
+                frame += 1
+                try? deliver()
+            }
+        ) { receiver.events(named: "frame").count >= 2 || !receiver.events(named: "refused").isEmpty }
+        #expect(receiver.events(named: "refused").isEmpty, "新しい大きさの面を断った: \(receiver.events)")
+        #expect(receiver.events(named: "accepted").first?["width"] as? Int == 32, "\(receiver.events)")
+        #expect(received, "絵が届かない: \(receiver.events)")
+        _ = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
+    }
 }

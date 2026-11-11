@@ -9,8 +9,8 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 22 |
-| 入れる | 4 |
+| 同等 | 24 |
+| 入れる | 2 |
 | 作例待ち | 1 |
 | 持たない | 7 |
 | 計 | 34 |
@@ -26,12 +26,12 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 ## 入れるの束
 
-「入れる」の API は、近いものごとに 6 本の `Feature` で入れる。表の「入れる」の行は 4 つで、欠けた形 (行は「同等」のまま、理由の欄に「無い形」と書いたもの) も束に入れた。
+「入れる」の API は、近いものごとに 6 本の `Feature` で入れる。表の「入れる」の行は当初 4 つ (いまは 2 つ。[#3711] で入れた `PImage.resize()` と [#3713] で入れた `PImage.mask()` は「同等」に移した) で、欠けた形 (行は「同等」のまま、理由の欄に「無い形」と書いたもの) も束に入れた。
 
 | 束 | API | 表の行 |
 | --- | --- | --- |
-| [#3711] 切り出しと大きさの変更 | `Image.cropped(…)`・`Image.resized(width:height:)` | `PImage.get()` の領域の形・`PImage.resize()` |
-| [#3713] マスク | `Image.mask(_:)` | `PImage.mask()` |
+| [#3711] 切り出しと大きさの変更 (入れた) | `Image.cropped(x:y:width:height:)`・`Image.resized(width:height:)` | `PImage.get()` の領域の形・`PImage.resize()` |
+| [#3713] マスク (入れた) | `Image.mask(_:)` | `PImage.mask()` |
 | [#3714] 画面の写し | `Sketch.get()`・`get(x, y, w, h)` と、`Canvas` の同じもの | 関数 `get()` の領域と全体の形 |
 | [#3715] URL からの読み込み | `loadImage`・`requestImage` の URL と、種類を渡す引数 | `loadImage()`・`requestImage()` の URL の形 |
 | [#3716] `filter` の残りの効果 | `Effect` の `.posterize`・`.erode`・`.dilate` と、不透明にする効果 | `PImage.filter()`・関数 `filter()` の残りの 4 つ |
@@ -43,10 +43,10 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 | 外した API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
-| 領域の切り出し `PImage.get(x, y, w, h)` | — | 入れる | `Image.cropped(…)` で入れる。名前は [#2449] と [#2580] の規則 3 で決まっている。新しい画像を返す値の操作で、いまは `createImage` と画素のループで書くしかない。範囲の外は透明にする見込み | [#2449]・[#3711] |
+| 領域の切り出し `PImage.get(x, y, w, h)` | `Image.cropped(x:y:width:height:)` | 同等 | 新しい画像を返し、元を変えない (名前は [#2449] と [#2580] の規則 3)。画像をはみ出す範囲は透明になり、重ならない範囲も投げずに透明の画像を返す。幅か高さが 1 を割れば `ImageFailure.unplaceable` を投げる。作業空間の値のまま写す | [#2449]・[#3711] |
 | 領域の `PImage.copy(sx, sy, sw, sh, dx, dy, dw, dh)`・`copy(src, …)` | `image(src, dx, dy, dw, dh, sx, sy, sw, sh)` | 持たない | 画面と描き場所へは、切り出しつきの `image()` で描ける。下地を置き換えるなら `blendMode(.replace)`。画像へ写すときは、描き場所に描いて画面の `get()` ([#3714]) で受けるか、拡縮しないなら `dst.pixels.update { }` の中で `src.get` を読む。画像の中を直に書き換える `copy(sx, …)` を足すと、新しい画像を返す `copy()` と同じ名前で働きが逆になる (規則 2a)。名前を変えて足すなら、作例を持つ別の `Feature` から | [#2449]・[#2580] |
-| `PImage.resize()` | — | 入れる | `Image.resized(width:height:)` で入れる。名前は [#2449] で決まっている。Processing の `resize` は自分を変えるが、`Image` の大きさは `let` で、新しい画像を返す。補間は縮小・拡大とも固定して決定論を保つ (PR [#3691] のコマの縮小と同じく、縮小は線形のまま光の量で平均する見込み) | [#2449]・[#3711] |
-| `PImage.mask()` | — | 入れる | `Image.mask(_:)` で入れる。描画 API に、別の画像の明るさを不透明度にする手段が無い。自分を変える命令形は `set`・`fill` と同じで、Processing と同名同義 | [#2449]・[#3713] |
+| `PImage.resize()` | `Image.resized(width:height:)` | 同等 | Processing の `resize` は自分を変えるが、`Image` の大きさは `let` で、新しい画像を返す (名前は [#2449])。読み方は縦横それぞれで固定して決定論を保つ: 縮める向きは作業空間 (線形・乗算済み) のまま光の量で平均し (覆う面積の割合で混ぜる。PR [#3691] のコマの縮小と同じく、エンコードした値では混ぜない)、広げる向きは `image()` が引き伸ばすときと同じく中心どうしの間を直線で補う (端は延ばす) | [#2449]・[#3711] |
+| `PImage.mask()` | `Image.mask(_:)` | 同等 | 別の画像の明るさ (`brightness(_:)` の物差しで 0〜100 を 0〜1) を不透明度に掛ける。自分を変える命令形は `set`・`fill` と同じで、Processing と同名同義。不透明度は掛ける (置き換えない): 不透明な画像では Processing と同じ結果で、半透明の画素では違う (置き換えを再現できないのは不透明度 0 の画素だけ)。大きさの違うマスクは何も変えず 1 度だけ警告する | [#2449]・[#3713] |
 | 画面の写しの `get()` | — | 入れる | `Sketch.get()`・`get(x, y, w, h)` (と `Canvas` の同じもの) で入れる。いまは `createImage` と `pixels` の写しで書くしかなく、`pixels` は実際の画素で数えるので、細かさを変えた作品や書き出しの倍率の下で、座標とずれる | [#2449]・[#3714] |
 
 ## PImage
@@ -59,13 +59,13 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | `PImage.width`・`PImage.height` (2 件) | `Image.width`・`Image.height` | 同等 | `let` のプロパティ | — |
 | `PImage.pixels[]` | `Image.pixels` | 同等 | 画像の画素そのものへの `Pixels` (ウィンドウ)。`pixels[x, y]` で読み書きし、`fill(_:)`・`update(_:)` で全画素を書き換える。値は `LinearRGBA`。無い形: 通し番号の添字 (`pixels[i]`。`count` はある) | [#2450]・PR [#3066] |
 | `PImage.loadPixels()`・`PImage.updatePixels()` (2 件) | — (`Image.pixels` を直接読み書きする) | 持たない | `Image.pixels` はいつでも読め、書き換えは描くときに自動で送られる。呼び忘れて画面が変わらない形が起きない。`updatePixels(x, y, w, h)` の領域の形も要らない | [#2450]・PR [#3066] |
-| `PImage.get()` | `Image.get(_:_:)` | 同等 | 1 画素を `LinearRGBA` で返し、範囲の外は透明。引数なしの `get()` は `Image.copy()`。無い形: 領域の `get(x, y, w, h)` ([#3711] の `cropped(…)` で入れる) | [#2449]・[#3711] |
+| `PImage.get()` | `Image.get(_:_:)` | 同等 | 1 画素を `LinearRGBA` で返し、範囲の外は透明。引数なしの `get()` は `Image.copy()`。領域の `get(x, y, w, h)` は `Image.cropped(x:y:width:height:)` (範囲の外は透明) | [#2449]・[#3711] |
 | `PImage.set()` | `Image.set(_:_:_:)` | 同等 | 1 画素を書く。範囲の外は何もしない。無い形: 画像を書き込む `set(x, y, img)` (画面へは `image(img, x, y)` で置ける。画像へは `pixels.update { }` の中で `img.get` を読む) | — |
 | `PImage.copy()` | `Image.copy()` | 同等 | 元と画素もテクスチャも共有しない新しい画像を返す。作業空間の値のまま写し、8 ビットを経由しない。無い形: 領域の `copy(sx, …)` (持たない。上の「外した 4 つ」) | [#2449]・PR [#2893] |
-| `PImage.save()` | `Image.save(_:)` | 同等 | 呼んだその場で書き終えて返る。書けなければ `ImageFailure.unwritable(path:reason:)` を投げる (Processing は `boolean`)。形式は PNG だけで、拡張子では選ばない (`.svg` の名前は受けない)。行き先の探し方はスケッチの `save(_:)` と同じ。無い形: TIFF・TARGA・JPEG (スケッチの `save()` も PNG だけで、形式の選択は入力・出力・環境の領域の表 ([#3688]) と合わせて決める) | [#2449]・PR [#2893] |
+| `PImage.save()` | `Image.save(_:)` | 同等 | 呼んだその場で書き終えて返る。書けなければ `ImageFailure.unwritable(path:reason:)` を投げる (Processing は `boolean`)。形式は PNG だけで、拡張子では選ばない。**名前が `.png` (大文字小文字を区別しない) で終わらなければ書かずに投げる** (`.svg`・`.jpg`・拡張子を省いた名前も。理由に PNG だけを書くことが載る・[#3723])。行き先の探し方はスケッチの `save(_:)` と同じ。無い形: TIFF・TARGA・JPEG (入力・出力・環境の領域の表 ([#3688]) と同じ。スケッチの `save()` は `.png` 以外の名前でも PNG で書き、1 度だけ知らせる) | [#2449]・PR [#2893]・[#3723] |
 | `PImage.filter()` | `Image.filtered(_:)` | 同等 | Processing は自分を変えるが、`filtered` は新しい画像を返し、元を変えない (規則 3・2a)。`THRESHOLD`・`GRAY`・`INVERT`・`BLUR` は `.threshold(level:)`・`.monochrome`・`.invert`・`.blur(radius:)` に当たる。無い形: `OPAQUE`・`POSTERIZE`・`ERODE`・`DILATE` ([#3716] で入れる) | [#2455]・PR [#3175]・[#3716] |
-| `PImage.resize()` | — | 入れる | 新しい画像を返す `resized(width:height:)` で入れる (「外した 4 つ」)。Processing の 0 で縦横比を保つ形は入れない (1 を割る指定を 1×1 へ丸めない規則と衝突する) | [#2449]・[#3711] |
-| `PImage.mask()` | — | 入れる | `mask(_:)` で入れる (「外した 4 つ」)。無い形: 整数の配列を渡す `mask(maskArray)` (必要になってから足す) | [#2449]・[#3713] |
+| `PImage.resize()` | `Image.resized(width:height:)` | 同等 | 新しい画像を返し、元を変えない (「外した 4 つ」)。縮める向きは光の量で平均し、広げる向きは `image()` と同じ直線の補い。無い形: 0 で縦横比を保つ `resize(150, 0)` (1 を割る指定を 1×1 へ丸めない規則と衝突するので、`ImageFailure.unplaceable` を投げる) | [#2449]・[#3711] |
+| `PImage.mask()` | `Image.mask(_:)` | 同等 | マスクの明るさ (`brightness(_:)` の物差し) を不透明度に掛ける (「外した 4 つ」)。Processing は灰色を前提に青のチャンネルを読み、不透明度を置き換える。灰色の不透明なマスクと画像では同じ結果になる。無い形: 整数の配列を渡す `mask(maskArray)` (必要になってから足す) | [#2449]・[#3713] |
 | `PImage.blend()` | — (描き場所へ `blendMode(_:)` と `image(src, dx, dy, dw, dh, sx, sy, sw, sh)`) | 持たない | 混ぜ方は描画 API の `blendMode` が持ち、画像を直に混ぜる API は足さない (`copy(sx, …)` と同じ理由)。Processing の 14 のモードのうち 9 つ (BLEND・ADD・SUBTRACT・DARKEST・LIGHTEST・DIFFERENCE・EXCLUSION・MULTIPLY・SCREEN) は `BlendMode` にある。OVERLAY・HARD_LIGHT・SOFT_LIGHT・DODGE・BURN の 5 つは無く、`blendMode()` の行 (色・変換・描画の領域の表) で扱う | [#2449]・[#2580] |
 | `PImage.blendColor()` | — | 作例待ち | 2 色を混ぜて 1 色を返す関数 (所属は `PImage` だが、category は `color` なので色の領域の式にも入る。数えるのはこの表だけにする)。割れる点: Processing は 8 ビットの整数の色を 0〜255 に収める (`ADD` は 255 で頭打ち) が、mokume の混ぜ方は線形・乗算済みで、`.add` は 1.0 を超えた値を残す。CPU の関数を Processing の式に寄せるか、描画 API (`blendMode`) と同じ値を返すかで、同じモードの結果が変わる。残りの 5 つのモードも `BlendMode` に無く、`blendMode()` の行が先に決める。使う作例が来たら選ぶ | — |
 
@@ -127,3 +127,4 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 [#3715]: https://github.com/mokume-metal/mokume/issues/3715
 [#3716]: https://github.com/mokume-metal/mokume/issues/3716
 [#3717]: https://github.com/mokume-metal/mokume/issues/3717
+[#3723]: https://github.com/mokume-metal/mokume/issues/3723

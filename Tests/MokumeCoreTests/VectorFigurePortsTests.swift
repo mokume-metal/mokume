@@ -74,6 +74,10 @@ struct VectorFigurePortsTests {
         #expect(try captured { $0.triangle(0, 0, 10, 0, 0, 10) } == 1)
         #expect(try captured { $0.quad(0, 0, 10, 0, 12, 10, 0, 8) } == 1)
         #expect(try captured { $0.bezier(0, 0, 10, 0, 20, 10, 30, 10) } == 1)
+        #expect(
+            try captured {
+                $0.bezier(from: Vector2(0, 0), control1: Vector2(10, 0), control2: Vector2(20, 10), to: Vector2(30, 10))
+            } == 1)
     }
 
     @Test("頂点で作る形の口は、図形を控える")
@@ -90,6 +94,10 @@ struct VectorFigurePortsTests {
             canvas.vertex(20, 20, 0.5, 0.5)
             canvas.bezierVertex(15, 30, 5, 30, 0, 20)
             canvas.quadraticVertex(-5, 10, 0, 0)
+            // ラベル付きの形 (#3781・#3782)
+            canvas.vertex(Vector2(0, 0), uv: Vector2(0.1, 0.1))
+            canvas.bezierVertex(control1: Vector2(5, -10), control2: Vector2(15, -10), to: Vector2(20, 0))
+            canvas.quadraticVertex(control: Vector2(10, 10), to: Vector2(0, 0))
             canvas.curveVertex(0, 0)
             canvas.curveVertex(0, 0)
             canvas.curveVertex(10, 10)
@@ -130,6 +138,9 @@ struct VectorFigurePortsTests {
                 $0.vertex(1, 2, 3)
                 $0.vertex(4, 5, 6, 0, 0)
                 $0.vertex(7, 8, 9)
+                $0.vertex(Vector3(1, 8, 3), uv: Vector2(0, 1))
+                $0.vertex(Vector3(4, 2, 6), uv: Vector2(1, 0))
+                $0.vertex(Vector3(7, 5, 9), uv: Vector2(1, 1))
                 $0.endShape()
             } == 1)
         #expect(try handled(canvas) { $0.box(10) } == 1)
