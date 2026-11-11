@@ -3571,6 +3571,72 @@ struct SourceStampTests {
         #expect(second == SourceStamp.current(for: sketch), "持ち回る読み手と新しい読み手の世代が食い違う")
     }
 
+    /// 外のファイルを書き、更新時刻を 1 時間前へ戻す。
+    private func outsideFile(_ text: String, pathExtension: String = "swift") throws -> URL {
+        let url = TestScratch.path("mokume-stamp-outside", pathExtension: pathExtension)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: url.path)
+        return url
+    }
+
+    /// `at` に `destination` を指すリンクを作り、リンク自体の更新時刻も 1 時間前へ戻す
+    /// (`setAttributes` は先へ辿るので `lutimes`)。
+    private func link(_ at: URL, to destination: URL) throws {
+        try FileManager.default.createSymbolicLink(at: at, withDestinationURL: destination)
+        let old = timeval(tv_sec: Int(Date().timeIntervalSince1970) - 3600, tv_usec: 0)
+        #expect(lutimes(at.path, [old, old]) == 0)
+    }
+
+    /// **多段のリンクの、途中のリンクを付け替えても拾う** (#3983 の反証)。`Palette.swift` →
+    /// 中継 → 先、の中継だけを、同じ大きさ・古い更新時刻の別のファイルへ向け直す。入口のリンクも
+    /// 置き場の中のファイルも何も変わらないので、属性を入口から取ると取りこぼす。
+    @Test("多段のリンクの途中を、同じ大きさ・古い時刻の別のファイルへ向け直しても世代が変わる")
+    func followsARetargetedIntermediateLink() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try settle(["Package.swift", "Sources/app/main.swift"], in: sketch)
+        let first = try outsideFile("let sampleRed: Double = 242")
+        let second = try outsideFile("let sampleRed: Double = 150")
+        let middle = TestScratch.path("mokume-stamp-middle", pathExtension: "swift")
+        defer {
+            for url in [first, second, middle] { try? FileManager.default.removeItem(at: url) }
+        }
+        try link(middle, to: first)
+        try link(sketch.appendingPathComponent("Sources/app/Palette.swift"), to: middle)
+
+        let reader = SourceStamp.Reader()
+        let before = reader.current(for: sketch)
+        #expect(before == SourceStamp.current(for: sketch))
+        #expect(reader.current(for: sketch) == before, "変わらない巡回で世代が動いた")
+
+        try FileManager.default.removeItem(at: middle)
+        try link(middle, to: second)
+        let after = reader.current(for: sketch)
+        #expect(after != before, "途中のリンクの付け替えを、持ち回る読み手が取りこぼした")
+        #expect(after == SourceStamp.current(for: sketch))
+    }
+
+    /// **切れたリンクは数えない** — 中身が読めないので、置いていないのと同じ世代を名乗り、
+    /// 落ちない。先が現れれば数える。
+    @Test("切れたリンクは落ちずに数えず、先が現れれば数える")
+    func aBrokenLinkIsNotCounted() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let without = SourceStamp.current(for: sketch)
+        let missing = TestScratch.path("mokume-stamp-missing", pathExtension: "swift")
+        defer { try? FileManager.default.removeItem(at: missing) }
+        try link(sketch.appendingPathComponent("Sources/app/Palette.swift"), to: missing)
+
+        let reader = SourceStamp.Reader()
+        #expect(reader.current(for: sketch) == without, "切れたリンクを数えた")
+
+        try "let sampleRed: Double = 242".write(to: missing, atomically: true, encoding: .utf8)
+        let appeared = reader.current(for: sketch)
+        #expect(appeared != without, "先が現れても数えない")
+        #expect(appeared == SourceStamp.current(for: sketch))
+    }
+
     /// 境目。リンクの先を辿るのは数えると決めたもの (`Sources` の `.swift`) だけで、**置き場の
     /// 中のシンボリックリンクは数えないまま** ([#2519](https://github.com/mokume-metal/mokume/issues/2519)
     /// の確定条件。範囲の外と help と docc に書いてある)。
