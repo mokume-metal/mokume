@@ -595,15 +595,35 @@ extension SketchPart {
 
     /// 通過点を結ぶ曲線の上の点を、1 つの軸について返す。
     ///
-    /// ```swift
-    /// // 曲線 curve(60, 230, 140, 80, 260, 220, 350, 60) の上を往復する点
-    /// noFill()
-    /// curve(60, 230, 140, 80, 260, 220, 350, 60)
-    /// let t = (sin(time) + 1) / 2
-    /// let x = curvePoint(60, 140, 260, 350, t)
-    /// let y = curvePoint(230, 80, 220, 60, t)
-    /// circle(x, y, 16)
-    /// ```
+    /// 下の例は、``curve(_:_:_:_:_:_:_:_:)`` で引いた区間の上の `t` が 0.4 の所に、``curveTangent(_:_:_:_:_:)``
+    /// で求めた進む向きへ頭を向けた三角形を置いている。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(18, 20, 26)
+    ///     noFill()
+    ///     stroke(120)
+    ///     strokeWeight(2)
+    ///     curve(60, 230, 140, 80, 260, 220, 350, 60)
+    ///     let t: Float = 0.4
+    ///     let x = curvePoint(60, 140, 260, 350, t)
+    ///     let y = curvePoint(230, 80, 220, 60, t)
+    ///     let angle = atan2(curveTangent(230, 80, 220, 60, t), curveTangent(60, 140, 260, 350, t))
+    ///     push {
+    ///         translate(x, y)
+    ///         rotate(angle)
+    ///         noStroke()
+    ///         fill(255)
+    ///         triangle(14, 0, -10, -8, -10, 8)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の細い曲線が左上から右下へ弧を描き、その途中に白い小さな三角形が曲線の向きへ頭を向けて乗っている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// 引数は手本と同じ並びで、``curve(_:_:_:_:_:_:_:_:)`` に渡す 4 つの点の 1 つの軸の値 (`a, b, c, d`) と、
     /// 曲線の上の位置 `t` である。平面の曲線なら、`x` の 4 つと `y` の 4 つで 2 回呼ぶ。
@@ -619,6 +639,7 @@ extension SketchPart {
     /// 数でない値・無限の値が混じったときは `b` を返し (`b` も数でないときは 0)、注意は 1 度だけ言う。
     /// `setup()`・`draw()`・入力のコールバックの外 (部品の `init()` など) で呼ぶと、張りを読む先が無いので、
     /// 1 度だけ知らせて既定の張り 0 で求めた値を返す。
+    // shot: 後で撮る
     public func curvePoint(
         _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ t: some ScalarConvertible
@@ -645,6 +666,7 @@ extension SketchPart {
     ///
     /// **0…1 の外は締めない。** 数でない値・無限の値が混じったときは 0 を返し、注意は 1 度だけ言う。
     /// `setup()`・`draw()`・入力のコールバックの外で呼ぶと、1 度だけ知らせて既定の張り 0 で求めた値を返す。
+    // shot: 参照 curvePoint(_:_:_:_:_:)
     public func curveTangent(
         _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ t: some ScalarConvertible
