@@ -170,6 +170,13 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.image(layer, 0, 0) } == 1)
         #expect(try handled(canvas) { $0.image(layer, 0, 0, 10, 10) } == 1)
         #expect(try handled(canvas) { $0.image(layer, 0, 0, 10, 10, 0, 0, 2, 2) } == 1)
+        // 範囲を Rect で渡す形 (#3783)
+        let box = Rect(left: 0, top: 0, width: 10, height: 10)
+        let part = Rect(left: 0, top: 0, width: 2, height: 2)
+        #expect(try handled(canvas) { $0.image(image, in: box) } == 1)
+        #expect(try handled(canvas) { $0.image(image, in: box, from: part) } == 1)
+        #expect(try handled(canvas) { $0.image(layer, in: box) } == 1)
+        #expect(try handled(canvas) { $0.image(layer, in: box, from: part) } == 1)
         #expect(try handled(canvas) { $0.shape(shape) } == 1)
         #expect(try handled(canvas) { $0.shape(shape, at: [Placement(x: 1, y: 1)]) } == 1)
         // 数の並びを置き場所として読む口 (#3581)。置くのは GPU で、何個になるかは CPU に分からないので、
@@ -182,6 +189,7 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.shape(solid, at: positions, layout: .position) } == 1)
         #expect(try handled(canvas) { $0.shape(shape, at: positions, layout: .position) } == 0)
         #expect(try handled(canvas) { $0.set(1, 1, .linear(red: 1, green: 0, blue: 0)) } == 1)
+        #expect(try handled(canvas) { $0.set(x: 1, y: 1, to: .linear(red: 1, green: 0, blue: 0)) } == 1)
         // 画素のビュー (`pixels`) からの書き込みも、`set` と同じく数える。種類は「読み取り」だが、
         // `VECTOR_ALSO` が「図形」の口と同じに見る (#3139)
         #expect(try handled(canvas) { $0.pixels[1, 1] = .linear(red: 1, green: 0, blue: 0) } == 1)

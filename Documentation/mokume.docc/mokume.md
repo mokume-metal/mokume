@@ -764,6 +764,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/image(_:_:_:)-23fpf``
 - ``SketchPart/image(_:_:_:_:_:)-4ch39``
 - ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-6fe4h``
+- ``SketchPart/image(_:in:)-(Image,_)``
+- ``SketchPart/image(_:in:from:)-(Image,_,_)``
 - ``SketchPart/texture(_:)-c9g``
 - ``SketchPart/noTexture()``
 - ``Image``
@@ -886,6 +888,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/loadPixels()``
 - ``SketchPart/get(_:_:)``
 - ``SketchPart/set(_:_:_:)``
+- ``SketchPart/set(x:y:to:)``
 - ``Pixels``
 - ``PixelBuffer``
 
@@ -895,6 +898,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/image(_:_:_:)-7psdx``
 - ``SketchPart/image(_:_:_:_:_:)-666br``
 - ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-3q9cm``
+- ``SketchPart/image(_:in:)-(Canvas,_)``
+- ``SketchPart/image(_:in:from:)-(Canvas,_,_)``
 - ``SketchPart/texture(_:)-6aozc``
 - ``Canvas``
 
