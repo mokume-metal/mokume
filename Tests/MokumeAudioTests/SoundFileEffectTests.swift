@@ -1069,6 +1069,21 @@ struct SoundFileEffectTests {
         #expect(abs(run.lastHeard[settled] - expected) < 1e-4)
     }
 
+    @Test("操作が溢れて音量の変更が捨てられたら、解析の値も変えず、聞こえる音と揃ったまま (#3944)")
+    func droppedVolumeKeepsAnalysisWithTheSound() throws {
+        var peaks: [Float] = []
+        let run = try congested(frames: 12, at: 3, held: 16_384) { song, _, frame in
+            if frame == 3 { song.amp(0.25) }
+            peaks.append(song.peak)
+        }
+        // 音量の変更が届かなかったので、聞こえる音は音量 1 のまま。解析の値も音量 1 の音 (中央の定位を外した値)
+        let lastFrame = run.heard.left.suffix(Self.perFrame).map { abs($0) / Self.center }
+        let heardPeak = try #require(lastFrame.max())
+        let analysed = try #require(peaks.last)
+        #expect(heardPeak > 0.2, "鳴っていない: \(heardPeak)")
+        #expect(abs(analysed - heardPeak) < 0.01, "解析 \(analysed) と聞こえた音 \(heardPeak) が食い違う")
+    }
+
     @Test("列が詰まっているとき、エフェクトへは通さず (何も変えず) 知らせ、詰まりが解けた後に通せる")
     func routingWhileTheQueueIsCongestedIsRefused() throws {
         var effectInputs: [UInt64] = []
