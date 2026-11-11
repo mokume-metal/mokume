@@ -25,6 +25,10 @@ nonisolated struct SynthCommand {
         /// 作者が音源を手放した (使う側の参照が無くなった)。音の側は、その音源が鳴り終えたら節を外して
         /// 置き場を返す。**この後その節へ操作は来ない。**
         case release
+        /// ファイルの節 (``FileNode``) のいまの区切りに包絡を掛ける (#3099)。形は直前の値 (`set` の
+        /// `attack`・`sustain`・`level`・`release`。秒) から作り、`bits` に位置のずれ (2 の補数の `Int64`。
+        /// ``FileEnvelope/offset``)。
+        case envelope
     }
 
     var op: Op
@@ -677,6 +681,8 @@ nonisolated final class SynthRack: @unchecked Sendable {
             nodes[id]?.begin(command.bits)
         case .release:
             if nodes[id] != nil { released |= 1 << UInt64(id) }
+        case .envelope:
+            nodes[id]?.shapeEnvelope(offset: Int(Int64(bitPattern: command.bits)))
         }
         return false
     }

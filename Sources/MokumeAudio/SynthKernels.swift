@@ -195,3 +195,26 @@ nonisolated struct EnvelopeShape: Equatable {
         return (attack, sustain, release)
     }
 }
+
+/// ``SoundFile`` に掛けた包絡 (#3099)。**形の上の位置は、掛けた時点から鳴った標本の数** (ファイルの標本) で、
+/// 区切り (鳴らし始める・飛ぶ・鳴らし直す) をまたいでも続き、止めている間は進まない。
+///
+/// 区切りの中で `n` 標本鳴ったところの位置は `n + offset`。区切りを始め直すとき、主スレッドが前の区切りで
+/// 鳴った数を ``offset`` へ畳み込んで、新しい区切りの頭からの位置にする。音の側 (``FileVoice``・``FileNode``) と
+/// 解析 (``SoundFile``) は、同じ値から同じ倍率を引く。
+nonisolated struct FileEnvelope: Equatable {
+    /// 形 (ファイルの標本の数)。
+    var shape: EnvelopeShape
+    /// 区切りの中で鳴った標本の数に足すと、形の上の位置になる数。
+    var offset: Int
+    /// 形の頭より前 (掛けた時点より前に鳴った標本) の倍率。前に掛けた形の、掛け直した時点の倍率 (前に形が
+    /// 無ければ 1)。**解析が区間の前の履歴を読むときだけ使う** — 音の側は掛けた時点より後の標本しか描かない。
+    var before: Float = 1
+
+    /// 区切りの中で `played` 標本鳴ったところの倍率。形が終わった後は 0 (次に掛けるまで)。
+    func gain(atPlayed played: Int) -> Float {
+        let position = played + offset
+        guard position >= 0 else { return before }
+        return shape.gain(at: position) ?? 0
+    }
+}
