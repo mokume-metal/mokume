@@ -193,6 +193,34 @@ struct SwiftPMTests {
         #expect(scope.required == ["Odd_Lib.bundle", "Odd_AppTests.bundle"])
     }
 
+    /// **起点が読めなければ閉包を求めない** (#3982 の 2 回目の反証)。product の `targets` の鍵が無い・
+    /// 空・宣言に無い名前を挙げていると、閉包が空になり、作品自身の包みまで除いて 0 で終わる
+    /// (読めないときは全部入れる側へ倒す約束と逆)。どれも従来の判定 (全部数え、何も除かない) へ倒す。
+    @Test(
+        "product の target が無い・空・宣言に無い名前なら、閉包を求めず何も除かない",
+        arguments: [
+            #""#,  // 鍵が無い
+            #","targets":[]"#,  // 空
+            #","targets":["Gone"]"#,  // 宣言に無い名前だけ
+            #","targets":["App","Gone"]"#,  // 宣言に無い名前を含む
+        ])
+    func productsWithoutReadableTargetsExcludeNothing(targets: String) throws {
+        let dump = """
+            {"name":"Odd",
+             "products":[{"name":"App","type":{"executable":null}\(targets)}],
+             "targets":[
+               {"name":"App","type":"executable","resources":[{"rule":{"copy":{}},"path":"a"}]},
+               {"name":"AppTests","type":"test","resources":[{"rule":{"copy":{}},"path":"f"}],
+                "dependencies":[{"byName":["App",null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+        #expect(package.targetClosure(ofProduct: "App") == nil)
+        #expect(
+            package.resourceScope(forProduct: "App")
+                == SwiftPM.Package.ResourceScope(
+                    required: ["Odd_App.bundle", "Odd_AppTests.bundle"], excluded: []))
+    }
+
     /// 閉包の外の target の依存が読めなくても、配る範囲は決まる (辿らないので出会わない)。
     @Test("閉包の外の target の依存が読めなくても、閉包は求まる")
     func unreadableDependenciesOutsideTheClosureDoNotMatter() throws {

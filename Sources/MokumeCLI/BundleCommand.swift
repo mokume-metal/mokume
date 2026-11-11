@@ -191,7 +191,7 @@ enum BundleCommand {
     /// - Parameter excluding: 入れない包みの名前 (``SwiftPM/Package/ResourceScope/excluded``)。
     static func assemble(
         executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL,
-        excluding: Set<String> = []
+        excluding: Set<String>
     ) throws(CommandFailure) -> URL {
         let app = try replaceableApp(for: identity, in: out)
         let contents = app.appendingPathComponent("Contents", isDirectory: true)
@@ -427,7 +427,7 @@ enum BundleCommand {
     /// 宣言を辿っても出てこないが、無ければそもそも絵が出ない。除くのは、このパッケージの target のうち
     /// 実行 product が使わないもの (テストの target の fixture など — #3982) で、名前の形ではなく
     /// 依存の閉包で決めたものを受け取る。
-    static func resourceBundles(besides executable: URL, excluding: Set<String> = []) -> [URL] {
+    static func resourceBundles(besides executable: URL, excluding: Set<String>) -> [URL] {
         let listing =
             (try? FileManager.default.contentsOfDirectory(
                 at: executable.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? []

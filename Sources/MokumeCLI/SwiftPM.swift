@@ -112,13 +112,18 @@ nonisolated enum SwiftPM {
         }
 
         /// `product` を作る target と、それらがこのパッケージの中で (推移的に) 依存する target の名前。
-        /// product の宣言が無い、または辿る途中で依存を読めない target に出会ったら `nil`。
+        /// product の宣言が無い・product の target が空か宣言に無い名前を含む・辿る途中で依存を読めない
+        /// target に出会った、のどれかなら `nil`。
         ///
         /// `byName` は同じ名前の target があれば target、無ければ他のパッケージの product と読む
         /// (道具立てと同じ解き方)。
         func targetClosure(ofProduct product: String) -> Set<String>? {
             guard let declared = products.first(where: { $0.name == product }) else { return nil }
             let byName = Dictionary(targets.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+            // **起点が読めなければ求めない。** product の target が無い (鍵が無い・空)、または宣言に無い
+            // 名前を挙げていると、閉包が空になり、作品自身の包みまで除いてしまう
+            guard !declared.targets.isEmpty, declared.targets.allSatisfy({ byName[$0] != nil })
+            else { return nil }
             var used = Set<String>()
             var pending = declared.targets
             while let next = pending.popLast() {
