@@ -125,8 +125,8 @@ extension Image {
     ///
     /// - **縮める向き**は、作業空間 (線形・アルファ乗算済み) のまま、**光の量で平均する**。新しい 1 画素が覆う元の
     ///   範囲を、覆う長さの割合で混ぜる (面積の平均)。エンコードした 8 bit の値のまま平均すると、明暗が接する所が
-    ///   暗くなる (白と黒の半々が 0.5 ではなく約 0.22 の光になる)。カメラのコマを縮めるときと同じ平均である
-    /// - **広げる向き**は、``SketchPart/image(_:_:_:_:_:)`` が絵を引き伸ばして置くときと同じく、隣り合う 2 画素の
+    ///   暗くなる (白と黒の半々が 0.5 ではなく約 0.21 の光になる)。カメラのコマを縮めるときも同じく光の量で混ぜる
+    /// - **広げる向き**は、`image(picture, x, y, w, h)` が絵を引き伸ばして置くときと同じく、隣り合う 2 画素の
     ///   中心の間を直線で補う。端は端の画素の色で延ばす
     ///
     /// 透けた画素は乗算済みのまま混ぜるので、透明な画素の色が縁へにじまない。返した絵は元と画素も面も共有しない
@@ -175,7 +175,7 @@ nonisolated enum ImageResampling {
     /// 1 本の向きで、新しい画素ごとに混ぜる元の画素と重み。重みの和は 1。
     static func weights(from source: Int, to destination: Int) -> [[(index: Int, weight: Float)]] {
         if destination == source {
-            return (0..<source).map { [($0, 1)] }
+            return (0..<source).map { [(index: $0, weight: Float(1))] }
         }
         let ratio = Double(source) / Double(destination)
         if destination < source {
@@ -199,8 +199,8 @@ nonisolated enum ImageResampling {
             let lower = Int(place.rounded(.down))
             let upper = min(lower + 1, source - 1)
             let fraction = Float(place - Double(lower))
-            if upper == lower || fraction == 0 { return [(lower, 1)] }
-            return [(lower, 1 - fraction), (upper, fraction)]
+            if upper == lower || fraction == 0 { return [(index: lower, weight: Float(1))] }
+            return [(index: lower, weight: 1 - fraction), (index: upper, weight: fraction)]
         }
     }
 
