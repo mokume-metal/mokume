@@ -162,6 +162,112 @@ struct DataLoadingTests {
         #expect(TableValues.warnings.hasWarned(.columnOutOfRange))
     }
 
+    // MARK: - 表から番号で読む (#3641)
+
+    @Test("表から行の番号と列で 1 つのセルを読む: 名前と番号の 2 つの形が、行から読んだ値と同じ")
+    func tableReadsOneCell() {
+        var t = Table(columns: ["x", "y"])
+        t.addRow([10, 20])
+        #expect(t.getFloat(0, "y") == 20)
+        #expect(t.getString(0, 0) == "10.0")
+        #expect(t.getInt(0, "x") == 10)
+        #expect(t.getFloat(0, 1) == 20)
+        #expect(t.getString(0, "y") == "20.0")
+        #expect(t.getInt(0, 1) == 20)
+        // 2 行目を足しても、番号で引いた行のセルを読む (先頭の行に固定されていない)
+        t.addRow([-3, 7])
+        #expect(t.getInt(1, "x") == -3)
+        #expect(t.getFloat(1, "y") == 7)
+        #expect(t.getString(1, 1) == "7.0")
+        for row in 0..<t.rowCount {
+            for column in ["x", "y"] {
+                #expect(t.getString(row, column) == t.rows[row].getString(column))
+                #expect(t.getInt(row, column) == t.rows[row].getInt(column))
+            }
+        }
+    }
+
+    @Test("表の外の行は、行の口と同じ空の値 (空の文字・NaN・0) を返し、口ごとに 1 度だけ行を名乗って知らせる")
+    func tableReadOutsideRows() {
+        var t = Table(columns: ["x", "y"])
+        t.addRow([10, 20])
+        #expect(t.getFloat(5, "x").isNaN)
+        let floatMessage = TableValues.warnings.message(for: .rowOutOfRange(call: "getFloat"))
+        #expect(floatMessage?.contains("getFloat(): there is no row 5") == true)
+        #expect(floatMessage?.contains("numbered 0") == true)
+        #expect(floatMessage?.contains("Reading it as NaN") == true)
+        // 1 度だけ: 別の行でも文面は変わらない
+        #expect(t.getFloat(-1, 0).isNaN)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getFloat")) == floatMessage)
+        #expect(t.getString(1, "x") == "")
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getString"))?.contains("no row 1") == true)
+        // 知らせは口ごとの空の値を名乗る (空の文字・NaN・0)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getString"))?.hasSuffix("Reading it as an empty string") == true)
+        #expect(t.getInt(Int.max, 1) == 0)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getInt"))?.contains("Reading it as 0") == true)
+        // 書く口の知らせとは別に数える
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getInt")) != TableValues.warnings.message(for: .rowOutOfRange(call: "setFloat")))
+    }
+
+    @Test("無い列は、表の口でも行の口と同じ空の値と、表にある列を添えた知らせ")
+    func tableReadMissingColumns() {
+        var t = Table(columns: ["x", "y"])
+        t.addRow([10, 20])
+        let typo = "z-\(UUID().uuidString)"
+        #expect(t.getFloat(0, typo).isNaN)
+        #expect(t.getInt(0, typo) == 0)
+        #expect(t.getString(0, typo) == "")
+        #expect(TableValues.warnings.message(for: .noColumn(typo))?.contains("\"x\", \"y\"") == true)
+        #expect(t.getInt(0, 2) == 0)
+        #expect(t.getFloat(0, -1).isNaN)
+        #expect(t.getString(0, 9) == "")
+        #expect(TableValues.warnings.hasWarned(.columnOutOfRange))
+        // 無い列と無い行が重なれば、列の知らせだけで、セルの知らせは出ない
+        #expect(t.getInt(7, typo) == 0)
+        #expect(TableValues.warnings.message(for: .notAnInteger(column: "\"\(typo)\"")) == nil)
+    }
+
+    @Test("getInt は丸めない: 整数の値の綴りだけを読み、他は 0 と列ごとに 1 度の知らせ (表の口と行の口で同じ)")
+    func getIntDoesNotRound() throws {
+        defer { cleanUp() }
+        let column = "count-\(UUID().uuidString)"
+        let cells: [(text: String, expected: Int?)] = [
+            ("2", 2), ("2.0", 2), ("1e3", 1000), (" 7 ", 7), ("-0", 0), ("+5", 5),
+            ("9223372036854775807", Int.max), ("-9223372036854775808", Int.min),
+            ("9007199254740993", 9_007_199_254_740_993),
+            ("2.5", nil), ("N/A", nil), ("", nil), ("0x10", nil), ("inf", nil),
+            ("9223372036854775808", nil), ("-9223372036854775809", nil), ("1e19", nil),
+        ]
+        let csv = "day,\(column)\n" + cells.enumerated().map { "\($0.offset),\($0.element.text)" }.joined(separator: "\n")
+        let table = try Bare().loadTable(try file("counts.csv", csv), header: true)
+        #expect(table.rowCount == cells.count)
+        for (row, cell) in cells.enumerated() {
+            #expect(table.getInt(row, column) == cell.expected ?? 0, "\(cell.text)")
+            #expect(table.getInt(row, 1) == cell.expected ?? 0, "\(cell.text)")
+            #expect(table.rows[row].getInt(column) == cell.expected ?? 0, "\(cell.text)")
+            #expect(table.rows[row].getInt(1) == cell.expected ?? 0, "\(cell.text)")
+        }
+        // 列ごとに 1 度: 最初に読めなかった行 ("2.5" の行) を名乗る
+        let message = TableValues.warnings.message(for: .notAnInteger(column: "\"\(column)\""))
+        #expect(message?.contains("row 9") == true)
+        #expect(message?.contains("\"2.5\"") == true)
+        #expect(message?.contains("Reading it as 0") == true)
+        // 列の番号で引いた口は、番号を名乗る別の鍵で数える
+        #expect(TableValues.warnings.hasWarned(.notAnInteger(column: "1")))
+    }
+
+    @Test("getFloat の表の口は、行の口と同じ綴りで数を読み、数でないセルは NaN と列ごとの知らせ")
+    func tableGetFloatMatchesRow() throws {
+        defer { cleanUp() }
+        let column = "rain-\(UUID().uuidString)"
+        let table = try Bare().loadTable(try file("t.csv", "day,\(column)\n1, 2.5 \n2,N/A\n"), header: true)
+        #expect(table.getFloat(0, column) == 2.5)
+        #expect(table.getFloat(1, column).isNaN)
+        let message = TableValues.warnings.message(for: .notANumber(column: "\"\(column)\""))
+        #expect(message?.contains("row 1") == true)
+        #expect(message?.contains("\"N/A\"") == true)
+    }
+
     // MARK: - 書く
 
     @Test("作例 1: 平均の列を足して書き出し、読み直すと同じ表に戻る")
