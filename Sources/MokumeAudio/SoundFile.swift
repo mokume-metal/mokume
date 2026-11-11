@@ -299,6 +299,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         // 裏で解いてきたなら、解き直さない (``Sketch/requestSound(_:)``)
         self.samples = decodedSamples ?? AudioFile.mono(buffer)
         self.sampleRate = Float(buffer.format.sampleRate)
+        self.channels = Int(buffer.format.channelCount)
         self.owner = owner
         self.injectedFlow = flow
         self.source = source
@@ -430,6 +431,41 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
 
     /// 長さ (秒)。サンプル数 ÷ ``sampleRate``。
     public var duration: Float { seconds(samples.count) }
+
+    /// ファイルのチャンネルの数。モノラルは 1、ステレオは 2。
+    ///
+    /// <!-- example: 文脈 var song: SoundFile? -->
+    /// ```swift
+    /// guard let song else { return }
+    /// if song.channels == 2 {
+    ///     // 左右のあるファイルは、左右に分けて丸を描く
+    ///     circle(width * 0.3, height / 2, 40 + song.level * 200)
+    ///     circle(width * 0.7, height / 2, 40 + song.level * 200)
+    /// } else {
+    ///     circle(width / 2, height / 2, 40 + song.level * 200)
+    /// }
+    /// ```
+    ///
+    /// **読み込んだファイルの数をそのまま返し、3 チャンネル以上でも 2 に畳まない** (Processing Sound の
+    /// `SoundFile.channels()` と同じ)。解析の値 (``level`` など) はチャンネルを平均したものだが、この数は平均する前のもの。
+    /// 外した (`detach(_:)`) 後も、追加し直した後も同じ値を返す。
+    public let channels: Int
+
+    /// ファイルの標本 (フレーム) の数。1 チャンネルあたりの数で、チャンネルの数は掛けない。
+    ///
+    /// <!-- example: 文脈 var song: SoundFile? -->
+    /// ```swift
+    /// guard let song else { return }
+    /// // 再生位置を、標本の番号で描く
+    /// let current = Int(song.position * song.sampleRate)
+    /// text("\(current) / \(song.frames)", 20, 40)
+    /// ```
+    ///
+    /// 読み込んだ標本の数そのもので、``duration`` × ``sampleRate`` の近似ではない。``duration`` は単精度の秒に
+    /// 丸めてあるので、掛け直して `Int` に切り捨てると、短いファイル (48 kHz で 7 標本から) でも 1 少なくなることがあり、
+    /// 長いファイル (約 512 秒から) では 2 以上ずれうる。標本の数が要るときはこちらを使う。Processing Sound の
+    /// `SoundFile.frames()` に当たる。外した後も、追加し直した後も同じ値を返す。
+    public var frames: Int { samples.count }
 
     /// 標本の位置を秒にする。
     private func seconds(_ sample: Int) -> Float {
