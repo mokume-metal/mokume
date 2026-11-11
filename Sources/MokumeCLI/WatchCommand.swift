@@ -522,10 +522,9 @@ enum WatchCommand {
             listing: WatchFrameListing(
                 identity: FrameListing.identity(ofPackageAt: session.directory), gpu: window.gpu))
         // **作品のウィンドウが映す世代の子に従って名乗る** ([ADR-0049] 決定 2)。プレビューは試聴の子を映すことが
-        // あるので見ない。子は断っていなければ作品名と題を絵に載せている
-        window.onFrameShareRead = { [listing = viewer.listing] share in listing.follow(share) }
-        // **受け手へは、作品のウィンドウが映す世代の新しい絵を道具の GPU で写す** (#3920)。ウィンドウが見えなくても渡す
-        window.onNewFrame = { [listing = viewer.listing] texture in listing.handOver(texture) }
+        // あるので見ない。子は断っていなければ作品名と題を絵に載せている。受け手へは、作品のウィンドウが映す世代の絵を
+        // 道具の GPU で写す (#3920)。ウィンドウが見えなくても渡す
+        viewer.listing.attach(to: window)
         // **相手は道具が出す** (ADR-0049 決定 6・#3921)。受け手と繋がっているのは道具なので、端末に 1 行ずつ言い、
         // プレビューの題に添える。子のメニューバーの名乗りは変えない
         viewer.listing.say = { say($0) }
