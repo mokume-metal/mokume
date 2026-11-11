@@ -90,6 +90,38 @@ struct WireNumberTests {
         #expect(try read(Int.self, #"{"number":\#(number)}"#) == .value(value), "\(number)")
     }
 
+    /// **Foundation の読みに依る綴り** (#3959 の 2 回目の反証で実測・macOS 27.0 / arm64)。`JSONDecoder` は
+    /// `Decimal` を指数 -128〜127・仮数 38 桁で読み、外れると誤りか丸めになる。読みは直す前 (`c1eef96d`) と
+    /// 同じで、**Foundation の版が変わって読みが変わったら、ここが赤くなって気付く**ための行である。
+    /// `1e-400` は整数でないが、`Decimal` に収まらず `Int` の読みに回り、`Double` で 0 に丸まって届く
+    /// (MCP サーバの側も `JSONSerialization` が 0 で渡すので、読み手からは見分けられない)。仮数が 38 桁を越える
+    /// 綴りは丸まって届く (`9` が 40 個は `99…900` で範囲の外、`1.` に 0 が 39 個と `1` は 1)。
+    enum Expected: Sendable { case notWhole, value(Int), overflow(negative: Bool) }
+
+    @Test(
+        "Decimal の指数・仮数の端の綴りは、Foundation の読みのまま固定する",
+        arguments: [
+            ("1e-400", .value(0)), ("5e-324", .notWhole), ("1e-130", .notWhole),
+            ("1e-128", .notWhole), ("1e-127", .notWhole),
+            ("1e100", .overflow(negative: false)), ("1e127", .overflow(negative: false)),
+            ("1e128", .overflow(negative: false)), ("1e400", .overflow(negative: false)),
+            ("-1e400", .overflow(negative: true)),
+            ("1" + String(repeating: "0", count: 40), .overflow(negative: false)),
+            (String(repeating: "9", count: 40), .overflow(negative: false)),
+            ("-1" + String(repeating: "0", count: 40), .overflow(negative: true)),
+            ("1." + String(repeating: "0", count: 39) + "1", .value(1)),
+        ] as [(String, Expected)])
+    func readsTheEdgesOfDecimalAsFoundationDoes(_ number: String, _ expected: Expected) throws {
+        let reading = try read(Int.self, #"{"number":\#(number)}"#)
+        let wanted: WireNumber<Int> =
+            switch expected {
+            case .notWhole: .notWhole
+            case .value(let value): .value(value)
+            case .overflow(let negative): .overflow(negative: negative)
+            }
+        #expect(reading == wanted, "\(number)")
+    }
+
     /// 10 進の値の判定は、JSON から届かない値 (`NaN`) も整数と読まない。MCP サーバの引数の読み
     /// (`JSONRPC.wholeNumber`) は、入口で有限でない数を断るので、ここで直に固定する。
     @Test("10 進の NaN は整数でない")

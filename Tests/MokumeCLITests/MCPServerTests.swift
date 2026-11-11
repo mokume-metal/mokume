@@ -1056,6 +1056,14 @@ struct MCPServerTests {
             // 仮数が 38 桁を越える綴りは、`JSONSerialization` が `NSDecimalNumber` にする段で丸めて
             // 届く (既知の限界・``JSONRPC/wholeNumber(_:)``)。45 桁の `1.000…0001` は 1 と読む
             ("1.000000000000000000000000000000000000000000001", 1),
+            // Foundation の読みに依る綴り (#3959 の 2 回目の反証で実測。直す前と同じ読み)。Foundation の版が
+            // 変わって読みが変わったら赤くなる行。`1e-400` は整数でないが `JSONSerialization` が 0 で渡すので
+            // 見分けられない。仮数が 38 桁を越える綴りは丸まって届く (`9` が 40 個は範囲の外、`1.0…01` は 1)
+            ("5e-324", nil), ("1e-130", nil), ("1e-400", 0),
+            ("1e100", Int.max), ("1e127", Int.max), ("1e128", Int.max),
+            ("1" + String(repeating: "0", count: 40), Int.max), (String(repeating: "9", count: 40), Int.max),
+            ("-1" + String(repeating: "0", count: 40), Int.min),
+            ("1." + String(repeating: "0", count: 39) + "1", 1),
         ] as [(String, Int?)])
     func readsLongNumbersExactly(text: String, whole: Int?) throws {
         let values = try decode(#"{"count": \#(text)}"#)
