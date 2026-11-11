@@ -144,6 +144,10 @@ final class ReplayRecorder {
             fileURLWithPath: claim.destination.path + ".\(getpid())" + partialSuffix)
         do {
             guard FileManager.default.createFile(atPath: partial.path, contents: nil) else {
+                // 同じ名前のフォルダは記録が作ったものではないので消さず、それが理由だと名指す (#3943)
+                if AtomicFile.isDirectory(partial, following: true) {
+                    return (nil, "\(partial.path) is a directory, not a file")
+                }
                 return (nil, "Could not create \(partial.path)")
             }
             let handle = try FileHandle(forWritingTo: partial)

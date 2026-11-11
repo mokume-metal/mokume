@@ -29,10 +29,12 @@ struct UnopenableFileTests {
         func draw() {}
     }
 
-    /// 文字のファイルを読む口。`rg -n 'TextFile\.read' Sources` で引いた呼び出し元すべてである
-    /// (`loadJSONObject` / `loadXML` は `readText`、待たない版は `requestParsed` を通る)。
+    /// ファイルを読む口。`rg -n 'TextFile\.read' Sources` で引いた呼び出し元すべてである
+    /// (`loadJSONObject` / `loadXML` は `readText`、待たない版は `requestParsed` を通る。
+    /// バイト列の口は `TextFile.readData` を通り、中身を解かない)。
     nonisolated enum Door: CaseIterable, Sendable {
         case loadStrings, requestStrings
+        case loadBytes, requestBytes
         case loadTable, requestTable
         case loadJSONObject, requestJSONObject
         case loadXML, requestXML
@@ -44,7 +46,16 @@ struct UnopenableFileTests {
             return false
         }
 
+        /// 中身を文字として解くか。バイト列の口は解かないので、UTF-8 でない中身でも投げない。
+        var decodesText: Bool {
+            switch self {
+            case .loadBytes, .requestBytes: false
+            default: true
+            }
+        }
+
         static var withoutCanvas: [Door] { allCases.filter { !$0.needsCanvas } }
+        static var decodingWithoutCanvas: [Door] { withoutCanvas.filter(\.decodesText) }
         static var needingCanvas: [Door] { allCases.filter(\.needsCanvas) }
 
         /// 口を呼ぶ。読んだ値は捨てる。
@@ -54,6 +65,8 @@ struct UnopenableFileTests {
             switch self {
             case .loadStrings: _ = try sketch.loadStrings(path)
             case .requestStrings: _ = try await sketch.requestStrings(path)
+            case .loadBytes: _ = try sketch.loadBytes(path)
+            case .requestBytes: _ = try await sketch.requestBytes(path)
             case .loadTable: _ = try sketch.loadTable(path)
             case .requestTable: _ = try await sketch.requestTable(path)
             case .loadJSONObject: _ = try sketch.loadJSONObject(path)
@@ -212,7 +225,7 @@ struct UnopenableFileTests {
         try await Self.expectUnopenable(door, obstacle)
     }
 
-    @Test("中身が UTF-8 でないファイルは今までどおり unreadable、在らない名前は notFound", arguments: Door.withoutCanvas)
+    @Test("中身が UTF-8 でないファイルは今までどおり unreadable、在らない名前は notFound", arguments: Door.decodingWithoutCanvas)
     func otherFailuresStayAsTheyWere(_ door: Door) async throws {
         try await Self.expectOtherFailuresUnchanged(door)
     }

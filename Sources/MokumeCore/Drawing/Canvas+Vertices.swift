@@ -149,6 +149,18 @@ extension Canvas {
         bezierVertex(c1.x, c1.y, c2.x, c2.y, end.x, end.y)
     }
 
+    /// 3 次の曲線で、いまの点から `end` まで繋ぐ。``bezierVertex(_:_:_:_:_:_:)`` に制御点 2 つと
+    /// 終点の成分を同じ順で渡すのと同じ (#3781)。
+    public func bezierVertex(control1: Vector2, control2: Vector2, to end: Vector2) {
+        bezierVertex(control1.x, control1.y, control2.x, control2.y, end.x, end.y)
+    }
+
+    /// 2 次の曲線で、いまの点から `end` まで繋ぐ。``quadraticVertex(_:_:_:_:)`` に制御点と終点の
+    /// 成分を同じ順で渡すのと同じ (#3781)。
+    public func quadraticVertex(control: Vector2, to end: Vector2) {
+        quadraticVertex(control.x, control.y, end.x, end.y)
+    }
+
     /// 通過点を結ぶ曲線の制御点を置く。
     ///
     /// **4 つ揃って初めて 1 区間が引ける** — 最初と最後の点は曲がり方を決めるためだけに

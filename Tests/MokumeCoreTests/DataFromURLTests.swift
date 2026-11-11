@@ -76,6 +76,26 @@ struct DataFromURLTests {
         #expect(try await sketch.requestStrings(url) == ["first", "", "third"])
     }
 
+    // MARK: - バイト列 (#3708)
+
+    @Test("loadBytes と requestBytes は URL の本文を解かずにそのまま返す。2xx でなければ unreachable")
+    func bytesFromURL() async throws {
+        let body: [UInt8] = [0x00, 0xFF, 0x0D, 0x0A, 0x80]
+        let url = CannedResponses.serve(.answer(status: 200, body: Data(body)))
+        let sketch = Bare()
+        #expect(try sketch.loadBytes(url) == body)
+        #expect(try await sketch.requestBytes(url) == body)
+        let missing = CannedResponses.serve(.answer(status: 404, body: Data(body)))
+        let failure = #expect(throws: DataFailure.self) { try Bare().loadBytes(missing) }
+        guard case .unreachable(let named, let reason) = failure else {
+            Issue.record("unreachable で投げていない: \(String(describing: failure))")
+            return
+        }
+        #expect(named == missing)
+        #expect(reason.contains("404"))
+        await #expect(throws: failure!) { try await Bare().requestBytes(missing) }
+    }
+
     // MARK: - 届かないとき
 
     /// 404 の本文 (多くは HTML の案内) を読まず、届かなかったものとして投げる。JSON と同じ。

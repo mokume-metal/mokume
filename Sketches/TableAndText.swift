@@ -56,6 +56,11 @@ final class TableAndText: Sketch {
         // 文字列の行も同じく書き出せる (普通のスケッチなら `saveStrings(caption, "out/caption.txt")`)。
         // 絵には出さない
         try saveStrings(caption, Self.writtenCaption)
+        // バイト列も同じく書き出して読み直せる (普通のスケッチなら `saveBytes(bytes, "out/caption.bin")`)。
+        // 中身を解かないので、書いた並びがそのまま戻る。絵には出さず、戻らなければ下の 1 行が名乗る
+        let bytes = Array(caption.joined(separator: "\n").utf8)
+        try saveBytes(bytes, Self.writtenBytes)
+        if try loadBytes(Self.writtenBytes) != bytes { rereadFailure = "バイト列の読み直しが合わない" }
         table = read
 
         // 書き出したものを、待たない口で読み直す。待つのは Task の仕事で、届くまでは
@@ -65,6 +70,7 @@ final class TableAndText: Sketch {
             do {
                 let read = try await requestTable(Self.written, header: true)
                 rereadLines = try await requestStrings(Self.written)
+                if try await requestBytes(Self.writtenBytes) != bytes { rereadFailure = "バイト列の読み直しが合わない" }
                 reread = read
             } catch {
                 rereadFailure = "CSV の読み直しに失敗 (ログを参照)"
@@ -138,4 +144,8 @@ final class TableAndText: Sketch {
     /// 説明の文を書き出す先。
     private static let writtenCaption = FileManager.default.temporaryDirectory
         .appendingPathComponent("mokume-reference-temperatures-caption.txt").path
+
+    /// 説明の文をバイト列として書き出す先。
+    private static let writtenBytes = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mokume-reference-temperatures-caption.bin").path
 }
