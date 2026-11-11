@@ -565,55 +565,6 @@ struct FrameSenderTests {
         #expect(!ModelReceiver.frames(in: later).isEmpty)
     }
 
-    /// **繋ぎ直しへの受け入れも待ち時間 0 の 1 通である** ([#3947] と同じ形)。待ち行列が埋まったまま繋ぎ直して
-    /// `accepted` が落ちたら、受け手が読み終えた後のリフレッシュで最新の大きさの `resized` を送り、受け手は約束どおり
-    /// 面を作り直して繋ぎ直せる。
-    ///
-    /// [#3947]: https://github.com/mokume-metal/mokume/issues/3947
-    @Test("待ち行列が埋まったまま繋ぎ直して受け入れの知らせが落ちても、読み終えた受け手へ大きさの変更を送って繋ぎ直させる")
-    func aDroppedAcceptanceOfAReconnectIsRecovered() throws {
-        let harness = try makeHarness()
-        defer { harness.sender.stop() }
-        let receiver = ModelReceiver(width: Self.width, height: Self.height, count: 8)
-        defer { receiver.die() }
-        receiver.connect(to: harness.service)
-        harness.sender.drain()
-        _ = receiver.receiveAll()
-        let id = try #require(receiver.id)
-        for frame in Int64(1)...8 { try harness.step(frame: frame) }
-        harness.sender.resize(width: 32, height: Self.height)
-        // 待ち行列が埋まったまま、受け手が新しい大きさで繋ぎ直す。受け入れの知らせは落ちる
-        receiver.reconnect(to: harness.service, width: 32, height: Self.height)
-        harness.sender.drain()
-        let queued = receiver.receiveAll()
-        #expect(
-            !queued.contains { $0.kind == FrameLink.Kind.accepted.rawValue || $0.kind == FrameLink.Kind.resized.rawValue },
-            "前提: 満杯で受け入れの知らせも大きさの変更も落ちる: \(queued.map(\.kind))")
-
-        // 読み終えた受け手へ、後のリフレッシュで大きさの変更が届く
-        var later: [FrameLink.Received] = []
-        for frame in Int64(9)...11 {
-            try harness.step(frame: frame, width: 32)
-            later += receiver.receiveAll()
-        }
-        #expect(later.contains { $0.kind == FrameLink.Kind.resized.rawValue }, "落ちた受け入れの後に何も届かない: \(later.map(\.kind))")
-
-        receiver.reconnect(to: harness.service, width: 32, height: Self.height)
-        harness.sender.drain()
-        var frames: [ModelReceiver.Frame] = []
-        let answers = receiver.receiveAll()
-        #expect(answers.first?.kind == FrameLink.Kind.accepted.rawValue)
-        #expect(receiver.id == id, "繋ぎ直しで別の受け手になった")
-        for frame in Int64(12)...15 {
-            try harness.step(frame: frame, width: 32)
-            for got in ModelReceiver.frames(in: receiver.receiveAll()) {
-                frames.append(got)
-                receiver.release(slot: got.slot, to: harness.service)
-            }
-        }
-        #expect(frames.count >= 3, "繋ぎ直した後に受け続けられない: \(frames.map(\.frameCount))")
-    }
-
     @Test("受け手が消えると dead-name の知らせで外し、切ると言われても外す")
     func removesReceiversThatGoAway() throws {
         let harness = try makeHarness()

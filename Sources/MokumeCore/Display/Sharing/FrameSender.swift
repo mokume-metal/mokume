@@ -19,8 +19,7 @@ import MokumeDiagnostics
 ///   #3946)
 /// - 受け手が面を全部掴んでいるフレームは書かずに見送り、その枚数を数える (``skippedFrames``)
 /// - 送りは待ち時間 0 (``FrameLink``)。受け手が読まずに待ち行列が埋まっていれば、その面は書かなかったことにして
-///   空きへ戻す。落ちた大きさの変更・繋ぎ直しへの答えは、以後のリフレッシュで最新の大きさの `resized` を送り直す
-///   (#3947)
+///   空きへ戻す。落ちた大きさの変更は、以後のリフレッシュで最新の大きさの `resized` を送り直す (#3947)
 /// - GPU の完了は待たない。結末が届いていない焼きは次のフレームで知らせる (`RenderDevice.undelivered(_:)`)
 ///
 /// ## 受け手が消えたら外す
@@ -193,9 +192,7 @@ package final class FrameSender {
                 nil
             }
         if let refusal {
-            // 受け入れ済みの受け手への断りが落ちたら、受け入れが落ちたのと同じく繋ぎ直させる (#3947 と同じ形)。
-            // まだ登録の無い受け手は、断りが落ちても送り手に何も残らない (受け手は答えを待たずに繋ぎ直せる)
-            if !refuse(reply, refusal, isKnown: existing != nil), let existing { owesReconnect(existing) }
+            refuse(reply, refusal, isKnown: existing != nil)
             return
         }
         var handed: [HandedSurface] = []
@@ -214,14 +211,10 @@ package final class FrameSender {
             existing.held = Array(repeating: false, count: handed.count)
             existing.pending.removeAll()
             existing.lastFrameCount = nil
-            // 受け入れが大きさを運ぶので、届けば知らせ損ねた大きさの変更はもう要らない (#3947)。**受け入れも待ち時間 0 の
-            // 1 通で、待ち行列が埋まっていれば落ちる** — 落ちたら面を手放し、以後のリフレッシュで最新の大きさを送って
-            // 繋ぎ直させる (`resized` は「渡した面は捨てた。作り直して繋ぎ直せ」の約束)
-            if accept(existing) {
-                existing.owesResized = false
-            } else {
-                owesReconnect(existing)
-            }
+            // 受け入れが大きさを運ぶので、知らせ損ねた大きさの変更はもう要らない (#3947)
+            // 受け入れが満杯で落ちた場合の扱いは #3968 で決める
+            existing.owesResized = false
+            accept(existing)
             return
         }
         let receiver = Receiver(id: nextID, name: name, port: reply, surfaces: handed)
@@ -237,37 +230,21 @@ package final class FrameSender {
         onReceiversChanged?(receiverNames)
     }
 
-    /// 受け入れ済みの受け手への答えを落とした。面を手放し、以後のリフレッシュで最新の大きさの `resized` を送って
-    /// 繋ぎ直させる (``announce(_:)``)。`resized` は「渡した面は捨てた。作り直して繋ぎ直せ」の約束なので、面は先に手放す。
-    private func owesReconnect(_ receiver: Receiver) {
-        for surface in receiver.surfaces { surface.release(gpu: gpu) }
-        receiver.surfaces = []
-        receiver.held = []
-        receiver.pending.removeAll()
-        receiver.lastFrameCount = nil
-        receiver.owesResized = true
-    }
-
-    /// 受け入れを知らせる。待たない。送れたら `true`。
-    @discardableResult
-    private func accept(_ receiver: Receiver) -> Bool {
+    private func accept(_ receiver: Receiver) {
         var payload = FrameLink.Payload()
         payload.append(receiver.id)
         payload.append(UInt32(width))
         payload.append(UInt32(height))
-        return FrameLink.send(.accepted, to: receiver.port, payload: payload) == KERN_SUCCESS
+        FrameLink.send(.accepted, to: receiver.port, payload: payload)
     }
 
-    /// 断りを知らせる。待たない。送れたら `true`。
-    @discardableResult
-    private func refuse(_ reply: mach_port_t, _ refusal: FrameLink.Refusal, isKnown: Bool) -> Bool {
+    private func refuse(_ reply: mach_port_t, _ refusal: FrameLink.Refusal, isKnown: Bool) {
         var payload = FrameLink.Payload()
         payload.append(refusal.rawValue)
-        let sent = FrameLink.send(.refused, to: reply, payload: payload) == KERN_SUCCESS
+        FrameLink.send(.refused, to: reply, payload: payload)
         warn("A receiver asked for this sketch's frames and was refused: \(refusal)")
         // 受け入れていない受け手の権利は持たない。受け入れ済みの受け手なら、重なった 1 つだけ返す
         if isKnown { FrameLink.releaseOneSend(reply) } else { FrameLink.releaseName(reply) }
-        return sent
     }
 
     private func removeReceiver(port name: mach_port_t) {
