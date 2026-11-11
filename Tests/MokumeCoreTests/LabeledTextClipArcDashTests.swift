@@ -172,6 +172,47 @@ struct LabeledTextClipArcDashTests {
             })
     }
 
+    @Test("Issue の例: rectMode(.center) の後の clip(Rect(0, 0, 50, 50)) も、.corner の clip(0, 0, 50, 50) と同じ範囲を切る")
+    func clipIssueExampleAfterCenterMode() throws {
+        let square = Rect(left: 0, top: 0, width: 50, height: 50)
+        try agree(
+            "Sketch",
+            labeled: { stage in
+                stage.rectMode(.center)
+                stage.clip(square)
+                Self.fillAll(stage)
+            },
+            positional: { stage in
+                stage.rectMode(.corner)
+                stage.clip(0, 0, 50, 50)
+                Self.fillAll(stage)
+            })
+        try agree(
+            "Canvas",
+            labeled: { stage in
+                stage.canvas.rectMode(.center)
+                stage.canvas.clip(square)
+                Self.fillAll(stage)
+            },
+            positional: { stage in
+                stage.canvas.rectMode(.corner)
+                stage.canvas.clip(0, 0, 50, 50)
+                Self.fillAll(stage)
+            })
+        try disagree(
+            ".center の clip(0, 0, 50, 50) と Rect の形が同じ範囲 — モードが効いていない",
+            { stage in
+                stage.rectMode(.center)
+                stage.clip(0, 0, 50, 50)
+                Self.fillAll(stage)
+            },
+            { stage in
+                stage.rectMode(.center)
+                stage.clip(square)
+                Self.fillAll(stage)
+            })
+    }
+
     @Test("clip(Rect) は既定のモードの clip(4 つの数) と同じ範囲で、rectMode に従わない")
     func clipRectMatchesAndIgnoresRectMode() throws {
         let box = Rect(left: 7, top: 5, width: 31, height: 22)
@@ -367,6 +408,27 @@ struct LabeledTextClipArcDashTests {
                 stage.strokeDash(3, 7)
                 Self.lines(stage)
             })
+    }
+
+    @Test("Issue の例: strokeDash(length: 8, gap: 4) は strokeDash(8, 4) と同じ破線")
+    func strokeDashIssueExample() throws {
+        try agree(
+            "Sketch",
+            labeled: { stage in
+                stage.strokeDash(length: 8, gap: 4)
+                Self.lines(stage)
+            },
+            positional: { stage in
+                stage.strokeDash(8, 4)
+                Self.lines(stage)
+            })
+        try disagree(
+            "strokeDash(8, 4) が実線と同じ絵 — 破線が効いていない",
+            { stage in
+                stage.strokeDash(8, 4)
+                Self.lines(stage)
+            },
+            { stage in Self.lines(stage) })
     }
 
     @Test("負の長さの strokeDash(length:gap:) は、位置の形と同じく実線に戻す")
