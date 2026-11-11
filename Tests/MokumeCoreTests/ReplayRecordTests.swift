@@ -289,7 +289,8 @@ struct ReplayRecordFormatTests {
 
         let opened = ReplayRecorder.open(destination: destination)
         #expect(opened.recorder == nil)
-        #expect(opened.failure?.contains(folder.path) == true, "\(opened.failure ?? "理由が無い")")
+        // 理由はその名前がフォルダで占められていることを名指す (`take()` と同じ言い方・#3943)
+        #expect(opened.failure == "\(folder.path) is a directory, not a file")
         #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
     }
 
