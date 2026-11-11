@@ -761,9 +761,9 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
 
     /// 止める操作の時点までの、前のフレーム以後の区間を控える。**止める前に鳴っていた分を、取りこぼさない。**
     /// 実際に鳴らしている間は、フレームの頭から ``pause()``・``stop()`` を呼ぶまでに数 ms 鳴っている。
-    private func holdTail() {
+    private func holdTail(after played: Int) {
         guard playhead.isPlaying else { return }
-        let span = playhead.span(of: samples, from: covered, after: played())
+        let span = playhead.span(of: samples, from: covered, after: played)
         covered = span.to
         stoppedTail = shaped(span)
     }
@@ -1106,9 +1106,11 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case .pause:
             guard playhead.isPlaying else { return }
             continuedCoverage = nil
-            holdTail()
-            foldEnvelope(after: played())
-            playhead.pause(after: played())
+            // 区間・包絡の位置・止めた位置を、同じ 1 回の読みから求める (実際に鳴らしている間は、読むたびに進む)
+            let playedNow = played()
+            holdTail(after: playedNow)
+            foldEnvelope(after: playedNow)
+            playhead.pause(after: playedNow)
             // 同じフレームで先に飛ぶよう頼まれていれば、止めた位置はその飛び先にする
             if let target = pendingJump {
                 pendingJump = nil
@@ -1118,8 +1120,9 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case .stop:
             pendingJump = nil
             continuedCoverage = nil
-            holdTail()
-            foldEnvelope(after: played())
+            let playedNow = played()
+            holdTail(after: playedNow)
+            foldEnvelope(after: playedNow)
             playhead.stop()
             halt()
         case .envelope(let seconds):
