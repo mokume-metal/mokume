@@ -269,13 +269,20 @@ public nonisolated func map(
 /// なら、比も 0 と 1 ちょうどになる。有限の値から数でない値は返らない (値が範囲から遠く
 /// 外れて溢れれば ±∞)。
 ///
+/// **幅は有限でも値と下端の差だけが溢れる組は、差と幅を半分にしてから割る** ([#3952])。
+/// `norm(m, -m, 0)` (m は `Float` の最大) は真の比が 2 なのに、差 `2m` が ∞ になって ∞ を返していた。
+/// 差が溢れるのは値と下端が異符号で大きいときだけなので、半分どうしの差は溢れず、どちらの半分も
+/// 丸まらない。幅もそうした大きな下端からの差なので、半分にしても丸まらない。だから比は、差を
+/// 丸めて割る元の式を指数の上限なしで計算したのと同じ値になる。**溢れない組は式も値も変えない。**
+///
 /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
 /// [#1476]: https://github.com/mokume-metal/mokume/issues/1476
+/// [#3952]: https://github.com/mokume-metal/mokume/issues/3952
 private nonisolated func proportion(_ value: Float, _ low: Float, _ high: Float) -> Float {
     let span = high - low
-    return span.isFinite
-        ? (value - low) / span
-        : (value / 2 - low / 2) / (high / 2 - low / 2)
+    guard span.isFinite else { return (value / 2 - low / 2) / (high / 2 - low / 2) }
+    let offset = value - low
+    return offset.isFinite ? offset / span : (value / 2 - low / 2) / (span / 2)
 }
 
 // MARK: - 2 つの値の間を取る
@@ -333,14 +340,24 @@ public nonisolated func lerp(_ start: some ScalarConvertible, _ stop: some Scala
 /// 戻らない・`amount` を増やして値が逆行する・外挿で NaN を返す、の 3 つを壊すうえ、端の間の
 /// ふつうの値も 4 つに 1 つが最下位ビットで動く。
 ///
+/// **幅は有限でも、幅と `amount` の積だけが溢れる外挿は、始まりと積を半分にしてから足して 2 倍する**
+/// ([#3952])。`lerp(m, 0, 2)` (m は `Float` の最大) は真の値が `-m` なのに、積 `-2m` が ∞ になって
+/// -∞ を返していた。積が溢れるのは幅が大きいときだけなので、幅の半分は丸まらず、半分の積は元の積を
+/// 丸めたものの半分になる。和の丸めも 1 回なので、値は元の式を指数の上限なしで計算したのと同じになり、
+/// 真の値が `Float` を越えるときだけ ±∞ を返す。`amount` が ±∞ でも ±∞ のままで、数でない値は作らない。
+/// **溢れない組は式も値も変えない。**
+///
 /// [#1312]: https://github.com/mokume-metal/mokume/issues/1312
 /// [#1453]: https://github.com/mokume-metal/mokume/issues/1453
+/// [#3952]: https://github.com/mokume-metal/mokume/issues/3952
 nonisolated func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
     let span = stop - start
     guard span.isFinite else { return (1 - amount) * start + amount * stop }
     // 幅が無ければ、どこを取っても始まり。比が ∞ で来ても `0 × ∞` の NaN を作らない
     guard span != 0 else { return start }
-    return amount == 1 ? stop : start + span * amount
+    guard amount != 1 else { return stop }
+    let step = span * amount
+    return step.isFinite ? start + step : 2 * (start / 2 + span / 2 * amount)
 }
 
 // MARK: - 値を範囲へ締める
