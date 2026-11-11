@@ -520,6 +520,22 @@ extension SketchPart {
         liveCanvas()?.strokeDash(length, gap)
     }
 
+    /// 線を破線にする。線の長さと隙間をラベルを付けて渡す。
+    ///
+    /// ``strokeDash(_:_:)`` に同じ値を同じ順で渡すのと同じ破線になる。効く線・受けない値の扱い・
+    /// フレームを越えることもそちらと同じで、違うのは**どの数が線でどれが隙間かを呼び出しの行で読める**
+    /// ことだけである。
+    ///
+    /// ```swift
+    /// // strokeDash(8, 4) と同じ破線
+    /// strokeDash(length: 8, gap: 4)
+    /// line(40, 150, 360, 150)
+    /// ```
+    // shot: 参照 strokeDash(_:_:)
+    public func strokeDash(length: some ScalarConvertible, gap: some ScalarConvertible) {
+        liveCanvas()?.strokeDash(length: length, gap: gap)
+    }
+
     /// 線を破線にするのをやめ、実線へ戻す。
     ///
     /// ``strokeDash(_:_:)`` を呼んでいなければ何もしない。
@@ -743,6 +759,26 @@ extension SketchPart {
         guard let canvas = liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.clip(a, b, c, d)
+    }
+
+    /// 以後の描画を、``Rect`` の範囲で切り抜く。
+    ///
+    /// ``rectMode(_:)`` が既定 (`.corner`) のときの ``clip(_:_:_:_:)`` に、`rect` の左上と幅・高さを渡すのと
+    /// 同じ範囲を切る。変換の受け方・フレームを越えないこと・受けない値の扱いもそちらと同じで、違いは
+    /// **どの数が範囲の何かを呼び出しの行で読める**ことと、**``rectMode(_:)`` に従わない**ことである
+    /// (``Rect`` は左上で置く値なので、モードが `.center` でも値のとおり左上から読む)。
+    ///
+    /// ```swift
+    /// // clip(0, 0, 50, 50) (既定のモード) と同じ範囲
+    /// clip(Rect(left: 0, top: 0, width: 50, height: 50))
+    /// circle(50, 50, 80)
+    /// ```
+    ///
+    /// - Note: 切り抜きは**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 参照 clip(_:_:_:_:)
+    public func clip(_ rect: Rect) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.clip(rect)
     }
 
     /// 閉包の中で描いた形の内側で、以後の描画を切り抜く。円の切り抜きから絵を覗く、字の形に切り抜く、といった

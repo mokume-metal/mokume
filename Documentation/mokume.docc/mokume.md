@@ -606,6 +606,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/strokeCap(_:)``
 - ``SketchPart/strokeJoin(_:)``
 - ``SketchPart/strokeDash(_:_:)``
+- ``SketchPart/strokeDash(length:gap:)``
 - ``SketchPart/noStrokeDash()``
 - ``StrokeCap``
 - ``StrokeJoin``
@@ -620,6 +621,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/ellipse(_:_:_:_:)``
 - ``SketchPart/arc(_:_:_:_:_:_:)``
 - ``SketchPart/arc(_:_:_:_:_:_:_:)``
+- ``SketchPart/arc(in:start:stop:)``
+- ``SketchPart/arc(in:start:stop:mode:)``
 - ``ArcMode``
 - ``SketchPart/triangle(_:_:_:_:_:_:)``
 - ``SketchPart/quad(_:_:_:_:_:_:_:_:)``
@@ -721,12 +724,14 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 ### 切り抜く
 
 - ``SketchPart/clip(_:_:_:_:)``
+- ``SketchPart/clip(_:)-(Rect)``
 - ``SketchPart/noClip()``
 
 ### 文字を描く
 
 - ``SketchPart/text(_:_:_:)``
 - ``SketchPart/text(_:_:_:_:_:)``
+- ``SketchPart/text(_:in:)``
 - ``SketchPart/textSize(_:)``
 - ``SketchPart/textFont(_:)-(String)``
 - ``SketchPart/textFont(_:)-(Font)``

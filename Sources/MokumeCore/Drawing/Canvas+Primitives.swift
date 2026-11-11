@@ -218,6 +218,23 @@ extension Canvas {
         placeArc(a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat, mode: mode)
     }
 
+    /// 円弧。範囲を `Rect` で渡す。``ellipseMode(_:)`` が `.corner` のときの ``arc(_:_:_:_:_:_:)`` に
+    /// `bounds` の左上と幅・高さを渡すのと同じ。**``ellipseMode(_:)`` に従わない** — `Rect` は左上で
+    /// 置く値なので、既定 (`.center`) のままでも値のとおり左上から読む (#3784)。
+    public func arc(in bounds: Rect, start: some ScalarConvertible, stop: some ScalarConvertible) {
+        placeArc(
+            bounds.left, bounds.top, bounds.width, bounds.height, start.asFloat, stop.asFloat, mode: nil,
+            boxMode: .corner)
+    }
+
+    /// 円弧を、閉じ方を選んで描く。範囲を `Rect` で渡す。``ellipseMode(_:)`` が `.corner` のときの
+    /// ``arc(_:_:_:_:_:_:_:)`` と同じで、``ellipseMode(_:)`` に従わない (#3784)。
+    public func arc(in bounds: Rect, start: some ScalarConvertible, stop: some ScalarConvertible, mode: ArcMode) {
+        placeArc(
+            bounds.left, bounds.top, bounds.width, bounds.height, start.asFloat, stop.asFloat, mode: mode,
+            boxMode: .corner)
+    }
+
     /// 円弧を置く。`mode` が `nil` なら、渡さなかったとき (塗りは扇・輪郭は開いた弧)。
     ///
     /// **距離関数の経路で描ける図形は、閉じ方によらず 1 つの置き場所・1 つの断片で描く** (``FormInstance/ArcClosure``)。
@@ -233,10 +250,12 @@ extension Canvas {
     /// 破線の輪郭 (#2835) は、塗りを距離関数のまま置き、輪郭だけを周の片で引く。
     ///
     /// **一周は、どの閉じ方でも楕円と同じ** (終わりが始まりの 2π 以上先なら、閉じ方に差が出る端が無い)。
+    /// `boxMode` が `nil` なら 4 つの数を ``ellipseMode(_:)`` で読む (`Rect` を取る形は `.corner` を渡す)。
     private func placeArc(
-        _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float, mode: ArcMode?
+        _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float, mode: ArcMode?,
+        boxMode: ShapeMode? = nil
     ) {
-        let box = Self.resolveBox(a, b, c, d, mode: style.ellipseMode)
+        let box = Self.resolveBox(a, b, c, d, mode: boxMode ?? style.ellipseMode)
         let radiusX = box.width / 2
         let radiusY = box.height / 2
         guard radiusX > 0, radiusY > 0 else { return }

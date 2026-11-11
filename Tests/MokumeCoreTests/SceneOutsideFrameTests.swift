@@ -102,6 +102,7 @@ struct SceneOutsideFrameTests {
             Mouth("pop", .transform, .style) { $0.pop() },
             // 切り抜き (#1505)
             Mouth("clip", .clip) { $0.clip(0, 0, 8, 8) },
+            Mouth("clip(Rect)", .clip) { $0.clip(Rect(left: 0, top: 0, width: 8, height: 8)) },
             // 形の切り抜き (#2431)。フレームの外では閉包を走らせずに注意する
             Mouth("clip { }", .clip) { $0.clip({}) },
             Mouth("noClip", .clip) { $0.noClip() },
