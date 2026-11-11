@@ -125,6 +125,36 @@ extension Canvas {
         return true
     }
 
+    /// **形の組み立ての中で**、`body` が記録するものを合成の単位の範囲として形に残す ([#3564])。
+    ///
+    /// 単位は形を置く時点で開く (``withCompositeGroup(opacity:covering:_:)`` は組み立ての中では開けない) ので、
+    /// 記録の中では範囲の印だけを残す (``Shape/compositeGroups``)。範囲の前後で列を閉じ、範囲が他の区間と
+    /// 1 つの区間に畳まれないようにする。何も記録しなければ範囲を残さない。
+    ///
+    /// - Parameters:
+    ///   - bounds: 中に記録するものの外接 (**形自身の座標**。いまの変換は掛けない)。線の太さなど縁の分を含める。
+    ///
+    /// [#3564]: https://github.com/mokume-metal/mokume/issues/3564
+    func recordCompositeGroup(opacity: Float, covering bounds: PlaneBox, _ body: () -> Void) {
+        guard recordingShape else { return body() }
+        closeBatch()
+        // 範囲は開いた時点で並びに置く (外側が先に並ぶ)。記録の途中で置いた側を描き切る逃げ道
+        // (``flushBeforeBuild()``) が列を引き戻すと、置いた範囲も同じだけずれる
+        let slot = recordedCompositeGroups.count
+        recordedCompositeGroups.append(
+            Shape.CompositeRange(runs: batches.count..<batches.count, opacity: opacity, bounds: bounds))
+        body()
+        closeBatch()
+        guard slot < recordedCompositeGroups.count else { return }
+        let start = recordedCompositeGroups[slot].runs.lowerBound
+        if batches.count > start {
+            recordedCompositeGroups[slot].runs = start..<batches.count
+        } else {
+            // 何も記録しなかった。中で開いた範囲も空なので、もう除かれている
+            recordedCompositeGroups.remove(at: slot)
+        }
+    }
+
     /// 中間面が覆う、描く先の整数の箱。外接を変換で移し、縁の余白を足し、この面の内側に絞る。
     private func compositeGroupBox(covering bounds: PlaneBox) -> CompositeGroupBoxResult {
         let corners = [

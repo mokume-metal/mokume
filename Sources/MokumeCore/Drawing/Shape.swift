@@ -125,6 +125,33 @@ public struct Shape {
     /// 読み直さずに「同じ形」を見分ける鍵にする。形を組み立てる口は ``init`` の 1 つだけなので、
     /// 中身の違う形が同じ番号を持つ経路は無い。
     let solidGeometryID: Int
+    /// **合成の単位**の範囲 ([#3564])。区間 (``runs``) のうち、ひとまとめに描いてから不透明度を 1 度だけ
+    /// 掛ける範囲で、読み込んだ SVG の重なりのある半透明の群と、塗りと線を両方持つ半透明の要素が持つ。
+    ///
+    /// **木にしない** — 平らな区間の並びに、始まりと終わりの印を添えるだけである。並びは始まりの小さい順
+    /// (同じ始まりなら外側が先) で、範囲どうしは入れ子になるか離れる。置く口 (``Canvas/shape(_:at:)``) は
+    /// 範囲ごとに合成の単位 (``Canvas/withCompositeGroup(opacity:covering:_:)``) を開き、組にする口
+    /// (``group(_:)``) と入れ子の記録は範囲を引き継ぐ。範囲の境目では区間を畳まない。
+    ///
+    /// [#3564]: https://github.com/mokume-metal/mokume/issues/3564
+    let compositeGroups: [CompositeRange]
+
+    /// 合成の単位の範囲 1 つ (``Shape/compositeGroups``)。
+    struct CompositeRange: Equatable {
+        /// 範囲の区間 (``Shape/runs`` の番号。溜め場で記録している間は ``Canvas/batches`` の番号)。
+        var runs: Range<Int>
+        /// まとめて描いた後に掛ける不透明度。
+        var opacity: Float
+        /// 中に描くものの外接 (形自身の座標)。線の太さなど縁の分を含む。
+        var bounds: PlaneBox
+
+        /// 区間の番号を `offset` ずらした写し。
+        func shifted(by offset: Int) -> CompositeRange {
+            var moved = self
+            moved.runs = (runs.lowerBound + offset)..<(runs.upperBound + offset)
+            return moved
+        }
+    }
 
     /// 区間を塗るもの一式。
     ///
@@ -234,8 +261,9 @@ public struct Shape {
         strokeRanges: [StrokeRange] = [], fillRanges: [RingFillRange] = [],
         geometryForms: [FormInstance] = [], solidStrokes: [SolidStrokePiece] = [],
         gpuStrokes: [RetainedGPUStroke] = [], solidParts: [SolidPart] = [],
-        planeBox knownBox: PlaneBox?? = nil
+        compositeGroups: [CompositeRange] = [], planeBox knownBox: PlaneBox?? = nil
     ) {
+        self.compositeGroups = compositeGroups
         // 繋ぐだけの組 (`group`) は子の外接の和を渡す。渡さなければ焼いた並びから求める
         planeBox =
             knownBox
@@ -408,6 +436,9 @@ public struct Shape {
         var solidStrokes: [SolidStrokePiece] = []
         var gpuStrokes: [RetainedGPUStroke] = []
         var solidParts: [SolidPart] = []
+        var compositeGroups: [CompositeRange] = []
+        // 前の形の最後の区間が、合成の単位の終わりか (次の形の最初の区間と畳まない)
+        var previousEndsGroup = false
         var box: PlaneBox?
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
         forms.reserveCapacity(shapes.reduce(0) { $0 + $1.forms.count })
@@ -445,7 +476,16 @@ public struct Shape {
             for part in shape.solidParts {
                 solidParts.append(part.shifted(by: part.isIndexed ? indexOffset : solidOffset))
             }
-            for var run in shape.runs {
+            // 合成の単位の境目 (始まりと終わり) では区間を畳まない (#3564)。畳むと、単位の外の区間が単位の中へ
+            // 入る。畳んだ後の番号へ範囲を移すので、区間ごとに行き先を控える
+            var boundaries: Set<Int> = []
+            for group in shape.compositeGroups {
+                boundaries.insert(group.runs.lowerBound)
+                boundaries.insert(group.runs.upperBound)
+            }
+            var landed: [Int] = []
+            if !shape.compositeGroups.isEmpty { landed.reserveCapacity(shape.runs.count) }
+            for (index, var run) in shape.runs.enumerated() {
                 switch run.source {
                 case .flat: run.start += flatOffset
                 case .solid:
@@ -453,14 +493,23 @@ public struct Shape {
                     if run.isIndexed { run.indexStart += indexOffset }
                 case .form: run.start += formOffset
                 }
-                append(run, to: &runs)
+                let breaks = boundaries.contains(index) || (index == 0 && previousEndsGroup)
+                append(run, to: &runs, folding: !breaks)
+                if !shape.compositeGroups.isEmpty { landed.append(runs.count - 1) }
             }
+            for group in shape.compositeGroups {
+                var moved = group
+                moved.runs = landed[group.runs.lowerBound]..<(landed[group.runs.upperBound - 1] + 1)
+                compositeGroups.append(moved)
+            }
+            if !shape.runs.isEmpty { previousEndsGroup = boundaries.contains(shape.runs.count) }
         }
         return Shape(
             vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
             forms: forms, runs: runs, strokeRanges: strokeRanges, fillRanges: fillRanges,
             geometryForms: geometryForms, solidStrokes: solidStrokes,
-            gpuStrokes: gpuStrokes, solidParts: solidParts, planeBox: .some(box))
+            gpuStrokes: gpuStrokes, solidParts: solidParts, compositeGroups: compositeGroups,
+            planeBox: .some(box))
     }
 
     /// 2 つの形を 1 つに畳む。
@@ -471,8 +520,8 @@ public struct Shape {
     /// **添字を使う区間は、読む順の並びの中でも連続していないと伸ばせない。** 頂点の
     /// 区間だけを見て伸ばすと、伸ばした先が飛び飛びの添字を描くことになる。片方だけが
     /// 添字を使う組も伸ばせない — 描く口が違う (``Shape/Run/isIndexed``)。
-    private static func append(_ run: Run, to runs: inout [Run]) {
-        if var last = runs.last, last.sameSettings(as: run), last.start + last.count == run.start,
+    private static func append(_ run: Run, to runs: inout [Run], folding: Bool = true) {
+        if folding, var last = runs.last, last.sameSettings(as: run), last.start + last.count == run.start,
             last.isIndexed == run.isIndexed,
             !run.isIndexed || last.indexStart + last.indexCount == run.indexStart
         {

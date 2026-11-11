@@ -95,6 +95,7 @@ extension Canvas {
         let geometryStart = mark.recordedGeometryForms
         let solidStrokeStart = mark.recordedSolidStrokes
         let gpuStrokeStart = mark.recordedGPUStrokes
+        let compositeStart = mark.recordedCompositeGroups
         let discardsAtStart = mark.discards
 
         // 記録の中で開いたまま抜けた形は、形ごと捨てて 1 度知らせる。外で開いていた形はその後に
@@ -166,6 +167,9 @@ extension Canvas {
             recordedGPU.append(stroke)
         }
         recordedGPUStrokes.removeLast(recordedGPUStrokes.count - gpuStrokeStart)
+        // 合成の単位の範囲も、列の番号を形自身の 0 起点へ引き戻して抜く (#3564)
+        let recordedComposites = recordedCompositeGroups[compositeStart...].map { $0.shifted(by: -runStart) }
+        recordedCompositeGroups.removeLast(recordedCompositeGroups.count - compositeStart)
         // **添字の値も形自身の 0 起点へ引き戻す。** 値は頂点の並びの番号そのものなので、
         // 区間だけずらすと記録した形が溜め場に残っていた頂点を指す (``Shape/solidIndices``)
         let recordedIndices = solidIndices[solidIndexStart...].map { $0 - UInt32(solidStart) }
@@ -205,7 +209,8 @@ extension Canvas {
             vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,
             forms: recordedForms, runs: Array(runs), strokeRanges: recordedStrokes,
             fillRanges: recordedFills, geometryForms: recordedGeometry,
-            solidStrokes: recordedPieces, gpuStrokes: recordedGPU, solidParts: recordedParts)
+            solidStrokes: recordedPieces, gpuStrokes: recordedGPU, solidParts: recordedParts,
+            compositeGroups: recordedComposites)
     }
 
     /// 形の組み立ての入口が控える、溜め場の各並びの長さ ([#2850])。
@@ -231,6 +236,7 @@ extension Canvas {
         var recordedGeometryForms: Int
         var recordedSolidStrokes: Int
         var recordedGPUStrokes: Int
+        var recordedCompositeGroups: Int
         /// 溜め場を捨てた回数 (``Canvas/pendingDiscards``) の、「記録の途中で捨てていない」ときの値。出口の
         /// 安全網がいまの回数と比べる。入口では入口の回数で、逃げ道が描き切りで進めた分は足す。
         var discards: Int
@@ -247,6 +253,7 @@ extension Canvas {
             recordedGeometryForms = canvas.recordedGeometryForms.count
             recordedSolidStrokes = canvas.recordedSolidStrokes.count
             recordedGPUStrokes = canvas.recordedGPUStrokes.count
+            recordedCompositeGroups = canvas.recordedCompositeGroups.count
             discards = canvas.pendingDiscards
         }
 
@@ -266,6 +273,7 @@ extension Canvas {
             clamped.recordedGeometryForms = min(recordedGeometryForms, pool.recordedGeometryForms)
             clamped.recordedSolidStrokes = min(recordedSolidStrokes, pool.recordedSolidStrokes)
             clamped.recordedGPUStrokes = min(recordedGPUStrokes, pool.recordedGPUStrokes)
+            clamped.recordedCompositeGroups = min(recordedCompositeGroups, pool.recordedCompositeGroups)
             return clamped
         }
 
@@ -282,6 +290,7 @@ extension Canvas {
             recordedGeometryForms += base.recordedGeometryForms - origin.recordedGeometryForms
             recordedSolidStrokes += base.recordedSolidStrokes - origin.recordedSolidStrokes
             recordedGPUStrokes += base.recordedGPUStrokes - origin.recordedGPUStrokes
+            recordedCompositeGroups += base.recordedCompositeGroups - origin.recordedCompositeGroups
         }
     }
 
@@ -305,6 +314,7 @@ extension Canvas {
         var recordedGeometryForms: [FormInstance]
         var recordedSolidStrokes: [SolidStrokePiece]
         var recordedGPUStrokes: [RetainedGPUStroke]
+        var recordedCompositeGroups: [Shape.CompositeRange]
         /// 切り詰める前の被覆。描き切りが投げて溜め場が手つかずのままなら、そのまま戻す。
         let coverageBefore: [CoverageSpan]
 
@@ -334,6 +344,8 @@ extension Canvas {
             canvas.recordedSolidStrokes.removeLast(recordedSolidStrokes.count)
             recordedGPUStrokes = Array(canvas.recordedGPUStrokes[origin.recordedGPUStrokes...])
             canvas.recordedGPUStrokes.removeLast(recordedGPUStrokes.count)
+            recordedCompositeGroups = Array(canvas.recordedCompositeGroups[origin.recordedCompositeGroups...])
+            canvas.recordedCompositeGroups.removeLast(recordedCompositeGroups.count)
             // 被覆は頂点の番号で持つ。描き切りが頂点より先の番号を引かないよう、切り詰めた先を指す分は落とす
             canvas.trimCoverage(to: origin.vertices)
         }
@@ -348,6 +360,7 @@ extension Canvas {
             let solidShift = base.solidVertices - origin.solidVertices
             let indexShift = base.solidIndices - origin.solidIndices
             let formShift = base.formInstances - origin.formInstances
+            let batchShift = base.batches - origin.batches
             canvas.vertices.append(contentsOf: vertices)
             canvas.solidVertices.append(contentsOf: solidVertices)
             canvas.solidIndices.append(
@@ -372,6 +385,9 @@ extension Canvas {
                         (stroke.vertices.lowerBound + solidShift)..<(stroke.vertices.upperBound + solidShift)
                     return stroke
                 })
+            // 合成の単位の範囲は列の番号を指すので、列と同じだけずらす (#3564)
+            canvas.recordedCompositeGroups.append(
+                contentsOf: recordedCompositeGroups.map { $0.shifted(by: batchShift) })
             for var batch in batches {
                 // 列の位置は並びごとに違う (出口が形を抜くときと同じ分け方・同じ前提)。**位置は `Batch.relocate(to:)`
                 // を通して置き直す** — 位置から導く値 (裏 → 表で描く部品の区間) も同じだけずれる (#2043)。記録の
@@ -584,6 +600,14 @@ extension Canvas {
             }
         }
 
+        // 合成の単位の範囲を持つ形は、置き場所ごとに範囲の単位を開いて置く (#3564)
+        if !shape.compositeGroups.isEmpty {
+            for placement in usable {
+                placeComposed(shape, in: 0..<shape.runs.count, groups: shape.compositeGroups[...], at: placement)
+            }
+            return
+        }
+
         // 半透明の色を掛ける置き場所があるときだけ、区間ごとに差し替える輪郭を求める。
         // 色を掛けない置き場所だけなら、輪郭を走査しない (輪郭の多い形を毎フレーム置いても増えない)
         var translucent = false
@@ -621,6 +645,115 @@ extension Canvas {
                 for placement in targets { placeForms(run, of: shape, at: placement) }
             }
         }
+    }
+
+    // MARK: - 合成の単位の範囲を持つ形 (#3564)
+
+    /// 合成の単位の範囲 (``Shape/compositeGroups``) を持つ形の区間 `range` を、置き場所 1 つに置く。
+    ///
+    /// 範囲の外の区間はそのまま置き、範囲は合成の単位にして置く (``placeCompositeRange(_:_:inner:at:)``)。
+    /// `groups` は `range` の中にある範囲 (始まりの小さい順・外側が先)。置き場所ごとに区間を一巡するので、
+    /// 置き場所を並べても 1 つずつ置いたときと同じ順に重なる。
+    private func placeComposed(
+        _ shape: Shape, in range: Range<Int>, groups: ArraySlice<Shape.CompositeRange>, at placement: Placement
+    ) {
+        var cursor = range.lowerBound
+        var rest = groups
+        while cursor < range.upperBound {
+            // 範囲は入れ子になるか離れるので、ここへ来るのは始まりが手前に無いものだけ (崩れた並びで戻らない)
+            while let first = rest.first, first.runs.lowerBound < cursor { rest = rest.dropFirst() }
+            guard let group = rest.first, group.runs.lowerBound == cursor else {
+                let end = min(rest.first?.runs.lowerBound ?? range.upperBound, range.upperBound)
+                placePlainRuns(shape, cursor..<end, at: placement)
+                cursor = end
+                continue
+            }
+            let inside = rest.dropFirst()
+            let after = inside.firstIndex { $0.runs.lowerBound >= group.runs.upperBound } ?? inside.endIndex
+            placeCompositeRange(shape, group, inner: inside[..<after], at: placement)
+            rest = inside[after...]
+            cursor = max(cursor + 1, min(group.runs.upperBound, range.upperBound))
+        }
+    }
+
+    /// 範囲の外の区間を、記録した区間の設定で置く (``place(_:at:)`` が置き場所 1 つで置くのと同じ)。
+    private func placePlainRuns(_ shape: Shape, _ range: Range<Int>, at placement: Placement) {
+        guard !range.isEmpty else { return }
+        let translucent = (placement.fill?.alpha ?? 1) < 1
+        let targets = [placement]
+        replaying(shape.runs[range]) { run in
+            switch run.source {
+            case .flat:
+                let carved = translucent ? shape.carvedStrokes(within: run.start..<(run.start + run.count)) : []
+                place(run, of: shape, at: placement, carved: carved)
+            case .solid:
+                placeSolid(run, of: shape, at: targets[...])
+            case .form:
+                placeForms(run, of: shape, at: placement)
+            }
+        }
+    }
+
+    /// 合成の単位の範囲 1 つを置く。
+    ///
+    /// - 置くときは、範囲の中を 1 枚の中間面にまとめて描き、不透明度を 1 度だけ掛けて重ねる
+    ///   (``withCompositeGroup(opacity:covering:_:)``)。中の範囲 (`inner`) は、中間面の上で同じように置く
+    /// - 形の組み立ての中では単位を開かず、範囲を外側の記録へ引き継ぐ (``recordCompositeGroup(opacity:covering:_:)``)。
+    ///   外接は外側の形の座標へ移す
+    /// - **単位にできないとき** (視点を通る・細かさが 1 未満・置く側の混ぜ方が `replace`・中間面を作れない) は、
+    ///   範囲の中の色ごとに不透明度を掛けて置き (重なった所は濃く出る)、そのことを 1 度知らせる。黙って色ごとに
+    ///   掛けず、描かないこともしない (#3564 の 2026-11-10 の決定)
+    private func placeCompositeRange(
+        _ shape: Shape, _ group: Shape.CompositeRange, inner: ArraySlice<Shape.CompositeRange>, at placement: Placement
+    ) {
+        let placing = placement.transform.matrix
+        if recordingShape {
+            if let bounds = Self.placedBox(group.bounds, by: transform.matrix * placing) {
+                recordCompositeGroup(opacity: group.opacity, covering: bounds) {
+                    placeComposed(shape, in: group.runs, groups: inner, at: placement)
+                }
+                return
+            }
+        } else if flatView(of: transform.matrix * placing).clip == nil,
+            let bounds = Self.placedBox(group.bounds, by: placing)
+        {
+            // 置き場所が奥行きを持つ (視点を通る) なら、中間面の画素と置く側の画素が重ならないので開かない。
+            // 面の側の理由 (視点・細かさ・混ぜ方) は単位が見る
+            let drawn = withCompositeGroup(opacity: group.opacity, covering: bounds) { surface in
+                surface.placeComposed(shape, in: group.runs, groups: inner, at: placement)
+            }
+            if drawn { return }
+        }
+        warnOnce(
+            .compositeGroupPerShape,
+            "A shape whose overlapping parts are drawn together and then faded as one (the opacity of an SVG "
+                + "group, or of an SVG element with both fill and stroke) was placed where they cannot be drawn "
+                + "together (under a camera or a 3D transform, with pixelDensity below 1, with the replace blend "
+                + "mode, or inside createShape with a transform that cannot be followed), so the opacity was "
+                + "applied to each part and where they overlap the result is more opaque")
+        var perShape = placement
+        perShape.fill = Self.fade(placement.fill, by: group.opacity)
+        placeComposed(shape, in: group.runs, groups: inner, at: perShape)
+    }
+
+    /// 形自身の座標の箱を `matrix` で置いた先の外接。角が数でない・無限なら `nil`。
+    private static func placedBox(_ box: PlaneBox, by matrix: simd_float4x4) -> PlaneBox? {
+        var placed: PlaneBox?
+        for corner in [
+            SIMD2(box.minX, box.minY), SIMD2(box.maxX, box.minY), SIMD2(box.maxX, box.maxY), SIMD2(box.minX, box.maxY),
+        ] {
+            let moved = matrix * SIMD4<Float>(corner.x, corner.y, 0, 1)
+            guard moved.x.isFinite, moved.y.isFinite else { return nil }
+            placed.include(SIMD2(moved.x, moved.y))
+        }
+        return placed
+    }
+
+    /// 置き場所の色に、不透明度 `opacity` を掛けた色 (乗算済み)。色が無ければ、不透明度だけの白。
+    private static func fade(_ tint: LinearRGBA?, by opacity: Float) -> LinearRGBA {
+        LinearRGBA(
+            premultipliedRed: (tint?.red ?? 1) * opacity, green: (tint?.green ?? 1) * opacity,
+            blue: (tint?.blue ?? 1) * opacity, alpha: (tint?.alpha ?? 1) * opacity)
     }
 
     /// 記録した区間の設定へ移って `place` で頂点を積み、置く側の設定へ戻す。
