@@ -123,4 +123,43 @@ extension SketchPart {
         guard let canvas = liveCanvas() else { return }
         canvas.vertex(point)
     }
+
+    /// 貼る絵の読み取り位置つきで頂点を 1 つ置く。位置を `Vector2` で、読み取り位置を `uv:` で渡す。
+    ///
+    /// ``vertex(_:_:_:_:)`` に `point.x`・`point.y`・`uv.x`・`uv.y` を渡すのと同じ頂点になる。読み取り位置の
+    /// 単位 (貼る絵を束ねていれば絵の画素) もそちらと同じで、違うのは**どの数が位置でどれが読み取り位置かを
+    /// 呼び出しの行で読める**ことだけである (#3782)。
+    ///
+    /// ```swift
+    /// // vertex(60, 60, 0, 0) と同じ頂点
+    /// beginShape()
+    /// vertex(Vector2(60, 60), uv: Vector2(0, 0))
+    /// vertex(Vector2(340, 60), uv: Vector2(1, 0))
+    /// vertex(Vector2(200, 250), uv: Vector2(0.5, 1))
+    /// endShape(.close)
+    /// ```
+    // shot: 参照 vertex(_:_:_:_:)
+    public func vertex(_ point: Vector2, uv: Vector2) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.vertex(point, uv: uv)
+    }
+
+    /// 奥行きと読み取り位置を持つ頂点を 1 つ置く。位置を `Vector3` で、読み取り位置を `uv:` で渡す。
+    ///
+    /// ``vertex(_:_:_:_:_:)`` に `point` の 3 つの成分と `uv.x`・`uv.y` を渡すのと同じ頂点になる。違うのは
+    /// **どの数が位置でどれが読み取り位置かを呼び出しの行で読める**ことだけである (#3782)。
+    ///
+    /// ```swift
+    /// // vertex(0, 0, 0, 0, 1) と同じ頂点
+    /// beginShape(.triangles)
+    /// vertex(Vector3(0, 0, 0), uv: Vector2(0, 1))
+    /// vertex(Vector3(120, 0, -40), uv: Vector2(1, 1))
+    /// vertex(Vector3(60, 100, 0), uv: Vector2(0.5, 0))
+    /// endShape()
+    /// ```
+    // shot: 参照 vertex(_:_:_:_:_:)
+    public func vertex(_ point: Vector3, uv: Vector2) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.vertex(point, uv: uv)
+    }
 }

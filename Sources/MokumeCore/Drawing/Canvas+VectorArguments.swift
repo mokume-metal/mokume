@@ -52,4 +52,16 @@ extension Canvas {
     public func vertex(_ point: Vector3) {
         vertex(point.x, point.y, point.z)
     }
+
+    /// 貼る絵の読み取り位置つきで頂点を 1 つ置く。``vertex(_:_:_:_:)`` に `point` と `uv` の成分を
+    /// 渡すのと同じ (#3782)。
+    public func vertex(_ point: Vector2, uv: Vector2) {
+        vertex(point.x, point.y, uv.x, uv.y)
+    }
+
+    /// 奥行きと読み取り位置を持つ頂点を 1 つ置く。``vertex(_:_:_:_:_:)`` に `point` と `uv` の成分を
+    /// 渡すのと同じ (#3782)。
+    public func vertex(_ point: Vector3, uv: Vector2) {
+        vertex(point.x, point.y, point.z, uv.x, uv.y)
+    }
 }
