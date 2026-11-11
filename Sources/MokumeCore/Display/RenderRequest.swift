@@ -88,6 +88,19 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
         FrameRecorder.distribution(of: destination) != nil
     }
 
+    /// 行き先が `.png` で終わらない連番か ([#3961])。連番は PNG の絵を書くので、道具はビルドの前に断る。
+    ///
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
+    package static func isSeriesNotPNG(destination: String) -> Bool {
+        !FrameRecorder.isMovie(destination) && FrameSequence(pattern: destination) != nil
+            && !FrameRecorder.isPNG(destination)
+    }
+
+    /// `.png` で終わらない名前を、受ける名前に直したもの (``FrameRecorder/pngName(for:)``)。
+    package static func pngName(for destination: String) -> String {
+        FrameRecorder.pngName(for: destination)
+    }
+
     /// 行き先が GIF か。道具が、GIF の fps の規則を断る文面を選ぶのに使う ([#2440])。
     ///
     /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440

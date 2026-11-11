@@ -176,8 +176,40 @@ struct RenderCommandTests {
         #expect(gif.request.destination == "/tmp/typed-here/loop.gif")
         let mp4 = try parse(["--fps", "60", "--seconds", "4", "--out", "loop.mp4"])
         #expect(mp4.request.frameCount == 240 && mp4.request.frameRate == 60)
-        // 番号の場所を持つ綴りは、今までどおり連番
-        _ = try parse(["--fps", "10", "--seconds", "1", "--out", "out/f-####.gif"])
+        // 番号の場所を持たない GIF は、従来どおりアニメーション GIF。番号の場所を持つ `out/f-####.gif` は
+        // PNG の連番なので断る (#3961・`aSeriesNotEndingInPNGStops`)
+        let movie = try parse(["--fps", "10", "--seconds", "1", "--out", "out/movie.gif"])
+        #expect(movie.request.destination == "/tmp/typed-here/out/movie.gif")
+    }
+
+    /// **連番は PNG の絵を書くので、`.png` で終わらない連番はビルドの前に断る** ([#3961])。断らないと、PNG の中身が
+    /// `.jpg`・`.gif` の名前で並ぶ (子の警告 1 行はビルドの後にしか出ない)。文面は `.png` の名前を名指し、`.gif` なら
+    /// 番号を付けないアニメーション GIF の名前も案内する。
+    ///
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
+    @Test(
+        ".png で終わらない連番は、.png の名前を案内してビルドの前に止まる",
+        arguments: [
+            ("out/f-####.jpg", "out/f-####.png"), ("out/f-####.tif", "out/f-####.png"),
+            ("out/f-####.gif", "out/f-####.png"), ("f-##.mp4", "f-##.png"), ("out/f-####", "out/f-####.png"),
+            ("out/f-####.JPG", "out/f-####.png"),
+        ])
+    func aSeriesNotEndingInPNGStops(out: String, suggested: String) {
+        expectUsage(
+            ["--fps", "10", "--seconds", "1", "--out", out], mentioningAll: ["--out", "PNG", suggested, ": \(out)"])
+    }
+
+    @Test("番号の場所を持つ .gif には、アニメーション GIF なら番号の無い名前にすることも案内する")
+    func aGIFSeriesPointsToAnAnimatedGIF() {
+        expectUsage(
+            ["--fps", "10", "--seconds", "1", "--out", "out/f-####.gif"],
+            mentioningAll: ["out/f-####.png", "animated GIF", "out/movie.gif"])
+    }
+
+    @Test(".png と .PNG で終わる連番は、従来どおり受ける", arguments: ["out/f-####.png", "out/f-####.PNG"])
+    func aPNGSeriesIsAccepted(out: String) throws {
+        let options = try parse(["--fps", "10", "--seconds", "1", "--out", out])
+        #expect(options.request.destination == "/tmp/typed-here/" + out)
     }
 
     /// **GIF は 1/100 秒の整数倍にならない刻みを、書く前に断る。** 黙って遅延を丸めず、枚を間引かない。
