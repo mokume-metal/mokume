@@ -424,15 +424,19 @@ extension RenderFailure: CustomStringConvertible {
             // 1 行に削る経路も、見張りの記録の頭の 1 行も、理由を落とす
             Self.setupFailedText(reason)
         case .unreadableRenderRequest(let value):
-            """
-            The sketch was asked to render, but it cannot read or write what it was asked: \(value)
-            \(StartupReads.render.key) comes from `mokume render` as <fps>:<frames>:<where to write> (with --scale, \
-            x<scale>:<fps>:<frames>:<where to write>) — a whole \
-            frame rate and frame count above 0, and a .mov or .mp4 (at most \(RenderRequest.movieFrameRateLimit) \
-            frames per second), a .gif (a frame rate that divides 100) or a numbered series (out/frame-####.png). If the tool and the \
-            sketch use different versions of mokume, bring them to the same one (`mokume doctor` \
-            shows both); if the variable was set by hand, unset it to run with a window.
-            """
+            // `.png` で終わらない連番なら、道具の `--out` と同じ理由を名乗る (#3961)
+            (RenderRequest.seriesNotPNGReason(environmentValue: value).map {
+                "The sketch was asked to render, but it does not write this series: \($0): \(value)\n"
+            } ?? "The sketch was asked to render, but it cannot read or write what it was asked: \(value)\n")
+                + """
+                \(StartupReads.render.key) comes from `mokume render` as <fps>:<frames>:<where to write> (with --scale, \
+                x<scale>:<fps>:<frames>:<where to write>) — a whole \
+                frame rate and frame count above 0, and a .mov or .mp4 (at most \(RenderRequest.movieFrameRateLimit) \
+                frames per second), a .gif (a frame rate that divides 100) or a numbered series ending in .png \
+                (out/frame-####.png). If the tool and the \
+                sketch use different versions of mokume, bring them to the same one (`mokume doctor` \
+                shows both); if the variable was set by hand, unset it to run with a window.
+                """
         }
     }
 

@@ -413,6 +413,32 @@ final class FrameRecorder: Outlet {
             + "Name it .png"
     }
 
+    /// `.png` で終わらない名前を、受ける名前に直したもの ([#3961])。断る文面が「どう名付ければよいか」を名指すのに
+    /// 使う。最後の部品の拡張子 (番号の場所 `#` を含まないもの。空の拡張子 `f-####.` の点も) を外し、外した名前が `.png` で終わればそれ、終わらな
+    /// ければ `.png` を足す (`f-####.jpg` → `f-####.png`、`frame` → `frame.png`、`frame.png.jpg` → `frame.png`)。
+    ///
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
+    nonisolated static func pngName(for path: String) -> String {
+        let nameStart = path.lastIndex(of: "/").map { path.index(after: $0) } ?? path.startIndex
+        var stem = path
+        if let dot = path[nameStart...].lastIndex(of: "."), dot != nameStart {
+            // 拡張子が空 (`f-####.`) でも点を外す。点を重ねて `f-####..png` と案内しない
+            let ext = path[path.index(after: dot)...]
+            if !ext.contains("#") { stem = String(path[..<dot]) }
+        }
+        return isPNG(stem) ? stem : stem + ".png"
+    }
+
+    /// `.png` で終わらない URL を断る `renderFrame(to:)` の理由 (1 文・[#3961])。**この API が PNG を書くことと、受ける
+    /// 名前を名指す。**
+    ///
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
+    nonisolated static func renderFrameNotPNGReason(_ path: String) -> String {
+        let suggested = FileNameLength.lastComponent(of: pngName(for: path))
+        return "renderFrame(to:) writes a PNG, and a name that does not end in .png would hold a PNG under another "
+            + "name. Name it .png, as in \(suggested)"
+    }
+
     /// `.png` でない名前を断る `Image.save` の理由 (1 文)。
     nonisolated static let notPNGImageReason =
         "an image is written as PNG only, and a name that does not end in .png would hold a PNG under another "
@@ -710,7 +736,8 @@ final class FrameRecorder: Outlet {
 
     /// 行き先の綴りが配る形か。**拡張子が `.gif` か `.mp4` で、番号の場所 (`#` の並び) を持たないもの。**
     ///
-    /// 番号の場所を持つ綴り (`loop-####.gif`) は、今までどおり連番である。
+    /// 番号の場所を持つ綴り (`loop-####.gif`) は、今までどおり連番である (`mokume render --out` は、`.png` で終わらない
+    /// 連番をビルドの前に断る・#3961)。
     nonisolated static func distribution(of pattern: String) -> Distribution? {
         guard FrameSequence(pattern: pattern) == nil else { return nil }
         let lowered = pattern.lowercased()
