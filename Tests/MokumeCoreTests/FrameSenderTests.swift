@@ -172,6 +172,17 @@ struct FrameSenderTests {
         return Harness(gpu: gpu, sender: sender, service: service, source: source, presenter: presenter)
     }
 
+    /// 子の面を模したテクスチャ (見張りの道具が写す元)。常駐の集合へ入れ、検査の色で焼いておく。
+    private func childTexture(_ harness: Harness, width: Int, height: Int) throws -> any MTLTexture {
+        let surface = try #require(ModelReceiver.makeSurfaces(width: width, height: height, count: 1).first)
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: RenderTarget.pixelFormat, width: width, height: height, mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        let texture = try #require(harness.gpu.device.makeTexture(descriptor: descriptor, iosurface: surface, plane: 0))
+        harness.gpu.makeResident(texture)
+        return texture
+    }
+
     @Test("3 枚の面で繋ぐと受け入れ、番号が 1 ずつ進み、画面と同じ値 (1.0 超を含む) と属性が面に載る")
     func handsFramesToTheReceiver() throws {
         let harness = try makeHarness()
@@ -393,6 +404,99 @@ struct FrameSenderTests {
         let frames = ModelReceiver.frames(in: receiver.receiveAll())
         #expect(!frames.isEmpty, "繋ぎ直した後に届かない")
         #expect(IOSurfaceGetWidth(receiver.surfaces[0]) == 32)
+    }
+
+    /// **寸法は受け手が居なくても送り手の状態である** ([#3946])。受け手が 0 の間に作品の大きさが変わっても覚え、
+    /// 後から新しい大きさの面で繋いだ受け手を 1 度で受け入れる。覚えるだけで写しは 0 回。
+    ///
+    /// [#3946]: https://github.com/mokume-metal/mokume/issues/3946
+    @Test("受け手が居ない間の大きさの変更を覚え、新しい大きさの面で初めて繋いだ受け手を 1 度で受け入れて渡す")
+    func remembersTheSizeWithoutReceivers() throws {
+        let harness = try makeHarness()
+        defer { harness.sender.stop() }
+        // 見張りと同じく、子の面を写す経路で渡す (16×8 → 32×8)
+        let child = try childTexture(harness, width: 32, height: 8)
+        let submitted = harness.gpu.submissionCount
+        for frame in Int64(1)...3 {
+            harness.sender.drain()
+            try harness.sender.deliver(copying: child, frameCount: frame, hostTime: 0)
+        }
+        #expect(harness.sender.width == 32, "受け手が居ない間の大きさの変更を覚えていない")
+        #expect(harness.gpu.submissionCount == submitted, "受け手が居ないのに写した")
+
+        let receiver = ModelReceiver(width: 32, height: 8, count: 2)
+        defer { receiver.die() }
+        receiver.connect(to: harness.service)
+        harness.sender.drain()
+        let answers = receiver.receiveAll()
+        #expect(ModelReceiver.refusals(in: answers).isEmpty, "正しい大きさの面を断った: \(ModelReceiver.refusals(in: answers))")
+        #expect(answers.map(\.kind) == [FrameLink.Kind.accepted.rawValue])
+        var frames: [ModelReceiver.Frame] = []
+        for frame in Int64(4)...6 {
+            harness.sender.drain()
+            try harness.sender.deliver(copying: child, frameCount: frame, hostTime: 0)
+            _ = harness.gpu.droppedWork(after: 0, through: harness.gpu.submissionCount)
+            for got in ModelReceiver.frames(in: receiver.receiveAll()) {
+                frames.append(got)
+                receiver.release(slot: got.slot, to: harness.service)
+            }
+        }
+        #expect(frames.map(\.frameCount) == [4, 5], "後続のフレームが届かない: \(frames.map(\.frameCount))")
+    }
+
+    /// **大きさの変更は、受け手へ届くまで送り手の状態である** ([#3947])。受け手が読まずに待ち行列が埋まった瞬間に
+    /// 大きさが変わっても、読み始めた受け手は最新の大きさを受け取り、同じ番号のまま面を作り直して受け続ける。
+    /// 送りは待ち時間 0 のまま。
+    ///
+    /// [#3947]: https://github.com/mokume-metal/mokume/issues/3947
+    @Test(
+        "待ち行列が埋まった間に大きさが変わっても、読み始めた受け手は最後の大きさを受け取り、繋ぎ直して受け続ける",
+        arguments: [[32], [32, 24, 40]])
+    func aResizeIntoAFullQueueIsNotLost(widths: [Int]) throws {
+        let harness = try makeHarness()
+        defer { harness.sender.stop() }
+        let receiver = ModelReceiver(width: Self.width, height: Self.height, count: 8)
+        defer { receiver.die() }
+        receiver.connect(to: harness.service)
+        harness.sender.drain()
+        _ = receiver.receiveAll()  // accepted だけ読み、読むのを止める
+        let id = try #require(receiver.id)
+        for frame in Int64(1)...12 { try harness.step(frame: frame) }
+        var frame: Int64 = 12
+        for width in widths {
+            frame += 1
+            try harness.step(frame: frame, width: width)
+        }
+        let last = try #require(widths.last)
+
+        // 受け手が読み始め、溜まっていた絵を返す
+        for got in ModelReceiver.frames(in: receiver.receiveAll()) { receiver.release(slot: got.slot, to: harness.service) }
+        var resized: [(UInt32?, UInt32?)] = []
+        for _ in 0..<3 {
+            frame += 1
+            try harness.step(frame: frame, width: last)
+            for message in receiver.receiveAll() where message.kind == FrameLink.Kind.resized.rawValue {
+                var reader = message.payload.reader
+                resized.append((reader.uint32(), reader.uint32()))
+            }
+        }
+        #expect(resized.last?.0 == UInt32(last) && resized.last?.1 == UInt32(Self.height), "最後の大きさが届かない: \(resized)")
+
+        receiver.reconnect(to: harness.service, width: last, height: Self.height)
+        harness.sender.drain()
+        _ = receiver.receiveAll()
+        #expect(receiver.id == id, "繋ぎ直しで別の受け手になった")
+        var frames: [ModelReceiver.Frame] = []
+        for _ in 0..<4 {
+            frame += 1
+            try harness.step(frame: frame, width: last)
+            for got in ModelReceiver.frames(in: receiver.receiveAll()) {
+                frames.append(got)
+                receiver.release(slot: got.slot, to: harness.service)
+            }
+        }
+        #expect(frames.count >= 3, "繋ぎ直した後に受け続けられない: \(frames.map(\.frameCount))")
+        #expect(harness.sender.receiverCount == 1)
     }
 
     @Test("受け手が消えると dead-name の知らせで外し、切ると言われても外す")
