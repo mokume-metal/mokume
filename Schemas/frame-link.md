@@ -32,7 +32,7 @@ Every message is a Mach message whose `msgh_id` is the kind below. Numbers are l
 | 6 | resized | sketch → receiver | `UInt32` width, `UInt32` height. The surfaces you sent are dropped: make new ones and send `connect` again from the same port, which keeps your receiver id |
 | 7 | disconnect | receiver → sketch | `UInt32` receiver id |
 
-The sketch sends with a timeout of zero. If your port's queue is full because you are not reading it, the message is dropped and the surface it was about counts as not written. Read your port promptly.
+The sketch sends with a timeout of zero. If your port's queue is full because you are not reading it, the message is dropped and the surface it was about counts as not written. Read your port promptly. A dropped `resized` is not lost: the sketch keeps sending it, with the latest size, on every later display refresh (also while the sketch is still and draws nothing new) until it gets through or the sketch accepts your next `connect`, so a slow receiver catches up to the final size.
 
 A receiver without a name (or with an empty or too long one) is called `a receiver`. The name is shown in the sketch's menu bar presence and in its diagnostics while you are connected.
 
