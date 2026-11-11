@@ -82,23 +82,37 @@ struct ResourceDeclarationTests {
         #expect(throws: Never.self) { try ResourceDeclaration.check(in: root) }
     }
 
-    /// target の置き場を `path:` で動かしていても、その置き場の宣言を見る。
-    @Test("path: で置き場を指した target の宣言も読む")
-    func aTargetPlacedByPathIsMatched() throws {
-        let manifest = """
+    /// `path:` で `Sources/demo` を置き場にした target `App`。
+    private static func placedByPath(resources: String?) -> String {
+        let declared = resources.map { ", resources: [\($0)]" } ?? ""
+        return """
             // swift-tools-version: 6.0
             import PackageDescription
 
             let package = Package(
                 name: "demo",
                 targets: [
-                    .executableTarget(name: "App", path: "Sources/demo", resources: [.copy("assets")])
+                    .executableTarget(name: "App", path: "Sources/demo"\(declared))
                 ]
             )
             """
-        let root = try makeSketch(manifest: manifest, assets: ["grain.png"])
-        defer { try? FileManager.default.removeItem(at: root) }
-        #expect(throws: Never.self) { try ResourceDeclaration.check(in: root) }
+    }
+
+    /// target の置き場を `path:` で動かしていても、その置き場の宣言を見る — 宣言していれば
+    /// 通り、していなければ止まる (置き場を持つ target を名前からだけ探すと、どちらも素通りする)。
+    @Test("path: で置き場を指した target の宣言も読む")
+    func aTargetPlacedByPathIsMatched() throws {
+        let declared = try makeSketch(
+            manifest: Self.placedByPath(resources: #".copy("assets")"#), assets: ["grain.png"])
+        defer { try? FileManager.default.removeItem(at: declared) }
+        #expect(throws: Never.self) { try ResourceDeclaration.check(in: declared) }
+
+        let undeclared = try makeSketch(
+            manifest: Self.placedByPath(resources: nil), assets: ["grain.png"])
+        defer { try? FileManager.default.removeItem(at: undeclared) }
+        #expect(throws: CommandFailure.resourcesNotDeclared(directory: "Sources/demo/assets")) {
+            try ResourceDeclaration.check(in: undeclared)
+        }
     }
 
     @Test("中身があるのに宣言が無ければ止まる")
