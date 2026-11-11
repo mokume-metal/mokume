@@ -361,6 +361,16 @@ def render_details(data: dict) -> str:
 
 ONOFF_PREFIXES = ("enable", "disable", "clear")
 
+# オンオフの検査から外してよい口と、その理由 (ADR-0020 決定 2)。
+#
+# 作法は FOREIGN_ALLOWLIST と同じ — **対象と理由を組で書く**。載せてよいのは、**オンオフの状態でなく、
+# 対になる `set*` / `enable*` / `disable*` を持たない口に限る** (決定 2 が禁じるのはオンオフの綴りの
+# 系統で、検査は名前の先頭だけで見ているため、決定の対象でないデータの操作まで落とす)。鍵は持ち主つき
+# (`Table.clearRows()`) で、他の型の同じ名前までは通さない
+ONOFF_ALLOWLIST = {
+    "Table.clearRows()": "オンオフの状態ではなく、表の行を全部除くデータの操作。対になる `set*` を持たない。手本 (Processing の `Table.clearRows()`) の綴り (ADR-0020 決定 2 の「手本があれば手本の綴り」)。2026-11-11 にメンテナが「例外の表で通す」と決めた (#3642)",
+}
+
 
 def check_onoff(symbols: list[dict]) -> list[str]:
     """ADR-0020 決定 2: オンオフは 1 系統で表す。
@@ -370,13 +380,16 @@ def check_onoff(symbols: list[dict]) -> list[str]:
     """
     problems = []
     for symbol in symbols:
+        if f"{owner(symbol) or '(トップレベル)'}.{title(symbol)}" in ONOFF_ALLOWLIST:
+            continue
         name = title(symbol).split("(")[0]
         for prefix in ONOFF_PREFIXES:
             if name.startswith(prefix) and len(name) > len(prefix) and name[len(prefix)].isupper():
                 problems.append(
                     f"{owner(symbol) or '(トップレベル)'}.{title(symbol)}: "
                     f"`{prefix}*` の綴りはオンオフの系統を増やす (ADR-0020 決定 2)。"
-                    "手本があれば手本の綴り、無ければ真偽値を 1 つ取る関数を 1 本置く"
+                    "手本があれば手本の綴り、無ければ真偽値を 1 つ取る関数を 1 本置く。オンオフの状態でなく対を"
+                    "持たない口なら、scripts/api-surface.py の ONOFF_ALLOWLIST に理由つきで載せる"
                 )
     return problems
 
