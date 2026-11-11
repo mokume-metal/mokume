@@ -586,6 +586,56 @@ struct SynthReservationTests {
         #expect(peak == 0, "取り消された予約は鳴らない: \(peak)")
     }
 
+    // MARK: - 操作の列が溢れても、止めたら止まる (#3944)
+
+    @Test("1 フレームに値を 21000 回変えて列を溢れさせても、stop() は届いて音が止まり、受け付けられない play() は isPlaying を変えない")
+    func stopIsDeliveredWhenTheQueueOverflows() {
+        let notices = NoticeLog()
+        let stage = makeStage(notices)
+        let first = SinOsc(stage: stage)
+        let second = SinOsc(stage: stage)
+        first.play(440, 0.5)
+        var frame = 0
+        func step() {
+            stage.frame = frame
+            stage.supply()
+            frame += 1
+        }
+        for _ in 0..<4 { step() }
+        #expect(first.peak > 0.4, "溢れさせる前は鳴っている: \(first.peak)")
+
+        // 列 (4096) と控え (16384) を埋めて、その先は捨てられるほど値を変える
+        for _ in 0..<21_000 { first.freq(440) }
+        first.stop()
+        second.play()
+        #expect(!first.isPlaying)
+        // 止める操作は控えの上限を越えて受け付け、受け付けられない鳴らす操作は状態を変えない
+        #expect(stage.rack.heldCount == 16_384 + 1, "控え: \(stage.rack.heldCount)")
+        #expect(!second.isPlaying, "受け付けられなかった play() で isPlaying が true になった")
+
+        var firstPeaks: [Float] = []
+        var secondPeaks: [Float] = []
+        for _ in 0..<41 {
+            step()
+            firstPeaks.append(first.peak)
+            secondPeaks.append(second.peak)
+        }
+        #expect(stage.rack.heldCount == 0)
+        #expect(firstPeaks.last == 0, "止めた音が鳴り続けている: \(firstPeaks)")
+        #expect(firstPeaks.suffix(30).allSatisfy { $0 == 0 }, "\(firstPeaks)")
+        #expect(second.isPlaying == (secondPeaks.last ?? 0 > 0), "状態と音が食い違う: \(secondPeaks)")
+        #expect(notices.lines.count == 1, "\(notices.lines)")
+        #expect(notices.lines.first?.contains("dropped") == true)
+
+        // 列が空いた後の play() は受け付けられ、状態と音が揃う
+        second.play()
+        #expect(second.isPlaying)
+        for _ in 0..<3 { step() }
+        #expect(second.peak > 0.4, "空いた後の play() が鳴らない: \(second.peak)")
+        #expect(notices.lines.count == 1, "知らせは 1 度だけ")
+        stage.close()
+    }
+
     // MARK: - 予約のまとまりは 1 度に公開する
 
     @Test("まとまりを載せている最中に音の側が取り出しても、先頭だけが予約され続きが即時に効く、ということは起きない")

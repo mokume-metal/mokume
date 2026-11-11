@@ -682,6 +682,7 @@ UNSHOWN = {
     "requestJSONArray": "loadJSONArray と同じ理由 (待たない版は書き出しの絵では受け取る番が回らない)",
     "parseJSONObject": "通信で届いた文字を読む口で、届く文字を参照スケッチが持たない。読み方はテストが見る (#2466)",
     "parseJSONArray": "parseJSONObject と同じ理由",
+    "createBrownNoise": "音を並べる参照スケッチ (SynthAndFilter) のパネルに足すと台帳の絵が動く。低域へ寄った帯域はテスト (BrownNoiseTests) が見て、帯域を棒にする作例は BrownNoise の説明文が持つ (make examples が組む・#3718)",
 }
 
 
@@ -1035,6 +1036,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "createSawOsc": RESOURCE,
     "createWhiteNoise": RESOURCE,
     "createPinkNoise": RESOURCE,
+    "createBrownNoise": RESOURCE,
     "createEnv": RESOURCE,
     "createLowPass": RESOURCE,
     "createHighPass": RESOURCE,
@@ -1063,6 +1065,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "requestModel": RESOURCE,
     "loadStrings": (RESOURCE, "ファイルか URL を読んで値を返す。描き場所には触れない"),
     "requestStrings": (RESOURCE, "loadStrings と同じ理由"),
+    "loadBytes": (RESOURCE, "loadStrings と同じ理由"),
+    "requestBytes": (RESOURCE, "loadStrings と同じ理由"),
     "loadTable": (RESOURCE, "loadStrings と同じ理由"),
     "requestTable": (RESOURCE, "loadStrings と同じ理由"),
     "loadJSONObject": (RESOURCE, "loadStrings と同じ理由"),
@@ -1119,6 +1123,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "save": (ASSEMBLY, "フレームの絵を外へ書き出す"),
     "saveTable": (ASSEMBLY, "表を外へ書き出す。絵にもフレームの状態にも触れない"),
     "saveStrings": (ASSEMBLY, "文字列を外へ書き出す。絵にもフレームの状態にも触れない"),
+    "saveBytes": (ASSEMBLY, "saveStrings と同じ理由"),
     "beginRecord": (ASSEMBLY, "save と同じ理由"),
     "attach": (ASSEMBLY, "走っているスケッチの差込口の並びを組み替える (plugins の実行中版)"),
     "detach": (ASSEMBLY, "attach と同じ理由"),

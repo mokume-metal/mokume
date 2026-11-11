@@ -171,6 +171,43 @@ nonisolated struct SynthKernelTests {
         for index in 1..<pink.count {
             #expect(abs(pink[index] / pink[index - 1] - 1) < 0.1, "pink \(index)")
         }
+        // ブラウンは周波数の 2 乗に反比例するので、帯域の数が 2 倍でもオクターブごとに約半分 (#3718)。
+        // 切れ目 (約 150 Hz) に近い帯域 4〜8 は外して、帯域 8 から上を見る
+        let brown = octavePowers(.brown)
+        for index in 2..<brown.count {
+            #expect(abs(brown[index] / brown[index - 1] - 0.5) < 0.1, "brown \(index): \(brown)")
+        }
+    }
+
+    @Test("ブラウンノイズは種が同じなら同じ列で、-1〜1 に収まり、直流が溜まらない (#3718)")
+    func brownNoiseIsBoundedAndCentered() {
+        var first = NoiseKernel(seed: 7)
+        var second = NoiseKernel(seed: 7)
+        var other = NoiseKernel(seed: 8)
+        let a = (0..<256).map { _ in first.next(.brown) }
+        #expect(a == (0..<256).map { _ in second.next(.brown) })
+        #expect(a != (0..<256).map { _ in other.next(.brown) })
+
+        // 1 分ぶん。1 秒ごとの平均が 0 から離れていかない (積分しきると、ここが歩き続けて片側へ寄る)
+        var kernel = NoiseKernel(seed: 1)
+        var means: [Float] = []
+        var peak: Float = 0
+        var power: Float = 0
+        for _ in 0..<60 {
+            var sum: Float = 0
+            for _ in 0..<48_000 {
+                let sample = kernel.next(.brown)
+                peak = max(peak, abs(sample))
+                sum += sample
+                power += sample * sample
+            }
+            means.append(sum / 48_000)
+        }
+        #expect(peak <= 1, "山: \(peak)")
+        #expect(peak > 0.5, "小さすぎる: \(peak)")
+        #expect(means.allSatisfy { abs($0) < 0.05 }, "1 秒の平均が偏る: \(means.map { abs($0) }.max() ?? 0)")
+        let rms = (power / Float(60 * 48_000)).squareRoot()
+        #expect(abs(rms - 0.17) < 0.02, "実効値: \(rms)")
     }
 
     // MARK: - 包絡
