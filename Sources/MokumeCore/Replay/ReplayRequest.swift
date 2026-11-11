@@ -66,14 +66,30 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
         }
     }
 
-    /// 世代の行き先に使ってよいか: 何も無いか、記録の頭で始まる通常ファイル (リンクはたどらない)。
+    /// 世代の行き先に使ってよいか: 行き先が何も無いか記録 (``isRecordFile(_:)``) で、**錠の名前
+    /// (`<行き先>.lock`) も何も無いか通常ファイル**のもの。錠の名前にリンク・フォルダなどが在ると、子は錠を取れずに
+    /// その世代を記録しない (``ReplayClaim/take(destination:)``) ので、その番号も飛ばす。
     ///
     /// 見られない名前 (親がファイル・権限が無い) は空きとして返す — どの番号でも同じなので、飛ばし続けずに子に
     /// 渡し、子が書けない理由を言う。
     private static func isFreeForAGeneration(_ path: String) -> Bool {
         var status = stat()
-        guard lstat(path, &status) == 0 else { return true }
-        return (status.st_mode & S_IFMT) == S_IFREG && looksLikeARecord(URL(fileURLWithPath: path))
+        if lstat(path, &status) == 0, !isRecordFile(path) { return false }
+        guard lstat(path + ReplayClaim.lockSuffix, &status) == 0 else { return true }
+        return (status.st_mode & S_IFMT) == S_IFREG
+    }
+
+    /// 記録の頭 (`{"schemaVersion":`) で始まる**通常ファイル**か。**リンクはたどらず、通常ファイルでないもの (フォルダ・
+    /// FIFO など) は開かない** — FIFO を読みに開くと、書き手が来るまで止まる (#3970)。世代の番号を選ぶ側
+    /// (``nextGeneration(of:after:)``) と、前の見張りの世代を消す側 (``discardGenerations(of:)``) が、同じこの判定を使う。
+    static func isRecordFile(_ path: String) -> Bool {
+        let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return false }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        var status = stat()
+        guard fstat(descriptor, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else { return false }
+        let head = (try? handle.read(upToCount: 32)) ?? Data()
+        return head.starts(with: Data("{\"schemaVersion\":".utf8))
     }
 
     /// 起動の口。**記録しない実行 (ホストのアプリの中の ``SketchView``・書き出しの子) でも、合図は読まずに環境
@@ -120,7 +136,8 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     /// **1 から振り直すので、残しておくと前回の `take-3` が今回の `take-1`・`take-2` と混ざる** (`run` が前回の
     /// 完成品を消すのと同じ扱い)。
     ///
-    /// 消すのは、**記録の頭 (`{"schemaVersion":`) で始まる完成品** と、``ReplayClaim`` の名前の形の `.partial` だけ
+    /// 消すのは、**記録の頭 (`{"schemaVersion":`) で始まる通常ファイルの完成品** (``isRecordFile(_:)``。リンク・
+    /// フォルダ・FIFO は残す) と、``ReplayClaim`` の名前の形の `.partial` だけ
     /// — 同じ並びの名前の、記録でないファイルにも、`.partial` の名前のフォルダ (``AtomicFile/remove(_:)``・#3943)
     /// にも触らない。世代ごとの錠を取れない行き先 (今、別の実行が書いている)
     /// も飛ばす。
@@ -145,7 +162,8 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
             guard let claim = ReplayClaim.take(destination: target).claim else { continue }
             defer { claim.release() }
             // 見てから消すまでの間にフォルダへ替わっても消さない (``AtomicFile/remove(_:)``・#3943)
-            if looksLikeARecord(target), AtomicFile.remove(target) {
+            // リンク・フォルダ・FIFO は記録でないものとして残す (番号を選ぶ側と同じ判定・#3970)
+            if isRecordFile(target.path), AtomicFile.remove(target) {
                 removed.append(name)
             }
             for entry in (try? manager.contentsOfDirectory(atPath: directory.path)) ?? []
@@ -166,13 +184,5 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
         let name = prefix + String(digits) + suffix
         if entry == name || ReplayClaim.isPartial(entry, of: name) { return name }
         return nil
-    }
-
-    /// 記録の頭で始まるファイルか。
-    private static func looksLikeARecord(_ url: URL) -> Bool {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
-        defer { try? handle.close() }
-        let head = (try? handle.read(upToCount: 32)) ?? Data()
-        return head.starts(with: Data("{\"schemaVersion\":".utf8))
     }
 }
