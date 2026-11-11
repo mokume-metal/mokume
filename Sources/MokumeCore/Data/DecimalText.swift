@@ -36,7 +36,8 @@ nonisolated enum DecimalText {
     /// **`Double` を通さない (#3950)。** 通すと 2⁵³ を越える整数の桁が落ち (`"9007199254740993.0"` が
     /// 9007199254740992 になる)、小さな端数が消え (`"1.0000000000000001"` が 1 になる)、`Int.min` の
     /// 1 つ外が `Int.min` に丸まる。綴りの数字と指数から、値を桁のまま組み立てる。
-    /// 整数を丸めずに読む口 (``JSONObject/getInt(_:)``・``JSONArray/getInt(_:)``) が使う。
+    /// 整数を丸めずに読む口 (``JSONObject/getInt(_:)``・``JSONArray/getInt(_:)``・
+    /// ``TableRow/getInt(_:)-(String)``・``Table/getInt(_:_:)-(_,String)``) が使う。
     static func int(_ text: String) -> Int? {
         let string = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let bytes = Array(string.utf8)
