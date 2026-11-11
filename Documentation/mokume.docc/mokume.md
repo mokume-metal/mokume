@@ -947,12 +947,15 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 
 - ``SketchPart/camera()``
 - ``SketchPart/camera(_:_:_:_:_:_:_:_:_:)``
+- ``SketchPart/camera(eye:center:up:)``
 - ``SketchPart/currentCamera``
 - ``SketchPart/setCamera(_:)``
 - ``SketchPart/perspective()``
 - ``SketchPart/perspective(_:_:_:_:)``
+- ``SketchPart/perspective(fieldOfView:aspect:near:far:)``
 - ``SketchPart/ortho()``
 - ``SketchPart/ortho(_:_:_:_:_:_:)``
+- ``SketchPart/ortho(left:right:bottom:top:near:far:)``
 - ``SketchPart/orbitControl(_:_:_:)``
 - ``SketchPart/orbit``
 - ``Camera``

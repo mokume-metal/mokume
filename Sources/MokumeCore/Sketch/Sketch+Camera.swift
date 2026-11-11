@@ -122,6 +122,27 @@ extension SketchPart {
         canvas.camera(eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ)
     }
 
+    /// 見る位置・見ている先・上方向を、それぞれ `Vector3` で決める。
+    ///
+    /// ``camera(_:_:_:_:_:_:_:_:_:)`` に 3 つの値の成分を同じ順で渡すのと同じ視点になる。座標の読み方・
+    /// 投影を残すこと・成り立たない指定の扱いもそちらと同じで、違うのは**どの数が何の値かを呼び出しの
+    /// 行で読める**ことだけである。上方向は省けない (手本の形と同じく、書いた値がそのまま効く)。
+    ///
+    /// ```swift
+    /// // camera(200, -150, 300, 200, 150, 0, 0, 1, 0) と同じ視点
+    /// camera(eye: Vector3(200, -150, 300), center: Vector3(200, 150, 0), up: Vector3(0, 1, 0))
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - eye: 見る位置。
+    ///   - center: 見ている先。
+    ///   - up: どちらを上とするか。**縦軸は下向き**なので、`Vector3(0, 1, 0)` が普通の向きになる。
+    // shot: 参照 camera(_:_:_:_:_:_:_:_:_:)
+    public func camera(eye: Vector3, center: Vector3, up: Vector3) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.camera(eye: eye, center: center, up: up)
+    }
+
     /// いま効いている視点を、値として取る。
     ///
     /// 視点はフレームを越えないので、**複数の視点を持ちたければ値で持つ**。初期化の
@@ -335,6 +356,24 @@ extension SketchPart {
         canvas.perspective(fieldOfView, aspect, near, far)
     }
 
+    /// 遠くのものほど小さく写す。4 つの数を、ラベルを付けて渡す。
+    ///
+    /// ``perspective(_:_:_:_:)`` に同じ値を同じ順で渡すのと同じ投影になる。値の意味・受けない値の扱いも
+    /// そちらと同じで、違うのは**どの数が画角でどれが奥の面かを呼び出しの行で読める**ことだけである。
+    /// ラベルは ``Camera/Projection/perspective(fieldOfView:aspect:near:far:)`` と揃えてある。
+    ///
+    /// ```swift
+    /// // perspective(1.6, width / height, 26, 2600) と同じ投影
+    /// perspective(fieldOfView: 1.6, aspect: width / height, near: 26, far: 2600)
+    /// ```
+    // shot: 参照 perspective(_:_:_:_:)
+    public func perspective(
+        fieldOfView: some ScalarConvertible, aspect: some ScalarConvertible, near: some ScalarConvertible, far: some ScalarConvertible
+    ) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.perspective(fieldOfView: fieldOfView.asFloat, aspect: aspect.asFloat, near: near.asFloat, far: far.asFloat)
+    }
+
     /// 平行投影を既定へ戻す。
     ///
     /// 範囲は**既定の視点を中心に面 1 枚ぶん**である。だから `ortho()` だけを書いても
@@ -442,6 +481,29 @@ extension SketchPart {
         guard let canvas = liveCanvas() else { return }
         let (left, right, bottom, top, near, far) = (left.asFloat, right.asFloat, bottom.asFloat, top.asFloat, near.asFloat, far.asFloat)
         canvas.ortho(left, right, bottom, top, near, far)
+    }
+
+    /// 距離によらず同じ大きさで写す。範囲の 6 つの数を、ラベルを付けて渡す。
+    ///
+    /// ``ortho(_:_:_:_:_:_:)`` に同じ値を同じ順で渡すのと同じ投影になる。値の意味・受けない値の扱いも
+    /// そちらと同じで、違うのは**どの数がどの端かを呼び出しの行で読める**ことだけである。ラベルは
+    /// ``Camera/Projection/orthographic(left:right:bottom:top:near:far:)`` と揃えてある。
+    ///
+    /// ```swift
+    /// // ortho(-300, 300, 225, -225, 60, 2600) と同じ投影
+    /// ortho(left: -300, right: 300, bottom: 225, top: -225, near: 60, far: 2600)
+    /// ```
+    ///
+    /// - Important: 縦軸が下向きなので、**`top` のほうが `bottom` より小さい数**になる
+    ///   (``ortho(_:_:_:_:_:_:)`` と同じ)。ラベルがあっても、値の向きは手本の形のまま読む。
+    // shot: 参照 ortho(_:_:_:_:_:_:)
+    public func ortho(
+        left: some ScalarConvertible, right: some ScalarConvertible, bottom: some ScalarConvertible, top: some ScalarConvertible,
+        near: some ScalarConvertible, far: some ScalarConvertible
+    ) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.ortho(
+            left: left.asFloat, right: right.asFloat, bottom: bottom.asFloat, top: top.asFloat, near: near.asFloat, far: far.asFloat)
     }
 
     /// 床の格子と 3 本の軸を出し、立体の空間の向きを読めるようにする。
