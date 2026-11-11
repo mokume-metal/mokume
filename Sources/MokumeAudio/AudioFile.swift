@@ -66,26 +66,52 @@ nonisolated enum AudioFile {
     /// - 見出しより実際が長いファイルの余りは読めない。`AVAudioFile` は見出しの長さの所で終わりの誤りを投げ、
     ///   位置を動かしても読ませない (2026-11-11 に WAV・CAF で実測)
     ///
-    /// `false` を返すのは、`read` が終わり以外の誤りを投げたときと、1 標本も読めずに終わりの誤りを投げたとき
-    /// (1 回で読んでいた頃に `unreadable` だったもの) だけ。
+    /// **`read` が終わりの手前をどう返すかに頼らない** (#3969)。見出しより短い CAF で、残りより多く求めた
+    /// `read` は、macOS 27 では読めた分を返してから次の `read` で終わりの誤りを投げるが、macOS 26 (下限) では
+    /// 標本を返さずにいきなり誤りを投げる (CI の赤から読んだ)。だから `read` が誤りを投げたら、位置を読めた
+    /// 標本の数へ戻し、求める数を半分にして読み直す。誤りの出ない読み方 (普通のファイル) は変わらない。
+    ///
+    /// `false` を返すのは、1 標本ずつにしても読めないときのうち、終わり以外の誤りを投げたときと、
+    /// 1 標本も読めずに終わりの誤りを投げたとき (1 回で読んでいた頃に `unreadable` だったもの) だけ。
     static func readAll(_ file: AVAudioFile, into buffer: AVAudioPCMBuffer) -> Bool {
-        let length = min(file.length, AVAudioFramePosition(buffer.frameCapacity))
+        readAll(
+            length: file.length, into: buffer,
+            seek: { file.framePosition = $0 },
+            read: { piece, count in try file.read(into: piece, frameCount: count) })
+    }
+
+    /// ``readAll(_:into:)`` の中身。ファイルを読む手 (`read`) と位置を動かす手 (`seek`) を受け取るので、
+    /// OS ごとの `read` の返し方を検査から差し替えられる。`length` は見出しの長さ。
+    static func readAll(
+        length fileLength: AVAudioFramePosition, into buffer: AVAudioPCMBuffer,
+        seek: (AVAudioFramePosition) -> Void,
+        read: (AVAudioPCMBuffer, AVAudioFrameCount) throws -> Void
+    ) -> Bool {
+        let length = min(fileLength, AVAudioFramePosition(buffer.frameCapacity))
         guard
             let piece = AVAudioPCMBuffer(
-                pcmFormat: file.processingFormat, frameCapacity: min(readChunk, buffer.frameCapacity)),
+                pcmFormat: buffer.format, frameCapacity: min(readChunk, buffer.frameCapacity)),
             let target = buffer.floatChannelData, let source = piece.floatChannelData
         else { return false }
-        let channelCount = Int(file.processingFormat.channelCount)
+        let channelCount = Int(buffer.format.channelCount)
         var filled = 0
+        // 1 回に求める数の上限。誤りで半分にし、読めたら倍に戻す (塊の大きさまで)
+        var step = readChunk
         while AVAudioFramePosition(filled) < length {
-            let wanted = AVAudioFrameCount(min(AVAudioFramePosition(readChunk), length - AVAudioFramePosition(filled)))
+            let wanted = AVAudioFrameCount(min(AVAudioFramePosition(step), length - AVAudioFramePosition(filled)))
             do {
-                try file.read(into: piece, frameCount: wanted)
-            } catch let error as NSError
-                where error.domain == NSOSStatusErrorDomain && error.code == Int(kAudioFileEndOfFileError) && filled > 0
-            {
-                break
+                try read(piece, wanted)
             } catch {
+                if wanted > 1 {
+                    // 誤りの後の位置は当てにせず、読めた所へ戻してから小さく読み直す
+                    seek(AVAudioFramePosition(filled))
+                    step = wanted / 2
+                    continue
+                }
+                let error = error as NSError
+                if error.domain == NSOSStatusErrorDomain && error.code == Int(kAudioFileEndOfFileError) && filled > 0 {
+                    break
+                }
                 return false
             }
             let count = Int(piece.frameLength)
@@ -94,6 +120,7 @@ nonisolated enum AudioFile {
                 (target[channel] + filled).update(from: source[channel], count: count)
             }
             filled += count
+            step = min(step * 2, readChunk)
         }
         buffer.frameLength = AVAudioFrameCount(filled)
         return true
