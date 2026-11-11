@@ -807,6 +807,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``Sketch/createSawOsc()``
 - ``Sketch/createWhiteNoise()``
 - ``Sketch/createPinkNoise()``
+- ``Sketch/createBrownNoise()``
 - ``Sketch/createEnv()``
 - ``Sketch/createLowPass()``
 - ``Sketch/createHighPass()``
@@ -824,6 +825,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``Noise``
 - ``WhiteNoise``
 - ``PinkNoise``
+- ``BrownNoise``
 - ``Env``
 - ``SoundEffect``
 - ``Filter``

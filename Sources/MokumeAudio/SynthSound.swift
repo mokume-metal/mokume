@@ -626,7 +626,7 @@ public final class SawOsc: Oscillator {
 
 // MARK: - ノイズ
 
-/// 周期の無い音 (ノイズ) を出し続ける音源。色ごとに ``WhiteNoise``・``PinkNoise`` がある。
+/// 周期の無い音 (ノイズ) を出し続ける音源。色ごとに ``WhiteNoise``・``PinkNoise``・``BrownNoise`` がある。
 ///
 /// ```swift
 /// final class Hiss: Sketch {
@@ -713,6 +713,30 @@ public final class WhiteNoise: Noise {
 public final class PinkNoise: Noise {
     init(stage: SynthStage) {
         super.init(stage: stage, color: .pink, name: "PinkNoise")
+    }
+}
+
+/// ブラウンノイズを出す。高い帯域ほど急に弱まる (周波数の 2 乗に反比例する)、ピンクノイズよりさらに低く
+/// こもった、遠い波や風のような音。レッドノイズとも呼ぶ。
+///
+/// <!-- example: 文脈 var noise: BrownNoise? -->
+/// ```swift
+/// if let noise {
+///     // 低い帯域ほど棒が長い
+///     for band in 1...64 {
+///         let length = noise.spectrumLevels[band] * 300
+///         rect(Float(band) * 10, height - length, 8, length)
+///     }
+/// }
+/// ```
+///
+/// 約 150 Hz より上は 1 オクターブごとに 6 dB 弱まり (ピンクノイズは 3 dB)、それより下は平らなので、音が片側へ
+/// 偏り続けることはない。標本は -1〜1 に収まる。
+///
+/// Processing Sound の `BrownNoise` に当たる。作る関数は ``Sketch/createBrownNoise()``。使い方は ``Noise``。
+public final class BrownNoise: Noise {
+    init(stage: SynthStage) {
+        super.init(stage: stage, color: .brown, name: "BrownNoise")
     }
 }
 
