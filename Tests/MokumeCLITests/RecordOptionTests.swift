@@ -133,8 +133,11 @@ struct RecordOptionTests {
         // 以降の保存も同じ規則: 記録でないもの (フォルダ・リンク) の番号は飛ばし、記録の残りは使う
         try manager.createDirectory(
             at: directory.appendingPathComponent("take-4.json"), withIntermediateDirectories: false)
+        // リンクは指す先が記録でも飛ばす (子が置き換えるとリンクが外れる)
+        let elsewhere = directory.appendingPathComponent("elsewhere.json")
+        try Data("{\"schemaVersion\":1}".utf8).write(to: elsewhere)
         try manager.createSymbolicLink(
-            atPath: directory.appendingPathComponent("take-5.json").path, withDestinationPath: first.path)
+            atPath: directory.appendingPathComponent("take-5.json").path, withDestinationPath: elsewhere.path)
         #expect(generations.next() == directory.appendingPathComponent("take-6.json").path)
         #expect(said.withLock { $0.count } == 2)
         try Data("{\"schemaVersion\":1}".utf8).write(to: directory.appendingPathComponent("take-7.json"))
