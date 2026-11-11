@@ -899,11 +899,14 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``PNGFile``
 - ``ImageWriteFailure``
 
-### 文字列と表を読み書きする
+### 文字列・バイト列・表を読み書きする
 
 - ``SketchPart/loadStrings(_:)``
 - ``SketchPart/requestStrings(_:)``
 - ``SketchPart/saveStrings(_:_:)``
+- ``SketchPart/loadBytes(_:)``
+- ``SketchPart/requestBytes(_:)``
+- ``SketchPart/saveBytes(_:_:)``
 - ``SketchPart/loadTable(_:header:)``
 - ``SketchPart/requestTable(_:header:)``
 - ``SketchPart/saveTable(_:_:)``
