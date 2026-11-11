@@ -133,8 +133,27 @@ nonisolated enum SwiftPM {
             }
         }
 
+        /// 置き場が `directory` の target (``sourceDirectory(of:in:)`` で決める)。無ければ `nil`。
+        ///
+        /// **同じディレクトリかは、ファイルとして同じかで見る** — 綴り (大文字と小文字・`..`・
+        /// シンボリックリンク) の違いで、同じ置き場を別のものと読まない。
+        func target(placedAt directory: URL, in root: URL) -> Target? {
+            guard let wanted = Self.identity(of: directory) else { return nil }
+            return targets.first { target in
+                guard let place = sourceDirectory(of: target, in: root),
+                    let found = Self.identity(of: place)
+                else { return false }
+                return found.isEqual(wanted)
+            }
+        }
+
+        private static func identity(of url: URL) -> NSObject? {
+            (try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]))?
+                .fileResourceIdentifier as? NSObject
+        }
+
         /// 資材の相対パスの綴りを揃える (`./assets/`・`assets/` → `assets`)。
-        private static func normalized(_ path: String?) -> String? {
+        static func normalized(_ path: String?) -> String? {
             guard let path else { return nil }
             var parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
             while parts.first == "." { parts.removeFirst() }

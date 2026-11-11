@@ -626,15 +626,66 @@ enum RunCommand {
     /// 起こせなかった・場所が使えない・道具立てが無い回は、子を起こす口が読み分けたとおり投げる。
     /// 道具立てが答えなかった回 (0 以外での終了) と、答えたが読めない回は、値で返す — 続けるか
     /// 止めるかは呼び手が決める。
+    ///
+    /// **同じ `Package.swift` には 1 度だけ聞く** (``declarations``・#3984)。走らせる前の資材の検査も
+    /// 宣言を読むので、控えが無いと 1 回の実行で `dump-package` を 2 度起こす。
     nonisolated static func declaration(
         in directory: URL, running: RunningBuild? = nil
     ) throws(CommandFailure) -> Declaration {
-        // **愚痴を混ぜない。** 出力は JSON として厳密に解くので、警告 1 行で黙って
-        // 読めなくなる (#731)
-        let answer = try swift(
-            ["package", "dump-package"], in: directory, capturing: true, errors: .inherit,
-            running: running)
-        return declaration(from: answer)
+        // **止められうる読みの答えは控えない** — 途中で止めた回の失敗を、次の読みへ持ち越さない
+        try declarations.reading(directory, keeping: running == nil) { () throws(CommandFailure) in
+            // **愚痴を混ぜない。** 出力は JSON として厳密に解くので、警告 1 行で黙って
+            // 読めなくなる (#731)
+            let answer = try swift(
+                ["package", "dump-package"], in: directory, capturing: true, errors: .inherit,
+                running: running)
+            return declaration(from: answer)
+        }
+    }
+
+    /// この実行が読んだ宣言の控え。
+    nonisolated static let declarations = DeclarationMemo()
+
+    /// 最後に読んだ宣言の控え。**`Package.swift` の中身が同じ間だけ使う。**
+    ///
+    /// 鍵は場所と `Package.swift` の中身 — 見張りが宣言の変化を知るのと同じ見方である
+    /// (``BuildResolver``)。持つのは 1 つだけで、別の場所や書き換えた宣言を読めば入れ替わる。
+    /// 子を起こせなかった回 (投げた回) は控えない。
+    nonisolated final class DeclarationMemo: Sendable {
+        private struct Kept: Sendable {
+            let directory: String
+            let manifest: Data
+            let declaration: Declaration
+        }
+
+        private let kept = Mutex<Kept?>(nil)
+
+        /// 控えがあればそれを、無ければ `ask` の答えを返す。
+        ///
+        /// - Parameter keeping: 答えを控えるか。控えを使うのは、どの読みでもよい。
+        func reading(
+            _ directory: URL, keeping: Bool,
+            ask: () throws(CommandFailure) -> Declaration
+        ) throws(CommandFailure) -> Declaration {
+            let path = directory.standardizedFileURL.path
+            guard
+                let manifest = try? Data(
+                    contentsOf: directory.appendingPathComponent("Package.swift"))
+            else { return try ask() }
+            if let found = kept.withLock({ kept -> Declaration? in
+                guard let kept, kept.directory == path, kept.manifest == manifest else { return nil }
+                return kept.declaration
+            }) {
+                return found
+            }
+            let answer = try ask()
+            if keeping {
+                kept.withLock {
+                    $0 = Kept(directory: path, manifest: manifest, declaration: answer)
+                }
+            }
+            return answer
+        }
     }
 
     /// `dump-package` の答えを読む。**検査から偽の子の答えを渡せる形にしてある。**
