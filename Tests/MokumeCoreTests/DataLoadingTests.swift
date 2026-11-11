@@ -201,6 +201,8 @@ struct DataLoadingTests {
         #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getFloat")) == floatMessage)
         #expect(t.getString(1, "x") == "")
         #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getString"))?.contains("no row 1") == true)
+        // 知らせは口ごとの空の値を名乗る (空の文字・NaN・0)
+        #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getString"))?.hasSuffix("Reading it as an empty string") == true)
         #expect(t.getInt(Int.max, 1) == 0)
         #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "getInt"))?.contains("Reading it as 0") == true)
         // 書く口の知らせとは別に数える
