@@ -85,11 +85,45 @@ nonisolated enum SwiftPM {
             platforms.first { $0.platformName == "macos" }?.version
         }
 
-        /// 入っているべき資材の包みの名前。
+        /// 入っているべき資材の包みの名前。**`product` が使う target のものだけ** (#3982)。
         ///
-        /// 道具立ては資材を `<パッケージ>_<ターゲット>.bundle` の名前で作る。
-        var declaredResourceBundles: [String] {
-            targets.filter { !$0.resources.isEmpty }.map { "\(name)_\($0.name).bundle" }
+        /// 道具立ては資材を `<パッケージ>_<ターゲット>.bundle` の名前で作る。テストの target や
+        /// 別の product の target が宣言した資材は、配るものには要らない — 数えると、コピーから
+        /// 除いた包みを「欠けている」と読んでしまう。`product` の宣言が見つからなければ、
+        /// 推し量らずに全部の target を数える (従来の判定)。
+        func declaredResourceBundles(forProduct product: String) -> [String] {
+            let used = targetClosure(ofProduct: product)
+            return targets.filter { !$0.resources.isEmpty && used?.contains($0.name) != false }
+                .map { "\(name)_\($0.name).bundle" }
+        }
+
+        /// 配るものに入れない包みの名前。**このパッケージの target のうち、`product` が使わないもの** (#3982)。
+        ///
+        /// 名前の形 (`…Tests`) では決めない — 依存の閉包の外にあるかで決める。テストの target も、
+        /// 別の product だけが使う target もここに入る。資材の宣言が無くても道具立てが包みを作る
+        /// ことがある (種類で自動に取り込まれる資材) ので、宣言の有無は見ない。他のパッケージの
+        /// 包みは宣言を辿らずに入れる (依存が持ち込む資材は無ければ絵が出ない) ので、ここには
+        /// 載らない。`product` の宣言が見つからなければ何も除かない。
+        func unusedResourceBundles(forProduct product: String) -> Set<String> {
+            guard let used = targetClosure(ofProduct: product) else { return [] }
+            return Set(targets.filter { !used.contains($0.name) }.map { "\(name)_\($0.name).bundle" })
+        }
+
+        /// `product` を作る target と、それらがこのパッケージの中で (推移的に) 依存する target の名前。
+        /// product の宣言が無ければ `nil`。
+        ///
+        /// `byName` は同じ名前の target があれば target、無ければ他のパッケージの product と読む
+        /// (道具立てと同じ解き方)。
+        func targetClosure(ofProduct product: String) -> Set<String>? {
+            guard let declared = products.first(where: { $0.name == product }) else { return nil }
+            let byName = Dictionary(targets.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+            var used = Set<String>()
+            var pending = declared.targets
+            while let next = pending.popLast() {
+                guard let target = byName[next], used.insert(next).inserted else { continue }
+                pending.append(contentsOf: target.dependencies)
+            }
+            return used
         }
 
         /// 走らせる実行ファイルの束に**そのまま写される**資材の置き場 (`Sources/<target>/assets`)
@@ -257,13 +291,34 @@ nonisolated enum SwiftPM {
             }
         }
 
-        private enum CodingKeys: String, CodingKey { case name, path, resources }
+        /// 同じパッケージの target を指しうる依存の名前 (`byName`・`target`)。**他のパッケージの
+        /// product (`product`) は載せない** — 閉包はこのパッケージの中だけで求める。
+        let dependencies: [String]
+
+        /// target の依存 1 件。種別は鍵で書き分けられ、値の先頭が名前
+        /// (`{"byName": ["Lib", null]}`・`{"target": ["Lib", null]}`・`{"product": ["X", "pkg", …]}`)。
+        private struct Dependency: Decodable {
+            let name: String?
+
+            private enum CodingKeys: String, CodingKey { case byName, target }
+
+            init(from decoder: any Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                let key = container.contains(.byName) ? CodingKeys.byName : .target
+                name = (try? container.decode([String?].self, forKey: key))?.first ?? nil
+            }
+        }
+
+        private enum CodingKeys: String, CodingKey { case name, path, resources, dependencies }
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             name = try container.decode(String.self, forKey: .name)
             path = try container.decodeIfPresent(String.self, forKey: .path)
             resources = try container.decodeIfPresent([Resource].self, forKey: .resources) ?? []
+            dependencies =
+                try container.decodeIfPresent([Dependency].self, forKey: .dependencies)?
+                .compactMap(\.name) ?? []
         }
     }
 

@@ -45,7 +45,8 @@ struct SwiftPMTests {
         #expect(package.targets.isEmpty)
         #expect(package.platforms.isEmpty)
         #expect(package.minimumMacOSVersion == nil)
-        #expect(package.declaredResourceBundles.isEmpty)
+        #expect(package.declaredResourceBundles(forProduct: "demo").isEmpty)
+        #expect(package.unusedResourceBundles(forProduct: "demo").isEmpty)
     }
 
     @Test("dump-package の出力でなければ、読めたことにしない")
@@ -64,7 +65,78 @@ struct SwiftPMTests {
             ]}
             """
         let package = try #require(SwiftPM.package(inDumpOf: dump))
-        #expect(package.declaredResourceBundles == ["demo_demo.bundle"])
+        // product の宣言が無ければ、推し量らずに全部の target を数え、何も除かない
+        #expect(package.declaredResourceBundles(forProduct: "demo") == ["demo_demo.bundle"])
+        #expect(package.unusedResourceBundles(forProduct: "demo").isEmpty)
+    }
+
+    /// 道具立てが書く依存の形 (`byName`・`target`・`product`) の dump。
+    /// - `Demo` (実行) → `Lib` (byName) → `Core` (target)。`Lib` と `Core` は資材を持つ
+    /// - `Tool` (実行・別の product) → `ToolKit` (資材つき) と `Core`
+    /// - `DemoTests` (テスト) → `Demo`。`Demo` と同じ名前の置き場 `assets` を宣言する
+    /// - `Unused` (どの product にも入らない・資材つき)
+    private let multiProductDump = """
+        {"name":"Demo",
+         "products":[
+           {"name":"Demo","type":{"executable":null},"targets":["Demo"]},
+           {"name":"Tool","type":{"executable":null},"targets":["Tool"]}],
+         "targets":[
+           {"name":"Demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
+            "dependencies":[{"byName":["Lib",null]},{"product":["Mokume","mokume",null,null]}]},
+           {"name":"Lib","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}],
+            "dependencies":[{"target":["Core",null]}]},
+           {"name":"Core","type":"regular","resources":[{"rule":{"process":{}},"path":"shaders"}]},
+           {"name":"Tool","type":"executable",
+            "dependencies":[{"byName":["ToolKit",null]},{"byName":["Core",null]}]},
+           {"name":"ToolKit","type":"regular","resources":[{"rule":{"copy":{}},"path":"kit"}]},
+           {"name":"DemoTests","type":"test","resources":[{"rule":{"copy":{}},"path":"assets"}],
+            "dependencies":[{"byName":["Demo",null]}]},
+           {"name":"Unused","type":"regular","resources":[{"rule":{"copy":{}},"path":"x"}]}]}
+        """
+
+    /// **配る範囲は、実行 product の依存の閉包で決める** (#3982)。テストの target・別の product の
+    /// target・どこからも使われない target の資材は入れず、必須の検査も数えない。推移的に依存する
+    /// target (`Lib` → `Core`) の資材は入れる。テストの target が実行 target と同じ名前の置き場
+    /// (`assets`) を宣言していても、包みは target ごとなので `Demo` の分は残る。
+    @Test("資材の包みは、実行 product が推移的に使う target のものだけを数え、残りを除く")
+    func bundlesFollowTheProductClosure() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: multiProductDump))
+        #expect(package.targetClosure(ofProduct: "Demo") == ["Demo", "Lib", "Core"])
+        #expect(
+            package.declaredResourceBundles(forProduct: "Demo")
+                == ["Demo_Demo.bundle", "Demo_Lib.bundle", "Demo_Core.bundle"])
+        #expect(
+            package.unusedResourceBundles(forProduct: "Demo")
+                == [
+                    "Demo_Tool.bundle", "Demo_ToolKit.bundle", "Demo_DemoTests.bundle",
+                    "Demo_Unused.bundle",
+                ])
+    }
+
+    /// **別の product を束ねれば、範囲もその product の閉包になる。** 共有する `Core` は両方に入る。
+    /// 名前の形 (`…Tests`) で決めていれば、ここで `ToolKit` を除いたり `Demo` を入れたりする。
+    @Test("別の実行 product では、その product の閉包が配る範囲になり、共有する target は残る")
+    func anotherProductHasItsOwnClosure() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: multiProductDump))
+        #expect(package.targetClosure(ofProduct: "Tool") == ["Tool", "ToolKit", "Core"])
+        #expect(
+            package.declaredResourceBundles(forProduct: "Tool")
+                == ["Demo_Core.bundle", "Demo_ToolKit.bundle"])
+        #expect(
+            package.unusedResourceBundles(forProduct: "Tool")
+                == [
+                    "Demo_Demo.bundle", "Demo_Lib.bundle", "Demo_DemoTests.bundle",
+                    "Demo_Unused.bundle",
+                ])
+    }
+
+    /// 宣言に無い product は、推し量らずに従来どおり (全部数え、何も除かない)。
+    @Test("宣言に無い product では、閉包を作らず何も除かない")
+    func unknownProductsExcludeNothing() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: multiProductDump))
+        #expect(package.targetClosure(ofProduct: "Missing") == nil)
+        #expect(package.unusedResourceBundles(forProduct: "Missing").isEmpty)
+        #expect(package.declaredResourceBundles(forProduct: "Missing").count == 6)
     }
 
     @Test("名乗っている macOS の下限を読む")

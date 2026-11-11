@@ -913,6 +913,64 @@ struct BundleCommandTests {
         }
     }
 
+    /// **実行 product が使わない target の包みは入れず、必須の検査も同じ範囲を見る** (#3982)。
+    /// テストの target の fixture (`<pkg>_DemoTests.bundle`) が配る `.app` に入っていた。除く範囲は
+    /// 宣言の依存の閉包で決める (``SwiftPM/Package/unusedResourceBundles(forProduct:)``)。
+    /// 依存のパッケージの包み (`mokume_MokumeCore.bundle`) は宣言を辿らずに入れる。コピーから
+    /// 除いた包みを「欠けている」と読まないことと、要る包みが欠ければ従来どおり止まることも見る。
+    ///
+    /// 期待する一覧は完了条件から: テストの target だけの包み (`Sketch_DemoTests`) は入らない。作品の
+    /// 実行 target (`Sketch_Demo`)・作品のライブラリ (`Sketch_Lib`、組めた回)・依存のパッケージ
+    /// (`mokume_MokumeCore`、`makeBuildOutput` の `demo_demo`) は入る。パッケージ名を `Sketch` に
+    /// するのは、`demo_demo.bundle` と大文字小文字だけ違う名前がファイルシステムで同じ場所になるのを避けるため。
+    @Test(
+        "テストの target の包みは入らず、作品と依存の包みは入り、検査も同じ範囲を見る",
+        arguments: [true, false])
+    func bundlesOutsideTheProductStayOut(libraryBuilt: Bool) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let bin = executable.deletingLastPathComponent()
+        var beside = ["Sketch_Demo.bundle", "Sketch_DemoTests.bundle", "mokume_MokumeCore.bundle"]
+        if libraryBuilt { beside.append("Sketch_Lib.bundle") }
+        for name in beside {
+            let inside = bin.appendingPathComponent("\(name)/Contents/Resources", isDirectory: true)
+            try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+            try name.write(
+                to: inside.appendingPathComponent("sample.txt"), atomically: true, encoding: .utf8)
+        }
+        let dump = """
+            {"name":"Sketch",
+             "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
+             "targets":[
+               {"name":"Demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
+                "dependencies":[{"byName":["Lib",null]},{"product":["Mokume","mokume",null,null]}]},
+               {"name":"Lib","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}]},
+               {"name":"DemoTests","type":"test","resources":[{"rule":{"copy":{}},"path":"fixtures"}],
+                "dependencies":[{"byName":["Demo",null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: identity, minimumSystemVersion: "26.0",
+            into: root.appendingPathComponent("out", isDirectory: true),
+            excluding: package.unusedResourceBundles(forProduct: "Demo"))
+        let resources = app.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let shipped = try FileManager.default.contentsOfDirectory(atPath: resources.path).sorted()
+        #expect(
+            shipped
+                == (["Sketch_Demo.bundle", "demo_demo.bundle", "mokume_MokumeCore.bundle"]
+                    + (libraryBuilt ? ["Sketch_Lib.bundle"] : [])).sorted())
+
+        let required = package.declaredResourceBundles(forProduct: "Demo")
+        #expect(required == ["Sketch_Demo.bundle", "Sketch_Lib.bundle"])
+        if libraryBuilt {
+            #expect(throws: Never.self) { try BundleCommand.check(app, contains: required) }
+        } else {
+            #expect(throws: CommandFailure.self) { try BundleCommand.check(app, contains: required) }
+        }
+    }
+
     /// 確かめ方まで言わないと、束ねた側の手元では成功したようにしか見えない。
     @Test("束ねた後の報せが、退避して起動する手順を含む")
     func theReportTellsHowToCheck() {

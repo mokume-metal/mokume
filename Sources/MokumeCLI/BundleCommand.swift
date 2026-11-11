@@ -117,10 +117,11 @@ enum BundleCommand {
         let app = try assemble(
             executable: executable, identity: identity,
             minimumSystemVersion: declared?.minimumMacOSVersion ?? defaultMinimumSystemVersion,
-            into: out)
+            into: out, excluding: declared?.unusedResourceBundles(forProduct: product) ?? [])
         let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
         let note = try finish(
-            app, identity: identity, bundles: declared?.declaredResourceBundles ?? []
+            app, identity: identity,
+            bundles: declared?.declaredResourceBundles(forProduct: product) ?? []
         ) { app throws(CommandFailure) in
             try sign(app, as: signature, entitlements: identity.entitlements)
         }
@@ -185,8 +186,11 @@ enum BundleCommand {
     /// **消してよいのは、`--out` の直下にある、前の版の自分の `.app` だけである** (#2309・#2500)。
     /// 場所は ``replaceableApp(for:in:)`` が、中身は ``isOwnOutput(_:identity:)`` が確かめ、
     /// どちらかが外れたら何も消さずに投げる。
+    ///
+    /// - Parameter excluding: 入れない包みの名前 (``SwiftPM/Package/unusedResourceBundles(forProduct:)``)。
     static func assemble(
-        executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL
+        executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL,
+        excluding: Set<String> = []
     ) throws(CommandFailure) -> URL {
         let app = try replaceableApp(for: identity, in: out)
         let contents = app.appendingPathComponent("Contents", isDirectory: true)
@@ -219,7 +223,7 @@ enum BundleCommand {
         }
 
         try copy(executable, to: programs.appendingPathComponent(executable.lastPathComponent))
-        for bundle in resourceBundles(besides: executable) {
+        for bundle in resourceBundles(besides: executable, excluding: excluding) {
             try copy(bundle, to: resources.appendingPathComponent(bundle.lastPathComponent))
         }
         return app
@@ -418,13 +422,16 @@ enum BundleCommand {
 
     /// 実行ファイルの隣に並んだ資材の包み。
     ///
-    /// **隣にあるものを全部入れる。** 依存が持ち込む包み (シェーダなど) は宣言を辿っても
-    /// 出てこないが、無ければそもそも絵が出ない。
-    static func resourceBundles(besides executable: URL) -> [URL] {
+    /// **隣にあるものを、`excluding` に載ったもの以外全部入れる。** 依存が持ち込む包み (シェーダなど) は
+    /// 宣言を辿っても出てこないが、無ければそもそも絵が出ない。除くのは、このパッケージの target のうち
+    /// 実行 product が使わないもの (テストの target の fixture など — #3982) で、名前の形ではなく
+    /// 依存の閉包で決めたものを受け取る。
+    static func resourceBundles(besides executable: URL, excluding: Set<String> = []) -> [URL] {
         let listing =
             (try? FileManager.default.contentsOfDirectory(
                 at: executable.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? []
-        return listing.filter { $0.pathExtension == "bundle" }.sorted { $0.path < $1.path }
+        return listing.filter { $0.pathExtension == "bundle" && !excluding.contains($0.lastPathComponent) }
+            .sorted { $0.path < $1.path }
     }
 
     // MARK: - 配る前の検査
