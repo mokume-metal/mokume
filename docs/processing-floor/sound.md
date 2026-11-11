@@ -9,8 +9,8 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 111 |
-| 入れる | 9 |
+| 同等 | 112 |
+| 入れる | 8 |
 | 作例待ち | 34 |
 | 持たない | 11 |
 | 計 | 165 |
@@ -33,7 +33,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 | --- | --- | --- |
 | [#3473] `SoundFile` の再生速度と定位 (既存の Issue。意味は決定済みで、型を `Feature` に替えてラベルを付ければ着手できる。`pan` と `rate` は別の PR でよい) | `SoundFile.rate()`・`pan()`・`AudioSample.rate()`・`pan()` | 4 |
 | [#3705] `SoundFile` のチャンネルの数と標本の数 | `SoundFile.channels()`・`frames()`・`AudioSample.channels()`・`frames()` | 4 |
-| [#3706] `BandPass` を Q で決める | `BandPass.res()` | 1 |
+| [#3706] `BandPass` を Q で決める (入れた。行は「エフェクト」の節で同等) | `BandPass.res()` | 1 |
 | [#3718] `BrownNoise` (入れた。行は「ノイズ」の節で同等) | `BrownNoise` (クラス)・`amp()`・`pan()`・`play()`・`set()`・`stop()` | 6 |
 
 件数に入らない行が 1 つある。`Env.play()` が `SoundFile` を受ける形は、`Env.play()` (同等) の「無い形」で、参照の項目ではないので件数に数えず、「Env」の節に子の行として置いた。これも「入れる」で、束は既存の [#3099] (型を `Feature` に替えて着手できる)。
@@ -90,8 +90,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 | `LowPass`・`HighPass` の `freq()`・`res()`・`set()`・`stop()` (2 クラス × 4 = 8 件) | `Filter.freq(_:)`・`res(_:)`・`set(_:_:)`・`SoundEffect.stop()` | 同等 | `freq` は 10〜20000 Hz、`res` (Q) は 0.1〜100。`stop()` は通していた音を直に鳴る形へ戻し、尾は残さない | PR [#2221] |
 | `LowPass`・`HighPass` の `process()` (2 件) | `SoundEffect.process(_:)`・`Filter.process(_:_:)`・`process(_:_:_:)` | 同等 | 入力は合成した音と `SoundFile`。`SoundFile` を通すと、最初に通したときからラックで鳴る (左右は畳まれて中央のモノラルになる)。無い形: `AudioIn` (マイク) を通す形 (「AudioIn」の節) | PR [#2221]・[#3109] |
 | `BandPass` (クラス) | `BandPass` (`Sketch.createBandPass()` が作る。基底は `SoundEffect`) | 同等 | 既定は中心 1000 Hz・幅 500 Hz | [#1980]・PR [#2221] |
-| `BandPass` の `bw()`・`freq()`・`process()`・`set()`・`stop()` (5 件) | `BandPass.bw(_:)`・`freq(_:)`・`process(_:_:_:)`・`set(_:_:)`・`SoundEffect.stop()` | 同等 | `bw` は Hz の幅で、中心が動いても保たれる。入力の制限は `LowPass` と同じ | PR [#2221]・[#3109] |
-| `BandPass.res()` | — | 入れる | 中心が動いても Q を保つ幅の決め方。参照が振る舞いを書いていて (`bw()` は Hz の幅を保ち、`res()` は Q を保つ)、割れる点は無い。幅を Q から求めて `freq(_:)` のたびに `bw(_:)` を計算し直す書き方は、作者が毎回書くことになる | [#3706] |
+| `BandPass` の `bw()`・`freq()`・`process()`・`res()`・`set()`・`stop()` (6 件) | `BandPass.bw(_:)`・`freq(_:)`・`process(_:_:_:)`・`res(_:)`・`set(_:_:)`・`SoundEffect.stop()` | 同等 | `bw` は Hz の幅で、中心が動いても保たれる。`res` は Q (0.1〜10。参照どおりで、`Filter.res(_:)` の 0.1〜100 とは違う) を保ち、幅は中心に比例して変わる。`bw` と `res` は後に呼んだほうが効く (`set`・`process` の幅は `bw` と同じ)。入力の制限は `LowPass` と同じ | PR [#2221]・[#3109]・[#3706] |
 | `Reverb` (クラス)・`damp()`・`process()`・`room()`・`set()`・`stop()`・`wet()` (7 件) | `Reverb`・`Reverb.damp(_:)`・`room(_:)`・`wet(_:)`・`set(_:_:_:)`・`process(_:_:_:_:)`・`SoundEffect.process(_:)`・`stop()` (`Sketch.createReverb()` が作る) | 同等 | Freeverb と同じ並べ方 (8 本の櫛形濾波器の後に 4 本の全域通過濾波器)。既定は 3 つとも 0.5。`wet` 0 で通した音がそのまま出る | [#1980]・PR [#2221]・[#3109] |
 | `Delay` (クラス)・`feedback()`・`set()`・`stop()`・`time()` (5 件) | `Delay`・`Delay.feedback(_:)`・`time(_:)`・`set(_:_:)`・`SoundEffect.stop()` (`Sketch.createDelay()` が作る) | 同等 | 遅れは最大 5 秒。既定は遅れ 0.25 秒・戻す割合 0.5。遅れを動かしている最中は音の高さが揺れる | [#1980]・PR [#2221] |
 | `Delay.process()` | `Delay.process(_:_:)`・`process(_:_:_:)` | 同等 | **違い:** 参照の `process(input, maxDelayTime, delayTime)` の第 3 引数は始めの遅れだが、mokume の第 3 引数は戻す割合 (`feedback`) で、遅れは `time(_:)` で決める。遅れの上限は 0〜5 秒の外を丸める | PR [#2221]・[#3109] |
