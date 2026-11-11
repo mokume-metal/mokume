@@ -36,6 +36,7 @@ struct InputEventWireTests {
         case .pinched: .pinched(amount: -0.25)
         case .fileDropped: .fileDropped(paths: ["/tmp/a.png", "/tmp/b c.png"], x: 10, y: 20.5)
         case .fileSelected: .fileSelected(path: "/tmp/a b.csv", serial: 2)
+        case .focusChanged: .focusChanged(focused: false)
         case .keyDown: .keyDown(code: .enter, characters: "a", isRepeat: true)
         case .keyUp: .keyUp(code: .escape)
         }

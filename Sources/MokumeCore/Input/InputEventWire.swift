@@ -51,6 +51,7 @@ extension InputEvent {
         case .pinched: .pinched
         case .fileDropped: .fileDropped
         case .fileSelected: .fileSelected
+        case .focusChanged: .focusChanged
         case .keyDown: .keyDown
         case .keyUp: .keyUp
         }
@@ -76,6 +77,8 @@ extension InputEvent {
             // 取り消しは空の配列。鍵ごと省くと書き忘れと見分けが付かない。番号は載せるときだけ書く
             [("paths", "[" + (path.map { Self.quoted($0) } ?? "") + "]")]
                 + (serial.map { [("serial", "\($0)")] } ?? [])
+        case .focusChanged(let focused):
+            [("focused", focused ? "true" : "false")]
         case .mouseMoved(let x, let y):
             [("x", Self.number(x)), ("y", Self.number(y))]
         case .mouseMovedBy(let dx, let dy), .scrolled(let dx, let dy):

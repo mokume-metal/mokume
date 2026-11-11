@@ -27,6 +27,7 @@ enum InputEventType: String, CaseIterable, Sendable {
     case pinched
     case fileDropped
     case fileSelected
+    case focusChanged
     case keyDown
     case keyUp
 }

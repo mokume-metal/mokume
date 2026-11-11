@@ -51,6 +51,12 @@ struct SketchApplicationRenderTests {
         /// このフレームの描き切りの投入を、GPU が打ち切ったことにする (検査の穴
         /// `dropsNextSubmissionForTesting`・#2743)。
         var dropsAtFrame: Int?
+        /// `if !focused { noLoop() }` を書いた作品にする (#3709)。
+        var stopsWhenUnfocused = false
+        /// 毎フレーム `windowTitle(_:)` を呼ぶ作品にする (#3709)。
+        var retitles = false
+        /// 見えた `focused`。
+        private(set) var focusedSeen: [Bool] = []
         private(set) var seen: [Moment] = []
         /// 作品から見えた大きさ: 座標 (`width`/`height`) と、実際に刻む画素 (`pixelWidth`/`pixelHeight`)。
         /// **倍率が組み立てから描く面まで渡っているかは、PNG の大きさだけでなく作品の側からも見る** (#2441 の反証)。
@@ -77,6 +83,9 @@ struct SketchApplicationRenderTests {
             // 時刻の純関数。フレームごとに絵が変わるので、2 回の一致が中身の一致を意味する
             rect(time * 60, 8, 6, 8)
             if frameCount == stopsAtFrame { noLoop() }
+            focusedSeen.append(focused)
+            if stopsWhenUnfocused, !focused { noLoop() }
+            if retitles { windowTitle("frame \(frameCount)") }
             if frameCount == pausesTimeAtFrame { pauseTime() }
             if let jump = jumpsTimeAt, frameCount == jump.frame { jumpTime(jump.seconds) }
         }
@@ -542,6 +551,27 @@ struct SketchApplicationRenderTests {
             #expect(ending.exitStatus == 1)
             let movie = try await decodeMovie(path)
             #expect(movie.times.count == 3)
+        }
+    }
+
+    /// **ウィンドウの無い書き出しでは `focused` は `true`** ([#3709](https://github.com/mokume-metal/mokume/issues/3709) の決定)。
+    /// `if !focused { noLoop() }` を書いた作品も、決めた枚数をすべて書き出す。`windowTitle(_:)` は読むウィンドウが無いので
+    /// 何もせず、止まらない。
+    @Test("書き出しでは focused が true で、if !focused { noLoop() } と windowTitle を書いた作品も枚数ぶん書き出す")
+    func renderingStaysFocused() async throws {
+        try await withTemporaryDirectory("mokume-render-focused") { directory in
+            let path = directory.appendingPathComponent("focused.mov").path
+            let sketch = Sweep()
+            sketch.stopsWhenUnfocused = true
+            sketch.retitles = true
+            let ending = try render(sketch, frameRate: 30, frames: 6, to: path)
+
+            #expect(ending.finishedCalls == 1)
+            #expect(ending.exitStatus == nil, "揃ったのに 0 以外で終わった")
+            #expect(sketch.seen.map(\.frame) == Array(1...6))
+            #expect(sketch.focusedSeen == Array(repeating: true, count: 6), "\(sketch.focusedSeen)")
+            let movie = try await decodeMovie(path)
+            #expect(movie.times.count == 6)
         }
     }
 

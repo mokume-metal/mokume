@@ -383,6 +383,7 @@ extension ShapeExit {
             "input": "入力の合流点。ウィンドウと外から書かれ、形に焼き付く値を生まない",
             "pointerLockRequested": "カーソルを捕まえる要求 (requestPointerLock)。ウィンドウが読み、形に焼き付く値を生まない。組み立ての中で呼んでも外の要求としてそのまま効く (#1144)",
             "cursorHidingRequested": "矢印のカーソルを隠す要求 (noCursor)。ウィンドウが読み、形に焼き付く値を生まない。組み立ての中で呼んでも外の要求としてそのまま効く (#2439)",
+            "windowTitleRequest": "ウィンドウの題名を変える頼み (windowTitle)。ウィンドウが読み、形に焼き付く値を生まない。組み立ての中で呼んでも外の頼みとしてそのまま効く (#3709)",
             "timing": control, "drawProgress": control, "now": control, "tempo": control, "budget": control,
             "frameWorkBegan": control, "firstAdvanceAt": control, "firstAdvanceRealAt": control, "presenceClock": control,
             "lastFrameAt": control, "drawnThrough": control, "isAdvancingFrame": control,

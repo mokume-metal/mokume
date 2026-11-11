@@ -35,11 +35,12 @@ struct SharedFrameStageTests {
     ///
     /// [#964]: https://github.com/mokume-metal/mokume/issues/964
     private func look(
-        _ name: String, size: NSSize = SharedFrameWindow.defaultSize, selects: Bool = false
+        _ name: String, size: NSSize = SharedFrameWindow.defaultSize, selects: Bool = false,
+        retitles: Bool = false
     ) -> SharedFrameStage.Look {
         SharedFrameStage.Look(
             title: name, autosaveName: "mokume.test.\(name)", defaultSize: size,
-            showsSelectionDialogs: selects)
+            showsSelectionDialogs: selects, followsRequestedTitle: retitles)
     }
 
     @Test("重ねる面を渡さなければ、絵の面には何も足されない")
@@ -1331,6 +1332,50 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 題名 (#3709)
+
+    /// **作品のウィンドウは、映す世代の子が頼んだ題名に従う** ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+    /// 頼みを載せない世代の絵・手放した世代では、台が開いたときの題名に戻す (保存で作り直したスケッチが呼ばなければ元の
+    /// 題名)。プレビュー (``SharedFrameStage/Look/followsRequestedTitle`` を立てない台) は変えない。
+    @Test("作品のウィンドウは映す世代が頼んだ題名を当て、頼みが消えたら・手放したら元の題名に戻す。プレビューは変えない")
+    func theArtworkWindowFollowsTheRequestedTitle() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let child = try publish(in: facet, gpu: gpu, pid: 100, frames: 0, pointerLock: false)
+            try draw(child, frame: 1, gpu: gpu, windowTitle: "clicked 3")
+            let artwork = try SharedFrameStage(
+                gpu: gpu, facet: facet, look: look("title-artwork", retitles: true))
+            let preview = try SharedFrameStage(gpu: gpu, facet: facet, look: look("title-preview"))
+            artwork.open()
+            preview.open()
+            defer {
+                artwork.close()
+                preview.close()
+            }
+            artwork.displayLinkFired()
+            preview.displayLinkFired()
+            #expect(artwork.windowTitleRequested == "clicked 3")
+            #expect(artwork.window?.title == "clicked 3")
+            #expect(preview.window?.title == "title-preview", "プレビューの題名を変えた")
+
+            // 頼みを載せない絵 (作り直したスケッチが呼ばない) では、元の題名に戻る
+            try draw(child, frame: 2, gpu: gpu)
+            artwork.displayLinkFired()
+            #expect(artwork.window?.title == "title-artwork")
+
+            try draw(child, frame: 3, gpu: gpu, windowTitle: "again")
+            artwork.displayLinkFired()
+            #expect(artwork.window?.title == "again")
+            // 手放した世代の頼みは下ろし、同じ面の次の枚数でも戻さない
+            artwork.relinquishSource(pids: [100])
+            artwork.displayLinkFired()
+            #expect(artwork.window?.title == "title-artwork", "手放した世代の題名が残った")
+            try draw(child, frame: 4, gpu: gpu, windowTitle: "again")
+            artwork.displayLinkFired()
+            #expect(artwork.window?.title == "title-artwork", "手放した世代の題名が次の枚数で戻った")
+        }
+    }
+
     // MARK: - 手放す世代を番号で指す (#2982・#2983)
 
     /// 面を作り、目録を (番号つきで) 置く。`pid` が `nil` なら番号を書かない子 (古いライブラリ) の目録。
@@ -2531,7 +2576,8 @@ struct SharedFrameStageTests {
     private func draw(
         _ shared: SharedFrameSurface, frame: Int, gpu: RenderDevice, width: Int = 32,
         height: Int = 32, pointerLock: Bool = false, cursorHidden: Bool = false,
-        numbers: FrameNumbers? = nil, selection: SelectionBroker.Request? = nil
+        numbers: FrameNumbers? = nil, selection: SelectionBroker.Request? = nil,
+        windowTitle: String? = nil
     ) throws {
         let source = try RenderTarget(gpu: gpu, width: width, height: height)
         try source.fill(with: .linear(red: 0, green: 0, blue: 0))
@@ -2539,7 +2585,8 @@ struct SharedFrameStageTests {
         try shared.write(
             source, using: presenter,
             numbers: numbers ?? SharedFrameSurfaceTests.numbers(frame: frame),
-            pointerLock: pointerLock, cursorHidden: cursorHidden, selection: selection)
+            pointerLock: pointerLock, cursorHidden: cursorHidden, selection: selection,
+            windowTitle: windowTitle)
         // 名乗りは焼きの結末を見てからなので、結末が届くのを待ってから名乗らせる (#2735)
         awaitOutcomes(gpu)
         try shared.publishPending()
