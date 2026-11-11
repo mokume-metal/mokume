@@ -878,6 +878,9 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/pixels``
 - ``SketchPart/loadPixels()``
 - ``SketchPart/get(_:_:)``
+- ``SketchPart/get()``
+- ``SketchPart/get(_:_:_:_:)``
+- ``SketchPart/get(in:)``
 - ``SketchPart/set(_:_:_:)``
 - ``Pixels``
 - ``PixelBuffer``

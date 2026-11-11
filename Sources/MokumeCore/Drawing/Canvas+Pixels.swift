@@ -94,6 +94,75 @@ extension Canvas {
         return target.pixels[x, y]
     }
 
+    /// 描いた絵の全体を、新しい ``Image`` にして返す。大きさは座標の大きさ (``width`` × ``height``)。
+    public func get() throws(ImageFailure) -> Image {
+        try get(0, 0, Int(width), Int(height))
+    }
+
+    /// 描いた絵の領域を、新しい ``Image`` にして返す。領域も返す絵の大きさも座標の単位で数える
+    /// (1 画素の ``get(_:_:)`` は実際の画素で数える)。範囲の外は透明。形の組み立ての中では、読まずに
+    /// 透明の絵を返す (``get(_:_:)`` と同じ)。
+    ///
+    /// **刻んだ画素が座標と違えば、読み直して座標の大きさにそろえる** ([#3714])。書き出しの倍率で細かく
+    /// 刻んでいれば光の量で平均して縮め、細かさを下げていれば広げる (``Image/resized(width:height:)`` と同じ
+    /// 読み方)。読む範囲は刻んだ画素の境へ外向きに丸めるので、座標 1 つが画素の境に乗らない細かさ (0.5 で
+    /// 奇数の位置など) では、半画素までずれうる。
+    ///
+    /// [#3714]: https://github.com/mokume-metal/mokume/issues/3714
+    public func get(_ x: Int, _ y: Int, _ w: Int, _ h: Int) throws(ImageFailure) -> Image {
+        // 返す絵の大きさは、読む前に検める (``createImage(_:_:)`` と同じ範囲・1 を割る指定を丸めない)
+        let sides = RenderDevice.textureSides
+        guard sides.contains(w), sides.contains(h) else { throw .unplaceable(width: w, height: h) }
+        let loading = needsPixelLoad
+        let texels: [SIMD4<Float16>]
+        if refusesInsideShape() {
+            texels = [SIMD4<Float16>](repeating: .zero, count: w * h)
+        } else {
+            if loading { loadPixels() }
+            texels = regionTexels(x, y, w, h)
+        }
+        return try makeImage(ImageFile.Decoded(width: w, height: h, pixels: texels))
+    }
+
+    /// ``Rect`` の領域を、新しい ``Image`` にして返す。``imageMode(_:)``・``rectMode(_:)`` に従わず、値のとおり
+    /// 左上で読む。値は近い整数へ丸めて ``get(_:_:_:_:)`` へ渡す。
+    public func get(in rect: Rect) throws(ImageFailure) -> Image {
+        let (w, h) = (Self.wholeUnits(rect.width), Self.wholeUnits(rect.height))
+        guard let w, let h else { throw .unplaceable(width: w ?? 0, height: h ?? 0) }
+        // 位置が数でないか Int に収まらなければ、どの画素とも重ならない (透明の絵になる)
+        return try get(Self.wholeUnits(rect.left) ?? .min, Self.wholeUnits(rect.top) ?? .min, w, h)
+    }
+
+    /// 座標を近い整数へ丸める。数でない・Int に収まらないなら `nil`。
+    private static func wholeUnits(_ value: Float) -> Int? {
+        let rounded = value.rounded()
+        guard rounded.isFinite, abs(rounded) < 0x1p62 else { return nil }
+        return Int(rounded)
+    }
+
+    /// 座標の領域 (`x`, `y`, `w`, `h`) を、刻んだ画素 (``pixels``) から読んで `w` × `h` の並びにする。
+    private func regionTexels(_ x: Int, _ y: Int, _ w: Int, _ h: Int) -> [SIMD4<Float16>] {
+        let view = target.pixels
+        let (columns, rows) = (Int(width), Int(height))
+        // 面とまったく重ならないか、写しを用意できなかった (大きさ 0 のビュー) なら全体が透明。`w`・`h` は
+        // 1〜面の上限なので、`x < columns` を確かめた後の `x + w` は溢れない
+        guard view.width > 0, view.height > 0, x < columns, y < rows, x + w > 0, y + h > 0
+        else { return [SIMD4<Float16>](repeating: .zero, count: w * h) }
+        if view.width == columns, view.height == rows {
+            return view.texels(x: x, y: y, columns: w, rows: h)
+        }
+        // ここでは x・y が (-w, 面の幅) の内にあるので、Double で掛けても溢れない。行き先と大きさが同じなら
+        // `resample` は元の画素をそのまま読む
+        let (scaleX, scaleY) = (Double(view.width) / Double(columns), Double(view.height) / Double(rows))
+        let left = Int((Double(x) * scaleX).rounded(.down))
+        let top = Int((Double(y) * scaleY).rounded(.down))
+        let right = max(Int((Double(x + w) * scaleX).rounded(.up)), left + 1)
+        let bottom = max(Int((Double(y + h) * scaleY).rounded(.up)), top + 1)
+        let drawn = view.texels(x: left, y: top, columns: right - left, rows: bottom - top)
+        return ImageResampling.resample(
+            drawn, from: (right - left, bottom - top), to: (w, h))
+    }
+
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) {
         // 画素の書き込みも置くことに含む ([#1672])。読む前に断る — 区間の外で描き切らせない
         //
