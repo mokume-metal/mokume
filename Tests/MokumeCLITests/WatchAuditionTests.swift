@@ -42,7 +42,14 @@ struct WatchAuditionTests {
         /// 作り直しが門で止まっているか。
         var isRebuildHeld: Bool { rebuildGate != nil }
 
+        /// 作り直しの口が呼ばれた回数。
+        private(set) var rebuilds = 0
+        /// 立てると、作り直しは通らない (終了コード 1)。**門の後で読む** — 門で止めた作り直しを、開ける前に失敗させられる。
+        var buildFails = false
+
         func waitForRebuildGate() async {
+            // 門を開けた後に着いた作り直しは待たない (期限で開けた回に、後から着いて止まり続けない)
+            guard holdRebuild else { return }
             await withCheckedContinuation { rebuildGate = $0 }
         }
 
@@ -55,11 +62,15 @@ struct WatchAuditionTests {
 
         /// 立てると、次の世代の読みは ``releaseStamp()`` まで戻らない (読みの最中の出来事を演じる・#3796)。
         var holdStamp = false
+        /// 立てると、止めた読みは**門を開けた後の**値を返す (読みの最中に置いた保存を、走っている読みが拾う形・#3796)。
+        /// 下ろしていれば、読みを始めた時点の値を返す。
+        var stampReadsAtEnd = false
         private var stampGate: CheckedContinuation<Void, Never>?
         /// 世代の読みが門で止まっているか。
         var isStampHeld: Bool { stampGate != nil }
 
         func waitForStampGate() async {
+            guard holdStamp else { return }
             await withCheckedContinuation { stampGate = $0 }
         }
 
@@ -68,6 +79,49 @@ struct WatchAuditionTests {
             holdStamp = false
             stampGate?.resume()
             stampGate = nil
+        }
+
+        /// 門で止まるのを待つ。**待つ側が期限を持つ** — 越えたら `false` を返す (門を開けて止めた拍を畳むのは呼び手)。
+        func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) async -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while !condition() {
+                if Date() >= deadline { return false }
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+            return true
+        }
+
+        /// 門で止まらなかったこと。期限で門を開け、止めた拍を畳んでから投げる。
+        struct GateTimeout: Error, CustomStringConvertible {
+            let description: String
+        }
+
+        /// 保存を置き、見張りがそれを読む拍を作り直しの門で止める。止めた拍の `Task` を返す。**期限までに止まらなければ、
+        /// 門を開けて拍を畳んでから投げる** (止めた `Task` を残さない)。
+        func holdBuild() async throws -> Task<Void, Never> {
+            holdRebuild = true
+            placeSave()
+            let building = Task { await beat() }
+            guard await waitUntil({ isRebuildHeld }) else {
+                releaseRebuild()
+                await building.value
+                throw GateTimeout(description: "作り直しが期限までに進行中にならない")
+            }
+            return building
+        }
+
+        /// 保存を置き、見張りがそれを読む拍を世代の読みの門で止める。止めた拍の `Task` を返す。期限の扱いは ``holdBuild()``。
+        /// `placing` を下ろすと保存を置かずに読みを始める (読みの最中に保存を置く形)。
+        func holdRead(placing: Bool = true) async throws -> Task<Void, Never> {
+            holdStamp = true
+            if placing { placeSave() }
+            let reading = Task { await beat() }
+            guard await waitUntil({ isStampHeld }) else {
+                releaseStamp()
+                await reading.value
+                throw GateTimeout(description: "世代の読みが期限までに進行中にならない")
+            }
+            return reading
         }
 
         /// 新しい本番の子を起こしたら、台が乗り換えた合図を送るか。
@@ -87,10 +141,13 @@ struct WatchAuditionTests {
                 directory: directory, context: testContext(),
                 hooks: WatchSession.Hooks(
                     rebuild: { directory in
+                        box.harness?.rebuilds += 1
                         // 作り直しの途中で止めておく (作り直しの最中の出来事を演じる)
                         if let harness = box.harness, harness.holdRebuild { await harness.waitForRebuildGate() }
+                        let fails = box.harness?.buildFails ?? false
                         return RunCommand.Rebuilt(
-                            status: 0, output: "", executable: URL(fileURLWithPath: "/bin/sh"),
+                            status: fails ? 1 : 0, output: "",
+                            executable: fails ? nil : URL(fileURLWithPath: "/bin/sh"),
                             binPath: directory, product: "sketch")
                     },
                     launch: { executable, _, _, _ throws(CommandFailure) in
@@ -101,11 +158,12 @@ struct WatchAuditionTests {
                     },
                     now: { 0 },
                     stamp: { _ in
-                        // 読みの途中で止めておく。**読んだ値は、止める前に決まっている** (保存は読みより前に置いた)
+                        // 読みの途中で止めておく。既定では**読んだ値は、止める前に決まっている** (保存は読みより前に置いた)。
+                        // `stampReadsAtEnd` なら、門を開けた後の値を返す (読みの最中に置いた保存を、走っている読みが拾う)
                         guard let harness = box.harness else { return nil }
-                        let stamp = harness.stamp
+                        let early = harness.stamp
                         if harness.holdStamp { await harness.waitForStampGate() }
-                        return stamp
+                        return harness.stampReadsAtEnd ? harness.stamp : early
                     }),
                 stopTimeout: stopTimeout, finishTimeout: 0.5)
             session.overlapsGenerations = overlapsGenerations
