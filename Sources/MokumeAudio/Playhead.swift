@@ -46,6 +46,14 @@ nonisolated struct Playhead: Equatable {
         return isLooping ? reached % length : min(reached, length)
     }
 
+    /// 区切りの中で `played` 標本鳴ったうち、実際にファイルの標本を鳴らした数。1 度だけなら終わりまでの数で止まる。
+    /// 止まっていれば 0。包絡 (``FileEnvelope``) が進む数。
+    func heard(after played: Int) -> Int {
+        guard isPlaying else { return 0 }
+        let reached = max(0, played)
+        return isLooping ? reached : min(reached, max(0, length - start))
+    }
+
     /// 1 度だけ鳴らしていて、`played` 標本で終わりまで鳴り切ったか。
     func hasEnded(after played: Int) -> Bool {
         isPlaying && !isLooping && start + max(0, played) >= length

@@ -108,6 +108,12 @@ import MokumeDiagnostics
 ///
 /// Processing Sound では、`LowPass`・`Reverb` などの `process(_:)` が `SoundFile` を受け付ける。
 ///
+/// ## エンベロープを掛ける
+///
+/// 合成した音と同じ ``Env`` で、音量にエンベロープを掛けられる (``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)``)。
+/// 曲の頭の立ち上げ・終わりのフェードが、``amp(_:)`` を毎フレーム動かさずに書ける。再生中なら位置を動かさず、
+/// 再生していなければ ``play()`` と同じ位置から 1 度だけ再生する。エンベロープが終わると無音になるが、再生は止まらない。
+///
 /// ## 書き出しでは、音を動画の音声トラックへ入れる
 ///
 /// ウィンドウを表示して実行している間は実際に音を出し、解析の位置は実際に出力したサンプル数から読む。**固定クロックで `.mov` へ
@@ -204,6 +210,12 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     private var waiting: [Operation] = []
     /// 控えている操作の中で、最後に頼まれた ``jump(_:)`` の飛び先 (標本)。**``position`` は飛び先を返す。**
     private var waitingTarget: Int?
+    /// ``Env`` が掛けた包絡 (#3099)。**一度も掛けていなければ `nil` で、鳴らす音も解析も掛ける前と同じ道を通る。**
+    /// 位置のずれ (``FileEnvelope/offset``) は、いまの区切りの頭からの数。区切りが終わるたびに、鳴った数を
+    /// 畳み込む (``foldEnvelope(after:)``)。
+    private var envelope: FileEnvelope?
+    /// 包絡の形の秒 (受けた値)。エフェクトへ通したときの節へ、同じ値から同じ形を作らせる。
+    private var envelopeSeconds: EnvelopeArguments.Accepted?
 
     /// 位置を動かす操作。
     private enum Operation {
@@ -211,6 +223,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case pause
         case stop
         case jump(Int)
+        /// ``Env`` が包絡を掛ける。鳴っていなければ ``play(looping:)`` と同じ位置から 1 度だけ鳴らす。
+        case envelope(EnvelopeArguments.Accepted)
     }
 
     /// ラックの節と、いまの区切りの世代。区切りを始めるたびに世代を 1 つ進める。
@@ -228,12 +242,44 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         var waitsForInput = false
 
         /// 区切りを始めるよう、節へ頼む。
-        mutating func begin(start: Int, looping: Bool) {
+        ///
+        /// 包絡を掛けているなら、区切りを始める操作の直後に、その区切りの包絡を載せる。**まとめて 1 度に
+        /// 載せる** — 音の側が区切りだけを先に読んで、前の区切りの位置のずれで 1 回描く、ということが起きない。
+        mutating func begin(
+            start: Int, looping: Bool, envelope: FileEnvelope?, seconds: EnvelopeArguments.Accepted?
+        ) {
             generation += 1
-            stage.rack.post(
+            let segment = SynthCommand(
+                op: .segment, node: UInt8(node.id),
+                bits: FileNode.segment(start: start, looping: looping, generation: generation))
+            guard let envelope, let seconds else {
+                stage.rack.post(segment)
+                return
+            }
+            stage.rack.postReservation([segment] + shaping(envelope, seconds))
+        }
+
+        /// いまの区切りの包絡を置き換える。
+        func reshape(_ envelope: FileEnvelope, seconds: EnvelopeArguments.Accepted) {
+            stage.rack.postReservation(shaping(envelope, seconds))
+        }
+
+        /// 包絡の形の値と、位置のずれを渡す操作。
+        private func shaping(
+            _ envelope: FileEnvelope, _ seconds: EnvelopeArguments.Accepted
+        ) -> [SynthCommand] {
+            let values: [(SynthParam, Float)] = [
+                (.attack, seconds.attack), (.sustain, seconds.sustain), (.level, seconds.level),
+                (.release, seconds.release),
+            ]
+            return values.map {
                 SynthCommand(
-                    op: .segment, node: UInt8(node.id),
-                    bits: FileNode.segment(start: start, looping: looping, generation: generation)))
+                    op: .set, node: UInt8(node.id), param: $0.0, bits: UInt64($0.1.bitPattern))
+            } + [
+                SynthCommand(
+                    op: .envelope, node: UInt8(node.id),
+                    bits: UInt64(bitPattern: Int64(envelope.offset)))
+            ]
         }
 
         /// 節を止める。
@@ -284,6 +330,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case cannotProcess
         case fileCapacity
         case congested
+        /// `Env.play` の引数の知らせ。種類は ``EnvelopeArguments`` が名乗る。
+        case envelope(String)
     }
 
     init(
@@ -507,7 +555,68 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
 
     /// 再生中か。``play()`` か ``loop()`` で `true` になり、``pause()``・``stop()``・
     /// 再生の終了で `false` になる。値はそのフレームの開始時点のもの。
+    ///
+    /// ``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)`` で再生を始めたときも `true` になり、エンベロープが終わって無音になっても
+    /// `true` のまま (再生は止まらない)。
     public var isPlaying: Bool { playhead.isPlaying }
+
+    // MARK: - 包絡
+
+    /// ``Env`` が、このファイルの音量に包絡を頭から掛ける (#3099)。鳴っていなければ ``play()`` と同じ位置から
+    /// 1 度だけ鳴らす。引数の検めは合成した音源と同じ ``EnvelopeArguments`` を通す (形はファイルの標本化率で数える)。
+    func triggerEnvelope(attack: Float, sustain: Float, level: Float, release: Float) {
+        guard
+            let accepted = EnvelopeArguments.accept(
+                attack: attack, sustain: sustain, level: level, release: release,
+                sampleRate: Double(sampleRate), subject: "\"\(name)\"",
+                notice: { key, message in notice(.envelope(key), message) })
+        else { return }
+        submit(.envelope(accepted))
+    }
+
+    /// 受けた秒の値から、ファイルの標本の数の形を作る。
+    private func envelopeShape(_ seconds: EnvelopeArguments.Accepted) -> EnvelopeShape {
+        EnvelopeShape(
+            attack: seconds.attack, sustain: seconds.sustain, level: seconds.level,
+            release: seconds.release, sampleRate: Double(sampleRate))
+    }
+
+    /// いまの区切りが `played` 標本鳴ったところで終わる。鳴った数を包絡の位置のずれへ畳み込み、次の区切りの頭から
+    /// 数え直せるようにする。**区切りを終える操作 (止める・飛ぶ・鳴らし直す・鳴り終わる・節や録りへ移す) が、
+    /// 再生位置を動かす前に呼ぶ。**
+    private func foldEnvelope(after played: Int) {
+        guard envelope != nil else { return }
+        envelope?.offset += playhead.heard(after: played)
+    }
+
+    /// 鳴らしている音の側へ、いまの区切りの包絡を渡し直す。
+    private func reshapeEnvelope() {
+        guard let envelope, let envelopeSeconds else { return }
+        switch pace {
+        case .speaker(let player):
+            player.reshape(envelope)
+        case .routed:
+            feed?.reshape(envelope, seconds: envelopeSeconds)
+        case .frames, .realTime, .unloaded, nil:
+            // 鳴らさない (解析だけが包絡を読む)
+            break
+        }
+    }
+
+    /// 区間に音量と包絡を掛ける。**包絡を掛けていなければ、掛ける前と同じ式** (音量だけ)。
+    ///
+    /// 区間の番号から区切りの中で鳴った数を引き (``Playhead`` の番号は、いまの区切りの頭が `shift + start`)、
+    /// 鳴らす側と同じ ``FileEnvelope/gain(atPlayed:)`` で倍率を決める。区間の前の履歴のうち、包絡を掛けた時点より前は
+    /// ``FileEnvelope/before``。
+    private func shaped(_ span: AudioSpan) -> AudioSpan {
+        guard let envelope else { return volume == 1 ? span : span.scaled(by: volume) }
+        let head = playhead.shift + playhead.start
+        var samples = span.samples
+        for index in samples.indices {
+            samples[index] *= volume * envelope.gain(atPlayed: span.base + index - head)
+        }
+        return AudioSpan(base: span.base, samples: samples, from: span.from)
+    }
 
     // MARK: - 生の値
 
@@ -653,6 +762,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             // 飛ぶ前の区切りは、前のフレームからこのフレームまで鳴り続けていた。その分が、このフレームの区間になる
             // (飛び先の区間はまだ空)
             holdPlayedSegment()
+            foldEnvelope(after: played())
             playhead.jump(to: target)
             beginSegment()
         }
@@ -667,6 +777,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         // **区間は音量を掛けた形でフレームの頭に決め、解析は読まれたときまで遅らせる** (#2379)。標本が
         // 進まなかったフレーム (飛び先から始まる最初のフレームなど) の空の区間は、前の値を保つ
         holdPlayedSegment(after: played)
+        if playhead.hasEnded(after: played) { foldEnvelope(after: played) }
         // 鳴り終わったフレームは、終わりまでの区間を解析してから止まる (1 フレームより短い一発音の peak も出る)。
         // 次のフレームからは無音 (``isPlaying`` が `false` の間、値は鳴っていない音のもの)
         if playhead.settle(after: played) {
@@ -681,16 +792,16 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         guard playhead.isPlaying else { return }
         let span = playhead.span(of: samples, from: covered, after: played ?? self.played())
         covered = span.to
-        deferred.hold(volume == 1 ? span : span.scaled(by: volume))
+        deferred.hold(shaped(span))
     }
 
     /// 止める操作の時点までの、前のフレーム以後の区間を控える。**止める前に鳴っていた分を、取りこぼさない。**
     /// 実際に鳴らしている間は、フレームの頭から ``pause()``・``stop()`` を呼ぶまでに数 ms 鳴っている。
-    private func holdTail() {
+    private func holdTail(after played: Int) {
         guard playhead.isPlaying else { return }
-        let span = playhead.span(of: samples, from: covered, after: played())
+        let span = playhead.span(of: samples, from: covered, after: played)
         covered = span.to
-        stoppedTail = volume == 1 ? span : span.scaled(by: volume)
+        stoppedTail = shaped(span)
     }
 
     /// いまの再生位置 (標本)。飛び先を待っている間も、まだ動いていない位置を返す。検査が読む。
@@ -701,6 +812,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         waiting.removeAll()
         waitingTarget = nil
         if case .speaker(let player) = pace { player.leave() }
+        // 足し直して鳴らしても、包絡は止めた所から続く
+        foldEnvelope(after: lastPlayed)
         // 止めて、手放す。節が消えきったら置き場が戻る (入力にも残らない)
         feed?.halt()
         feed?.release()
@@ -750,6 +863,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         if wasPlaying {
             // いまの位置から区切りを始め直す。ウィンドウは、始まりより前もファイルの標本で埋める (``Playhead/carry(after:)``)
             // ので、解析の値は途切れない。鳴らし始めるのは、入力に選ばれてから (``nodeIsConnected()``)
+            foldEnvelope(after: playedNow)
             playhead.carry(after: playedNow)
             lastPlayed = 0
             // 前の区間の続きから (``beginSegment()`` が始まりの位置へ戻さない)。標本の流れは続く (飛んだのではない)
@@ -880,6 +994,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         if wasPlaying {
             // 同じ音が続くので、区間の番号も続ける (``Playhead/carry(after:)``)。位置の側へ付け直すと、ループで何周かした後は
             // ウィンドウの格子がずれて、載せないときと別の値になる (#3268)
+            foldEnvelope(after: playedNow)
             playhead.carry(after: playedNow)
             continuedCoverage = covered
             beginSegment()
@@ -1003,7 +1118,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         switch operation {
         case .jump(let target): waitingTarget = target
         case .play, .stop: waitingTarget = nil
-        case .pause: break
+        // 包絡は位置を動かさない (鳴っていなければ、止めた位置 = 控えた飛び先から鳴らす)
+        case .pause, .envelope: break
         }
     }
 
@@ -1020,13 +1136,17 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             pendingJump = nil
             // 頭から (止めた位置から) 鳴らし直すので、エフェクトへ通したときの引き継ぎ値は古い位置のもの
             continuedCoverage = nil
+            if playhead.isPlaying { foldEnvelope(after: played()) }
             playhead.play(looping: looping)
             beginSegment()
         case .pause:
             guard playhead.isPlaying else { return }
             continuedCoverage = nil
-            holdTail()
-            playhead.pause(after: played())
+            // 区間・包絡の位置・止めた位置を、同じ 1 回の読みから求める (実際に鳴らしている間は、読むたびに進む)
+            let playedNow = played()
+            holdTail(after: playedNow)
+            foldEnvelope(after: playedNow)
+            playhead.pause(after: playedNow)
             // 同じフレームで先に飛ぶよう頼まれていれば、止めた位置はその飛び先にする
             if let target = pendingJump {
                 pendingJump = nil
@@ -1036,9 +1156,30 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case .stop:
             pendingJump = nil
             continuedCoverage = nil
-            holdTail()
+            let playedNow = played()
+            holdTail(after: playedNow)
+            foldEnvelope(after: playedNow)
             playhead.stop()
             halt()
+        case .envelope(let seconds):
+            let shape = envelopeShape(seconds)
+            envelopeSeconds = seconds
+            guard playhead.isPlaying else {
+                // 鳴っていなければ、``play()`` と同じ位置から 1 度だけ鳴らす (Processing Sound の `Env.play` が
+                // `input.play()` を呼ぶのと同じ)。形は新しい区切りの頭から
+                envelope = FileEnvelope(
+                    shape: shape, offset: 0, before: envelope?.gain(atPlayed: 0) ?? 1)
+                continuedCoverage = nil
+                playhead.play(looping: false)
+                beginSegment()
+                return
+            }
+            // 鳴っていれば位置を動かさず、いま (区切りの中で鳴った所) から形を掛け直す。書き出しではフレームの頭、
+            // 実際に鳴らしているなら音の側が描いた所
+            let origin = playhead.heard(after: played())
+            envelope = FileEnvelope(
+                shape: shape, offset: -origin, before: envelope?.gain(atPlayed: origin) ?? 1)
+            reshapeEnvelope()
         case .jump(let target):
             continuedCoverage = nil
             if playhead.isPlaying {
@@ -1066,11 +1207,13 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case .realTime:
             pace = .realTime(origin: now())
         case .speaker(let player):
-            player.play(from: playhead.start, looping: playhead.isLooping)
+            player.play(from: playhead.start, looping: playhead.isLooping, envelope: envelope)
         case .routed, .unloaded, nil:
             break
         }
-        feed?.begin(start: playhead.start, looping: playhead.isLooping)
+        feed?.begin(
+            start: playhead.start, looping: playhead.isLooping, envelope: envelope,
+            seconds: envelopeSeconds)
     }
 
     /// 鳴らしている player と、ラックの節を止める。
@@ -1085,6 +1228,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         guard case .speaker(let player) = pace, playhead.isPlaying, !player.flow.isRunning
         else { return }
         let looping = playhead.isLooping
+        // 鳴り終わっていても、止めた位置から鳴らし直しても、区切りはここで終わる
+        foldEnvelope(after: lastPlayed)
         if playhead.settle(after: lastPlayed) { return }
         playhead.pause(after: lastPlayed)
         playhead.play(looping: looping)
