@@ -49,7 +49,8 @@ struct EffectTests {
     ///
     /// 「0 なら効かない」を散文の約束にせず、組み込みの効果すべてについて機械で見る。
     /// 式の丸めに任せず断片の側で分岐して返しているのは、ここを厳密に見るためである。
-    /// 無効の値を入れた組み込みの効果。**7 つ全部を並べる。**
+    /// 無効の値を入れた組み込みの効果。**無効の値を持つ 8 つ全部を並べる** (無効の値を持たない
+    /// `threshold`・`erode`・`dilate`・`opaque` は除く。`Effect` の説明の一文と揃える)。
     private static let idle: [(name: String, effect: Effect)] = [
         ("blur", .blur(radius: 0)),
         ("bloom", .bloom(amount: 0)),
@@ -58,6 +59,8 @@ struct EffectTests {
         ("vignette", .vignette(amount: 0)),
         ("fringe", .fringe(amount: 0)),
         ("adjust", .adjust()),
+        ("posterize 0", .posterize(levels: 0)),
+        ("posterize 1", .posterize(levels: 1)),
     ]
 
     @Test("無効の値では、絵が 1 ビットも変わらない")
@@ -82,6 +85,11 @@ struct EffectTests {
         ("contrast", .adjust(contrast: 0.5)),
         ("saturation", .adjust(saturation: -1)),
         ("threshold", .threshold(level: 0.5)),
+        ("posterize", .posterize(levels: 3)),
+        ("erode", .erode),
+        ("dilate", .dilate),
+        // `opaque` は載せない: この絵は背景で塗りつぶした不透明な絵で、不透明にしても変わらない
+        // (効くことは `FilterRemainingEffectsTests` が半透明の画素で見る)
     ]
 
     @Test("効かせると、絵が変わる")

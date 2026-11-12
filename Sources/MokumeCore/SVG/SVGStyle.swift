@@ -24,6 +24,7 @@ extension SVGFile {
         var alpha: Float
 
         static let black = Color(red: 0, green: 0, blue: 0, alpha: 1)
+        static let white = Color(red: 1, green: 1, blue: 1, alpha: 1)
     }
 
     /// 色の文字を読む。読むのは `#rgb`・`#rgba`・`#rrggbb`・`#rrggbbaa`・`rgb()` / `rgba()`
@@ -107,9 +108,10 @@ extension SVGFile {
         case paint(Paint)
         /// 親の値を受け継ぐ (`inherit`)。
         case inherit
-        /// グラデーションやパターン (`url(#…)`) を指している。**描けないので名乗る。** 後ろに
-        /// 書いた代わりの色 (`url(#a) red`) があれば、その色で塗る
-        case reference(fallback: Paint)
+        /// グラデーションやパターン (`url(#…)`) を指している。`id` は同じファイルの中を指す名前 (`#` を外したもの)
+        /// で、ほかのファイルを指す・`#` で始まらないなら `nil`。指す先が読める勾配なら勾配で塗り (#3031)、そうで
+        /// なければ**名乗って**、後ろに書いた代わりの色 (`url(#a) red`) があればその色で塗る
+        case reference(id: String?, fallback: Paint)
         /// 読めない。代わりの色が読めない参照 (`url(#a) abc`) も、CSS では宣言ごと無効なのでここ (#2649)
         case unreadable
     }
@@ -124,16 +126,28 @@ extension SVGFile {
         }
         if value.lowercased().hasPrefix("url(") {
             guard let close = value.firstIndex(of: ")") else { return .unreadable }
+            let id = referencedID(value[value.index(value.startIndex, offsetBy: 4)..<close])
             let rest = value[value.index(after: close)...].trimmingCharacters(in: .whitespaces)
-            if rest.isEmpty { return .reference(fallback: .none) }
+            if rest.isEmpty { return .reference(id: id, fallback: .none) }
             switch parsePaint(rest) {
-            case .paint(let fallback): return .reference(fallback: fallback)
+            case .paint(let fallback): return .reference(id: id, fallback: fallback)
             // `inherit`・もう 1 つの参照・読めない値は代わりの色にならず、値ごと読めない (#2649)
             case .inherit, .reference, .unreadable: return .unreadable
             }
         }
         guard let color = parseColor(value) else { return .unreadable }
         return .paint(.color(color))
+    }
+
+    /// `url(…)` の括弧の中 (`#a`・`'#a'`・`"#a"`) から、同じファイルの中を指す名前を取る。ほかのファイルを
+    /// 指す (`other.svg#a`)・空なら `nil`。`href` の値 (`#a`) も同じ形で読む。
+    nonisolated static func referencedID(_ text: Substring) -> String? {
+        var inside = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if inside.count >= 2, let first = inside.first, first == "'" || first == "\"", inside.last == first {
+            inside = String(inside.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard inside.hasPrefix("#"), inside.count > 1 else { return nil }
+        return String(inside.dropFirst())
     }
 
     // MARK: - display と描けない効果

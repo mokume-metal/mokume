@@ -21,13 +21,15 @@ import Foundation
 /// - `transform` (`matrix` / `translate` / `scale` / `rotate` / `skewX` / `skewY`)
 /// - 塗りと線: 色・`currentColor`・`fill-opacity` / `stroke-opacity` / `opacity`・
 ///   `stroke-width`・`stroke-linecap`・`stroke-linejoin`・`fill-rule`
+/// - 塗りの勾配: `fill="url(#…)"` が指す `linearGradient`・`radialGradient` (#3031)。読む範囲と名乗るものは
+///   `SVGGradient.swift` の冒頭
 /// - 書き方: 属性・`style` 属性・`<style>` の `*` か要素名 1 つかクラス 1 つのセレクタ。優先の順は
 ///   CSS のとおり (属性 < `*` の規則 < 要素名の規則 < クラスの規則 < `style` 属性。`!important` を
 ///   付けた宣言はそれらすべてより上で、その中でも同じ順)
 ///
 /// ## 描けないものは捨てて、何を捨てたかを残す
 ///
-/// 字・画像・`use`・グラデーションやパターンの塗り (`url(#…)`)・切り抜き・マスク・
+/// 字・画像・`use`・線の勾配とパターンの塗り (`url(#…)`)・切り抜き・マスク・
 /// フィルタ・矢じり・破線・アニメーション、読めない値と CSS の規則は描かない。**黙って
 /// 捨てず**、何を何個・最初に出た行を ``Drawing/skipped`` に残す ([ADR-0020] 決定 5)。
 /// 読まない性質のうち、名乗らないと形の大きさ・位置が黙って変わるものも名乗る (#2627): CSS で書いた
@@ -113,6 +115,9 @@ nonisolated enum SVGFile {
         var join: StrokeJoin
         /// この要素の座標から形の座標への変換 (祖先の `transform` と `viewBox` を畳んだもの)。
         var transform: Affine
+        /// 塗りの勾配 (#3031)。あれば ``fill`` は白で、その不透明度 (`fill-opacity` と `opacity`。単位の分は
+        /// 含まない) を勾配の区切りの不透明度に掛けて塗る。
+        var gradient: GradientFill? = nil
     }
 
     /// 塗りの規則。
@@ -164,6 +169,7 @@ nonisolated enum SVGFile {
         }
         var walk = Walk(prefix: prefix)
         for style in reader.styles { walk.read(styleSheet: style.text, line: style.line) }
+        walk.collectGradients(in: reader.events)
         for event in reader.events { walk.visit(event) }
         let (items, units) = walk.finish()
         return Drawing(
@@ -184,7 +190,7 @@ nonisolated enum SVGFile {
     ]
 
     /// アニメーションの要素。形の中に書かれていても名乗る。
-    private static let animationElements: Set<String> = [
+    static let animationElements: Set<String> = [
         "animate", "animateMotion", "animateTransform", "animateColor", "set",
     ]
 
@@ -282,8 +288,10 @@ nonisolated enum SVGFile {
     /// 祖先から受け継ぐ描き方と、座標の決まり。
     private struct Context {
         var fill = Paint.color(.black)
-        /// 塗りが `url(#…)` を指していたか (描けないので、描いた要素ごとに名乗る)。
+        /// 塗りが `url(#…)` を指していたか。指す先が読める勾配なら勾配で塗り、そうでなければ描いた要素ごとに名乗る。
         var fillIsReference = false
+        /// 塗りの `url(#…)` が同じファイルの中で指す名前 (#3031)。
+        var fillReferenceID: String?
         var fillOpacity: Float = 1
         var fillRule = FillRule.nonzero
         var stroke = Paint.none
@@ -514,6 +522,10 @@ nonisolated enum SVGFile {
         private var openGroup: Int?
         private var rules: [StyleRule] = []
         private var stack: [Frame] = []
+        /// ファイルの中の勾配 (`id` ごと・#3031)。
+        private var gradients: [String: GradientDefinition] = [:]
+        /// 名乗りを済ませた勾配の `id`。勾配の書き方の名乗りは、使った要素の数ではなく勾配ごとに 1 度。
+        private var notedGradients: Set<String> = []
 
         init(prefix: String) { self.prefix = prefix }
 
@@ -575,6 +587,11 @@ nonisolated enum SVGFile {
             for written in sheet.unreadDeclarations { tally.note(SVGFile.valueNote("CSS declaration", written), line: line) }
         }
 
+        /// 勾配を集める。`<style>` の規則を読んだ後で、辿る前に呼ぶ (勾配は使う要素より後ろにも書ける)。
+        mutating func collectGradients(in events: [Event]) {
+            gradients = SVGFile.collectGradients(events, prefix: prefix, rules: rules)
+        }
+
         mutating func visit(_ event: Event) {
             switch event {
             case .end:
@@ -585,10 +602,7 @@ nonisolated enum SVGFile {
         }
 
         /// SVG の名前空間の要素なら、前置きを外した名前。他の名前空間の要素なら `nil`。
-        private func localName(_ raw: String) -> String? {
-            if !prefix.isEmpty, raw.hasPrefix(prefix) { return String(raw.dropFirst(prefix.count)) }
-            return raw.contains(":") ? nil : raw
-        }
+        private func localName(_ raw: String) -> String? { SVGFile.localName(raw, prefix: prefix) }
 
         private mutating func start(_ rawName: String, _ attributes: [String: String], _ line: Int) {
             let parent = stack.last ?? Frame(context: Context(), mode: .render)
@@ -823,12 +837,14 @@ nonisolated enum SVGFile {
                 let isFill = property == "fill"
                 let paint: Paint
                 var isReference = false
+                var referenceID: String?
                 switch SVGFile.parsePaint(value) {
                 case .paint(let read): paint = read
                 case .inherit: return .inherit
-                case .reference(let fallback):
+                case .reference(let id, let fallback):
                     paint = fallback
                     isReference = true
+                    referenceID = id
                 // 代わりの色が読めない参照 (`url(#a) abc`) もここで、下の宣言・受け継いだ値が残る (#2649)
                 case .unreadable: return .unreadable
                 }
@@ -836,6 +852,7 @@ nonisolated enum SVGFile {
                     if isFill {
                         context.fill = paint
                         context.fillIsReference = isReference
+                        context.fillReferenceID = referenceID
                     } else {
                         context.stroke = paint
                         context.strokeIsReference = isReference
@@ -928,6 +945,7 @@ nonisolated enum SVGFile {
                 return .set { context, _ in
                     context.fill = .color(.black)
                     context.fillIsReference = false
+                    context.fillReferenceID = nil
                 }
             case "stroke":
                 return .set { context, _ in
@@ -1237,11 +1255,30 @@ nonisolated enum SVGFile {
                 return base.alpha * (opacity * context.opacity) > 0 ? base : nil
             }
             var fill: Color?
+            var gradient: GradientFill?
             if case .line = outline {
                 fill = nil
+            } else if context.fillIsReference {
+                // 指す先が読める勾配なら勾配で塗る (#3031)。勾配の書き方の名乗りは勾配ごとに 1 度
+                let (paint, notes) = SVGFile.resolveGradient(
+                    context.fillReferenceID, in: gradients, outline: outline, viewport: context.viewport)
+                if let id = context.fillReferenceID, notedGradients.insert(id).inserted {
+                    for note in notes { tally.note(note.what, line: note.line) }
+                }
+                switch paint {
+                case .unresolved:
+                    fill = color(context.fill, opacity: context.fillOpacity)
+                    tally.note("fill=\"url(…)\"", line: line)
+                case .nothing:
+                    fill = nil
+                case .color(let read):
+                    fill = color(.color(read), opacity: context.fillOpacity)
+                case .gradient(let read):
+                    fill = color(.color(.white), opacity: context.fillOpacity)
+                    gradient = fill == nil ? nil : read
+                }
             } else {
                 fill = color(context.fill, opacity: context.fillOpacity)
-                if context.fillIsReference { tally.note("fill=\"url(…)\"", line: line) }
             }
             let stroke = context.strokeWidth > 0 ? color(context.stroke, opacity: context.strokeOpacity) : nil
             if context.strokeIsReference { tally.note("stroke=\"url(…)\"", line: line) }
@@ -1271,7 +1308,7 @@ nonisolated enum SVGFile {
                 Item(
                     outline: outline, fill: fill, fillRule: context.fillRule, stroke: stroke,
                     strokeWidth: context.strokeWidth, cap: context.cap, join: context.join,
-                    transform: context.transform))
+                    transform: context.transform, gradient: gradient))
         }
 
         /// 半透明の容器を閉じ、合成の単位にするかを決める (#3564)。

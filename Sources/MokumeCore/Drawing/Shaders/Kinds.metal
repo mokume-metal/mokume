@@ -154,6 +154,10 @@ constant uint kEffectEnlarge = 11;
 constant uint kEffectAccumulate = 12;
 constant uint kEffectResize = 13;
 constant uint kEffectThreshold = 14;
+constant uint kEffectPosterize = 15;
+constant uint kEffectErode = 16;
+constant uint kEffectDilate = 17;
+constant uint kEffectOpaque = 18;
 
 // 粒に掛ける力。Swift 側は `ForceKind`
 constant uint kForceGravity = 0;
@@ -233,6 +237,10 @@ kernel void mokume_kindLayout(
     numbers[i++] = kEffectAccumulate;
     numbers[i++] = kEffectResize;
     numbers[i++] = kEffectThreshold;
+    numbers[i++] = kEffectPosterize;
+    numbers[i++] = kEffectErode;
+    numbers[i++] = kEffectDilate;
+    numbers[i++] = kEffectOpaque;
 
     numbers[i++] = kKindSection + 7;
     numbers[i++] = kForceGravity;

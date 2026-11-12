@@ -45,6 +45,63 @@ static inline float mokume_luminance(float3 color) {
     return dot(color, float3(0.228975, 0.691739, 0.079287));
 }
 
+/// 線形 Display P3 → 線形 sRGB。**係数は `ColorPrimaries.sRGBFromWorkingRows` と同じ**
+/// (`FilterImmediateTests` が突き合わせる)。乗算済みの色にも、戻した色にもそのまま掛けられる (線形なので)。
+static inline float3 mokume_sRGBFromWorking(float3 premultiplied) {
+    return float3(
+        dot(premultiplied, float3(1.2249401762805598, -0.2249401762805601, 0.0)),
+        dot(premultiplied, float3(-0.0420569547096882, 1.0420569547096878, 0.0)),
+        dot(premultiplied, float3(-0.0196375545903344, -0.0786360455506318, 1.0982736001409665)));
+}
+
+/// 線形 sRGB → 線形 Display P3。**係数は `ColorPrimaries.workingFromSRGBRows` と同じ**
+/// (`FilterImmediateTests` が突き合わせる)。
+static inline float3 mokume_workingFromSRGB(float3 straight) {
+    return float3(
+        dot(straight, float3(0.8224619687143624, 0.1775380312856379, 0.0)),
+        dot(straight, float3(0.0331941988509617, 0.9668058011490386, 0.0)),
+        dot(straight, float3(0.0170826307211200, 0.0723974406639634, 0.9105199286149164)));
+}
+
+/// 線形 → 表示のエンコード。**式は `TransferFunction.encode` と同じ** (負の値は直線の区間で負のまま)。
+static inline float3 mokume_encode(float3 linear) {
+    float3 curve = 1.055 * pow(max(linear, 0.0031308), 1.0 / 2.4) - 0.055;
+    return select(curve, 12.92 * linear, linear <= 0.0031308);
+}
+
+/// 表示のエンコード → 線形。**式は `TransferFunction.decode` と同じ**。
+static inline float3 mokume_decode(float3 encoded) {
+    float3 curve = pow((max(encoded, 0.04045) + 0.055) / 1.055, 2.4);
+    return select(curve, encoded / 12.92, encoded <= 12.92 * 0.0031308);
+}
+
+/// 削る・広げる (`erode`・`dilate`) が比べる明るさ。**Processing と同じ輝度の加重** (8 ビットの
+/// 77・151・28) を、表示の値 (sRGB の原色・エンコードした値) に**乗算済みのまま**掛ける —
+/// 透明な画素は暗い側になる。2 値化の物差し (3 成分の最大) とは別である (`Effect.erode` の説明)。
+static inline float mokume_processingLuma(float4 color) {
+    return dot(mokume_encode(mokume_sRGBFromWorking(color.rgb)), float3(77.0, 151.0, 28.0));
+}
+
+/// 削る・広げる。自分と上下左右の 4 画素から、最も暗い (`darkest`)・最も明るい画素を**丸ごと**選ぶ。
+/// 縁の外は自分 (`mokume_texel` が端へ寄せる)。同じ明るさなら、自分・左・右・上・下の順で先のものを
+/// 残す (比べ方は厳密な大小。Processing の `PImage.erode` / `dilate` と同じ)。
+static inline float4 mokume_morph(Pixel in, bool darkest) {
+    float2 size = float2(in.source.get_width(), in.source.get_height());
+    int2 at = int2(floor(in.place * size));
+    float4 chosen = mokume_texel(in, at);
+    float best = mokume_processingLuma(chosen);
+    const int2 around[4] = { int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1) };
+    for (int k = 0; k < 4; k++) {
+        float4 next = mokume_texel(in, at + around[k]);
+        float luma = mokume_processingLuma(next);
+        if (darkest ? luma < best : luma > best) {
+            chosen = next;
+            best = luma;
+        }
+    }
+    return chosen;
+}
+
 /// 箱で縮める。`factor` は縮め幅 (2 のべき)。
 ///
 /// **2×2 の箱 1 つを線形の読み 1 回で取る** — 縮めた画素の中心は元の 2×2 の境目に
@@ -339,17 +396,42 @@ float4 effect(Pixel in, Values values) {
     if (kind == kEffectThreshold) {
         float alpha = in.color.a;
         if (alpha <= 0.0) { return in.color; }
-        float3 premultiplied = in.color.rgb;
-        // 線形 Display P3 → 線形 sRGB。**係数は `ColorPrimaries.sRGBFromWorkingRows` と同じ**
-        // (`FilterImmediateTests` が突き合わせる)
-        float3 srgb = float3(
-            dot(premultiplied, float3(1.2249401762805598, -0.2249401762805601, 0.0)),
-            dot(premultiplied, float3(-0.0420569547096882, 1.0420569547096878, 0.0)),
-            dot(premultiplied, float3(-0.0196375545903344, -0.0786360455506318, 1.0982736001409665)));
+        float3 srgb = mokume_sRGBFromWorking(in.color.rgb);
         float brightest = max(srgb.r, max(srgb.g, srgb.b));
         float on = brightest >= p0 * (1.0 - 1.0 / 1024.0) * alpha ? 1.0 : 0.0;
         // 白は不透明度ぶん (乗算済み)
         return float4(float3(on * alpha), alpha);
+    }
+
+    // 段数を減らす。**p0 は段数**で、2 未満は効かない (入りをそのまま返す)。乗算を戻した表示の値
+    // (sRGB の原色・エンコードした 0…1) を、Processing と同じ式で段に切る: 8 ビットの値 v の段は
+    // floor(v × levels / 256)、段 q は floor(q × 255 / (levels − 1)) / 255 で出す。**アルファは動かさない。**
+    // 不透明度 0 の画素はそのまま通す (2 値化と同じ・ADR-0011 決定 1)。
+    //
+    // **表示の値は、まず最も近い 8 ビットの目盛りへ丸めてから切る。** 面は半精度で、戻す・移す計算で値が
+    // 僅かに揺れる。段の境は 8 ビットの目盛りのすぐ上にも来る (`levels: 255` の 1 は境の 1/256 手前) ので、
+    // 揺れたまま切ると隣の段へ落ちる。丸めた後は整数の式と同じ (積は 2^24 未満で、単精度で割り切れる)。
+    if (kind == kEffectPosterize) {
+        float alpha = in.color.a;
+        if (p0 < 2.0 || alpha <= 0.0) { return in.color; }
+        float levels = p0;
+        float3 shown = clamp(mokume_encode(mokume_sRGBFromWorking(in.color.rgb / alpha)), 0.0, 1.0);
+        float3 value = rint(shown * 255.0);
+        float3 step = floor(value * levels / 256.0);
+        float3 posterized = floor(step * 255.0 / (levels - 1.0)) / 255.0;
+        return float4(mokume_workingFromSRGB(mokume_decode(posterized)) * alpha, alpha);
+    }
+
+    // 削る・広げる。最も暗い・明るい近傍の画素を丸ごと選ぶ (`mokume_morph`)
+    if (kind == kEffectErode) { return mokume_morph(in, true); }
+    if (kind == kEffectDilate) { return mokume_morph(in, false); }
+
+    // 不透明にする。乗算を戻した色を不透明度 1 で置き直す。不透明度 0 の画素は色が残っていないので
+    // 黒の不透明になる (透明な地へ加算した光も、戻しようが無いので黒になる)
+    if (kind == kEffectOpaque) {
+        float alpha = in.color.a;
+        if (alpha <= 0.0) { return float4(0.0, 0.0, 0.0, 1.0); }
+        return float4(in.color.rgb / alpha, 1.0);
     }
 
     // 拡大して、前のフレームの結果と混ぜる (時間方向)。**p2 がいまのフレームの重み**で、
