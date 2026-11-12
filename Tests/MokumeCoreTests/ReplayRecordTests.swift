@@ -1383,6 +1383,32 @@ struct ReplayRecordingRuntimeTests {
         #expect(third["unreproducible"] == nil)
     }
 
+    @Test("URL から読んだ画像も、その回に記録の保証の外と名乗る (#3715)", arguments: [false, true])
+    func aWebImageIsNotInTheRecord(withKind: Bool) throws {
+        final class ImageFetcher: Sketch {
+            var url = ""
+            var withKind = false
+            var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+            init() {}
+            convenience init(_ url: String, withKind: Bool) {
+                self.init()
+                self.url = url
+                self.withKind = withKind
+            }
+            func draw() {
+                background(0.1)
+                guard frameCount == 3 else { return }
+                _ = withKind ? try? loadImage(url, extension: "png") : try? loadImage(url)
+            }
+        }
+        let directory = try scratch()
+        let fetched = directory.appendingPathComponent("fetched.json")
+        let url = CannedResponses.serve("not an image")
+        let record = try run(try makeRuntime(ImageFetcher(url, withKind: withKind), to: fetched), frames: 5, at: fetched)
+        #expect(reasons(of: record) == [ReplayRecorder.Reason.webFile], "\(reasons(of: record))")
+        #expect((record["unreproducible"] as? [[String: Any]])?.first?["step"] as? Int == 2, "3 枚目の draw の中")
+    }
+
     @Test("描くのに失敗した枚は drew が偽で画素のハッシュを取らず、理由を名乗り、最後の絵も書かない")
     func aFailedDrawIsNotHashed() throws {
         let directory = try scratch()

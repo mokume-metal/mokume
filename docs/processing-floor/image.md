@@ -33,7 +33,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | [#3711] 切り出しと大きさの変更 (入れた) | `Image.cropped(x:y:width:height:)`・`Image.resized(width:height:)` | `PImage.get()` の領域の形・`PImage.resize()` |
 | [#3713] マスク (入れた) | `Image.mask(_:)` | `PImage.mask()` |
 | [#3714] 画面の写し (入れた) | `Sketch.get()`・`get(_:_:_:_:)`・`get(in:)` と、`Canvas` の同じもの | 関数 `get()` の領域と全体の形 |
-| [#3715] URL からの読み込み | `loadImage`・`requestImage` の URL と、種類を渡す引数 | `loadImage()`・`requestImage()` の URL の形 |
+| [#3715] URL からの読み込み (入れた) | `loadImage`・`requestImage` の URL と、種類を渡す `loadImage(_:extension:)`・`requestImage(_:extension:)` | `loadImage()`・`requestImage()` の URL の形 |
 | [#3716] `filter` の残りの効果 | `Effect` の `.posterize`・`.erode`・`.dilate` と、不透明にする効果 | `PImage.filter()`・関数 `filter()` の残りの 4 つ |
 | [#3717] テクスチャの読み方 | `textureMode`・`textureWrap` | `textureMode()`・`textureWrap()` |
 
@@ -78,9 +78,9 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | `createImage()` | `createImage(_:_:)` | 同等 | 透明な画像を返す。幅か高さが 1 を割るかテクスチャの大きさの上限を越えれば `ImageFailure.unplaceable` を投げ、1×1 へ丸めない。無い形: `format` (RGB・ARGB・ALPHA)。画素はいつも RGBA | — |
 | `image()` | `image(_:_:_:)`・`image(_:_:_:_:_:)` | 同等 | 描き場所 (`Canvas`) も渡せる。引数の読み方は `imageMode(_:)` が決める。切り出しつきの 9 引数の形もある (参照に無いので数えない) | — |
 | `imageMode()` | `imageMode(_:)` | 同等 | `.corner`・`.corners`・`.center` が当たる。`.radius` もある (参照に無い)。一度書けばフレームを越える | — |
-| `loadImage()` | `loadImage(_:)` | 同等 | 読めなければ `ImageFailure` を投げる (Processing は `null`)。同じ名前の画像は一度しか読まない。無い形: `http(s)` の URL と、種類を渡す `extension` ([#3715] で入れる) | [#3715] |
+| `loadImage()` | `loadImage(_:)`・`loadImage(_:extension:)` | 同等 | 読めなければ `ImageFailure` を投げる (Processing は `null`)。同じ名前の画像は一度しか読まない。名前が `http://` か `https://` で始まれば URL から受け取り、実行のあいだ URL ごとに 1 度だけ受け取る (サーバの側の差し替えは拾わない)。届かなければ `ImageFailure.unreachable(url:reason:)` を投げる。種類を渡す `extension` は ImageIO への手がかりで、中身から種類が分かればそちらで読む | [#3715] |
 | `noTint()` | `noTint()` | 同等 | 色掛けをやめる | — |
-| `requestImage()` | `requestImage(_:)` | 同等 | `async` で、読み終えてから画像を返す (Processing は幅と高さが 0 の画像をすぐ返し、読めたら埋める。読めなければ幅と高さを -1 にする)。読めなければ投げる。無い形: `loadImage()` と同じ ([#3715]) | [#3715] |
+| `requestImage()` | `requestImage(_:)`・`requestImage(_:extension:)` | 同等 | `async` で、読み終えてから画像を返す (Processing は幅と高さが 0 の画像をすぐ返し、読めたら埋める。読めなければ幅と高さを -1 にする)。読めなければ投げる。URL と種類を渡す `requestImage(_:extension:)` は `loadImage()` と同じ (Processing の `requestImage(filename, extension)`) | [#3715] |
 | `tint()` | `tint(_:_:)`・`tint(_:_:_:_:)`・`tint(_:)` | 同等 | グレー・RGB・`LinearRGBA` で渡す。一度書けばフレームを越える | — |
 
 ## 画素の関数

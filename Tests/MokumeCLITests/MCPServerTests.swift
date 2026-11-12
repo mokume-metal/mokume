@@ -2872,6 +2872,29 @@ struct MCPServerTests {
         #expect(outcome.text.contains("VERSION='rev-aaaaaaaaaaaa'"), "\(outcome.text)")
     }
 
+    /// 版を桁の多い端数つきの数で書いた詳細は、`2.5` と同じ理由で読めないと言う (#4015)。直す前は
+    /// `JSONDecoder` が端数を捨てて版 1 と読み、読める詳細として通していた。整数の綴りは今までどおり読む。
+    @Test("詳細の版の、桁の多い端数は 2.5 と同じく読めない")
+    func refusesALongFractionalDetailsVersion() {
+        func parse(_ version: String) -> String {
+            let data = Data(#"{"schemaVersion":\#(version),"version":"v0.2.0","symbols":{}}"#.utf8)
+            switch APIDetails.parse(data) {
+            case .success(let details): return "read \(details.version)"
+            case .failure(let failure): return failure.reason
+            }
+        }
+        let fraction = parse("2.5")
+        #expect(fraction.contains("not a details file"), "\(fraction)")
+        for spelling in ["1.00000000000000000000001", "0.99999999999999999999999", "12345678901234567.5"] {
+            #expect(parse(spelling) == fraction, "\(spelling): \(parse(spelling))")
+        }
+        for spelling in ["1", "1.0", "1e0", "1.00000000000000000000000"] {
+            #expect(parse(spelling) == "read v0.2.0", "\(spelling): \(parse(spelling))")
+        }
+        #expect(parse("1e19") == fraction, "範囲の外の整数は前から 2.5 と同じに断る")
+        #expect(parse("2").contains("update the tool"))
+    }
+
     /// 道具が読む形は、`Schemas/` の代表例と同じ (形の正典と読む側が離れない)。
     @Test("Schemas の代表例を、そのまま読んで引ける")
     func readsTheSchemaExample() throws {

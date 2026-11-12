@@ -198,10 +198,29 @@ struct TemplateBuildTests {
             to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
             encoding: .utf8)
 
-        try BundleCommand.run([root.path])
+        // 宣言から消えた target の古い包みを、束ねる置き場の実行ファイルの隣に先に置く (#4005)。実際の
+        // 束ねと本物の `show-dependencies` を通って、`.app` に入らず報せで名乗られるところまで見る
+        let declared = try #require(try RunCommand.declaration(in: root).package)
+        let bin = try RunCommand.binPath(
+            in: root,
+            context: BuildContext(
+                configuration: BundleCommand.configuration, place: BundleCommand.place, product: nil))
+        let stale = "\(declared.name)_Gone.bundle"
+        try Self.write("消した target", to: bin.appendingPathComponent("\(stale)/gone.txt"))
+
+        var reported: [String] = []
+        try BundleCommand.run([root.path]) { reported.append($0) }
 
         let app = root.appendingPathComponent("bundle/Grain.app", isDirectory: true)
         #expect(FileManager.default.fileExists(atPath: app.path), "包みが出来ていない")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: app.appendingPathComponent("Contents/Resources/\(stale)").path),
+            "宣言から消えた target の古い包みが、配る包みに入った")
+        #expect(
+            reported.joined().contains(
+                "Left out: \(stale) — in .build, but no target in Package.swift and no dependency builds it now"),
+            "入れなかった古い包みを、報せが名乗っていない:\n\(reported.joined())")
 
         let infoPlist = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
         let plist =

@@ -769,7 +769,9 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 ### 画像を置く
 
 - ``SketchPart/loadImage(_:)``
+- ``SketchPart/loadImage(_:extension:)``
 - ``SketchPart/requestImage(_:)``
+- ``SketchPart/requestImage(_:extension:)``
 - ``SketchPart/createImage(_:_:)``
 - ``SketchPart/image(_:_:_:)-23fpf``
 - ``SketchPart/image(_:_:_:_:_:)-4ch39``

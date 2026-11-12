@@ -41,6 +41,8 @@ nonisolated final class CannedResponses: URLProtocol, @unchecked Sendable {
         /// 受け口がこの応答を止めたか (``stopLoading()``)。受け取りを取り消したときも、
         /// 返し終えたときも止める。
         var stopped = false
+        /// 届いた要求の数 (``startLoading()`` を呼ばれた回数)。
+        var requests = 0
     }
 
     private static let progress = Mutex<[String: Progress]>([:])
@@ -62,6 +64,16 @@ nonisolated final class CannedResponses: URLProtocol, @unchecked Sendable {
     /// 本文を 200 で返す URL。
     static func serve(_ body: String, status: Int = 200) -> String {
         serve(.answer(status: status, body: Data(body.utf8)))
+    }
+
+    /// 置いた応答を差し替える。**次に届く要求から**、新しい応答で答える (サーバの側の差し替えを真似る)。
+    static func replace(_ url: String, with reply: Reply) {
+        replies.withLock { $0[url] = reply }
+    }
+
+    /// その URL に届いた要求の数。受け口が答えを控えて要求を省いたら、ここに数えられない。
+    static func requests(_ url: String) -> Int {
+        progress.withLock { $0[url]?.requests ?? 0 }
     }
 
     /// 遅い応答を打ち切る。**検査の側が自分の期限を越えたときの止め方** — 次の刻みで「取り消した」
@@ -100,6 +112,7 @@ nonisolated final class CannedResponses: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         guard let url = request.url else { return }
+        Self.progress.withLock { $0[url.absoluteString, default: Progress()].requests += 1 }
         let reply = Self.replies.withLock { $0[url.absoluteString] } ?? .fail(.cannotFindHost)
         switch reply {
         case .answer(let status, let body):

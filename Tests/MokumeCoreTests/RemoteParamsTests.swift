@@ -470,6 +470,31 @@ struct RemoteParamsTests {
         }
     }
 
+    /// プレビューが読む宣言の `int` の値も、桁の多い端数つきの数は `2.5` と同じく、その 1 件だけ飛ばして名乗る
+    /// ([#4015](https://github.com/mokume-metal/mokume/issues/4015))。直す前は `1.00000000000000000000001` を
+    /// `int(1)` のつまみとして並べ、`2.5` の知らせは `JSONError: The operation couldn’t be completed.
+    /// (Foundation.JSONError error 11.)` と、値も場所も言わなかった。
+    @Test(
+        "宣言の int の値の桁の多い端数は、2.5 と同じく飛ばし、値と場所を言う",
+        arguments: ["2.5", "1.00000000000000000000001", "12345678901234567.5"])
+    func skipsAFractionalIntDeclaration(spelling: String) throws {
+        try withFacet { facet in
+            try publishRaw(
+                params: #"[{"name":"a","type":"float","value":1},{"name":"c","type":"int","value":\#(spelling)}]"#,
+                at: facet)
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            #expect(params.refresh())
+            #expect(params.boxes.map(\.name) == ["a"])
+            #expect(
+                said == [
+                    "The knob \"c\" in the sketch's report could not be read, so it is left out "
+                        + "(the other knobs are still shown): DecodingError: Number \(spelling) is not a whole number "
+                        + "(at params[1].value) (said once for this knob)"
+                ], "\(said)")
+        }
+    }
+
     /// **外枠が読めない応答は、つまみを並べないまま、改訂ごとに 1 度だけ名乗る** ([#2889])。
     /// 黙って捨てると、つまみが 1 つも並ばない理由がどこにも残らない (ADR-0018 決定 6)。
     /// 文面は (i) どのファイルか (ii) 読めなかった理由 (iii) 候補 (版のずれ・`mokume doctor`) を言い、

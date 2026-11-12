@@ -96,7 +96,8 @@ extension ParamValue: Codable {
         }
         switch type {
         case .float: self = .float(try container.decode(Double.self, forKey: .value))
-        case .int: self = .int(try container.decode(Int.self, forKey: .value))
+        // 桁の多い端数つきの数も `2.5` と同じに断る (#4015)
+        case .int: self = .int(try container.decodeWhole(Int.self, forKey: .value))
         case .bool: self = .bool(try container.decode(Bool.self, forKey: .value))
         case .string: self = .string(try container.decode(String.self, forKey: .value))
         case .color:

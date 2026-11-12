@@ -6,6 +6,7 @@ import Foundation
 import ImageIO
 import MokumeDiagnostics
 import simd
+import UniformTypeIdentifiers
 
 /// 画像のファイルを、作業空間の画素へ落とす。
 ///
@@ -43,11 +44,44 @@ nonisolated enum ImageFile {
     ///
     /// 隔離の外で 1 度に済ませる形にしてあるのは、待たない読み込みが探索・更新時刻の
     /// 読み・復号をまとめて別の仕事へ回すためである。
-    static func read(_ path: String) throws(ImageFailure) -> Read {
+    static func read(_ path: String, kind: String? = nil) throws(ImageFailure) -> Read {
         let url = try locate(path)
         let stamp = stamp(of: url)
-        return Read(url: url, stamp: stamp, decoded: try decode(at: url, name: path))
+        return Read(url: url, stamp: stamp, decoded: try decode(at: url, name: path, kind: kind))
     }
+
+    // MARK: - URL (#3715)
+
+    /// 名前が URL なら、その URL。URL でなければ `nil` (ファイルとして探す)。
+    ///
+    /// 規則は ``WebFile/url(_:)`` と同じで、URL と読むのは `http://` か `https://` で始まる名前だけ
+    /// (`file://` はファイルの名前として探す)。失敗は画像の読み込みの型 (``ImageFailure``) へ移す。
+    static func webURL(_ path: String) throws(ImageFailure) -> URL? {
+        do { return try WebFile.url(path) } catch { throw moved(error, path: path) }
+    }
+
+    /// 本文を受け取る。受け取り終わるか、届かないと分かるか、期限 (``WebFile/waitLimit``) が過ぎるまで
+    /// 返らない (``WebFile/fetchWaiting(_:path:limit:)``)。
+    static func fetchWaiting(_ url: URL, path: String) throws(ImageFailure) -> Data {
+        do { return try WebFile.fetchWaiting(url, path: path) } catch { throw moved(error, path: path) }
+    }
+
+    /// 本文を受け取る。受け取るまで、他の仕事を止めない (``WebFile/fetch(_:path:limit:)``)。
+    static func fetch(_ url: URL, path: String) async throws(ImageFailure) -> Data {
+        do { return try await WebFile.fetch(url, path: path) } catch { throw moved(error, path: path) }
+    }
+
+    /// 受け取りの失敗を、画像の読み込みの失敗へ移す。`WebFile` が投げるのは届かなかったこと
+    /// (``DataFailure/unreachable(url:reason:)``) だけだが、他の case も届かなかったものとして運ぶ
+    /// (`DataFailure` のまま投げない。読み込みは `throws(ImageFailure)` で型付けされている)。
+    private static func moved(_ failure: DataFailure, path: String) -> ImageFailure {
+        guard case .unreachable(let url, let reason) = failure else {
+            return .unreachable(url: path, reason: failure.description)
+        }
+        return .unreachable(url: url, reason: reason)
+    }
+
+    // MARK: - ファイル
 
     /// 名前を、実際に在るファイルへ解く。
     ///
@@ -109,13 +143,33 @@ nonisolated enum ImageFile {
     ///
     /// [#1873]: https://github.com/mokume-metal/mokume/issues/1873
     /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
-    static func decode(at url: URL, name: String) throws(ImageFailure) -> Decoded {
+    static func decode(at url: URL, name: String, kind: String? = nil) throws(ImageFailure) -> Decoded {
         if let refusal = AssetOpening.refusal(at: url) {
             throw .unopenable(path: name, location: refusal.location, reason: refusal.reason)
         }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-        else {
+        return try decode(CGImageSourceCreateWithURL(url as CFURL, hints(kind)), name: name)
+    }
+
+    /// URL から受け取った本文を復号する。`kind` は種類の手がかり (拡張子。``decode(at:name:kind:)`` と同じ)。
+    static func decode(_ body: Data, name: String, kind: String? = nil) throws(ImageFailure) -> Decoded {
+        try decode(CGImageSourceCreateWithData(body as CFData, hints(kind)), name: name)
+    }
+
+    /// 種類の手がかりを、ImageIO が読む形にする。
+    ///
+    /// **手がかりは中身の判別に勝たない。** ImageIO は中身から種類が分かればそちらで読み、手がかりを
+    /// 使うのは中身から分からないときだけである (#3715 の実測では、PNG・JPEG・BMP・TGA は手がかり無しでも
+    /// 読めた)。知らない拡張子 (画像の種類として登録の無いもの。`UTType` は知らない拡張子にも仮の種類を
+    /// 作って返すので、それを除く) は手がかり無しで読む。
+    static func hints(_ kind: String?) -> CFDictionary? {
+        guard let kind, let type = UTType(filenameExtension: kind), !type.isDynamic, type.conforms(to: .image)
+        else { return nil }
+        return [kCGImageSourceTypeIdentifierHint: type.identifier as CFString] as CFDictionary
+    }
+
+    /// 開いた元から、1 枚目を作業空間の画素へ落とす。
+    private static func decode(_ source: CGImageSource?, name: String) throws(ImageFailure) -> Decoded {
+        guard let source, let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw .undecodable(path: name)
         }
 
