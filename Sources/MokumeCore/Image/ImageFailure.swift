@@ -31,7 +31,7 @@ public enum ImageFailure: Error, Equatable, Sendable {
     /// 同じ理由・[#1642](https://github.com/mokume-metal/mokume/issues/1642))。
     case unplaceable(width: Int, height: Int)
     /// 書き出せなかった。`path` は頼んだ行き先、`reason` は書けなかった事情 (置き場が無い・書く権利が
-    /// 無いなど)。``Image/save(_:)`` が投げる
+    /// 無いなど)。``Image/save(_:)`` と、`.png` で終わらない URL を渡された `SketchRuntime.renderFrame(to:)` が投げる
     /// (``DataFailure/unwritable(path:reason:)`` と同じ形)。
     case unwritable(path: String, reason: String)
     /// 走っている面を取れない所で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前

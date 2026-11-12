@@ -14,7 +14,7 @@
       "id": "2280-observe-time-with-count",
       "origin": "#2278",
       "file": "Sources/MokumeCLI/MCP/Tools.swift",
-      "find": "guard let value = JSONRPC.number(raw), value.doubleValue == 1 else {",
+      "find": "guard Self.seriesArgument(raw, key: key) == .value(1) else {",
       "replace": "guard JSONRPC.number(raw) != nil else {",
       "gpu": false,
       "note": "time と count=2 / every=2 の併用を断らずに送る (ObserveTests.rejectsInvalidTimeArguments が殺すはず)"
@@ -40,9 +40,9 @@
     {
       "id": "2283-analysis-window-rounds-up",
       "origin": "#2278",
-      "file": "Sources/MokumeAudio/AudioSource.swift",
-      "find": "max(0, Int((time * Double(sampleRate)).rounded(.down)))",
-      "replace": "max(0, Int((time * Double(sampleRate)).rounded(.up)))",
+      "file": "Sources/MokumeAudio/FrameSamples.swift",
+      "find": "Int(min(max(position, -reach), reach).rounded(.down))",
+      "replace": "Int(min(max(position, -reach), reach).rounded(.up))",
       "gpu": false,
       "note": "時刻から区間の末尾への丸めが切り上げになり、まだ届いていない標本まで区間が 1 つずれる (AudioAnalysisTests.samplesArrivedByATimeRoundDown が殺すはず)"
     },

@@ -106,6 +106,86 @@ nonisolated enum JSONFile {
         return items
     }
 
+    /// 値を JSON の文字にする (``SketchPart/saveJSONObject(_:_:)`` の中身)。
+    ///
+    /// **同じ値からは同じ文字になる。** オブジェクトのキーは ``JSONObject/keys`` と同じ文字の順で並べ、
+    /// 字下げは 2 (Processing の既定)、行の終わりは LF で、最後にも LF を付ける。空のオブジェクトと
+    /// 配列は `{}`・`[]` の 1 語にする。
+    ///
+    /// - 数: 整数は整数の綴り (`2`)、`Double` は最も短い綴り (`2.0`・`-3.5`・`1e+30`)。桁の多い数
+    ///   (`longNumber`) は**読んだ綴りのまま**書く — `Double` に丸めた値を書くと、読んで書き出すだけで
+    ///   `-9223372036854775809` が `-9.223372036854776e+18` に変わる (黙って別の値を書かない)
+    /// - 文字: `"`・`\`・U+0000〜U+001F を逃がし (`\n` など短い形があればそれ、無ければ `\u00XX`)、
+    ///   それ以外は UTF-8 のまま書く
+    ///
+    /// 木は有限の数しか持たない (読む側は ``parse(_:path:)`` が断り、書く側は
+    /// ``JSONObject/setFloat(_:_:)`` が書かない)。
+    static func format(_ value: JSONValue) -> String {
+        var text = ""
+        write(value, indent: 0, into: &text)
+        return text + "\n"
+    }
+
+    private static func write(_ value: JSONValue, indent: Int, into text: inout String) {
+        switch value {
+        case .null: text += "null"
+        case .bool(let flag): text += flag ? "true" : "false"
+        case .integer(let number): text += String(number)
+        case .number(let number): text += "\(number)"
+        case .longNumber(_, let spelling): text += spelling
+        case .string(let string): quote(string, into: &text)
+        case .array(let items):
+            guard !items.isEmpty else {
+                text += "[]"
+                return
+            }
+            text += "[\n"
+            for (index, item) in items.enumerated() {
+                text += String(repeating: " ", count: indent + 2)
+                write(item, indent: indent + 2, into: &text)
+                text += index == items.count - 1 ? "\n" : ",\n"
+            }
+            text += String(repeating: " ", count: indent) + "]"
+        case .object(let members):
+            guard !members.isEmpty else {
+                text += "{}"
+                return
+            }
+            text += "{\n"
+            // 並べ方は `JSONObject.keys` (`members.keys.sorted()`) と同じ `String` の `<`
+            let sorted = members.sorted { $0.key < $1.key }
+            for (index, member) in sorted.enumerated() {
+                text += String(repeating: " ", count: indent + 2)
+                quote(member.key, into: &text)
+                text += ": "
+                write(member.value, indent: indent + 2, into: &text)
+                text += index == sorted.count - 1 ? "\n" : ",\n"
+            }
+            text += String(repeating: " ", count: indent) + "}"
+        }
+    }
+
+    /// 文字を JSON の文字の綴り (`"…"`) にする。
+    private static func quote(_ string: String, into text: inout String) {
+        text += "\""
+        for scalar in string.unicodeScalars {
+            switch scalar {
+            case "\"": text += "\\\""
+            case "\\": text += "\\\\"
+            case "\n": text += "\\n"
+            case "\r": text += "\\r"
+            case "\t": text += "\\t"
+            case "\u{08}": text += "\\b"
+            case "\u{0C}": text += "\\f"
+            case "\u{00}"..."\u{1F}":
+                text += "\\u" + String(repeating: "0", count: 4 - String(scalar.value, radix: 16).count)
+                    + String(scalar.value, radix: 16)
+            default: text.unicodeScalars.append(scalar)
+            }
+        }
+        text += "\""
+    }
+
     /// JSON の文字を値へ読み解く。最上位はどの値でもよい。
     ///
     /// **`Double` に収まらない数は、`JSONSerialization` に任せず本体が文字から探す。** 任せると

@@ -225,6 +225,12 @@ enum RenderCommand {
                     + " with render too), and give \(outFlags[0]) a .mov, .mp4 or .gif, or a numbered series"
                     + " (out/frame-####.png): \(out)")
         }
+        // **`.png` で終わらない連番も、ビルドの前に断る** (#3961)。連番は PNG の絵を書くので、受けると PNG の中身が
+        // `.jpg`・`.gif` の名前で並ぶ (子の警告はビルドの後にしか出ない)。頼みの型も組まないので、ここで理由を
+        // 名乗る。文面は子が環境変数の頼みを断るときと同じ 1 つで、打った綴りから名前を案内する
+        if let reason = RenderRequest.seriesNotPNGReason(destination: out) {
+            throw .usage("\(outFlags[0]): \(reason): \(out)")
+        }
         guard RenderRequest.accepts(destination: out),
             let request = RenderRequest(
                 frameRate: frameRate, frameCount: frameCount, scale: scale, destination: destination)
