@@ -67,6 +67,10 @@ struct VectorFigurePortsTests {
         #expect(try captured { $0.ellipse(50, 50, 30, 20) } == 1)
         #expect(try captured { $0.arc(50, 50, 30, 30, 0, 2) } >= 1)
         #expect(try captured { $0.arc(50, 50, 30, 30, 0, 2, .chord) } >= 1)
+        // 範囲を Rect で渡す形 (#3784)
+        #expect(try captured { $0.arc(in: Rect(left: 35, top: 35, width: 30, height: 30), start: 0, stop: 2) } >= 1)
+        #expect(
+            try captured { $0.arc(in: Rect(left: 35, top: 35, width: 30, height: 30), start: 0, stop: 2, mode: .chord) } >= 1)
         #expect(try captured { $0.line(0, 0, 10, 10) } == 1)
         #expect(try captured { $0.point(5, 5) } == 1)
         #expect(try captured { $0.line(Vector2(0, 0), Vector2(10, 10)) } == 1)
@@ -168,6 +172,7 @@ struct VectorFigurePortsTests {
         let dust = try canvas.makeParticles(count: 8)
         #expect(try handled(canvas) { $0.text("a", 10, 10) } == 1)
         #expect(try handled(canvas) { $0.text("a b", 5, 5, 40, 40) } == 1)
+        #expect(try handled(canvas) { $0.text("a b", in: Rect(left: 5, top: 5, width: 40, height: 40)) } == 1)
         #expect(try handled(canvas) { $0.shapedText("ab", 10, 10) } == 1)
         #expect(try handled(canvas) { $0.image(image, 0, 0) } == 1)
         #expect(try handled(canvas) { $0.image(image, 0, 0, 10, 10) } == 1)

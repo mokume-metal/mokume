@@ -378,6 +378,22 @@ public struct JSONArray: Equatable, Sendable {
         return JSONArray([])
     }
 
+    /// 番号の要素が `null` か。**範囲の外の番号も `true`** (Processing の `isNull()` と同じ)。
+    ///
+    /// <!-- example: 文脈 var readings: JSONArray! -->
+    /// ```swift
+    /// for i in 0..<readings.count where !readings.isNull(i) {
+    ///     circle(20 + Float(i) * 24, height - readings.getFloat(i), 8)
+    /// }
+    /// ```
+    ///
+    /// 番号が範囲の中かは `count` で分かる。**知らせない** — 値が欠けているかもしれないことを分かって
+    /// 尋ねる口である (``JSONObject/isNull(_:)`` と同じ)。
+    public func isNull(_ index: Int) -> Bool {
+        guard items.indices.contains(index) else { return true }
+        return items[index] == .null
+    }
+
     // MARK: - 内部
 
     /// 書く口の共通の道。範囲の外なら書かずに、口ごとに 1 度知らせる。

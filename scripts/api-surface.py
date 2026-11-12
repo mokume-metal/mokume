@@ -681,6 +681,7 @@ UNSHOWN = {
     "requestJSONArray": "loadJSONArray と同じ理由 (待たない版は書き出しの絵では受け取る番が回らない)",
     "parseJSONObject": "通信で届いた文字を読む口で、届く文字を参照スケッチが持たない。読み方はテストが見る (#2466)",
     "parseJSONArray": "parseJSONObject と同じ理由",
+    "parseXML": "parseJSONObject と同じ理由 (#3645)",
     "createBrownNoise": "音を並べる参照スケッチ (SynthAndFilter) のパネルに足すと台帳の絵が動く。低域へ寄った帯域はテスト (BrownNoiseTests) が見て、帯域を棒にする作例は BrownNoise の説明文が持つ (make examples が組む・#3718)",
 }
 
@@ -1079,6 +1080,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "requestJSONArray": (RESOURCE, "loadJSONObject と同じ理由"),
     "parseJSONObject": (READING, "文字から値を作って返す。ファイルにも描き場所にも触れない"),
     "parseJSONArray": (READING, "parseJSONObject と同じ理由"),
+    "parseXML": (READING, "parseJSONObject と同じ理由"),
     "loadShape": RESOURCE,
     "requestShape": RESOURCE,
     "loadShader": RESOURCE,

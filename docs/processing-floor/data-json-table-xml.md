@@ -9,8 +9,8 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 66 |
-| 入れる | 9 |
+| 同等 | 75 |
+| 入れる | 0 |
 | 作例待ち | 12 |
 | 持たない | 21 |
 | 計 | 108 |
@@ -24,11 +24,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 ## 入れるの束
 
-「入れる」の 9 件は、近い口ごとに 1 本の `Feature` で入れる。入れ終えた束 ([#3641] の 4 件・[#3642] の 6 件・[#3643] の 7 件・[#3644] の 9 件) は行を「同等」に直し、ここから外した。
-
-| 束 | 口 | 件数 |
-| --- | --- | --- |
-| [#3645] JSON と XML の読み口の残り | `JSONObject.isNull()`・`JSONArray.isNull()`・`XML.getName()`・`getInt()`・`getIntContent()`・`getFloatContent()`・`hasAttribute()`・`listAttributes()`・`parseXML()` (引数なしの `getChildren()` を含む) | 9 |
+「入れる」の 35 件は、近い口ごとに 5 本の `Feature` ([#3641] の 4 件・[#3642] の 6 件・[#3643] の 7 件・[#3644] の 9 件・[#3645] の 9 件) で入れ終え、行を「同等」に直した。残る「入れる」は無い。
 
 ## JSONObject
 
@@ -43,7 +39,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 | `JSONObject.getJSONArray()` | `JSONObject.getJSONArray(_:)` | 同等 | 返る配列は `for-in` で回せる。配列でなければ空の配列 | [#2466]・PR [#3056] |
 | `JSONObject.getJSONObject()` | `JSONObject.getJSONObject(_:)` | 同等 | オブジェクトでなければ空のオブジェクトで、繋いだまま書ける | PR [#2180]・[#2466] |
 | `JSONObject.getString()` | `JSONObject.getString(_:)` | 同等 | 文字の値だけを読み、数や真偽を綴りにしない | [#2466]・PR [#3056] |
-| `JSONObject.isNull()` | — | 入れる | `hasKey(_:)` は値が `null` でも `true` で、`null` を知らせずに見分ける口が無い。`getString(_:)` で読むと空の文字と知らせになり、欠けたキーと区別できない。無いキーを渡すと Processing と同じく `true` を返し、知らせない (2026-10-31 の決定) | [#3645] |
+| `JSONObject.isNull()` | `JSONObject.isNull(_:)` | 同等 | 値が `null` かを知らせずに確かめる (`hasKey(_:)` は値が `null` でも `true`)。無いキーを渡すと Processing と同じく `true` を返し、知らせない (2026-10-31 の決定)。無いキーと `null` の値は `hasKey(_:)` と組んで分ける | [#3645] |
 | `JSONObject.setBoolean()`・`setFloat()`・`setInt()`・`setJSONArray()`・`setJSONObject()`・`setString()` (6 件) | `JSONObject.setBoolean(_:_:)`・`setFloat(_:_:)`・`setInt(_:_:)`・`setJSONArray(_:_:)`・`setJSONObject(_:_:)`・`setString(_:_:)` | 同等 | キーに値を書く。値の型なので `mutating` の API になる。入れ子は、取り出した写しを書き換えて `setJSONObject` で戻す (取り出した値へ直に書くと、コンパイルが止める)。既にあるキーは種類が変わっても置き換える。`setFloat` は NaN と無限を書かず、キーごとに 1 度知らせる (Processing は投げる。2026-10-31 の決定) | [#3643] |
 
 ## JSONArray
@@ -56,7 +52,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 | `JSONArray.append()`・`remove()`・`setBoolean()`・`setFloat()`・`setInt()`・`setJSONArray()`・`setJSONObject()`・`setString()` (8 件) | `JSONArray.append(_:)`・`remove(_:)`・`setBoolean(_:_:)`・`setFloat(_:_:)`・`setInt(_:_:)`・`setJSONArray(_:_:)`・`setJSONObject(_:_:)`・`setString(_:_:)` | 同等 | 番号に値を書く・末尾に足す・番号の値を除く。`JSONObject` の書き換えと同じく `mutating` の API。`append` は `Int`・`Float`・`String`・`Bool`・`JSONObject`・`JSONArray` を受ける。`remove` は除いた値を返さない (`Any` を面に出さない)。NaN と無限は書かず、口ごとに 1 度知らせる。範囲の外の番号には書かず、1 度だけ知らせる (Processing は `null` で埋めて伸ばす。2026-10-31 の決定) | [#3644] |
 | `JSONArray.getBoolean()`・`getFloat()`・`getInt()`・`getJSONArray()`・`getJSONObject()`・`getString()` (6 件) | `JSONArray.getBoolean(_:)`・`getFloat(_:)`・`getInt(_:)`・`getJSONArray(_:)`・`getJSONObject(_:)`・`getString(_:)` | 同等 | 番号で読む。読み方は `JSONObject` の同じ名前の口と同じ (`getInt` は丸めない)。範囲の外の番号も落ちず、空の値と口ごとに 1 度の知らせ | [#2466]・PR [#3056] |
 | `JSONArray.getIntArray()`・`getStringArray()`・`toIntArray()`・`toStringArray()` (4 件) | `(0..<array.count).map { array.getInt($0) }` (文字は `getString`) | 持たない | 番号で読む口を Swift の `map` で回せば同じ並びになる。`getIntArray` と `toIntArray` は参照の上でも同じ働きの 2 つの名前である。整数でない要素は 0 と知らせになる (Processing は投げる) | — |
-| `JSONArray.isNull()` | — | 入れる | 番号の値が `null` かを、知らせずに見分ける口が無い。範囲の外の番号は `true` を返し、知らせない (`JSONObject.isNull()` と同じ。2026-10-31 の決定) | [#3645] |
+| `JSONArray.isNull()` | `JSONArray.isNull(_:)` | 同等 | 番号の値が `null` かを知らせずに確かめる。範囲の外の番号は `true` を返し、知らせない (`JSONObject.isNull(_:)` と同じ。2026-10-31 の決定) | [#3645] |
 | `JSONArray.size()` | `JSONArray.count` | 同等 | 数え方は collection の `count` だけで、`size()` は持たない (書き方を 2 通りにしない) | [#2466]・PR [#3056] |
 
 ## Table
@@ -101,16 +97,16 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 | --- | --- | --- | --- | --- |
 | `XML` (クラス) | `XML` | 同等 | 値の型の要素 1 つで、読むだけ。空から作る `new XML(name)` は、書き換えと一緒に作例待ち (下の行) | PR [#2180]・[#2466] |
 | `XML.addChild()`・`format()`・`removeChild()`・`setContent()`・`setFloat()`・`setInt()`・`setLong()`・`setName()`・`setString()`・`toString()` (10 件) | — | 作例待ち | 値の型の要素で、子へ書き戻す形が割れる。Processing の `addChild` は足した子を参照で返してそこへ書かせ、`removeChild` は消す子を参照で指す。写しの子を書き換えても木は変わらないので、子を番号で置き換える口など、Processing に無い形を選ぶ必要がある。書き出す口 (`format`・`toString`・`saveXML()`) は書き換えと組でしか使い途が無い。書き換えて書き出す作例が来たら、形をまとめて決める | — |
-| `XML.getAttributeCount()` | `xml.listAttributes().count` ([#3645] の `listAttributes()`) | 持たない | 数え方は `count` だけにする ([#2466] の `JSONArray.size()` と同じ考え) | [#2466] |
-| `XML.getChild()` | `XML.getChild(_:)` | 同等 | 名前の形。無い形: 番号の `getChild(index)` ([#3645] の引数なしの `getChildren()` で `getChildren()[index]` と書ける) と、パス (`channel/item`) の名前 (`getChild` を繋いで降りる) | [#2466]・PR [#3056] |
-| `XML.getChildCount()`・`hasChildren()`・`listChildren()` (3 件) | `xml.getChildren().count`・`.isEmpty`・`.map { $0.getName() }` ([#3645] の引数なしの `getChildren()` と `getName()`) | 持たない | 子の並びから、数・有無・名前が引ける。数え方は `count` だけにする ([#2466] と同じ考え) | [#2466] |
-| `XML.getChildren()` | `XML.getChildren(_:)` | 同等 | 名前の形。無い形: 引数なしのすべての子 ([#3645] で入れる) と、パスの名前 | PR [#2180] |
+| `XML.getAttributeCount()` | `xml.listAttributes().count` | 持たない | 数え方は `count` だけにする ([#2466] の `JSONArray.size()` と同じ考え) | [#2466] |
+| `XML.getChild()` | `XML.getChild(_:)` | 同等 | 名前の形。番号の `getChild(index)` は、引数なしの `getChildren()` で `getChildren()[index]` と書く ([#3645])。無い形: パス (`channel/item`) の名前 (`getChild` を繋いで降りる) | [#2466]・PR [#3056] |
+| `XML.getChildCount()`・`hasChildren()`・`listChildren()` (3 件) | `xml.getChildren().count`・`.isEmpty`・`.map { $0.getName() }` | 持たない | 子の並びから、数・有無・名前が引ける。数え方は `count` だけにする ([#2466] と同じ考え) | [#2466] |
+| `XML.getChildren()` | `XML.getChildren(_:)`・`XML.getChildren()` | 同等 | 名前の形と、引数なしのすべての子 (書かれた順。[#3645])。無い形: パスの名前 | PR [#2180]・[#3645] |
 | `XML.getContent()` | `XML.getContent()` | 同等 | 書かれたままの文字 (前後の空白も残る)。文字が無ければ空の文字で、知らせない | [#2466]・PR [#3056] |
 | `XML.getFloat()` | `XML.getFloat(_:)` | 同等 | 属性を数として読む。10 進の綴りだけで、数でなければ NaN と知らせ | PR [#2180] |
-| `XML.getFloatContent()`・`getInt()`・`getIntContent()`・`getName()`・`hasAttribute()`・`listAttributes()` (6 件) | — | 入れる | 読み口の残り。要素の名前、属性の整数、要素の文字の数、属性があるか (JSON の `hasKey(_:)` に当たり、知らせない)、属性の名前の一覧 (JSON の `keys` に当たる。属性は順を持たないので文字の順にそろえる)。整数は丸めない | [#3645] |
+| `XML.getFloatContent()`・`getInt()`・`getIntContent()`・`getName()`・`hasAttribute()`・`listAttributes()` (6 件) | `XML.getFloatContent()`・`getInt(_:)`・`getIntContent()`・`getName()`・`hasAttribute(_:)`・`listAttributes()` | 同等 | 要素の名前、属性の整数、要素の文字の数、属性があるか (JSON の `hasKey(_:)` に当たり、知らせない)、属性の名前の一覧 (JSON の `keys` に当たる。属性は順を持たないので文字の順にそろえる)。数の綴りは `getFloat(_:)` と同じ 10 進だけで、前後の空白は落とす。**整数は丸めない** (`"4.5"` は 0 を返して知らせる。Processing は切り捨てる)。読めなければ NaN か 0 を返し、1 度知らせる | [#3645] |
 | `XML.getParent()` | — (降りる前の要素を変数に残す) | 持たない | 値の型の要素は親を持たない。子は写しで、親から降りた道は作者が持つ | — |
 | `XML.getString()` | `XML.getString(_:)` | 同等 | 属性を文字として読む。無ければ空の文字と知らせ | [#2466]・PR [#3056] |
-| `XML.parse()` | `parseXML()` ([#3645]) | 持たない | 文字から読む口は関数の `parseXML()` の 1 つにする (`parseJSONObject(_:)` と同じ形。書き方を 2 通りにしない) | — |
+| `XML.parse()` | `parseXML(_:)` | 持たない | 文字から読む口は関数の `parseXML(_:)` の 1 つにする (`parseJSONObject(_:)` と同じ形。書き方を 2 通りにしない) | — |
 
 ## 読み書きの関数
 
@@ -123,7 +119,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 | `loadTable()` | `loadTable(_:header:)`・`requestTable(_:header:)` | 同等 | `"header"` の選択は `header: true`。URL からも読む。無い形: 区切りの選択 (`"tsv"` など。区切りはカンマだけ) | [#2470]・PR [#2896] |
 | `loadXML()` | `loadXML(_:)`・`requestXML(_:)` | 同等 | XML 宣言の `encoding` は読まず UTF-8 として読む (Processing と同じ)。外の実体は読まない | PR [#2180]・[#2466] |
 | `parseJSONArray()`・`parseJSONObject()` (2 件) | `parseJSONArray(_:)`・`parseJSONObject(_:)` | 同等 | TCP・UDP・WebSocket で届いた文字を読む。壊れた文字は投げる (Processing は `null`) | [#2466]・PR [#3056] |
-| `parseXML()` | — | 入れる | 届いた文字の XML を読む口が無い (JSON には `parseJSONObject(_:)` がある)。同じ形で、壊れた文字は投げる | [#3645] |
+| `parseXML()` | `parseXML(_:)` | 同等 | 届いた文字の XML を読む。読み方は `loadXML(_:)` と同じで、壊れた文字は投げる (Processing は `null`)。投げる形は `parseJSONObject(_:)` と同じ (`path` は口の名前) | [#3645] |
 | `saveJSONArray()` | `saveJSONArray(_:_:)` | 同等 | `JSONArray` を JSON のファイルにする。書き方 (UTF-8・LF・字下げ 2・同じ値から同じファイル) は `saveJSONObject(_:_:)` と同じ。置き場と書きかけを残さないことは `saveTable(_:_:)` と同じ | [#3644] |
 | `saveJSONObject()` | `saveJSONObject(_:_:)` | 同等 | `JSONObject` を JSON のファイルにする。キーは `keys` と同じ文字の順で書き、同じ値から同じファイルになる (UTF-8・LF・字下げ 2)。読んだ桁の多い数は綴りのまま書く。書けなければ投げ (Processing は `false` を返す)、書きかけを残さないことは `saveTable(_:_:)` と同じ | [#3643] |
 | `saveTable()` | `saveTable(_:_:)` | 同等 | 書けなければ投げる (Processing は `false` を返す)。無い形: 区切りの選択 (`"tsv"` など) | [#2468]・PR [#2861] |
