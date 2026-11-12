@@ -1148,6 +1148,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/exitPointerLock()``
 - ``SketchPart/noCursor()``
 - ``SketchPart/cursor()``
+- ``SketchPart/focused``
+- ``SketchPart/windowTitle(_:)``
 - ``SketchPart/keyboard``
 - ``Keyboard``
 - ``SketchPart/key``

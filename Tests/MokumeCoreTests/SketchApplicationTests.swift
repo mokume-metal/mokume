@@ -244,8 +244,9 @@ struct SketchApplicationTests {
     }
 
     /// **ウィンドウが key でなくなったら、押していたキーを離した扱いにする** (#2443)。退いている間に
-    /// 離したキーはウィンドウへ届かないので、流さないと押されたまま残る。
-    @Test("ウィンドウが退く知らせで、押していたキーの解放が流れる")
+    /// 離したキーはウィンドウへ届かないので、流さないと押されたまま残る。退いたこと (`focusChanged`・
+    /// [#3709](https://github.com/mokume-metal/mokume/issues/3709)) を先に流し、離した呼び出しの中から `false` で読めるようにする。
+    @Test("ウィンドウが退く知らせで、退いたことが流れ、続けて押していたキーの解放が流れる")
     func resigningKeyReleasesHeldKeys() throws {
         let application = try makeApplication(Blank())
         application.didFinishLaunching()
@@ -263,8 +264,30 @@ struct SketchApplicationTests {
             lines == [
                 InputEvent.keyDown(code: .arrowRight, characters: "\u{F703}", isRepeat: false)
                     .wireLine,
+                InputEvent.focusChanged(focused: false).wireLine,
                 InputEvent.keyUp(code: .arrowRight).wireLine,
             ])
+    }
+
+    /// **ウィンドウが key になった・外れた知らせは、前に流した値によらず流す** ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+    /// 道具の 2 つのウィンドウは同じ子へ流すので、面ごとの値で間引くと、ウィンドウを移った後の子の値が食い違う。
+    @Test("ウィンドウが key になる・外れる知らせで、前にあるかが毎回流れる")
+    func keyChangesAreRelayedEveryTime() throws {
+        let application = try makeApplication(Blank())
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        let window = try #require(application.window)
+        let surface = try #require(window.contentView as? SketchSurface)
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+        let focus = { (focused: Bool) in InputEvent.focusChanged(focused: focused).wireLine }
+        #expect(lines == [focus(true), focus(false), focus(false), focus(true)], "\(lines)")
     }
 
     /// **同じウィンドウの中で第一応答者が面から移っても離す** (#2443 の兄弟)。ウィンドウは key のままなので、

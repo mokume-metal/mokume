@@ -184,6 +184,44 @@ extension SketchPart {
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     public var keyCode: Key? { liveInput.lastKey }
+    /// ウィンドウが前にあるか (キーを受け取るウィンドウか)。Processing の `focused` に当たる。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     // ほかのアプリへ移ったら止める。戻ってきたら keyPressed() などで loop() を呼ぶ
+    ///     if !focused { noLoop() }
+    ///     background(20)
+    ///     circle(mouseX, mouseY, 40)
+    /// }
+    /// ```
+    ///
+    /// ⌘Tab などでウィンドウが前から退くと `false` になり、戻ると `true` になる。**変わるのは、知らせが届いたフレームの頭**
+    /// — 入力と同じ合流点を通るので、同じフレームの中では読むたびに同じ値を返す。退いたときは、ウィンドウで押していた
+    /// キーとボタンが離された扱いになり (``Sketch/keyReleased()``・``Sketch/mouseReleased()``)、その呼び出しの中から
+    /// 読んでも既に `false` である。
+    ///
+    /// **退いても、外から注入した押下は離さない** — 入力の線・MCP の `input` で送った `keyDown`・`mouseDown` は、注入した
+    /// 側が解放を送るまで押されたまま残る。だから `focused` が `false` の間も、``keyboard`` や ``isMousePressed`` が
+    /// 押されていると答えることがある (自動操作の最中に人がウィンドウを切り替えても、結果が変わらない)。
+    ///
+    /// ## ウィンドウを持つ所ごとの答え
+    ///
+    /// - **直に走らせたウィンドウ** (`mokume run`・束ねた `.app`): そのウィンドウが key か
+    /// - **`mokume watch` の下**: ウィンドウは道具が持つので、道具のウィンドウ (作品のウィンドウかプレビュー) が key か。
+    ///   道具が入力と同じ線で子へ運ぶ。子を起こし直した直後は、次に道具のウィンドウが key の出入りをするまで `true`
+    /// - **``SketchView``**: ビューを載せたホストのウィンドウが key か。ウィンドウに載っていない間は `true`
+    /// - **ウィンドウの無い実行** (`mokume render`・参照スケッチの `--render`): いつも `true`。`if !focused { noLoop() }`
+    ///   は書き出しを止めない
+    /// - **走っていないとき** (`init` の中など): `true` (警告は出さない)
+    ///
+    /// Processing は初めて前に出るまで `false` だが、mokume は `true` から始める。
+    ///
+    /// ## 外から送る
+    ///
+    /// 入力の線 (`.mokume/input`・MCP の `input`) で `{"type": "focusChanged", "focused": false}` を送ると、`focused` が
+    /// `false` になる。機材も人の操作も無しに確かめられる。送った知らせは押下を離さない (ウィンドウの押下を離すのは
+    /// ウィンドウ自身で、注入した押下は注入した側の解放で離れる)。
+    public var focused: Bool { liveInput.focused }
 
     /// 走っているランタイムの合流点。走っていなければ**空の状態**を返す。
     ///

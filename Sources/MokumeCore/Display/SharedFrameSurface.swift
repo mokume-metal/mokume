@@ -166,6 +166,14 @@ final class SharedFrameSurface {
     /// ``selectInputAttribute`` の辞書の鍵 — ダイアログに添える文言 (文字列)。
     static let selectInputPromptKey = "prompt"
 
+    /// スケッチがウィンドウの題名を変えるよう頼んでいるときの、題名を載せる属性の名前 (文字列・
+    /// [#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+    ///
+    /// ``cursorHiddenAttribute`` と同じ形で、**題名を変えるのは道具の作品のウィンドウである** (子はウィンドウを持たない)。
+    /// 頼みは絵と同じ面に載せて毎フレーム渡し、作品のウィンドウは**自分が映す世代の面**の頼みに従う。**載っていなければ
+    /// 頼んでいない** — 道具は自分が付けた元の題名に戻す。古いライブラリの子は載せない。
+    static let windowTitleAttribute = "mokume.windowTitle"
+
     /// 面の番号を置くファイルの名前。
     static let manifestName = "surface.json"
 
@@ -333,6 +341,8 @@ final class SharedFrameSurface {
         let cursorHidden: Bool
         /// 待っているファイルを選ばせる頼み (``selectInputAttribute``)。
         let selection: SelectionBroker.Request?
+        /// 題名を変える頼み (``windowTitleAttribute``)。頼んでいなければ `nil`。
+        let windowTitle: String?
         /// 焼いた書き込みの通し番号 (``writes``)。名乗るときの枚数になる。
         let number: Int
     }
@@ -644,11 +654,13 @@ final class SharedFrameSurface {
     ///     (``pointerLockAttribute``)。速さと同じく絵と一緒に載せる。
     ///   - cursorHidden: この絵を描いたときに、スケッチが矢印のカーソルを隠すよう頼んでいたか
     ///     (``cursorHiddenAttribute``)。捕まえの要求と同じく絵と一緒に載せる。
+    ///   - windowTitle: この絵を描いたときに、スケッチが頼んでいたウィンドウの題名 (``windowTitleAttribute``)。
+    ///     頼んでいなければ `nil`。
     @discardableResult
     func write(
         _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers,
         pointerLock: Bool = false, cursorHidden: Bool = false,
-        selection: SelectionBroker.Request? = nil
+        selection: SelectionBroker.Request? = nil, windowTitle: String? = nil
     ) throws(RenderFailure) -> Bool {
         try publishPending()
         writes += 1
@@ -667,7 +679,8 @@ final class SharedFrameSurface {
         pending.append(
             Burn(
                 slot: index, submission: submission, numbers: numbers, pointerLock: pointerLock,
-                cursorHidden: cursorHidden, selection: selection, number: writes))
+                cursorHidden: cursorHidden, selection: selection, windowTitle: windowTitle,
+                number: writes))
         nextSlot = (index + 1) % slots.count
         return true
     }
@@ -724,6 +737,7 @@ final class SharedFrameSurface {
         Self.publishPointerLock(burn.pointerLock, to: slot.surface)
         Self.publishCursorHidden(burn.cursorHidden, to: slot.surface)
         Self.publishSelection(burn.selection, to: slot.surface)
+        Self.publishWindowTitle(burn.windowTitle, to: slot.surface)
         Self.publishFrameShare(frameShare, to: slot.surface)
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
@@ -810,6 +824,23 @@ final class SharedFrameSurface {
     /// 引いた面が名乗っている矢印を隠す要求。載っていなければ `false`。
     static func cursorHiddenRequested(on surface: IOSurfaceRef) -> Bool {
         number(cursorHiddenAttribute, on: surface)?.intValue == 1
+    }
+
+    /// 題名を変える頼みを面へ載せる。**頼んでいなければ属性ごと消す** — 面は使い回されるので、消さなければ
+    /// 前に載せた頼みが残る (``publishPointerLock(_:to:)`` と同じ)。
+    static func publishWindowTitle(_ title: String?, to surface: IOSurfaceRef) {
+        guard let title else {
+            IOSurfaceRemoveValue(surface, windowTitleAttribute as CFString)
+            return
+        }
+        IOSurfaceSetValue(surface, windowTitleAttribute as CFString, title as CFString)
+    }
+
+    /// 引いた面が名乗っている題名を変える頼み。読み手の側の規則 (``publishWindowTitle(_:to:)`` と対)。
+    ///
+    /// - Returns: 載っていない面・文字列でない値は `nil` (頼んでいない)。
+    static func windowTitleRequest(on surface: IOSurfaceRef) -> String? {
+        IOSurfaceCopyValue(surface, windowTitleAttribute as CFString) as? String
     }
 
     /// 子が「別のプロセスの画面への受け渡しを断っていない」ことと、一覧に見せる題を載せる属性の名前

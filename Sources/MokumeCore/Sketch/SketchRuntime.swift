@@ -173,6 +173,9 @@ package final class SketchRuntime {
         /// (``settleOldestOutletFrame(_:)``・#2743)。**ランタイムで 1 度だけ** — 壊れた GPU は
         /// 打ち切りを続けうる。
         case droppedOutletFrame
+        /// ``SketchView`` の中で ``SketchPart/windowTitle(_:)`` が呼ばれた。題名はホストのアプリが決めるので何もしない
+        /// ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。**ランタイムで 1 度だけ** — 毎フレーム呼ぶ作品もある。
+        case windowTitleInSketchView
     }
 
     /// 1 度だけ言った注意の控え。**検査が読む。**
@@ -205,6 +208,20 @@ package final class SketchRuntime {
             "settings.frameRate is read only at launch, so changing it to \(current) while"
                 + " running has no effect; frames, time and deltaTime keep following"
                 + " \(declaredFrameRate) fps")
+    }
+
+    /// ウィンドウの題名を変える頼みを受ける (``SketchPart/windowTitle(_:)``・[#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+    ///
+    /// **``SketchView`` の中では頼みを持たず、1 度だけ知らせる** — ウィンドウも題名もホストのアプリのもので、ビューが
+    /// 書き換えると、ホストが付けた題名を黙って奪う。
+    func requestWindowTitle(_ title: String) {
+        guard !isEmbedded else {
+            warnings.warnOnce(
+                .windowTitleInSketchView,
+                "windowTitle(_:) does nothing in a SketchView: the window and its title belong to the host app")
+            return
+        }
+        windowTitleRequest = title
     }
 
     /// 組み立てで受け取る刻みを検める。**宣言 (``SketchSettings/frameRate``) も、差し替えた
@@ -451,6 +468,14 @@ package final class SketchRuntime {
     /// 道具のウィンドウへ渡す ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。ウィンドウの無い実行では
     /// 誰も読まないので、何も起きない。絵には触れない。
     var cursorHidingRequested = false
+    /// ウィンドウの題名を変える頼み (``SketchPart/windowTitle(_:)``)。**頼んでいなければ `nil`** で、ウィンドウは
+    /// 起動のときの題名 (``SketchSettings/title``) のまま。
+    ///
+    /// ``cursorHidingRequested`` と同じく**読むのはウィンドウである** — 直に走らせたウィンドウは ``SketchApplication`` が
+    /// 毎リフレッシュ当て、見張りの子は共有面の属性 (``SharedFrameSurface/windowTitleAttribute``) に載せて道具の作品の
+    /// ウィンドウへ渡す ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。ウィンドウの無い実行では誰も読まない。
+    /// ``isEmbedded`` の実行 (``SketchView``) では頼みを持たない (題名はホストのもの)。絵には触れない。
+    var windowTitleRequest: String?
     /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
     /// 視点 (シーンの記述) と違ってフレームごとには戻らない。まだ触っていなければ `nil`。
     var orbit: Orbit?

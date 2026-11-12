@@ -93,6 +93,14 @@ final class SketchSurface: NSView {
     /// ⌘ を押している間の keyUp を拾う監視 (``commandKeyUpMonitor(for:)``)。ウィンドウに載っている間だけ持つ。
     fileprivate var keyUpMonitor: Any?
 
+    /// 最後に流した「ウィンドウが前にあるか」(``InputEvent/focusChanged(focused:)``)。**合流点と同じ `true` から始める。**
+    ///
+    /// ウィンドウが key になった・外れた知らせでは、この値によらず流す — 道具の 2 つのウィンドウ (作品のウィンドウと
+    /// プレビュー) は同じ子へ流すので、片方が覚えた値で間引くと、ウィンドウを移った後の子の値が食い違う
+    /// ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。間引くのはウィンドウへ載せ外しするときだけ
+    /// (``followWindowFocus()``)。
+    fileprivate var announcedFocus = true
+
     /// - Parameter acceptsFileDrops: ファイルのドロップを受けるか。**自前のウィンドウと道具のウィンドウは受ける** (既定)。
     ///   **ホストのアプリへ埋め込む面 (``SketchView``) は受けない** — ウィンドウはホストのもので、ホスト側のドロップと
     ///   取り合わない。受けるのは macOS の自前のウィンドウだけである。
@@ -397,6 +405,7 @@ extension SketchSurface {
             heldButtons.remove(button)
         case .mouseMoved(let x, let y): lastPoint = (x, y)
         case .fileDropped(_, let x, let y): lastPoint = (x, y)
+        case .focusChanged(let focused): announcedFocus = focused
         case .mouseMovedBy, .scrolled, .pinched, .fileSelected: break
         }
     }
@@ -620,15 +629,39 @@ extension SketchSurface {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         stopObservingWindow()
+        followWindowFocus()
         guard let window else { return }
         observedWindow = window
         NotificationCenter.default.addObserver(
             self, selector: #selector(windowDidResignKey(_:)),
             name: NSWindow.didResignKeyNotification, object: window)
         NotificationCenter.default.addObserver(
+            self, selector: #selector(windowDidBecomeKey(_:)),
+            name: NSWindow.didBecomeKeyNotification, object: window)
+        NotificationCenter.default.addObserver(
             self, selector: #selector(windowWillClose(_:)),
             name: NSWindow.willCloseNotification, object: window)
         keyUpMonitor = commandKeyUpMonitor(for: window)
+    }
+
+    /// ウィンドウへ載せ外ししたときに、「ウィンドウが前にあるか」を合わせる ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+    ///
+    /// - **ウィンドウから外れたら `true`** — ``SketchView`` が載っていない間は、前から退いた扱いにしない
+    /// - **見えているウィンドウへ載ったら、そのウィンドウが key か** — ホストが前に出ていないウィンドウへ ``SketchView`` を
+    ///   足した、など。まだ見えていないウィンドウ (直に走らせるウィンドウ・道具のウィンドウは、面を載せてから出す) では
+    ///   合わせない。出すときに key になる知らせが来る
+    ///
+    /// 前に流した値と同じなら流さない。
+    private func followWindowFocus() {
+        let focus: Bool
+        if let window {
+            guard window.isVisible else { return }
+            focus = window.isKeyWindow
+        } else {
+            focus = true
+        }
+        guard focus != announcedFocus else { return }
+        deliver(.focusChanged(focused: focus))
     }
 
     private func stopObservingWindow() {
@@ -640,17 +673,30 @@ extension SketchSurface {
         NotificationCenter.default.removeObserver(
             self, name: NSWindow.didResignKeyNotification, object: observed)
         NotificationCenter.default.removeObserver(
+            self, name: NSWindow.didBecomeKeyNotification, object: observed)
+        NotificationCenter.default.removeObserver(
             self, name: NSWindow.willCloseNotification, object: observed)
         observedWindow = nil
     }
 
     /// ウィンドウが退いた (⌘Tab・他のウィンドウ)。**利用者が外したものとして放す** — 押すまで掛け直さない。
     ///
-    /// **押しているキーとボタンも離す** (``releaseHeld()``)。
+    /// 退いたこと (``InputEvent/focusChanged(focused:)``) を流してから、**押しているキーとボタンを離す** (``releaseHeld()``)。
+    /// 先に知らせるので、離した呼び出し (`keyReleased()` など) の中から読む ``SketchPart/focused`` は既に `false` である。
+    ///
+    /// **離すのは、この面が流した押下だけ** ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。合流点は退いた
+    /// 知らせでは何も離さないので、外から注入した押下は、注入した側の解放まで残る
+    /// ([#3709](https://github.com/mokume-metal/mokume/issues/3709) の決定)。
     @objc private func windowDidResignKey(_ notification: Notification) {
         pointerLock.releaseByUser()
         cursorHiding.stop()
+        deliver(.focusChanged(focused: false))
         releaseHeld()
+    }
+
+    /// ウィンドウが前に出た (key になった)。**前に流した値によらず流す** (``announcedFocus``)。
+    @objc private func windowDidBecomeKey(_ notification: Notification) {
+        deliver(.focusChanged(focused: true))
     }
 
     /// アプリが退いた。ウィンドウが key のまま他のアプリへ移る経路でも、押しているものを離す。

@@ -71,6 +71,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         /// 同じ面の頼みを読むので、両方が出すとパネルが 2 枚出る。作品のウィンドウは直に走らせたウィンドウと同じ見え方で、
         /// ダイアログもそこに出る。
         var showsSelectionDialogs = false
+        /// スケッチが題名を変えるよう頼んだら (``SketchPart/windowTitle(_:)``)、このウィンドウの題名を変えるか。
+        ///
+        /// **作品のウィンドウだけが変える** ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。作品のウィンドウは
+        /// 直に走らせたウィンドウと同じ見え方で、題名もそこに出る。プレビューの題名は道具のもの (警告の行を添える) で変えない。
+        var followsRequestedTitle = false
     }
 
     /// × を押された人に問う言葉。
@@ -310,6 +315,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// (``SharedFrameSurface/selectInputAttribute``・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
     /// 読み方は ``pointerLockRequested`` と同じで、**自分が映す世代の頼みに従う**。検査から読む。
     private(set) var selectionRequested: (pid: Int32?, request: SelectionBroker.Request)?
+    /// 出している世代のスケッチが頼んでいるウィンドウの題名。**頼んでいなければ `nil`**。**面の属性から読む**
+    /// (``SharedFrameSurface/windowTitleAttribute``・[#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+    /// 読み方は ``pointerLockRequested`` と同じで、**自分が映す世代の頼みに従う**。当てるのは ``Look/followsRequestedTitle``
+    /// のウィンドウだけ。検査から読む。
+    private(set) var windowTitleRequested: String?
     /// 出している世代のスケッチが載せた名乗りの中身。**`nil` なら断っている** (古いライブラリの子も)。**面の属性から
     /// 読む** (``SharedFrameSurface/frameShareAttribute``・[#3919](https://github.com/mokume-metal/mokume/issues/3919))。
     /// 読み方は ``pointerLockRequested`` と同じで、**自分が映す世代の値に従う**。検査から読む。
@@ -532,6 +542,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             self.view?.followPointerLock(requested: pointerLockRequested)
             self.view?.followCursorHiding(requested: cursorHiddenRequested)
             self.followSelectionRequest()
+            self.followWindowTitleRequest()
         }
         guard let source, let newest = source.lookup.newest() else {
             // 絵が無くても、写した絵の GPU の完了は知らせる (#3945)
@@ -572,6 +583,19 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         } catch {
             noteFailure(error)
         }
+    }
+
+    // MARK: - 題名
+
+    /// スケッチの題名を変える頼みを、このウィンドウの題名に当てる ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+    ///
+    /// **当てるのは ``Look/followsRequestedTitle`` のウィンドウ (作品のウィンドウ) だけ。** 頼みが無い (呼ばない世代・手放した
+    /// 世代) なら、台が開いたときの題名 (``Look/title``) に戻す — 保存で作り直したスケッチが `windowTitle(_:)` を呼ばなければ
+    /// 元の題名になる。同じ題名は当て直さない (毎リフレッシュ通る)。
+    private func followWindowTitleRequest() {
+        guard look.followsRequestedTitle, let window else { return }
+        let wanted = windowTitleRequested ?? look.title
+        if window.title != wanted { window.title = wanted }
     }
 
     // MARK: - ファイルを選ばせる
@@ -675,6 +699,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             selectionRequested = SharedFrameSurface.selectionRequest(on: surface).map {
                 (source?.pid, $0)
             }
+            windowTitleRequested = SharedFrameSurface.windowTitleRequest(on: surface)
             frameShare = SharedFrameSurface.frameShare(on: surface)
             onFrameShareRead?(frameShare)
         }
@@ -981,6 +1006,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         pointerLockRequested = false
         cursorHiddenRequested = false
         selectionRequested = nil
+        windowTitleRequested = nil
         // **番号を名乗る世代は子の番号で、名乗らない世代 (古いライブラリ) は面の番号で覚える**
         if let pid = source?.pid {
             relinquishedPIDs.insert(pid)

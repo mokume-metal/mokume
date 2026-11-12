@@ -45,6 +45,18 @@ public enum InputEvent: Equatable, Sendable {
     /// 同じときだけ**待ちを終え、違う番号の結果 (前の待ちの古い答え・待ちが終わった後の送り直し) は黙って捨てる。
     /// 載っていなければ今の待ちへ届く。番号があるので、道具は頼みが残っている間、落ちた結果を送り直せる。
     case fileSelected(path: String?, serial: Int? = nil)
+    /// ウィンドウが前に出た (`true`)・前から退いた (`false`) ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+    /// スケッチからは ``SketchPart/focused`` として読む。
+    ///
+    /// 届いたフレームから ``SketchPart/focused`` が変わる。**この出来事そのものは押下を離さない。** 退いたときに離すのは
+    /// ウィンドウが流した押下だけで、ウィンドウが `false` に続けて解放の出来事を流す
+    /// ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。外から注入した押下は、注入した側の解放まで残る —
+    /// `false` の間も押されたままでありうる。
+    ///
+    /// 自前のウィンドウと道具のウィンドウ (`mokume watch`) は、ウィンドウが key になった・外れたときにこれを送る。
+    /// 道具のウィンドウは 1 行にして子へ渡すので、子の ``SketchPart/focused`` も道具のウィンドウに従う。外から送る線
+    /// (`focusChanged`) は `focused` (真偽) が要り、無い・`null` の 1 件は読めない 1 件にする。
+    case focusChanged(focused: Bool)
     case keyDown(code: Key, characters: String, isRepeat: Bool)
     case keyUp(code: Key)
 }
@@ -80,8 +92,10 @@ extension String {
 /// `serial` (どの頼みへの答えか) は省ける。載せるなら正の整数 — 0 や負の番号は頼みの番号ではないので、
 /// 読めない 1 件にする (番号なしと読むと、狙った待ちではない待ちを終えうる)。
 /// `clickCount` は省略が自然に読める (単発の 1)。
-/// **`amount`・`clickCount`・`paths`・`serial` は、それぞれ読む種別 (`pinched`・`mouseDown`・
-/// `fileDropped` と `fileSelected`・`fileSelected`) でだけ読む** (``readKeys(forType:)``)。
+/// ウィンドウが前にあるか (`focusChanged` の `focused`) も省略に意味が無い — 前に出たのか退いたのかを
+/// 決めずに埋めると、どちらかを黙って選ぶことになるので、無い・`null` の 1 件は読めない 1 件にする。
+/// **`amount`・`clickCount`・`paths`・`serial`・`focused` は、それぞれ読む種別 (`pinched`・`mouseDown`・
+/// `fileDropped` と `fileSelected`・`fileSelected`・`focusChanged`) でだけ読む** (``readKeys(forType:)``)。
 ///
 /// 一方 `button` の 0 は主ボタン (左)、`dx` の 0 は動いていない (スクロールでも、相対の移動
 /// `mouseMovedBy` でも)、`isRepeat` の false は押しっぱなしでない — こちらは省略が自然に
@@ -109,9 +123,11 @@ struct RawInputEvent: Decodable {
     let clickCount: Int?
     let paths: [String]?
     let serial: Int?
+    let focused: Bool?
 
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case type, x, y, button, dx, dy, code, characters, isRepeat, amount, clickCount, paths, serial
+        case type, x, y, button, dx, dy, code, characters, isRepeat, amount, clickCount, paths, serial,
+            focused
     }
 
     /// 読む鍵 (宣言順)。スキーマ (`input-request.schema.json`) の出来事の `properties` と同じ集合で、
@@ -121,8 +137,9 @@ struct RawInputEvent: Decodable {
     /// 種別 `type` の出来事が読む鍵 (宣言順)。知らない鍵の名乗りが並べる。
     ///
     /// **`amount` は `pinched` でだけ、`clickCount` は `mouseDown` でだけ、`paths` は `fileDropped` と `fileSelected` で、
-    /// `serial` は `fileSelected` でだけ読む**
-    /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762)・[#3061](https://github.com/mokume-metal/mokume/issues/3061))。
+    /// `serial` は `fileSelected` でだけ、`focused` は `focusChanged` でだけ読む**
+    /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762)・[#3061](https://github.com/mokume-metal/mokume/issues/3061)・
+    /// [#3709](https://github.com/mokume-metal/mokume/issues/3709))。
     /// ほかの種別に付いていたら、足す前と同じく読まない鍵として名乗り、その 1 件は通す (値の型が違っても
     /// 解けない 1 件にしない — `mouseUp` の `"clickCount": 1.5` で解放が落ちると、ボタンが押されたまま残る)。
     /// 種別が欠けた・知らない出来事は、どの種別の鍵か決まらないので、すべての鍵を読む鍵として扱う (名乗りに出さない)。
@@ -134,6 +151,7 @@ struct RawInputEvent: Decodable {
             case CodingKeys.clickCount.stringValue: kind == .mouseDown
             case CodingKeys.paths.stringValue: kind == .fileDropped || kind == .fileSelected
             case CodingKeys.serial.stringValue: kind == .fileSelected
+            case CodingKeys.focused.stringValue: kind == .focusChanged
             default: true
             }
         }
@@ -161,6 +179,8 @@ struct RawInputEvent: Decodable {
             ? try container.decodeIfPresent([String].self, forKey: .paths) : nil
         serial =
             kind == .fileSelected ? try container.decodeWholeIfPresent(Int.self, forKey: .serial) : nil
+        focused =
+            kind == .focusChanged ? try container.decodeIfPresent(Bool.self, forKey: .focused) : nil
     }
 
     /// 線の番号をボタンにする。**番号を型へ絞る関所は、こことウィンドウ (`SketchSurface`) の 2 つだけ。**
@@ -215,6 +235,10 @@ struct RawInputEvent: Decodable {
             // 番号は省ける。載せるなら頼みの番号 (1 から数える) でなければならない
             if let serial, serial < 1 { return nil }
             return .fileSelected(path: paths.first, serial: serial)
+        case .focusChanged:
+            // 前に出たのか退いたのかを決めずに埋めない。無い・null は読めない 1 件
+            guard let focused else { return nil }
+            return .focusChanged(focused: focused)
         case .keyDown:
             guard let code else { return nil }
             return .keyDown(

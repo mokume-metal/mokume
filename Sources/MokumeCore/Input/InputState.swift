@@ -116,6 +116,15 @@ package final class InputState {
     public private(set) var lastKey: Key?
     /// 最後に入力された文字。
     public private(set) var characters: String = ""
+    /// ウィンドウが前にあるか (``SketchPart/focused``・[#3709](https://github.com/mokume-metal/mokume/issues/3709))。
+    ///
+    /// **`true` から始まり、``InputEvent/focusChanged(focused:)`` が届いたフレームから変わる。** ウィンドウの無い実行
+    /// (書き出し) には届かないので `true` のまま — `if !focused { noLoop() }` が書き出しを止めない。
+    ///
+    /// **`false` が届いても、押されているキーとボタンは離さない。** 退いたときに離すのはウィンドウが流した押下だけで、
+    /// ウィンドウ (`SketchSurface`) が `false` を流した直後に解放を流す。外から注入した押下は、`false` の間も押されたままで
+    /// ありうる ([#2443](https://github.com/mokume-metal/mokume/issues/2443) の約束)。
+    public private(set) var focused = true
 
     /// 入力の層が 1 度だけ言う注意の種類。
     enum Warning: Hashable {
@@ -331,6 +340,11 @@ package final class InputState {
             // 落とした所は当てた後なので、呼ばれた中から ``x``・``y`` で読める。`mouseMoved()` は呼ばない
             // ([#3061](https://github.com/mokume-metal/mokume/issues/3061))
             dispatch(.fileDropped(paths: paths))
+        case .focusChanged:
+            // 呼び出しは生まない。**押下も離さない** — 退いたときに離すのはウィンドウが流した押下だけで、
+            // それはウィンドウ (`SketchSurface.releaseHeld()`) が解放の出来事として流す。外から注入した押下は、
+            // 注入した側の解放で離れる (#2443 の約束・[#3709](https://github.com/mokume-metal/mokume/issues/3709) の決定)
+            break
         }
     }
 
@@ -498,6 +512,8 @@ package final class InputState {
             self.y = y
         case .fileSelected:
             break
+        case .focusChanged(let focused):
+            self.focused = focused
         case .mouseMovedBy(let dx, let dy):
             // **位置は動かさない** (#1144)。捕まえている間のウィンドウは位置を名乗らないので、
             // ここで足し込むと mouseX が捕まえた点から離れていく
@@ -559,7 +575,7 @@ package final class InputState {
             (scrollX + dx).isFinite && (scrollY + dy).isFinite
         case .pinched(let amount):
             amount.isFinite && (pinch + amount).isFinite && (pinchScale * (1 + Double(amount))).isFinite
-        case .keyDown, .keyUp, .fileSelected:
+        case .keyDown, .keyUp, .fileSelected, .focusChanged:
             true
         }
     }

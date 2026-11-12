@@ -40,6 +40,10 @@
       "serial": 1
     },
     {
+      "type": "focusChanged",
+      "focused": false
+    },
+    {
       "type": "keyDown",
       "code": 49,
       "characters": " ",

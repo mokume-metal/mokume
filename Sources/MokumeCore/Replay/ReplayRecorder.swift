@@ -439,7 +439,7 @@ extension InputEvent {
             !amount.isFinite
         case .fileDropped(_, let x, let y):
             !x.isFinite || !y.isFinite
-        case .fileSelected, .keyDown, .keyUp:
+        case .fileSelected, .focusChanged, .keyDown, .keyUp:
             false
         }
     }
