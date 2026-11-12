@@ -1249,8 +1249,9 @@ struct WatchSessionModelTests {
             for _ in 0..<2 { await beat() }
             let launched = Set(launchesBefore..<gens.count)
             func label(_ index: Int) -> String { "G\(index)=\(launchStamps[index] ?? "-")" }
-            for index in launched.sorted() {
-                // 見張りの役 (作品のウィンドウが採らない試聴の子か) と、規則の役が一致する
+            // 見張りの役 (作品のウィンドウが採らない試聴の子か) と、規則の役が一致する。**見るのは生きている子だけ** — 出た後の
+            // 通常の差し替えは、止めた試聴の子の覚えを捨てる (番号は使い回されるので、死んだ子の答えは約束の外)
+            for index in launched.sorted() where isAlive(index) {
                 let sessionSaysAudition = session.isAuditionGeneration(pid: pid(index))
                 if sessionSaysAudition != auditionGens.contains(index) {
                     return Violation(
