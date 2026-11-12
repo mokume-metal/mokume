@@ -39,6 +39,10 @@
               "type": "string",
               "description": "The type the declaration belongs to (Sketch, Canvas, SoundFile). Empty for a type or a top-level declaration. The first path component only: a member of a nested type names the outermost type."
             },
+            "ownerPath": {
+              "type": "string",
+              "description": "The whole path of the type the declaration belongs to (PixelSurface.ColorTable for a member of the nested type ColorTable). The same as owner for a member of an outermost type; empty for a type or a top-level declaration. Optional: a file built before it was added has none, and a reader then falls back to owner. Adding it does not change schemaVersion."
+            },
             "declaration": {
               "type": "string",
               "description": "The declaration as the index prints it, attributes included."

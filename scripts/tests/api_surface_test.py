@@ -47,7 +47,7 @@ def symbol(
         "identifier": {"precise": precise or f"s:{owner or ''}{name}"},
         "accessLevel": "public",
         "names": {"title": name},
-        "pathComponents": ([owner] if owner else []) + [name],
+        "pathComponents": (owner.split(".") if owner else []) + [name],
         "declarationFragments": fragments,
     }
     if parameters:
@@ -519,6 +519,24 @@ class ApiSurfaceTests(unittest.TestCase):
         entry = data["symbols"]["Sketch"][0]
         self.assertEqual(entry["owner"], "")
         self.assertEqual(entry["doc"], "利用者が書く単位。\n\n詳しい説明。")
+
+    def test_詳細の持ち主の経路全体は_ownerPath_に入り_owner_は最外の型のまま(self):
+        # #3674: 入れ子の型のメンバの owner は最外の型で、ownerPath が経路全体を持つ
+        symbols = [
+            symbol("PixelSurface", kind="swift.struct"),
+            symbol("init(width:)", owner="PixelSurface", precise="a"),
+            symbol("init(converting:)", owner="PixelSurface.ColorTable", precise="b"),
+            symbol("ColorTable", owner="PixelSurface", kind="swift.struct", precise="c"),
+        ]
+        data = api.details(symbols, "v1.2.3")
+        inits = {e["declaration"]: e for e in data["symbols"]["init"]}
+        outer = next(e for d, e in inits.items() if "width" in d)
+        nested = next(e for d, e in inits.items() if "converting" in d)
+        self.assertEqual((outer["owner"], outer["ownerPath"]), ("PixelSurface", "PixelSurface"))
+        self.assertEqual((nested["owner"], nested["ownerPath"]), ("PixelSurface", "PixelSurface.ColorTable"))
+        # 型そのものは空。入れ子の型自身の持ち主は最外の型
+        self.assertEqual(data["symbols"]["PixelSurface"][0]["ownerPath"], "")
+        self.assertEqual(data["symbols"]["ColorTable"][0]["ownerPath"], "PixelSurface")
 
     def test_詳細の件数は一覧の三つの出口の件数と一致する(self):
         # 出口は top (型)・by_owner (一覧に型がある持ち主のメンバー)・その他 (型が一覧に無い持ち主)

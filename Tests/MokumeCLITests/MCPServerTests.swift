@@ -2438,6 +2438,60 @@ struct MCPServerTests {
         #expect(wrong.text.contains("SketchPart"), "\(wrong.text)")
     }
 
+    /// 入れ子の型のメンバの詳細。`owner` は最外の型のまま、`ownerPath` が経路全体を持つ (#3674)。
+    private static let nestedDetailsAsset = """
+        {"schemaVersion":1,"version":"v0.2.0","symbols":{
+        "PixelSurface":[{"owner":"","ownerPath":"","declaration":"struct PixelSurface","doc":"画素の面。"}],
+        "init":[
+        {"owner":"PixelSurface","ownerPath":"PixelSurface","declaration":"init(width: Int)","doc":"面を作る。"},
+        {"owner":"PixelSurface","ownerPath":"PixelSurface.ColorTable","declaration":"init(converting surface: PixelSurface)","doc":"色の表を作る。"}]}}
+        """
+
+    /// `ownerPath` を持たない、足す前の資産。入れ子の型のメンバも最外の型の持ち主で載る。
+    private static let legacyNestedDetailsAsset = """
+        {"schemaVersion":1,"version":"v0.2.0","symbols":{
+        "PixelSurface":[{"owner":"","declaration":"struct PixelSurface","doc":"画素の面。"}],
+        "init":[
+        {"owner":"PixelSurface","declaration":"init(width: Int)","doc":"面を作る。"},
+        {"owner":"PixelSurface","declaration":"init(converting surface: PixelSurface)","doc":"色の表を作る。"}]}}
+        """
+
+    @Test("入れ子の型の口は経路全体で引け、最外の型の口に混ざらない")
+    func narrowsToANestedOwnerByItsWholePath() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        try putDetails(Self.nestedDetailsAsset, at: "mokume-api-details-v0.2.0.json", in: directory)
+        let tools = makeTools(directory: directory, fetches: Fetches())
+
+        let nested = reference(tools, "PixelSurface.ColorTable.init")
+        #expect(!nested.isError, "\(nested.text)")
+        #expect(nested.text.contains("色の表を作る。"), "\(nested.text)")
+        #expect(!nested.text.contains("面を作る。"), "最外の型の口が混ざる: \(nested.text)")
+
+        let outer = reference(tools, "PixelSurface.init")
+        #expect(!outer.isError, "\(outer.text)")
+        #expect(outer.text.contains("面を作る。"), "\(outer.text)")
+        #expect(!outer.text.contains("色の表を作る。"), "入れ子の型の口が混ざる: \(outer.text)")
+
+        // 経路が違う型 (持ち主の無い名前) は断る
+        let wrong = reference(tools, "PixelSurface.Other.init")
+        #expect(wrong.isError, "\(wrong.text)")
+    }
+
+    @Test("ownerPath の無い古い資産は、今までどおり最外の型で引ける")
+    func keepsTheOutermostOwnerForAssetsWithoutAnOwnerPath() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        try putDetails(Self.legacyNestedDetailsAsset, at: "mokume-api-details-v0.2.0.json", in: directory)
+        let tools = makeTools(directory: directory, fetches: Fetches())
+
+        let outer = reference(tools, "PixelSurface.init")
+        #expect(!outer.isError, "\(outer.text)")
+        #expect(outer.text.contains("面を作る。") && outer.text.contains("色の表を作る。"), "\(outer.text)")
+        // 経路全体では引けない (ownerPath が無いので、持ち主は最外の型だけ)
+        #expect(reference(tools, "PixelSurface.ColorTable.init").isError)
+    }
+
     /// 例 3: 無い名前・頼み方の誤りは `isError`。受けて黙って捨てない (#2319 と同じ扱い)。
     @Test("無い名前は索引で綴りを確かめるよう案内し、api 以外の文書や型の違う symbol は黙って捨てずに断る")
     func refusesWhatItCannotAnswer() throws {
