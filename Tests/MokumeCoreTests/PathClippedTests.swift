@@ -249,10 +249,15 @@ nonisolated struct PathClippedValueTests {
 
     @Test("相手の数でない座標を持つ部分道は落ちる (残りの部分道だけで切る)")
     func nonFiniteRegionSubpathsAreDropped() {
-        let broken = Path.Subpath(points: [[300, 0], [.nan, 0], [300, 50]], isClosed: true, isCurveStep: [false, false, false])
+        // 線 (y = 100) をまたぐ三角形の 1 点が数でない
+        let broken = Path.Subpath(
+            points: [[300, 50], [.nan, 150], [350, 150]], isClosed: true, isCurveStep: [false, false, false])
         let withBroken = Path(subpaths: a.subpaths + [broken])
         let line = segment([0, 100], [400, 100])
         #expect(line.clipped(to: withBroken) == line.clipped(to: a))
+        // `contains` は数でない点の部分道も有限の辺だけで数えるので、ここでは内側と答える (説明文で名乗るずれ)
+        #expect(withBroken.contains([310, 100]))
+        #expect(line.clipped(to: withBroken).subpaths.allSatisfy { $0.points.allSatisfy { $0.x < 200 } })
     }
 
     @Test("別の部分道の片は、端点が同じ所にあっても繋がない")
