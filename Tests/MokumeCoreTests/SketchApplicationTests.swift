@@ -244,9 +244,9 @@ struct SketchApplicationTests {
     }
 
     /// **ウィンドウが key でなくなったら、押していたキーを離した扱いにする** (#2443)。退いている間に
-    /// 離したキーはウィンドウへ届かないので、流さないと押されたまま残る。離した後に、退いたこと
-    /// (`focusChanged`・[#3709](https://github.com/mokume-metal/mokume/issues/3709)) を流す。
-    @Test("ウィンドウが退く知らせで、押していたキーの解放が流れ、続けて退いたことが流れる")
+    /// 離したキーはウィンドウへ届かないので、流さないと押されたまま残る。退いたこと (`focusChanged`・
+    /// [#3709](https://github.com/mokume-metal/mokume/issues/3709)) を先に流し、離した呼び出しの中から `false` で読めるようにする。
+    @Test("ウィンドウが退く知らせで、退いたことが流れ、続けて押していたキーの解放が流れる")
     func resigningKeyReleasesHeldKeys() throws {
         let application = try makeApplication(Blank())
         application.didFinishLaunching()
@@ -264,8 +264,8 @@ struct SketchApplicationTests {
             lines == [
                 InputEvent.keyDown(code: .arrowRight, characters: "\u{F703}", isRepeat: false)
                     .wireLine,
-                InputEvent.keyUp(code: .arrowRight).wireLine,
                 InputEvent.focusChanged(focused: false).wireLine,
+                InputEvent.keyUp(code: .arrowRight).wireLine,
             ])
     }
 

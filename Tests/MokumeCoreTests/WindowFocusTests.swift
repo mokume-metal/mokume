@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Foundation
 import IOSurface
+import Metal
 import MokumeTestSupport
 import Testing
 
@@ -67,62 +69,39 @@ struct FocusChangedInputTests {
         #expect(state.focused)
     }
 
-    @Test("退いたら、押しているキーとボタンを離し、keyReleased・mouseReleased を配る")
-    func leavingReleasesWhatIsHeld() {
+    /// **退いた知らせそのものは押下を離さない** ([#3709](https://github.com/mokume-metal/mokume/issues/3709) の決定)。
+    /// 合流点に積まれた押下は、ウィンドウのものも注入したものも同じ形なので、ここで離すと注入した押下まで離す
+    /// (#2443 の約束を破る)。ウィンドウの押下を離すのはウィンドウ (`SketchSurface`・下の `FocusLossSurfaceTests`)。
+    @Test("注入した押下は、退いた知らせが届いても残り、呼び出しも出ない。注入した解放で離れる")
+    func injectedPressesSurviveLeaving() {
         let state = InputState()
         _ = run(
             state,
             [
-                .keyDown(code: .s, characters: "s", isRepeat: false),
-                .keyDown(code: .a, characters: "a", isRepeat: false),
-                .keyDown(code: .shift, characters: "", isRepeat: false),
-                .mouseDown(x: 4, y: 5, button: .right),
+                .keyDown(code: .arrowRight, characters: "\u{F703}", isRepeat: false),
+                .mouseDown(x: 4, y: 5, button: .left),
             ])
-        var seen: [InputCallback] = []
-        var focusedWhenReleased: [Bool] = []
-        state.enqueue(.focusChanged(focused: false))
-        state.beginFrame { callback in
-            seen.append(callback)
-            focusedWhenReleased.append(state.focused)
-        }
-        // キーは番号順 (a = 0, s = 1)。修飾キーは押下の状態だけを戻す。ボタンは押したまま離すのでクリックにもなる
-        #expect(seen == [.keyReleased, .keyReleased, .mouseReleased, .mouseClicked], "\(seen)")
-        #expect(focusedWhenReleased.allSatisfy { !$0 }, "離した呼び出しの中で、まだ前にある扱いだった")
-        #expect(state.pressedKeys.isEmpty)
-        #expect(!state.isMouseDown)
-        #expect(state.x == 4 && state.y == 5, "離した扱いで位置が動いた")
+        let seen = run(state, [.focusChanged(focused: false)])
+        #expect(seen.isEmpty, "退いた知らせで呼び出しを出した: \(seen)")
+        #expect(!state.focused)
+        #expect(Keyboard(state: state).isPressed(.arrowRight), "注入したキーを離した")
+        #expect(state.isMouseDown, "注入したボタンを離した")
+
+        // 注入した側の解放で離れる (退いている間でも)
+        let released = run(state, [.keyUp(code: .arrowRight), .mouseUp(x: 4, y: 5, button: .left)])
+        #expect(released == [.keyReleased, .mouseReleased, .mouseClicked], "\(released)")
+        #expect(state.pressedKeys.isEmpty && !state.isMouseDown)
+        #expect(!state.focused, "解放で前に戻った扱いになった")
     }
 
-    @Test("離すのは当てる時点で押されているものだけ。退いた後の押下は残り、前に出ても離さない")
-    func releasesAreDecidedWhenApplied() {
-        let state = InputState()
-        // 同じフレームで、押す → 退く → 押す
-        let seen = run(
-            state,
-            [
-                .keyDown(code: .a, characters: "a", isRepeat: false),
-                .focusChanged(focused: false),
-                .keyDown(code: .s, characters: "s", isRepeat: false),
-            ])
-        #expect(
-            seen == [.keyPressed, .keyTyped, .keyReleased, .keyPressed, .keyTyped], "\(seen)")
-        #expect(state.pressedKeys == [.s])
-        // 前に出ても何も離さない
-        #expect(run(state, [.focusChanged(focused: true)]).isEmpty)
-        #expect(state.pressedKeys == [.s])
-        // 何も押していないときに退いても、何も配らない
-        _ = run(state, [.keyUp(code: .s)])
-        #expect(run(state, [.focusChanged(focused: false)]).isEmpty)
-    }
-
-    @Test("溜めきれずに先に当てる 1 件が退いた知らせでも、押しているキーを離す")
-    func overflowStillReleases() {
+    @Test("溜めきれずに先に当てる 1 件が退いた知らせでも、状態に入り、押下は離さない")
+    func overflowAppliesTheFocusOnly() {
         let state = InputState()
         _ = run(state, [.keyDown(code: .a, characters: "a", isRepeat: false)])
         state.enqueue(.focusChanged(focused: false))
         for _ in 0..<InputState.queueLimit { state.enqueue(.scrolled(dx: 0, dy: 1)) }
         #expect(!state.focused, "溢れて当てた知らせが状態に入っていない")
-        #expect(state.pressedKeys.isEmpty, "溢れて当てた知らせが押下を離していない")
+        #expect(state.pressedKeys == [.a], "溢れて当てた知らせが押下を離した")
     }
 
     @Test("区画から送ると accepted。focused の無い 1 件は ignored")
@@ -222,7 +201,7 @@ struct WindowFocusSketchTests {
             to: facet.appendingPathComponent("request.json"))
     }
 
-    @Test("注入した focusChanged で focused が変わり、false で押しているキーとボタンが離れる")
+    @Test("注入した focusChanged で focused が変わる。注入した押下は退いても残り、注入した解放で離れる")
     func injectedFocusReachesTheSketch() throws {
         let facet = try TestScratch.directory("mokume-focus-sketch")
         defer { try? FileManager.default.removeItem(at: facet) }
@@ -240,11 +219,17 @@ struct WindowFocusSketchTests {
         try send(#"{"type":"focusChanged","focused":false}"#, id: "f2", to: facet)
         try runtime.advance()
         #expect(sketch.seen == [true, true, false], "\(sketch.seen)")
+        #expect(sketch.focusedWhenKeyReleased.isEmpty, "注入したキーを退いた知らせで離した")
+        #expect(sketch.mouseReleases == 0, "注入したボタンを退いた知らせで離した")
+        #expect(runtime.input.pressedKeys == [.a] && runtime.input.isMouseDown)
+
+        try send(#"{"type":"keyUp","code":0},{"type":"mouseUp","x":2,"y":3}"#, id: "f3", to: facet)
+        try runtime.advance()
         #expect(sketch.focusedWhenKeyReleased == [false])
         #expect(sketch.mouseReleases == 1)
         #expect(runtime.input.pressedKeys.isEmpty && !runtime.input.isMouseDown)
 
-        try send(#"{"type":"focusChanged","focused":true}"#, id: "f3", to: facet)
+        try send(#"{"type":"focusChanged","focused":true}"#, id: "f4", to: facet)
         try runtime.advance()
         #expect(sketch.seen.last == true)
     }
@@ -316,5 +301,63 @@ struct WindowFocusSketchTests {
         #expect(titled.frame > untitled.frame)
         let titledSurface = try #require(IOSurfaceLookup(titled.id))
         #expect(SharedFrameSurface.windowTitleRequest(on: titledSurface) == "clicked 3")
+    }
+}
+
+/// **ウィンドウが退いたときに離すのは、ウィンドウが流した押下だけ** ([#2443](https://github.com/mokume-metal/mokume/issues/2443)・
+/// [#3709](https://github.com/mokume-metal/mokume/issues/3709) の決定)。面をウィンドウへ載せるが前には出さず、退いた知らせを
+/// 送って、ウィンドウの押下と注入した押下が混ざった合流点を見る。面を作るのに Metal の装置が要る。
+@Suite(
+    "ウィンドウが退いたときの押下",
+    .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
+@MainActor
+struct FocusLossSurfaceTests {
+    @Test("退くと、ウィンドウの押下だけが離れ、注入した押下は残る。離した呼び出しの中から読む focused は false")
+    func onlyWindowPressesAreReleased() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let input = InputState()
+        let surface = SketchSurface(
+            frame: NSRect(x: 0, y: 0, width: 64, height: 64), device: device, input: input,
+            canvasSize: (64, 64))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 64, height: 64), styleMask: [.titled],
+            backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.contentView = surface
+        defer { window.contentView = nil }
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+
+        // ウィンドウの押下 (面が流す) と、注入した押下 (合流点へ直に積む)
+        surface.deliver(.keyDown(code: .a, characters: "a", isRepeat: false))
+        surface.deliver(.mouseDown(x: 5, y: 6, button: .left))
+        input.enqueue(.keyDown(code: .space, characters: " ", isRepeat: false))
+        input.enqueue(.mouseDown(x: 5, y: 6, button: .right))
+        input.beginFrame()
+        input.endFrame()
+        lines.removeAll()
+
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        // 運び先 (道具のウィンドウなら子) へも、退いた知らせの後にウィンドウの分の解放だけが流れる
+        #expect(
+            lines == [
+                InputEvent.focusChanged(focused: false).wireLine,
+                InputEvent.keyUp(code: .a).wireLine,
+                InputEvent.mouseUp(x: 5, y: 6, button: .left).wireLine,
+            ], "\(lines)")
+
+        var calls: [InputCallback] = []
+        var focusedInCalls: [Bool] = []
+        input.beginFrame { callback in
+            calls.append(callback)
+            focusedInCalls.append(input.focused)
+        }
+        #expect(calls == [.keyReleased, .mouseReleased, .mouseClicked], "\(calls)")
+        #expect(focusedInCalls.allSatisfy { !$0 }, "離した呼び出しの中で、まだ前にある扱いだった")
+        let keyboard = Keyboard(state: input)
+        #expect(!keyboard.isPressed(.a), "ウィンドウのキーが残った")
+        #expect(keyboard.isPressed(.space), "注入したキーを離した")
+        #expect(input.pressedButtons == [.right], "離したボタンが違う: \(input.pressedButtons)")
+        #expect(!input.focused)
     }
 }

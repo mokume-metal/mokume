@@ -681,14 +681,17 @@ extension SketchSurface {
 
     /// ウィンドウが退いた (⌘Tab・他のウィンドウ)。**利用者が外したものとして放す** — 押すまで掛け直さない。
     ///
-    /// **押しているキーとボタンも離す** (``releaseHeld()``)。離した後に、退いたこと (``InputEvent/focusChanged(focused:)``)
-    /// を流す — 合流点は退いた知らせでも押下を離すが、面が流した押下は先に面が離しておく (同じ並びで、`releasedOnLeave`
-    /// の印も付く)。
+    /// 退いたこと (``InputEvent/focusChanged(focused:)``) を流してから、**押しているキーとボタンを離す** (``releaseHeld()``)。
+    /// 先に知らせるので、離した呼び出し (`keyReleased()` など) の中から読む ``SketchPart/focused`` は既に `false` である。
+    ///
+    /// **離すのは、この面が流した押下だけ** ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。合流点は退いた
+    /// 知らせでは何も離さないので、外から注入した押下は、注入した側の解放まで残る
+    /// ([#3709](https://github.com/mokume-metal/mokume/issues/3709) の決定)。
     @objc private func windowDidResignKey(_ notification: Notification) {
         pointerLock.releaseByUser()
         cursorHiding.stop()
-        releaseHeld()
         deliver(.focusChanged(focused: false))
+        releaseHeld()
     }
 
     /// ウィンドウが前に出た (key になった)。**前に流した値によらず流す** (``announcedFocus``)。
