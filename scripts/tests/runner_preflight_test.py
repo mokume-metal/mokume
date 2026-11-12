@@ -314,7 +314,7 @@ class RunnerPreflightTest(unittest.TestCase):
         return lines[0].removeprefix(f"{key}=") if lines else None
 
     def test_置き場の外の負荷はプロセス名を_notice_に書き_pid_は数えの材料にしない(self):
-        # render.yml が job の出力へ上げ、scripts/report-runner-notice.sh が run をまたいで数える (#3633)。
+        # render.yml が job の出力へ上げ、scripts/count-runner-notice.sh が run をまたいで数える (#3633)。
         # 鍵は名前。annotation の末尾の 〔注意の名前: …〕 が前の run から読み戻す材料で、pid を含まない
         r = self.run_preflight(FAKE_PS=self.MEDIA_ANALYSIS, FAKE_CWDS="1904=/")
         self.assertEqual(r.returncode, 0, r.stdout)

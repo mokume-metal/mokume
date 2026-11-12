@@ -208,7 +208,7 @@ if processes=$(ps -U "$job_user" -o pid=,ppid=,%cpu=,etime=,comm= 2>/dev/null); 
     if [ "$others_count" -gt 5 ]; then others_more=" ほか $((others_count - 5)) 本"; fi
     notice="orphan-load: job の置き場の外のプロセスが CPU を使い続けている (前の job の残りではないので赤にしない。検査は遅くなりうる): ${others_list}${others_more}"
     # 名前の列は run をまたいだ数えの材料 (#3633)。annotation の末尾の 〔注意の名前: …〕 を
-    # scripts/report-runner-notice.sh が前の run から読み戻す。`|` 区切りで、名前に空白があってもよい
+    # scripts/count-runner-notice.sh が前の run から読み戻す。`|` 区切りで、名前に空白があってもよい
     notice_names=$(printf '%s' "$other_names" | sort -u | paste -sd '|' -)
     echo "::warning title=専用機の環境::${notice} 〔注意の名前: ${notice_names}〕"
     if [ -n "${GITHUB_OUTPUT:-}" ]; then

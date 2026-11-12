@@ -267,18 +267,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: count
+        # 名前は環境変数で渡す (引数だと `-` で始まるプロセス名を選択肢と読む・#3633 の反証)
         env:
           GH_TOKEN: ${{ github.token }}
           NOTICE: ${{ needs.render.outputs.preflight-notice }}
-        run: bash scripts/count-runner-notice.sh "$NOTICE"
+        run: bash scripts/count-runner-notice.sh
 
-  # 同じプロセス名の注意が N 回続いた回に、注意の Issue へ 1 度だけ追記する (#3633)。
-  # 赤の回の Issue (render-environment-report) とは題も本文も別
+  # 同じプロセス名の注意が N 回以上続いた回に、注意の Issue へ続き 1 つにつき 1 度だけ追記する (#3633)。
+  # 「既に書いたか」は注意の Issue の印から読む (scripts/report-runner-notice.sh の冒頭)。
+  # 赤の回の Issue (render-environment-report) とは題も本文も別。
+  # **concurrency で直列にする**: runner 2 本の並行で、同じ続きを数えた 2 本が互いの印を見落とさない
+  # ように。待たせるだけで、走っている job は切らない。render の job と workflow 全体には掛けない。
+  # 待ちに 2 本目が来ると先の待ちは GitHub に打ち切られるが、後の 1 本も同じ続きを数えていれば
+  # (印が無いので) 書く
   render-notice-report:
     needs: [render, render-notice-count]
     if: ${{ !cancelled() && needs.render-notice-count.outputs.due != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: render-notice-report
+      cancel-in-progress: false
     permissions:
       contents: read # checkout
       issues: write # 注意の起票・追記 (#3633)
@@ -289,7 +298,7 @@ jobs:
           DUE: ${{ needs.render-notice-count.outputs.due }}
           DETAIL: ${{ needs.render.outputs.preflight-notice-detail }}
           UNREADABLE: ${{ needs.render-notice-count.outputs.unreadable }}
-        run: bash scripts/report-runner-notice.sh report "$DUE" "$DETAIL" "$UNREADABLE"
+        run: bash scripts/report-runner-notice.sh
 
   render-pr:
     needs: render-turn

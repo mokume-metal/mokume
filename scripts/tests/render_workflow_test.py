@@ -383,7 +383,15 @@ class RenderWorkflowTest(unittest.TestCase):
         report = self.jobs["render-notice-report"]
         self.assertEqual(needs(report), {"render", "render-notice-count"})
         self.assertIn("needs.render-notice-count.outputs.due != ''", condition(report))
-        self.assertIn("scripts/report-runner-notice.sh report", report)
+        # 名前は環境変数で渡す。引数だと `-zsh` のような名前を選択肢と読み違えて 64 で止まる (#3633 の反証)
+        self.assertRegex(count, r"run: bash scripts/count-runner-notice\.sh\s*$")
+        self.assertRegex(count, r"NOTICE: \$\{\{ needs\.render\.outputs\.preflight-notice \}\}")
+        self.assertRegex(report, r"run: bash scripts/report-runner-notice\.sh\s*$")
+        self.assertRegex(report, r"DUE: \$\{\{ needs\.render-notice-count\.outputs\.due \}\}")
+        # 並行する 2 本の書き込みが互いの印を見落とさないよう直列に。走っている job は切らない
+        self.assertRegex(report, r"concurrency:\n\s+group: render-notice-report\n\s+cancel-in-progress: false")
+        self.assertNotIn("concurrency:", self.jobs["render"])
+        self.assertNotIn("concurrency:", count)
         # 書き込みは記録を読む権限を持たない・数えは書かない
         self.assertNotRegex(report, r"(actions|checks):\s*read")
         self.assertNotRegex(count, r"issues:\s*write")
@@ -391,6 +399,20 @@ class RenderWorkflowTest(unittest.TestCase):
         red = condition(self.jobs["render-environment-report"])
         self.assertIn("needs.render.result == 'failure'", red)
         self.assertNotIn("preflight-notice", red)
+
+    def test_注意の数えが前検査の_step_を見分ける名前は_render_の_step_名に合う(self):
+        # count-runner-notice.sh は前の run の jobs の API の step 名で「前検査が走ったか」を見る (#3633 の反証 5)。
+        # name: の無い step の名前は GitHub が `Run <run の 1 行目>` と付ける。食い違うと、どの run も
+        # 「前検査が走っていない」と飛ばされ、続きを数えられない
+        script = (REPO / "scripts" / "count-runner-notice.sh").read_text(encoding="utf-8")
+        m = re.search(r'^readonly PREFLIGHT_STEP="([^"]+)"', script, re.M)
+        self.assertIsNotNone(m, "count-runner-notice.sh の PREFLIGHT_STEP")
+        preflight = [s for s in steps(self.jobs["render"]) if "id: preflight" in s]
+        self.assertEqual(len(preflight), 1, steps(self.jobs["render"]))
+        named = re.search(r"^\s+(?:- )?name:\s*(.+?)\s*$", preflight[0], re.M)
+        run = re.search(r"^\s+(?:- )?run:\s*(.+?)\s*$", preflight[0], re.M)
+        display = named.group(1) if named else f"Run {run.group(1)}"
+        self.assertIn(m.group(1), display)
 
     def test_scheduled_report_は専用機のジョブが落ちたか切れたときだけ走る(self):
         body = self.jobs["scheduled-report"]
