@@ -52,8 +52,10 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     ///
     /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
     package init?(frameRate: Int, frameCount: Int, scale: Int = 1, destination: String) {
+        // `.png` で終わらない連番も組まない (#3961)。道具を通らずに置いた頼みでも、PNG の中身を別の名前で書かない
         guard frameRate > 0, frameCount > 0, Self.scales.contains(scale),
-            Self.accepts(destination: destination, frameRate: frameRate)
+            Self.accepts(destination: destination, frameRate: frameRate),
+            !Self.isSeriesNotPNG(destination: destination)
         else {
             return nil
         }
@@ -86,6 +88,36 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
     package static func isDistribution(destination: String) -> Bool {
         FrameRecorder.distribution(of: destination) != nil
+    }
+
+    /// 行き先が `.png` で終わらない連番か ([#3961])。連番は PNG の絵を書くので、**頼みとして組まない**
+    /// (``init(frameRate:frameCount:scale:destination:)``)。道具の `--out` も、子が環境変数から読む頼みも、ここを通る。
+    /// `.mov` で終わる綴りは番号の場所を持っても動画である。
+    ///
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
+    package static func isSeriesNotPNG(destination: String) -> Bool {
+        !FrameRecorder.isMovie(destination) && FrameSequence(pattern: destination) != nil
+            && !FrameRecorder.isPNG(destination)
+    }
+
+    /// `.png` で終わらない連番を断る理由 (1 文・[#3961])。断らない行き先なら `nil`。**受ける名前を名指し**、`.gif`・
+    /// `.mp4` の連番には、番号の場所を外した動画の名前 (`movie.gif`・`movie.mp4`) も添える。道具の `--out` の文面と、
+    /// 子が環境変数の頼みを断る文面 (``RenderFailure/unreadableRenderRequest(value:)``) が同じこれを使う。
+    ///
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
+    package static func seriesNotPNGReason(destination: String) -> String? {
+        guard isSeriesNotPNG(destination: destination) else { return nil }
+        var text =
+            "a numbered series is written as PNG pictures, and a name that does not end in .png would hold PNGs "
+            + "under another name. Name it .png, as in \(FrameRecorder.pngName(for: destination))"
+        let folder = destination.lastIndex(of: "/").map { String(destination[...$0]) } ?? ""
+        let lowered = destination.lowercased()
+        if lowered.hasSuffix(".gif") {
+            text += ". For an animated GIF, give a name without a run of #, as in \(folder)movie.gif"
+        } else if lowered.hasSuffix(".mp4") {
+            text += ". For a movie, give a name without a run of #, as in \(folder)movie.mp4"
+        }
+        return text
     }
 
     /// 行き先が GIF か。道具が、GIF の fps の規則を断る文面を選ぶのに使う ([#2440])。
@@ -137,9 +169,19 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
 
     /// 環境変数の値から読む。**読めなければ `nil`。**
     package init?(environmentValue: String) {
+        guard let fields = Self.fields(of: environmentValue) else { return nil }
+        self.init(
+            frameRate: fields.frameRate, frameCount: fields.frameCount, scale: fields.scale,
+            destination: fields.destination)
+    }
+
+    /// 環境変数の値を、書き出せるかは見ずに欄へ分ける。形が違えば `nil`。
+    private static func fields(of value: String)
+        -> (scale: Int, frameRate: Int, frameCount: Int, destination: String)?
+    {
         // 倍率があれば、先頭に `x<倍率>:` が付いている
         var scale = 1
-        var rest = Substring(environmentValue)
+        var rest = Substring(value)
         if rest.hasPrefix("x") {
             guard let colon = rest.firstIndex(of: ":"), let given = Int(rest[rest.index(after: rest.startIndex)..<colon])
             else { return nil }
@@ -150,7 +192,13 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
         guard parts.count == 3, let rate = Int(parts[0]), let count = Int(parts[1]) else {
             return nil
         }
-        self.init(frameRate: rate, frameCount: count, scale: scale, destination: String(parts[2]))
+        return (scale, rate, count, String(parts[2]))
+    }
+
+    /// 環境変数の頼みを、行き先が `.png` で終わらない連番だから断るときの理由 (``seriesNotPNGReason(destination:)``)。
+    /// 形が違う値・ほかの理由で断る値は `nil`。
+    package static func seriesNotPNGReason(environmentValue: String) -> String? {
+        fields(of: environmentValue).flatMap { seriesNotPNGReason(destination: $0.destination) }
     }
 
     /// 起動の瞬間に決まる頼み。**合図が無ければ `nil`** (いつものウィンドウの経路)。

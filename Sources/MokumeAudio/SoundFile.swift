@@ -246,8 +246,9 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             stage.rack.post(SynthCommand(op: .release, node: UInt8(node.id)))
         }
 
-        /// 音量を伝える。
-        func amp(_ volume: Float) {
+        /// 音量を伝える。操作が溢れて受け付けられなければ `false` (#3944)。
+        @discardableResult
+        func amp(_ volume: Float) -> Bool {
             stage.rack.post(
                 SynthCommand(
                     op: .set, node: UInt8(node.id), param: .amplitude,
@@ -461,9 +462,11 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
                 "amp() takes a volume from 0 to 1, so \(volume) was clamped to \(clamped) for "
                     + "\"\(name)\"")
         }
+        // 操作が溢れて節が受け付けなかったら、音量を変えない — 解析は ``volume`` を掛けた標本で読むので、
+        // 変えると聞こえる音と解析の値が食い違う。捨てたことはステージが 1 度だけ知らせる (#3944)
+        if let feed, !feed.amp(clamped) { return }
         self.volume = clamped
         if case .speaker(let player) = pace { player.volume = clamped }
-        feed?.amp(clamped)
     }
 
     /// 再生中か。``play()`` か ``loop()`` で `true` になり、``pause()``・``stop()``・

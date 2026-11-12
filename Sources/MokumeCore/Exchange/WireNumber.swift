@@ -36,13 +36,46 @@ nonisolated enum WireNumber<Value> {
     }
 }
 
+/// 10 進の値を整数として読む。外から届いた数の読み手 (観測の要求と MCP サーバの引数) が共有する。
+package nonisolated enum WholeDecimal {
+    /// **整数でなければ `nil`。** `Int` に収まらない整数は符号の側の端 (`Int.max` / `Int.min`) に寄せる。
+    ///
+    /// **整数かは 10 進の値のまま見る** ([#3959](https://github.com/mokume-metal/mokume/issues/3959))。
+    /// `Double` に丸めると `1.00000000000000000000001` が 1.0 に、`Int` に読ませると
+    /// `12345678901234567.5` が端数を捨てた 12345678901234567 になり、どちらも端数のある数を整数と読む。
+    /// ただし `Decimal` の仮数は 38 桁までで、39 桁以上の綴りは読み手 (`JSONSerialization`・
+    /// `JSONDecoder`) が `Decimal` にする段で丸まる (45 桁の `1.000…0001` は 1 として届く)。
+    package static func integer(_ decimal: Decimal) -> Int? {
+        var value = decimal
+        guard !value.isNaN else { return nil }
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &value, 0, .plain)
+        guard rounded == value else { return nil }
+        if value > Decimal(Int.max) { return .max }
+        if value < Decimal(Int.min) { return .min }
+        return Int(NSDecimalNumber(decimal: value).stringValue)
+    }
+}
+
 extension KeyedDecodingContainer {
     /// 鍵の数を読む。**収まらない数は誤りにせず、姿を返す** (``WireNumber``)。
     ///
     /// 型の違う値 (`"0.5"`・`true`) は、場所つきの `DecodingError` のまま投げる。
+    ///
+    /// **整数は、まず `Decimal` で読んで 10 進の値で整数かを決める** (#3959)。`JSONDecoder` の `Int` への
+    /// 読みは、桁の多い端数つきの数を断らずに整数にする (`1.00000000000000000000001` → 1、
+    /// `12345678901234567.5` → 12345678901234567)。`Decimal` にも収まらない数 (`1e400`)・型の違う値は、
+    /// 下の `Int` の読みに任せ、桁あふれの姿と場所つきの誤りを今までどおりに返す。
     nonisolated func decodeWireNumber<Number: Decodable>(
         _ type: Number.Type, forKey key: Key
     ) throws -> WireNumber<Number> {
+        if Number.self == Int.self, let decimal = try? decodeIfPresent(Decimal.self, forKey: key) {
+            guard let whole = WholeDecimal.integer(decimal) else { return .notWhole }
+            if decimal > Decimal(Int.max) || decimal < Decimal(Int.min) {
+                return .overflow(negative: decimal < 0)
+            }
+            return .value(whole as! Number)
+        }
         do {
             guard let value = try decodeIfPresent(type, forKey: key) else { return .absent }
             return .value(value)

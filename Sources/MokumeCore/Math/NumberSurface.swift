@@ -51,6 +51,8 @@ nonisolated enum NumberValues {
             case mod
             case bezierPoint
             case bezierTangent
+            case curvePoint
+            case curveTangent
             case phase
         }
     }
@@ -259,6 +261,23 @@ public nonisolated func map(
     return interpolate(outLow, outHigh, proportion(value, inLow, inHigh))
 }
 
+/// ある範囲の値を、別の範囲の値へ対応づける。元の範囲の端と対応づけた先の端を、ラベルを付けて渡す。
+///
+/// ``map(_:_:_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。範囲の外を丸めないこと・逆向きの範囲
+/// (`fromLow > fromHigh`) を受けること・幅 0 や数でない値で対応づけた先の下端を返すことも同じで、違うのは
+/// **どの値が元の範囲の端で、どれが対応づけた先の端かを呼び出しの行で読める**ことだけである。
+///
+/// ```swift
+/// // map(mouseX, 0, width, 6, 60) と同じ値
+/// let pointCount = map(mouseX, fromLow: 0, fromHigh: width, toLow: 6, toHigh: 60)
+/// ```
+public nonisolated func map(
+    _ value: some ScalarConvertible, fromLow: some ScalarConvertible, fromHigh: some ScalarConvertible,
+    toLow: some ScalarConvertible, toHigh: some ScalarConvertible
+) -> Float {
+    map(value, fromLow, fromHigh, toLow, toHigh)
+}
+
 /// 値が範囲のどこにあるかの比 (0…1 の外もありうる)。``map(_:_:_:_:_:)``・``norm(_:_:_:)``・
 /// ``smoothstep(_:_:_:)`` が共有する。**注意は言わない** — 中で他の口を呼ぶと、呼んだ先の名で
 /// 注意が鳴る ([#1283])。値と端は有限で、幅は 0 でないこと。
@@ -269,13 +288,20 @@ public nonisolated func map(
 /// なら、比も 0 と 1 ちょうどになる。有限の値から数でない値は返らない (値が範囲から遠く
 /// 外れて溢れれば ±∞)。
 ///
+/// **幅は有限でも値と下端の差だけが溢れる組は、差と幅を半分にしてから割る** ([#3952])。
+/// `norm(m, -m, 0)` (m は `Float` の最大) は真の比が 2 なのに、差 `2m` が ∞ になって ∞ を返していた。
+/// 差が溢れるのは値と下端が異符号で大きいときだけなので、半分どうしの差は溢れず、どちらの半分も
+/// 丸まらない。幅もそうした大きな下端からの差なので、半分にしても丸まらない。だから比は、差を
+/// 丸めて割る元の式を指数の上限なしで計算したのと同じ値になる。**溢れない組は式も値も変えない。**
+///
 /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
 /// [#1476]: https://github.com/mokume-metal/mokume/issues/1476
+/// [#3952]: https://github.com/mokume-metal/mokume/issues/3952
 private nonisolated func proportion(_ value: Float, _ low: Float, _ high: Float) -> Float {
     let span = high - low
-    return span.isFinite
-        ? (value - low) / span
-        : (value / 2 - low / 2) / (high / 2 - low / 2)
+    guard span.isFinite else { return (value / 2 - low / 2) / (high / 2 - low / 2) }
+    let offset = value - low
+    return offset.isFinite ? offset / span : (value / 2 - low / 2) / (span / 2)
 }
 
 // MARK: - 2 つの値の間を取る
@@ -313,6 +339,19 @@ public nonisolated func lerp(_ start: some ScalarConvertible, _ stop: some Scala
     return interpolate(start, stop, amount)
 }
 
+/// 2 つの値の間を取る。その間のどこかを、ラベルを付けて渡す。
+///
+/// ``lerp(_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。0…1 の外を締めないこと・数でない値で
+/// `start` を返すことも同じで、違うのは**どの値が割合かを呼び出しの行で読める**ことだけである。
+///
+/// ```swift
+/// // lerp(20, width - 20, 0.25) と同じ値
+/// let x = lerp(20, width - 20, amount: 0.25)
+/// ```
+public nonisolated func lerp(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, amount: some ScalarConvertible) -> Float {
+    lerp(start, stop, amount)
+}
+
 /// 間を取る計算。``lerp(_:_:_:)`` と ``map(_:_:_:_:_:)`` が共有し、``lerpColor(_:_:_:)`` も
 /// 成分ごとに通す (そのためモジュールの中へ開けてある)。端は有限であること。
 /// `amount` は ±∞ でもよい — ``map(_:_:_:_:_:)`` の比は、写す値が元の範囲から遠く外れると
@@ -333,14 +372,28 @@ public nonisolated func lerp(_ start: some ScalarConvertible, _ stop: some Scala
 /// 戻らない・`amount` を増やして値が逆行する・外挿で NaN を返す、の 3 つを壊すうえ、端の間の
 /// ふつうの値も 4 つに 1 つが最下位ビットで動く。
 ///
+/// **幅は有限でも、幅と有限の `amount` の積だけが溢れる外挿は、始まりと積を半分にしてから足して 2 倍する**
+/// ([#3952])。`lerp(m, 0, 2)` (m は `Float` の最大) は真の値が `-m` なのに、積 `-2m` が ∞ になって
+/// -∞ を返していた。`amount` が有限なら、積が溢れるのは幅が 1 以上のときだけなので、幅の半分は丸まらず、
+/// 半分の積は元の積を丸めたものの半分になる。和の丸めも 1 回なので、値は元の式を指数の上限なしで
+/// 計算したのと同じになり、真の値が `Float` を越えるときだけ ±∞ を返す。**`amount` が ±∞・NaN の組と、
+/// 溢れない組は、式も値も変えない** — ±∞ の `amount` に幅の小さな組を半分にして当てると、幅の半分が 0 に
+/// 丸まって `0 × ∞` の NaN になる。
+///
 /// [#1312]: https://github.com/mokume-metal/mokume/issues/1312
 /// [#1453]: https://github.com/mokume-metal/mokume/issues/1453
+/// [#3952]: https://github.com/mokume-metal/mokume/issues/3952
 nonisolated func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
     let span = stop - start
     guard span.isFinite else { return (1 - amount) * start + amount * stop }
     // 幅が無ければ、どこを取っても始まり。比が ∞ で来ても `0 × ∞` の NaN を作らない
     guard span != 0 else { return start }
-    return amount == 1 ? stop : start + span * amount
+    guard amount != 1 else { return stop }
+    let step = span * amount
+    // 計算し直すのは `amount` が有限のときだけ。±∞ (比が溢れた `map`) や NaN は元の式のまま —
+    // 幅が最小の非正規化数だと半分が 0 に丸まり、`0 × ∞` の NaN を作る (#3952 の反証)
+    guard !step.isFinite, amount.isFinite else { return start + step }
+    return 2 * (start / 2 + span / 2 * amount)
 }
 
 // MARK: - 値を範囲へ締める
@@ -460,6 +513,20 @@ public nonisolated func smoothstep(_ edge0: some ScalarConvertible, _ edge1: som
     return t * t * (3 - 2 * t)
 }
 
+/// ウィンドウの中で 0 から 1 へ、両端で速さが 0 になる曲線で移る。曲線に通す値を、ラベルを付けて渡す。
+///
+/// ``smoothstep(_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。ウィンドウの外を締めること・逆向きの
+/// ウィンドウが下り坂になること・幅 0 で段になること・数でない値で 0 を返すことも同じで、違うのは
+/// **どの値がウィンドウの縁で、どれが曲線に通す値かを呼び出しの行で読める**ことだけである。
+///
+/// ```swift
+/// // smoothstep(2.4, 5.4, time) と同じ値
+/// let fade = smoothstep(2.4, 5.4, x: time)
+/// ```
+public nonisolated func smoothstep(_ edge0: some ScalarConvertible, _ edge1: some ScalarConvertible, x: some ScalarConvertible) -> Float {
+    smoothstep(edge0, edge1, x)
+}
+
 // MARK: - 目標へ寄る・往復する・角を混ぜる
 
 /// 目標へ、フレームの長さに依らない硬さで寄る。
@@ -537,6 +604,24 @@ public nonisolated func damp(
     return interpolate(current, target, amount)
 }
 
+/// 目標へ、フレームの長さに依らない硬さで寄る。目標・硬さ・経った秒を、ラベルを付けて渡す。
+///
+/// ``damp(_:_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。負の `lambda`・`deltaTime` で動かないこと・
+/// 数でない値で今の値を返すことも同じで、違うのは**どの値が目標で、どれが硬さと経った秒かを呼び出しの
+/// 行で読める**ことだけである。
+///
+/// <!-- example: 文脈 var eyeX: Float = 200 -->
+/// ```swift
+/// // damp(eyeX, mouseX, 6, deltaTime) と同じ値
+/// eyeX = damp(eyeX, toward: mouseX, lambda: 6, deltaTime: deltaTime)
+/// ```
+public nonisolated func damp(
+    _ current: some ScalarConvertible, toward target: some ScalarConvertible, lambda: some ScalarConvertible,
+    deltaTime: some ScalarConvertible
+) -> Float {
+    damp(current, target, lambda, deltaTime)
+}
+
 /// 0 から `length` まで上がって 0 へ戻る、三角の波。
 ///
 /// ```swift
@@ -574,9 +659,16 @@ public nonisolated func pingpong(_ t: some ScalarConvertible, _ length: some Sca
     }
     // 負の長さは、正の長さの往復を負の側へ写す
     let reach = abs(length)
-    // 周期 2 * reach の中の位置 (0 以上 2 * reach 未満)。``mod(_:_:)`` と同じ畳み方
-    let position = foldedIntoPeriod(t, by: 2 * reach)
-    let rising = reach - abs(position - reach)
+    // 周期 2 * reach の中の位置 (0 以上 2 * reach 未満)。三角波は左右対称なので |t| を畳む。
+    // ``mod(_:_:)`` の畳み方で負の t に 2 * reach を足すと、大きな reach では小さな時刻が丸めで
+    // 消える (`pingpong(-1, 1e8)` が 0 — #3953)。|t| の剰余は丸めずに求まる。
+    // 2 * reach が ∞ になる長さでは、剰余は |t| そのもの
+    let position = abs(t).truncatingRemainder(dividingBy: 2 * reach)
+    // 立ち上がりは位置をそのまま返す。全区間に `reach - abs(position - reach)` を当てると、
+    // 大きな reach を引いて足し戻す間に小さな時刻が丸めで消える (`pingpong(1, 1e8)` が 0 — #3953)。
+    // 下降の `position - reach` は position が [reach, 2 * reach) にあるので丸めずに引ける。
+    // `2 * reach - position` にしないのは、reach が Float の最大の半分を越えると 2 * reach が ∞ になるため
+    let rising = position <= reach ? position : reach - (position - reach)
     return length < 0 ? -rising : rising
 }
 
@@ -622,6 +714,23 @@ public nonisolated func lerpAngle(_ start: some ScalarConvertible, _ stop: some 
     guard delta.isFinite else { return start }
     if delta > .pi { delta -= turn } else if delta < -.pi { delta += turn }
     return interpolate(start, start + delta, amount)
+}
+
+/// 最短の弧で、角を混ぜる (ラジアン)。その間のどこかを、ラベルを付けて渡す。
+///
+/// ``lerpAngle(_:_:_:)`` に同じ値を同じ順で渡すのと同じ値を返す。±π にラップしないこと・0…1 の外を
+/// 締めないこと・数でない値で `start` を返すことも同じで、違うのは**どの値が割合かを呼び出しの行で
+/// 読める**ことだけである。
+///
+/// <!-- example: 文脈 var look: Float = 0 -->
+/// <!-- example: 文脈 var eyeX: Float = 200 -->
+/// <!-- example: 文脈 var eyeY: Float = 150 -->
+/// ```swift
+/// // lerpAngle(look, atan2(mouseY - eyeY, mouseX - eyeX), 0.2) と同じ値
+/// look = lerpAngle(look, atan2(mouseY - eyeY, mouseX - eyeX), amount: 0.2)
+/// ```
+public nonisolated func lerpAngle(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, amount: some ScalarConvertible) -> Float {
+    lerpAngle(start, stop, amount)
 }
 
 // MARK: - 2 点の距離・二乗

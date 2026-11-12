@@ -15,10 +15,11 @@ import MokumeDiagnostics
 ///
 /// ## 送り手は受け手を待たない
 ///
-/// - 面が届くまでは何もしない (受け手 0 なら即座に返る。繋がっていない間の費用はこれだけ)
+/// - 面が届くまでは写しも送りもしない (受け手 0 なら描く大きさを覚えるだけで返る。繋がっていない間の費用はこれだけ・
+///   #3946)
 /// - 受け手が面を全部掴んでいるフレームは書かずに見送り、その枚数を数える (``skippedFrames``)
 /// - 送りは待ち時間 0 (``FrameLink``)。受け手が読まずに待ち行列が埋まっていれば、その面は書かなかったことにして
-///   空きへ戻す
+///   空きへ戻す。落ちた大きさの変更は、以後のリフレッシュで最新の大きさの `resized` を送り直す (#3947)
 /// - GPU の完了は待たない。結末が届いていない焼きは次のフレームで知らせる (`RenderDevice.undelivered(_:)`)
 ///
 /// ## 受け手が消えたら外す
@@ -43,8 +44,14 @@ package final class FrameSender {
         var pending: [(slot: Int, submission: UInt64, frameCount: Int64, writes: Int64, hostTime: UInt64)] = []
         /// 面へ書いた回数。
         var writes: Int64 = 0
-        /// 最後に書いたフレームの番号。同じ番号の絵を 2 度書かない。
+        /// 最後に書いたフレームの番号。同じ番号の絵を 2 度書かない。**書いた絵を GPU が打ち切ったら戻す** —
+        /// 止まった作品では次の番号が来ないので、戻さないと受け手は今の絵を受け取れない (#3945)。
         var lastFrameCount: Int64?
+        /// 面が全部掴まれていて見送ったフレームの番号。同じ番号を何度呼ばれても 1 枚と数える。
+        var lastSkippedFrameCount: Int64?
+        /// 大きさの変更を知らせ損ねている (待ち行列が埋まっていた)。送れるまで、以後のリフレッシュで最新の大きさを
+        /// 送り直す。繋ぎ直しを受け入れたら下ろす (`accepted` が大きさを運ぶ・#3947)。
+        var owesResized = false
 
         init(id: UInt32, name: String, port: mach_port_t, surfaces: [HandedSurface]) {
             self.id = id
@@ -204,6 +211,9 @@ package final class FrameSender {
             existing.held = Array(repeating: false, count: handed.count)
             existing.pending.removeAll()
             existing.lastFrameCount = nil
+            // 受け入れが大きさを運ぶので、知らせ損ねた大きさの変更はもう要らない (#3947)
+            // 受け入れが満杯で落ちた場合の扱いは #3968 で決める
+            existing.owesResized = false
             accept(existing)
             return
         }
@@ -260,26 +270,35 @@ package final class FrameSender {
 
     // MARK: - 書く
 
-    /// 繋がっている受け手の面へ、1 フレームを書く。**受け手が居なければ何もしない。**
+    /// 繋がっている受け手の面へ、1 フレームを書く。**受け手が居なければ、描く大きさを覚えるだけで写しも送りもしない**
+    /// (#3946)。
+    ///
+    /// **表示のリフレッシュごとに呼んでよい** (#3945)。同じ番号の絵は受け手ごとに 1 度だけ書くので、止まった作品へ
+    /// 後から繋いだ受け手には今の絵を 1 度書き、前に書いた絵の GPU の完了は呼ばれるたびに見て知らせる。
     ///
     /// - Parameters:
     ///   - width: いまの描く解像度。前と違えば、受け手に大きさの変更を知らせて面を手放す (``resize(width:height:)``)
-    ///   - frameCount: フレームの番号。前に書いた番号と同じなら書かない (止まっている作品)
+    ///   - frameCount: フレームの番号。その受け手へ前に書いた番号と同じなら書かない (止まっている作品)
     ///   - hostTime: 描いた時刻
     ///   - write: 与えた面へ絵を書く投入をして、その番号を返す。待たない
     package func deliver(
         width: Int, height: Int, frameCount: Int64, hostTime: UInt64,
         write: (any MTLTexture) throws(RenderFailure) -> UInt64
     ) throws(RenderFailure) {
-        guard !receivers.isEmpty else { return }
+        // **大きさは受け手が居なくても覚える** (#3946)。覚えないと、後から新しい大きさの面で繋いだ受け手を
+        // 古い大きさで断る。覚えるだけで写しはしない
         if width != self.width || height != self.height { resize(width: width, height: height) }
+        guard !receivers.isEmpty else { return }
         for receiver in receivers {
             announce(receiver)
             guard receiver.lastFrameCount != frameCount, !receiver.surfaces.isEmpty else { continue }
             let busy = Set(receiver.pending.map(\.slot))
             guard let slot = receiver.held.indices.first(where: { !receiver.held[$0] && !busy.contains($0) })
             else {
-                skippedFrames += 1
+                if receiver.lastSkippedFrameCount != frameCount {
+                    receiver.lastSkippedFrameCount = frameCount
+                    skippedFrames += 1
+                }
                 continue
             }
             let submission = try write(receiver.surfaces[slot].texture)
@@ -298,8 +317,8 @@ package final class FrameSender {
     ///   - source: 子の面のテクスチャ。常駐の集合に入っていること (台が入れている)。
     ///   - frameCount: 道具が数えるフレームの番号 (保存で子が入れ替わっても途切れない)。
     package func deliver(copying source: any MTLTexture, frameCount: Int64, hostTime: UInt64) throws(RenderFailure) {
-        guard !receivers.isEmpty else { return }
-        if let surface = source.iosurface {
+        // 受け手が居なくても大きさは覚える (#3946・下の `deliver` の入口)。面の属性を読むのは居るときだけ
+        if !receivers.isEmpty, let surface = source.iosurface {
             if let name = IOSurfaceCopyValue(surface, FrameLink.Attribute.colorSpace as CFString) as? String {
                 colorSpace = name
             }
@@ -327,16 +346,26 @@ package final class FrameSender {
         }
     }
 
-    /// 控えた焼きのうち、GPU が無事に終えたものを知らせる。結末がまだなら次へ回す。
+    /// 書いた焼きのうち、GPU が無事に終えたものを知らせる。**書く絵が無いリフレッシュに呼ぶ** — 止まった作品でも、
+    /// 最後に書いた絵を次の絵を待たずに知らせる (#3945)。待たない。
+    package func announceCompleted() {
+        for receiver in receivers { announce(receiver) }
+    }
+
+    /// 控えた焼きのうち、GPU が無事に終えたものを知らせる。結末がまだなら次へ回す。大きさの変更を知らせ損ねて
+    /// いれば、先に送り直す (#3947)。
     private func announce(_ receiver: Receiver) {
+        if receiver.owesResized { sendResized(to: receiver) }
         while let burn = receiver.pending.first {
             switch gpu.undelivered(burn.submission) {
             case nil:
                 return
             case true?:
-                // 打ち切られた焼きは知らせない (中身が揃っていない)
+                // 打ち切られた焼きは知らせない (中身が揃っていない)。それが最後に書いた絵なら、同じ番号でも書き直す
+                // (止まった作品では次の番号が来ない・#3945)
                 receiver.pending.removeFirst()
                 receiver.held[burn.slot] = false
+                if receiver.lastFrameCount == burn.frameCount { receiver.lastFrameCount = nil }
             case false?:
                 receiver.pending.removeFirst()
                 let surface = receiver.surfaces[burn.slot].surface
@@ -354,14 +383,21 @@ package final class FrameSender {
                 if FrameLink.send(.frame, to: receiver.port, payload: payload) == KERN_SUCCESS {
                     deliveredFrames += 1
                 } else {
-                    // 受け手が読んでいない (待ち行列が埋まった)・消えた。知らせていない面は掴まれていない
+                    // 受け手が読んでいない (待ち行列が埋まった)・消えた。知らせていない面は掴まれていない。それが最後に
+                    // 書いた絵なら、後のリフレッシュで空いた面へ書き直す (止まった作品では次の番号が来ない・#3945)
                     receiver.held[burn.slot] = false
+                    if receiver.lastFrameCount == burn.frameCount { receiver.lastFrameCount = nil }
                 }
             }
         }
     }
 
     /// 描く解像度が変わった。受け手の面を手放し、新しい大きさを知らせる。受け手は面を作り直して繋ぎ直す。
+    ///
+    /// **大きさは受け手の数と関係なく送り手の状態である** (#3946)。受け手が居なければ覚えるだけで、写しも送りもしない。
+    /// **知らせは受け手に届くまで送り手の状態である** (#3947)。待ち時間 0 の送りが待ち行列の満杯で落ちたら、受け手ごとに
+    /// 覚えて、以後のリフレッシュで最新の大きさを送り直す (``announce(_:)``)。受け手は新しい大きさを知るまで面を作り
+    /// 直さない約束なので、落としたままにすると二度と繋ぎ直さない。
     package func resize(width: Int, height: Int) {
         guard width != self.width || height != self.height else { return }
         self.width = width
@@ -372,11 +408,16 @@ package final class FrameSender {
             receiver.held = []
             receiver.pending.removeAll()
             receiver.lastFrameCount = nil
-            var payload = FrameLink.Payload()
-            payload.append(UInt32(width))
-            payload.append(UInt32(height))
-            FrameLink.send(.resized, to: receiver.port, payload: payload)
+            sendResized(to: receiver)
         }
+    }
+
+    /// いまの大きさを受け手へ知らせる。送れなければ ``Receiver/owesResized`` を立てたままにし、送れたら下ろす。待たない。
+    private func sendResized(to receiver: Receiver) {
+        var payload = FrameLink.Payload()
+        payload.append(UInt32(width))
+        payload.append(UInt32(height))
+        receiver.owesResized = FrameLink.send(.resized, to: receiver.port, payload: payload) != KERN_SUCCESS
     }
 }
 

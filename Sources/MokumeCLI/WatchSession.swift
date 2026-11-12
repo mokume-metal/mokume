@@ -77,7 +77,11 @@ final class WatchSession {
             // 止めるのは見張りが終わるときだけなので、それで足りる (#1147)
             let running = RunningBuild()
             return live(
-                resolver: .live(in: directory, invocation: invocation, running: running),
+                // **資材の宣言は見ない。** ここは見張りの口 (``WatchCommand``) を通らずに組む形で、
+                // 資材の宣言を見るのは見張りの口が始める前に組む導き手 (``ResourceDeclaration/Once``)
+                resolver: .live(
+                    in: directory, invocation: invocation, running: running,
+                    afterReading: { _ in }),
                 running: running)
         }
 
@@ -122,6 +126,16 @@ final class WatchSession {
                     }.value.get()
                 },
                 launch: { executable, directory, stamp, rate throws(CommandFailure) in
+                    // 置き場の元は導き手から取る。**資材の宣言の抜けだけは飲み込まない** (#3984) —
+                    // ここで導き直しが走り、宣言が初めて読めた回の検査 (``ResourceDeclaration/Once``)
+                    // が止めたら、子を起こさない。他の失敗は今までどおり「渡さない」へ倒す
+                    let resolved: BuildResolution?
+                    do throws(CommandFailure) {
+                        resolved = try resolver.current()
+                    } catch {
+                        if case .resourcesNotDeclared = error { throw error }
+                        resolved = nil
+                    }
                     let process = Process()
                     process.executableURL = executable
                     process.currentDirectoryURL = directory
@@ -140,7 +154,7 @@ final class WatchSession {
                         stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName,
                         // **置き場の断片は元から読ませる** (#2517)。写しを読むと、元を保存しても
                         // 走らせたまま差し替わらない
-                        assetOrigin: (try? resolver.current())?.context.assets.url?.path,
+                        assetOrigin: resolved?.context.assets.url?.path,
                         keepTime: keepTime,
                         recording: generations?.next())
                     do {

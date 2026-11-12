@@ -89,3 +89,56 @@ public nonisolated func bezierTangent(
     let u = 1 - dt
     return Float(3 * (u * u * (db - da) + 2 * u * dt * (dc - db) + dt * dt * (dd - dc)))
 }
+
+// MARK: - 通過点を結ぶ曲線の上の点と向き
+
+/// 通過点を結ぶ曲線の上の点の、1 つの軸の値 (#3710)。``Canvas/curvePoint(_:_:_:_:_:)`` と
+/// ``SketchPart/curvePoint(_:_:_:_:_:)`` の式で、張りは呼ぶ側が描画先の状態を渡す。
+///
+/// 式は描く側の ``Canvas/catmullRomPoint(_:_:_:_:_:tightness:)`` と同じ (一様 Catmull-Rom の
+/// エルミート形で、接線に張り `(1 - tightness) / 2` を掛けたもの)。`Double` で計算するので、
+/// `t` が 0 なら `b`、1 なら `c` が**ちょうど**返る。
+///
+/// 数でない値・無限の値 (張りも含む) が混じったときは `b` (区間の始点) を返し、`b` も数で
+/// なければ 0 を返す。注意は 1 度だけ言う (``bezierPoint(_:_:_:_:_:)`` と同じ扱い)。
+nonisolated func curvePointValue(
+    _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ t: Float, tightness: Float
+) -> Float {
+    guard a.isFinite, b.isFinite, c.isFinite, d.isFinite, t.isFinite, tightness.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.curvePoint),
+            "curvePoint(): got a value that is not a number, or an infinite one (the curve tightness included), so the start of the segment was returned"
+        )
+        return b.isFinite ? b : 0
+    }
+    let (da, db, dc, dd, dt) = (Double(a), Double(b), Double(c), Double(d), Double(t))
+    let s = (1 - Double(tightness)) / 2
+    let t2 = dt * dt
+    let t3 = t2 * dt
+    return Float(
+        db * (2 * t3 - 3 * t2 + 1) + s * (dc - da) * (t3 - 2 * t2 + dt) + dc * (-2 * t3 + 3 * t2)
+            + s * (dd - db) * (t3 - t2))
+}
+
+/// 通過点を結ぶ曲線の、1 つの軸についての傾き (`t` で微分した値・#3710)。式は
+/// ``curvePointValue(_:_:_:_:_:tightness:)`` を `t` で微分したもの。
+///
+/// 数でない値・無限の値 (張りも含む) が混じったときは 0 を返し、注意は 1 度だけ言う
+/// (``bezierTangent(_:_:_:_:_:)`` と同じ扱い)。
+nonisolated func curveTangentValue(
+    _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ t: Float, tightness: Float
+) -> Float {
+    guard a.isFinite, b.isFinite, c.isFinite, d.isFinite, t.isFinite, tightness.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.curveTangent),
+            "curveTangent(): got a value that is not a number, or an infinite one (the curve tightness included), so 0 was returned"
+        )
+        return 0
+    }
+    let (da, db, dc, dd, dt) = (Double(a), Double(b), Double(c), Double(d), Double(t))
+    let s = (1 - Double(tightness)) / 2
+    let t2 = dt * dt
+    return Float(
+        db * (6 * t2 - 6 * dt) + s * (dc - da) * (3 * t2 - 4 * dt + 1) + dc * (-6 * t2 + 6 * dt)
+            + s * (dd - db) * (3 * t2 - 2 * dt))
+}

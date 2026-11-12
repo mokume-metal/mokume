@@ -599,6 +599,79 @@ struct DataLoadingTests {
         #expect(path == out)
     }
 
+    // MARK: - バイト列 (#3708)
+
+    /// 中身をバイトのまま置く。
+    private func file(_ name: String, bytes: [UInt8]) throws -> String {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(name)
+        try Data(bytes).write(to: url)
+        return url.path
+    }
+
+    /// 文字として読めないバイト・BOM・CRLF を含む中身。どれも解かずにそのまま返ることを見る。
+    private static let blob: [UInt8] = [0xEF, 0xBB, 0xBF, 0x00, 0xFF, 0x0D, 0x0A, 0x80, 0x41]
+
+    @Test("loadBytes は中身を解かずにそのまま返し、requestBytes は同じバイト列を返す")
+    func loadBytesReturnsTheContentAsIs() async throws {
+        defer { cleanUp() }
+        let path = try file("blob.bin", bytes: Self.blob)
+        let sketch = Bare()
+        #expect(try sketch.loadBytes(path) == Self.blob)
+        #expect(try await sketch.requestBytes(path) == sketch.loadBytes(path))
+    }
+
+    @Test("空のファイルは空のバイト列になる")
+    func anEmptyFileGivesNoBytes() async throws {
+        defer { cleanUp() }
+        let path = try file("empty.bin", bytes: [])
+        #expect(try Bare().loadBytes(path) == [])
+        #expect(try await Bare().requestBytes(path) == [])
+    }
+
+    @Test("無い名前・無いディレクトリの中の名前は、探した場所を添えて notFound で投げる")
+    func missingBytesNameWhereItLooked() async {
+        for name in ["no-such-blob-\(UUID().uuidString).bin", folder.appendingPathComponent("no-dir/blob.bin").path] {
+            let expected = DataFailure.notFound(path: name, searched: ImageFile.candidates(for: name).map(\.path))
+            #expect(throws: expected) { try Bare().loadBytes(name) }
+            await #expect(throws: expected) { try await Bare().requestBytes(name) }
+        }
+    }
+
+    @Test("saveBytes は無い途中のディレクトリを作って書き、loadBytes で読み直すと同じ並びに戻る。書きかけは残らない")
+    func saveBytesRoundTrips() throws {
+        defer { cleanUp() }
+        let sketch = Bare()
+        let out = folder.appendingPathComponent("out/nested/blob.bin").path
+        try sketch.saveBytes(Self.blob, out)
+        #expect(try sketch.loadBytes(out) == Self.blob)
+        // 上書きも同じ。短い中身で書き直すと、前の中身の尾は残らない
+        try sketch.saveBytes([1, 2], out)
+        #expect(try sketch.loadBytes(out) == [1, 2])
+        try sketch.saveBytes([], out)
+        #expect(try sketch.loadBytes(out) == [])
+        let left = try FileManager.default.contentsOfDirectory(atPath: folder.appendingPathComponent("out/nested").path)
+        #expect(left == ["blob.bin"], "書きかけの一時ファイルが残っている: \(left)")
+    }
+
+    @Test("saveBytes も、書けない場所 (途中がファイル・行き先がディレクトリ) へは unwritable で投げる")
+    func saveBytesToAnUnwritablePlaceThrows() throws {
+        defer { cleanUp() }
+        let blocker = try file("blocker", "x")
+        let directory = folder.appendingPathComponent("taken.bin")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for out in [blocker + "/blob.bin", directory.path] {
+            let failure = #expect(throws: DataFailure.self) { try Bare().saveBytes([1], out) }
+            guard case .unwritable(let path, let reason) = failure else {
+                Issue.record("unwritable で投げていない: \(String(describing: failure))")
+                continue
+            }
+            #expect(path == out)
+            #expect(!reason.isEmpty)
+        }
+        #expect(try String(contentsOfFile: blocker, encoding: .utf8) == "x", "途中のファイルを壊していない")
+    }
+
     @Test("書けない場所へは unwritable で投げる")
     func unwritablePlaceThrows() throws {
         defer { cleanUp() }

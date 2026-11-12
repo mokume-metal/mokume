@@ -105,6 +105,65 @@ nonisolated extension Path {
         operated(with: other, .intersection)
     }
 
+    /// 道を `distance` だけ太らせた道。負なら内側へ縮めた道。**角は丸める。**
+    ///
+    /// 太らせた道の輪郭は、元の輪郭から `distance` 離れた所を通る。正なら、元の形の全部の点に半径 `distance` の円板を
+    /// 重ねた形 (円板との和) で、尖った角の外側は半径 `distance` の弧になる (角を尖らせて延ばす形は無い — 細い角で
+    /// 線が長く突き出すため)。負なら、輪郭から `-distance` 以内の所を削った形で、元の形より細い所は消える。半径 50 の
+    /// 円を `offset(by: -50)` 以下にすると、空の道になる。
+    ///
+    /// 内側の決め方は ``contains(_:)`` と同じで、**開いた部分道も閉じた形として扱う** (線の道を太らせる口ではない)。
+    /// 結果の性質 (CoreGraphics が計算する・点が 3 つに満たない部分道と数でない座標の部分道は落ちる) は
+    /// ``Path/union(_:)`` と同じ。丸めた弧は隔たり 0.02 以下の折れ線に刻み、刻みの印を付ける。
+    ///
+    /// 輪郭を破線にするなら、道は割らずに ``SketchPart/strokeDash(_:_:)`` を指定して ``SketchPart/shape(_:_:_:)-(Path,_,_)``
+    /// で引く。
+    ///
+    /// - `offset(by: 0)` は自分をそのまま返す
+    /// - 数でない値・無限の値を渡すと、自分をそのまま返す (太らせ方が定まらない。落とさない)
+    /// - 空の道は空の道を返す
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(18, 20, 26)
+    ///     noFill()
+    ///     let a = Path(Circle(center: [170, 150], radius: 50))
+    ///     let b = Path(Circle(center: [230, 150], radius: 50))
+    ///     let lens = a.intersection(b)
+    ///     stroke(240)
+    ///     strokeWeight(2)
+    ///     shape(lens)
+    ///     stroke(255, 160, 60)
+    ///     strokeDash(10, 6)
+    ///     shape(lens.offset(by: 14))   // 角は丸く太り、破線は strokeDash で引く
+    ///     noStrokeDash()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 濃い下地に白いレンズの輪郭があり、その外側を、角を丸めた橙の破線の輪郭が 14 離れて囲んでいる -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 後で撮る
+    public func offset(by distance: some ScalarConvertible) -> Path {
+        let distance = Double(distance.asFloat)
+        guard distance.isFinite, distance != 0 else { return self }
+        if subpaths.isEmpty { return Path() }
+        // 輪郭を太さ 2|d|・丸い折れ目で線にした形。閉じた部分道だけを線にするので、端の形は出ない
+        let band = Path(
+            cgPath: cgPath().copy(
+                strokingWithWidth: 2 * abs(distance), lineCap: .round, lineJoin: .round, miterLimit: 10),
+            inputs: [])
+        // 線の輪郭は、交わって折れる所を除けば滑らか (辺をずらした線と折れ目の弧が接して続く)。だから全部の点を刻みとし、
+        // 和・差で交わって新しくできた点だけが角になる (`StepTable` は表に無い点を角とする)
+        let smooth = Path(
+            subpaths: band.subpaths.map {
+                Subpath(points: $0.points, isClosed: $0.isClosed, isCurveStep: Array(repeating: true, count: $0.points.count))
+            })
+        return distance > 0 ? operated(with: smooth, .union) : operated(with: smooth, .subtracting)
+    }
+
     private enum Operation {
         case union, subtracting, intersection
     }

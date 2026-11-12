@@ -453,9 +453,36 @@ struct NumberSurfaceTests {
             }
             t += 0.37
         }
-        // 小さな負の値が周期へ丸まる境目 (-1e-9 + 2 は Float で 2 ちょうど) でも 0 のまま
-        #expect(pingpong(-1e-9, 1) == 0)
+        // 小さな負の値は、周期へ戻す足し算 (-1e-9 + 2 は Float で 2 ちょうど) で丸めず、正の側と同じ値になる (#3953)
+        #expect(pingpong(-1e-9, 1) == 1e-9)
         #expect(pingpong(1e9, 1).isFinite && pingpong(-1e9, 1).isFinite)
+    }
+
+    @Test("pingpong は、大きな length でも立ち上がりの時刻をそのまま返す")
+    func pingpongKeepsTheRisingTimeUnderALargeLength() {
+        // 立ち上がりで length を引いて足し戻すと、1 - 1e8 が -1e8 に丸まって 0 になる (#3953)。
+        // 小さな負の時刻が周期端で 0 に丸まる境目 (`pingpong(-1e-9, 1)`) とは別の、正の立ち上がりの事例
+        #expect(pingpong(1, 100_000_000) == 1)
+        #expect(pingpong(2, 100_000_000) == 2)
+        #expect(pingpong(1, -100_000_000) == -1)
+        #expect(pingpong(2, -100_000_000) == -2)
+        // 折り返し点と下降はこれまでどおり
+        #expect(pingpong(100_000_000, 100_000_000) == 100_000_000)
+        #expect(pingpong(150_000_000, 100_000_000) == 50_000_000)
+    }
+
+    @Test("pingpong は、大きな length でも負の時刻を正の時刻と同じ値にする")
+    func pingpongMirrorsNegativeTimeUnderALargeLength() {
+        // 負の時刻を t + 2 * length で周期へ戻すと、-1 + 2e8 が 2e8 に丸まって 0 になる (#3953 の反証)
+        for t: Float in [1, 2, 10, 150_000_000] {
+            #expect(pingpong(-t, 100_000_000) == pingpong(t, 100_000_000), "t = \(t)")
+            #expect(pingpong(-t, -100_000_000) == pingpong(t, -100_000_000), "t = \(t)")
+        }
+        #expect(pingpong(-1, 100_000_000) == 1)
+        #expect(pingpong(-10, 100_000_000) == 10)
+        // 周期 2 * length が Float を越える長さでも、負の時刻は 0 に潰れない
+        #expect(pingpong(-1, Float.greatestFiniteMagnitude) == 1)
+        #expect(pingpong(1, Float.greatestFiniteMagnitude) == 1)
     }
 
     @Test("pingpong は、負の length では負の側へ往復する")
@@ -602,11 +629,52 @@ struct NumberSurfaceTests {
     func farExtrapolationNeverGivesNotANumber() {
         // 写した先の幅が 0 なら、どこを写しても下端 — 比が ∞ でも `0 × ∞` を作らない
         #expect(map(3e38, -3e38, 0, 5, 5) == 5)
+        // 比そのものが溢れて ∞ になる組でも (`1e30 / 1e-30`)。写した先の幅が 0 なら下端
+        #expect(map(1e30, 0, 1e-30, 5, 5) == 5)
+        #expect(map(-1e30, 0, 1e-30, 5, 5) == 5)
         // 元の幅が溢れる範囲の外の値 (真の値は 1.0169…)
         #expect(map(3e38, -3e38, 2.9e38, 0, 1).isFinite)
-        // 締めないので、真の値が Float に無ければ ∞ のまま
-        #expect(map(3e38, -3e38, 0, 0, 1) == .infinity)
-        #expect(map(3e38, -3e38, 0, 1, 0) == -.infinity)
+        // 締めないので、真の値が Float に無ければ ∞ のまま (比は 2 で収まり、写した先の 2 倍が溢れる)
+        #expect(map(3e38, -3e38, 0, 0, 3e38) == .infinity)
+        #expect(map(3e38, -3e38, 0, 0, -3e38) == -.infinity)
+    }
+
+    /// 元の範囲の幅は有限でも、写す値と下端の差 (`value - inLow`) だけが溢れる組 ([#3952])。真の比は
+    /// `Float` に収まるので、溢れた差から ∞ を作らずに有限の比を返す。
+    ///
+    /// [#3952]: https://github.com/mokume-metal/mokume/issues/3952
+    @Test("写す値と下端の差だけが溢れても、比が Float に収まれば有限の比を返す")
+    func anOverflowingOffsetStillGivesTheRatio() {
+        let m = Float.greatestFiniteMagnitude
+        // Issue の入力そのまま
+        #expect(norm(m, -m, 0) == 2)
+        #expect(map(m, -m, 0, 0, 1) == 2)
+        #expect(norm(-m, m, 0) == 2)
+        // 以前は ∞ を返すと押さえていた組 (真の比は 2)
+        #expect(map(3e38, -3e38, 0, 0, 1) == 2)
+        #expect(map(3e38, -3e38, 0, 1, 0) == -1)
+        // 幅の狭い範囲・逆向きの範囲・写した先が逆向き
+        #expect(norm(m, -m, -m / 2) == 4)
+        #expect(norm(-m, m, m / 2) == 4)
+        #expect(map(m, -m, 0, 10, 0) == -10)
+        // 範囲の中と端はこれまでどおり
+        #expect(norm(-m, -m, 0) == 0)
+        #expect(norm(0, -m, 0) == 1)
+        #expect(norm(-m / 2, -m, 0) == 0.5)
+    }
+
+    @Test("写す値と下端の差が溢れても、写した先が Float を越えれば ±∞ で、数でない値は返らない")
+    func anOverflowingOffsetBeyondFloatGivesInfinity() {
+        let m = Float.greatestFiniteMagnitude
+        #expect(map(m, -m, 0, 0, m) == .infinity)
+        #expect(map(m, -m, 0, 0, -m) == -.infinity)
+        // 写した先の幅も溢れる組 (真の値は 3m)
+        #expect(map(m, -m, 0, -m, m) == .infinity)
+        // 幅 0・数でない値は、これまでどおり下端 (norm は 0)
+        #expect(norm(m, -m, -m) == 0)
+        #expect(map(m, -m, -m, 5, 6) == 5)
+        #expect(norm(Float.infinity, -m, 0) == 0)
+        #expect(map(m, -m, Float.nan, 5, 6) == 5)
     }
 
     @Test("写す元の幅が 0 なら、写した先の下端を返す")
@@ -741,6 +809,126 @@ struct NumberSurfaceTests {
         #expect(lerp(-3e38, 3e38, -1) == -.infinity)
         // 端の差が溢れる組の、端のすぐ外 (真の値は 3.06e38 で Float に収まる)
         #expect(lerp(-3e38, 3e38, 1.01).isFinite)
+        // 端の差は収まり、差と amount の積だけが溢れる組の外挿 (真の値は -2m)
+        let m = Float.greatestFiniteMagnitude
+        #expect(lerp(m, 0, 3) == -.infinity)
+    }
+
+    /// 端の差 (`stop - start`) は有限でも、差と `amount` の積だけが溢れる組 ([#3952] と同じ根)。
+    /// 真の値は `Float` に収まるので、溢れた積から ∞ を作らずに有限の値を返す。``map(_:_:_:_:_:)`` の外挿・
+    /// ``Vector2/interpolated(to:amount:)``・``lerpAngle(_:_:_:)`` も同じ計算を通る。
+    ///
+    /// [#3952]: https://github.com/mokume-metal/mokume/issues/3952
+    @Test("端の差と amount の積だけが溢れても、外挿の値が Float に収まれば有限で返る")
+    func anOverflowingStepStillGivesTheExtrapolation() {
+        let m = Float.greatestFiniteMagnitude
+        #expect(lerp(m, 0, 2) == -m)
+        #expect(lerp(-m, 0, 2) == m)
+        #expect(lerp(m, m / 2, 4) == -m)
+        // 積が Float の最大ちょうどの組 (溢れないので元の式のまま)
+        #expect(lerp(0, m / 2, -2) == -m)
+        // 幅 1.5p (p = 2^127) は収まり、積 2.25p だけが溢れる組。真の値 1.25p は Float でちょうど表せる
+        let p = Float(sign: .plus, exponent: 127, significand: 1)
+        #expect(lerp(-p, p / 2, 1.5) == 1.25 * p)
+        #expect(lerp(p, -p / 2, 1.5) == -1.25 * p)
+        // 写した先の外挿も同じ
+        #expect(map(2, 0, 1, m, 0) == -m)
+        #expect(map(m, -m, 0, 1e38, 0) == -1e38)
+        #expect(Vector2(m, 0).interpolated(to: Vector2(0, 0), amount: 2) == Vector2(-m, 0))
+        #expect(Vector3(0, m, 0).interpolated(to: Vector3(0, 0, 0), amount: 2) == Vector3(0, -m, 0))
+        // 端と真ん中はこれまでどおり
+        #expect(lerp(m, 0, 1) == 0)
+        #expect(lerp(m, 0, 0) == m)
+        #expect(lerp(m, 0, 0.5) == m / 2)
+    }
+
+    /// 比が溢れて ±∞ で届いた `amount` を、幅の小さな組で外挿する ([#3952] の反証)。積は ±∞ だが、
+    /// 幅の半分は最小の非正規化数で 0 に丸まるので、半分にして計算し直すと `0 × ∞` の NaN になる。
+    /// 非有限の `amount` は元の式のまま ±∞ を返す。
+    ///
+    /// [#3952]: https://github.com/mokume-metal/mokume/issues/3952
+    @Test("比が ∞ で届いても、幅の小さな組の外挿は ±∞ で、数でない値は返らない")
+    func anInfiniteRatioOverATinySpanGivesInfinity() {
+        let tiny = Float.leastNonzeroMagnitude
+        #expect(map(1e30, 0, 1e-30, 0, tiny) == .infinity)
+        #expect(map(1e30, 0, 1e-30, 0, -tiny) == -.infinity)
+        #expect(map(-1e30, 0, 1e-30, 0, tiny) == -.infinity)
+        #expect(map(1e30, 0, 1e-30, tiny, 0) == -.infinity)
+        #expect(Vector2(0, 0).interpolated(to: Vector2(tiny, 0), amount: Float.infinity).x == .infinity)
+        #expect(Vector2(0, 0).interpolated(to: Vector2(-tiny, 0), amount: Float.infinity).x == -.infinity)
+        #expect(Vector3(0, 0, 0).interpolated(to: Vector3(0, 0, tiny), amount: -Float.infinity).z == -.infinity)
+    }
+
+    /// 直す前の `interpolate` (``valuesWithoutAnOverflowAreUnchanged()`` の式に、幅が溢れる組と幅 0・
+    /// `amount` が 1 の扱いを足したもの)。
+    private static func interpolateBefore(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
+        let span = stop - start
+        guard span.isFinite else { return (1 - amount) * start + amount * stop }
+        guard span != 0 else { return start }
+        return amount == 1 ? stop : start + span * amount
+    }
+
+    @Test("amount が ±∞・NaN の組では、間の値が直す前の式とビットまで一致する")
+    func nonFiniteAmountsAreUnchanged() {
+        var randomness = Randomness(seed: 39520)
+        var moved: [String] = []
+        var count = 0
+        let tiny = Float.leastNonzeroMagnitude
+        var pairs: [(Float, Float)] = [(0, tiny), (0, -tiny), (tiny, 0), (1, 1), (-3e38, 3e38), (5, 5)]
+        for _ in 0..<20_000 {
+            let a = Float(bitPattern: UInt32(truncatingIfNeeded: randomness.next()))
+            let b = Float(bitPattern: UInt32(truncatingIfNeeded: randomness.next()))
+            if a.isFinite, b.isFinite { pairs.append((a, b)) }
+        }
+        for (start, stop) in pairs {
+            for amount in [Float.infinity, -.infinity, .nan] {
+                count += 1
+                let now = interpolate(start, stop, amount)
+                let before = Self.interpolateBefore(start, stop, amount)
+                let same = now.bitPattern == before.bitPattern || (now.isNaN && before.isNaN)
+                if !same { moved.append("interpolate(\(start), \(stop), \(amount)) = \(now), 前は \(before)") }
+            }
+        }
+        #expect(moved.isEmpty, "動いた組 \(moved.count): \(moved.prefix(3))")
+        #expect(count > 30_000)
+    }
+
+    /// 溢れない組の値は 1 ビットも変えない ([#3952])。比は `(value - low) / (high - low)`、間は
+    /// `start + (stop - start) * amount` (`amount` が 1 なら `stop`) の式そのものと、ビットの並びまで一致する。
+    /// 組は全ての指数にわたるよう、ビットの並びから作る。
+    @Test("差も積も溢れない組では、比と間の値が式そのものとビットまで一致する")
+    func valuesWithoutAnOverflowAreUnchanged() {
+        var randomness = Randomness(seed: 3952)
+        func anyFinite() -> Float {
+            while true {
+                let value = Float(bitPattern: UInt32(truncatingIfNeeded: randomness.next()))
+                if value.isFinite { return value }
+            }
+        }
+        func ordinary() -> Float { randomness.value(from: -1000, to: 1000) }
+        var ratios = 0
+        var steps = 0
+        var moved: [String] = []
+        for index in 0..<200_000 {
+            let draw = index.isMultiple(of: 2) ? anyFinite : ordinary
+            let (a, b, c) = (draw(), draw(), draw())
+            let span = c - b
+            let offset = a - b
+            if span.isFinite, span != 0, offset.isFinite {
+                ratios += 1
+                if norm(a, b, c).bitPattern != (offset / span).bitPattern { moved.append("norm(\(a), \(b), \(c))") }
+            }
+            let amount = index.isMultiple(of: 3) ? anyFinite() : randomness.value(from: -4, to: 4)
+            let width = b - a
+            let step = width * amount
+            if width.isFinite, width != 0, amount != 1, step.isFinite {
+                steps += 1
+                if lerp(a, b, amount).bitPattern != (a + step).bitPattern { moved.append("lerp(\(a), \(b), \(amount))") }
+            }
+        }
+        #expect(moved.isEmpty, "動いた組 \(moved.count): \(moved.prefix(3))")
+        // 両方の式を十分な数で見たこと
+        #expect(ratios > 50_000 && steps > 50_000, "比 \(ratios) 組・間 \(steps) 組")
     }
 
     @Test("間を取る口へ数でない値・無限が混じっても、数でない値は返らない")

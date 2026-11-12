@@ -232,7 +232,7 @@ public class SynthSound: EffectInput {
 
     // MARK: - 音の側へ渡す
 
-    /// 値を 1 つ変える。ステージが閉じていれば捨てる。
+    /// 値を 1 つ変える。ステージが閉じていれば捨てる。操作が溢れて捨てられたら、ステージが 1 度だけ知らせる。
     func send(_ param: SynthParam, _ value: Float) {
         guard let node, !stage.isClosed else { return }
         stage.rack.set(node.id, param, value)
@@ -259,17 +259,22 @@ public class SynthSound: EffectInput {
 
     /// 値の変更と操作を、位置 `position` の 1 つの予約にして渡す。ステージが閉じていれば捨てる。
     /// 位置が今以前 (0 を含む) なら、次に作る標本の頭で全部が順に効く。
+    ///
+    /// - Returns: 載せたら `true`。操作が溢れてラックが受け付けなかったとき (#3944)、置き場が埋まって節を
+    ///   持てなかったとき、ステージが閉じた後 (#3964) は `false`。**呼ぶ側は、そのとき状態
+    ///   (``SynthSource/isPlaying``) を変えない** — 鳴らない音を鳴っていると読ませない。
+    @discardableResult
     func postReservation(
         values: [(param: SynthParam, value: Float)], ops: [SynthCommand.Op], at position: Int
-    ) {
-        guard let node, !stage.isClosed else { return }
+    ) -> Bool {
+        guard let node, !stage.isClosed else { return false }
         var commands: [SynthCommand] = values.map {
             SynthCommand(
                 op: .set, node: UInt8(node.id), param: $0.param, bits: UInt64($0.value.bitPattern),
                 at: position)
         }
         commands += ops.map { SynthCommand(op: $0, node: UInt8(node.id), at: position) }
-        stage.rack.postReservation(commands)
+        return stage.rack.postReservation(commands)
     }
 
     /// 呼び出しで渡された値を、範囲へ丸めて受ける。数でない値・無限の値は `nil` (無視する)。
@@ -316,7 +321,10 @@ public class SynthSound: EffectInput {
 public class SynthSource: SynthSound {
     /// 再生中か。``play()``・``play(at:)`` で `true` になり、``stop()`` で `false` になる。
     ///
-    /// ``Env`` のエンベロープが終わって音が 0 になっても `true` のまま (停止するのは ``stop()``)。
+    /// ``Env`` のエンベロープが終わって音が 0 になっても `true` のまま (停止するのは ``stop()``)。1 フレームに
+    /// 数千回の操作を頼んで受け付けられなかった ``play()`` は、音を鳴らさず、この値も変えない (1 度だけ警告する)。
+    /// 同時に存在できる数 (64 個) を越えて作った音と、スケッチが終わった後の ``play()`` も、鳴らないのでこの値を
+    /// 変えない (スケッチが終わる前から鳴らしていた音は `true` のまま)。
     public internal(set) var isPlaying = false
 
     /// 再生を始める。現在の周波数・音量・オフセット・定位のまま。
@@ -360,7 +368,7 @@ public class SynthSource: SynthSound {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func play(at time: Double) {
         guard let position = reservationPosition(time, call: "play") else { return }
-        postReservation(values: [], ops: [.play], at: position)
+        guard postReservation(values: [], ops: [.play], at: position) else { return }
         isActive = true
         isPlaying = true
     }
@@ -368,7 +376,8 @@ public class SynthSource: SynthSound {
     /// 停止する。約 5 ミリ秒かけてフェードアウトする。
     ///
     /// 再生していなければ何もしない。もう一度 ``play()`` で再生できる。**先の時刻へ予約していた再生の操作・エンベロープ
-    /// (``play(at:)``・``Env/play(_:_:_:_:_:at:)``) も、すべて取り消す。** 時刻は渡せない。
+    /// (``play(at:)``・``Env/play(_:_:_:_:_:at:)``) も、すべて取り消す。** 時刻は渡せない。1 フレームに数千回の
+    /// 操作を頼んだ後でも、止める操作は捨てられず、溜まった操作の後に必ず届く。
     public func stop() {
         post(.stop)
         isPlaying = false
@@ -437,13 +446,27 @@ public class SynthSource: SynthSound {
             let sustainLevel = accept(
                 level, 0...1, call: "Env.play", meaning: "a sustainLevel")
         else { return }
+        // 標本の数で表せない長さ (区間か合計が Int を越える) は、音の側で落ちる前に呼び出しごと拒む (#3951)
+        guard
+            EnvelopeShape.sampleCounts(
+                attack: attackTime, sustain: sustainTime, release: releaseTime,
+                sampleRate: stage.rack.sampleRate) != nil
+        else {
+            notice(
+                "Env.play.tooLong",
+                "Env.play() got times that are too long to count in samples (each, or all three "
+                    + "together), so the call is ignored for this \(name)")
+            return
+        }
         // 値・包絡・鳴らす操作を 1 つの予約として渡す。時刻が先なら、前の予約の値を書き換えないよう全部がその時刻に効く
-        postReservation(
-            values: [
-                (.attack, attackTime), (.sustain, sustainTime), (.level, sustainLevel),
-                (.release, releaseTime),
-            ],
-            ops: [.trigger, .play], at: position)
+        guard
+            postReservation(
+                values: [
+                    (.attack, attackTime), (.sustain, sustainTime), (.level, sustainLevel),
+                    (.release, releaseTime),
+                ],
+                ops: [.trigger, .play], at: position)
+        else { return }
         isActive = true
         isPlaying = true
     }
@@ -535,7 +558,8 @@ public class Oscillator: SynthSource {
         _ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0, at time: Double
     ) {
         guard let position = reservationPosition(time, call: "play") else { return }
-        postReservation(values: voiceValues(freq, amp, add, pan), ops: [.play], at: position)
+        guard postReservation(values: voiceValues(freq, amp, add, pan), ops: [.play], at: position)
+        else { return }
         isActive = true
         isPlaying = true
     }
@@ -616,7 +640,7 @@ public final class SawOsc: Oscillator {
 
 // MARK: - ノイズ
 
-/// 周期の無い音 (ノイズ) を出し続ける音源。色ごとに ``WhiteNoise``・``PinkNoise`` がある。
+/// 周期の無い音 (ノイズ) を出し続ける音源。色ごとに ``WhiteNoise``・``PinkNoise``・``BrownNoise`` がある。
 ///
 /// ```swift
 /// final class Hiss: Sketch {
@@ -670,7 +694,9 @@ public class Noise: SynthSource {
     /// ``SynthSource/add(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
     public func play(_ amp: Float, _ add: Float = 0, _ pan: Float = 0, at time: Double) {
         guard let position = reservationPosition(time, call: "play") else { return }
-        postReservation(values: mixValues(amp, add, pan), ops: [.play], at: position)
+        guard postReservation(values: mixValues(amp, add, pan), ops: [.play], at: position) else {
+            return
+        }
         isActive = true
         isPlaying = true
     }
@@ -701,6 +727,30 @@ public final class WhiteNoise: Noise {
 public final class PinkNoise: Noise {
     init(stage: SynthStage) {
         super.init(stage: stage, color: .pink, name: "PinkNoise")
+    }
+}
+
+/// ブラウンノイズを出す。高い帯域ほど急に弱まる (周波数の 2 乗に反比例する)、ピンクノイズよりさらに低く
+/// こもった、遠い波や風のような音。レッドノイズとも呼ぶ。
+///
+/// <!-- example: 文脈 var noise: BrownNoise? -->
+/// ```swift
+/// if let noise {
+///     // 低い帯域ほど棒が長い
+///     for band in 1...64 {
+///         let length = noise.spectrumLevels[band] * 300
+///         rect(Float(band) * 10, height - length, 8, length)
+///     }
+/// }
+/// ```
+///
+/// 約 150 Hz より上は 1 オクターブごとに 6 dB 弱まり (ピンクノイズは 3 dB)、それより下は平らなので、音が片側へ
+/// 偏り続けることはない。標本は -1〜1 に収まる。
+///
+/// Processing Sound の `BrownNoise` に当たる。作る関数は ``Sketch/createBrownNoise()``。使い方は ``Noise``。
+public final class BrownNoise: Noise {
+    init(stage: SynthStage) {
+        super.init(stage: stage, color: .brown, name: "BrownNoise")
     }
 }
 
@@ -757,6 +807,9 @@ public final class Env {
     ///
     /// 秒数が負なら 0 に、`sustainLevel` が 0〜1 の外なら端にクランプし、NaN・無限大があれば
     /// 呼び出し全体を無視する。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
+    /// 有限でも、秒数のどれか 1 つ、または 3 つの合計がサンプル数で表せないほど長い (48 kHz で
+    /// およそ 1.9 × 10¹⁴ 秒を越える) ときは、同じく呼び出し全体を無視して 1 度だけ警告する。
+    /// 鳴っている音の包絡も先の予約もそのまま残る。
     /// すぐに始める。先の時刻に始めるなら ``play(_:_:_:_:_:at:)``。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -781,8 +834,8 @@ public final class Env {
     ///   - at: 始める時刻 (オーディオクロックの秒。``Sketch/soundTime`` と同じクロック)。現在より前 (負を含む) なら、次に生成する
     ///     サンプルの先頭で始める。
     ///
-    /// NaN・無限大 (`time` を含む) があれば呼び出し全体を無視して 1 度だけ警告する (投げない —
-    /// [ADR-0020] 決定 5)。
+    /// NaN・無限大 (`time` を含む) と、サンプル数で表せないほど長い秒数があれば、呼び出し全体を無視して
+    /// 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
     ///
     /// ## 先の時刻へ予約する
     ///

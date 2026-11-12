@@ -255,6 +255,9 @@ nonisolated final class FilterNode: RackNode {
     private var cutoff: Float = 1000
     private var resonance: Float = 1
     private var bandwidth: Float = 500
+    /// 帯域通過の幅を Q (``resonance``) で決めるか。`false` なら Hz の幅 (``bandwidth``) で決める。**後に届いた
+    /// ほうが効く** — ``SynthParam/resonance`` で `true`、``SynthParam/bandwidth`` で `false` になる。
+    private var keepsQuality = false
 
     init(id: Int, sampleRate: Double, meter: SampleRing, shape: FilterShape) {
         self.shape = shape
@@ -265,8 +268,12 @@ nonisolated final class FilterNode: RackNode {
     override func apply(_ param: SynthParam, _ value: Float) {
         switch param {
         case .cutoff: cutoff = value
-        case .resonance: resonance = value
-        case .bandwidth: bandwidth = value
+        case .resonance:
+            resonance = value
+            keepsQuality = true
+        case .bandwidth:
+            bandwidth = value
+            keepsQuality = false
         default: return
         }
         configure()
@@ -276,6 +283,9 @@ nonisolated final class FilterNode: RackNode {
         let frequency = min(max(Double(cutoff), 10), sampleRate * 0.49)
         let quality: Double
         switch shape {
+        case .bandPass where keepsQuality:
+            // Q を保つ。幅は中心に比例して変わる
+            quality = min(max(Double(resonance), 0.1), 100)
         case .bandPass:
             // 帯域の幅 (Hz) から、中心に対する Q へ
             quality = min(max(frequency / max(Double(bandwidth), 1), 0.1), 100)

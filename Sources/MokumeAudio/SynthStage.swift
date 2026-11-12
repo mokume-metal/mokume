@@ -89,6 +89,7 @@ final class SynthStage: Inlet, RealtimeSound {
         case capacity
         case cannotCarry
         case reservationFull
+        case queueFull
     }
 
     /// - Parameter owner: 持ち主のスケッチ。**検査だけが `nil` で作る** (スケッチを走らせずに、`pace` と
@@ -214,6 +215,17 @@ final class SynthStage: Inlet, RealtimeSound {
                 + "seconds) keeps its reservation waiting and fills the store")
     }
 
+    /// 操作が多すぎて、値の変更や再生を捨てたことを 1 度だけ知らせる (#3944)。
+    private func noticeQueueFull() {
+        notice(
+            .queueFull,
+            "Too many changes were sent to synthesized sounds before the audio could take them (for "
+                + "example, thousands of freq() or amp() calls in one frame), so some value changes, "
+                + "play() calls and effect connections were dropped; a dropped play() leaves isPlaying "
+                + "unchanged. stop() and disconnecting an effect are never dropped. Change each value "
+                + "once per frame instead")
+    }
+
     // MARK: - Inlet
 
     func open() throws {
@@ -267,6 +279,7 @@ final class SynthStage: Inlet, RealtimeSound {
         if case .speaker(let player) = pace { resumeIfStopped(player) }
         reapReleasedSources()
         if rack.droppedReservations > 0 { noticeReservationFull() }
+        if rack.rejectedCount > 0 { noticeQueueFull() }
         for entry in sounds { entry.sound?.refresh() }
     }
 
