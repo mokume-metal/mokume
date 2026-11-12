@@ -15,6 +15,11 @@
     "width": 800
   },
   "stamp": null,
-  "time": 5.671,
-  "values": {}
+  "time": 5.5,
+  "values": {
+    "count": {
+      "type": "int",
+      "value": 3
+    }
+  }
 }

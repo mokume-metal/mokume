@@ -4,7 +4,7 @@
     "kind": "frames"
   },
   "complete": true,
-  "frame": 121,
+  "frame": 120,
   "id": "a1",
   "image": "frame.png",
   "params": {
@@ -23,7 +23,7 @@
     ]
   },
   "record": {
-    "frame": 121,
+    "frame": 120,
     "id": "5E0C2A71-3B8D-4F0A-9C55-7D1E2B6A9F10"
   },
   "schemaVersion": 1,
@@ -32,7 +32,7 @@
     "width": 800
   },
   "stamp": "b3f1a20c",
-  "time": 2.0,
+  "time": 2,
   "values": {
     "count": {
       "type": "int",

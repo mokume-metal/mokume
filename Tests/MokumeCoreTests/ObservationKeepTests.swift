@@ -45,6 +45,44 @@ struct ObservationKeepRequestTests {
     func acceptsOrdinaryIdentifiers(_ id: String) {
         #expect(KeptFrame.refusal(forDirectoryNamed: id) == nil)
     }
+
+    /// 代表例と同じ中身の目録。`time` は `Float` の時刻を `Double` にした値で書く (実装と同じ道)。
+    private static let examples: [String: KeptFrame] = [
+        "kept-frame": KeptFrame(
+            id: "a1", image: "frame.png", frame: 120, time: Double(Float(2)),
+            clock: KeptFrame.KeptClock(.frameIndex(frameRate: 60)),
+            size: ObservationReport.Size(width: 800, height: 600), stamp: "b3f1a20c",
+            values: ["count": .int(12)],
+            params: KeptFrame.Params(values: [
+                NamedParamValue(name: "radius", value: .float(121)),
+                NamedParamValue(name: "palette", value: .string("dusk")),
+            ]),
+            paramsUnknownReason: nil,
+            record: KeptFrame.Record(id: "5E0C2A71-3B8D-4F0A-9C55-7D1E2B6A9F10", frame: 120)),
+        "kept-frame-unknown": KeptFrame(
+            id: "b7", image: "frame.png", frame: 340, time: Double(Float(5.5)),
+            clock: KeptFrame.KeptClock(.wallClock),
+            size: ObservationReport.Size(width: 800, height: 600), stamp: nil, values: ["count": .int(3)], params: nil,
+            paramsUnknownReason: "The knob values changed after frame 340 was drawn, "
+                + "so the values this picture was drawn with are not known",
+            record: nil),
+    ]
+
+    /// 反証 9: 代表例は実装が書いたバイト列そのもの (鍵の後の空白だけを揃える)。代表例は `make schemas` がスキーマと
+    /// 照らすので、これで符号化とスキーマが繋がる。代表例を直すときは、この検査の目録を直して出力から作り直す。
+    @Test("目録の符号化は、代表例と字まで一致する", arguments: ["kept-frame", "kept-frame-unknown"])
+    func theManifestIsWrittenAsTheExample(_ name: String) throws {
+        let manifest = try #require(Self.examples[name])
+        let written = try TestScratch.directory("mokume-kept-example").appendingPathComponent("kept.json")
+        try AtomicFile.writeJSON(manifest, to: written)
+        let produced = String(decoding: try Data(contentsOf: written), as: UTF8.self)
+            .replacingOccurrences(of: "\" : ", with: "\": ") + "\n"
+        let exampleURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Schemas/examples/\(name).json")
+        let example = try String(contentsOf: exampleURL, encoding: .utf8)
+        #expect(produced == example, "実装の出力:\n\(produced)")
+    }
 }
 
 /// 観測 1 枚と、そのフレームについて分かる条件を組で持ち出す ([#2618](https://github.com/mokume-metal/mokume/issues/2618))。

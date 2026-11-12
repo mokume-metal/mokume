@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/kept-frame.schema.json",
   "title": "A kept observation",
-  "description": "One image an observation took, kept with the conditions known for its frame (`.mokume/kept/<id>/kept.json`, beside the image). It is written when an observation request asks for keep (`observe-request.schema.json`), and the next request does not clear it. **It records only what is known**: the knob values are the ones read at the end of the draw() that made the picture, and the random seed and the version of the code are not written here — they belong to the record of the run (`replay-record.schema.json`), which `record` points at; when the run was not being recorded, `record` is null and the seed and the version are not known. **The folder is complete only under its own name**: it is written as `<id>.partial` and renamed to `<id>` once the image and this catalogue are in place and synced, so a `.partial` folder (left by a failed write or a run that died) is not a kept observation. The keys listed here are the whole set of this version (additionalProperties is false), so a writer that adds one updates this schema first.",
+  "description": "One image an observation took, kept with the conditions known for its frame (`.mokume/kept/<id>/kept.json`, beside the image). It is written when an observation request asks for keep (`observe-request.schema.json`), and the next request does not clear it. **It records only what is known**: the knob values are the ones read at the end of the draw() that made the picture, and the random seed and the version of the code are not written here — they belong to the record of the run (`replay-record.schema.json`), which `record` points at; when the run was not being recorded, `record` is null and the seed and the version are not known. **The folder is complete only under its own name**: it is written as `<id>.<pid>.partial` (the process number of the writer, as the record of a run is) and renamed to `<id>` once the image and this catalogue are in place and synced, so a `.partial` folder (left by a failed write or a run that died) is not a kept observation, and **a reader does not read the catalogue inside one** — a write that failed at the rename leaves a catalogue saying `complete: true` there. The rename never replaces anything already under `<id>`. The keys listed here are the whole set of this version (additionalProperties is false), so a writer that adds one updates this schema first.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -203,7 +203,7 @@
     },
     "complete": {
       "const": true,
-      "description": "The mark of a finished catalogue. Only a folder that was put in place under its own name holds a catalogue, so it is always true."
+      "description": "Always true: this catalogue was written for a pair that was being put in place. **It is not the mark of completion** — the name of the folder is (`<id>`, not a `.partial` name). The catalogue is written before the rename, so a folder left unfinished by a failed rename also holds one with `complete: true`; a catalogue is read only under the folder's own name."
     }
   },
   "allOf": [
