@@ -25,7 +25,7 @@ import MokumeDiagnostics
 /// ## 受け手が消えたら外す
 ///
 /// 受け手を受け入れたとき、その port に dead-name の知らせを頼む。知らせ (または disconnect) が来たら、その受け手の
-/// 面を手放して外す。時計は使わない。
+/// 面を手放して外す。**頼めない (返信先が既に死んでいる) connect は受け入れない** (#3968)。時計は使わない。
 ///
 /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
 /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
@@ -215,17 +215,26 @@ package final class FrameSender {
             existing.pending.removeAll()
             existing.lastFrameCount = nil
             // 受け入れが大きさを運ぶので、知らせ損ねた大きさの変更はもう要らない (#3947)
-            // 受け入れが満杯で落ちた場合の扱いは #3968 で決める
+            // 受け入れが満杯で落ちたら、受け手が期限で立ち直る (`Schemas/frame-link.md`・#3968)
             existing.owesResized = false
             accept(existing)
             return
         }
+        // **返信先が死んでいれば登録しない** (#3968)。受け手が答えを待ちきれずに port を捨てた後で、この connect を読んだ。
+        // 死んだ返信先 (届いた名前が `MACH_PORT_DEAD`、または受けた後に死んだ名前) には dead-name の知らせを頼めない
+        // (`KERN_INVALID_ARGUMENT`) ので、登録すると外す契機が無く、枠を握ったまま書き続ける。答えも送らない (届かない)
+        var previous: mach_port_t = 0
+        guard
+            mach_port_request_notification(
+                mach_task_self_, reply, MACH_NOTIFY_DEAD_NAME, 0, port,
+                mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND_ONCE), &previous) == KERN_SUCCESS
+        else {
+            for surface in handed { surface.release(gpu: gpu) }
+            FrameLink.releaseName(reply)
+            return
+        }
         let receiver = Receiver(id: nextID, name: name, port: reply, surfaces: handed)
         nextID &+= 1
-        var previous: mach_port_t = 0
-        mach_port_request_notification(
-            mach_task_self_, reply, MACH_NOTIFY_DEAD_NAME, 0, port,
-            mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND_ONCE), &previous)
         receivers.append(receiver)
         accept(receiver)
         // **繋がったことを 1 行言う** (ADR-0020 決定 5・ADR-0049 決定 6)
