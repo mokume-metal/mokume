@@ -179,6 +179,14 @@ nonisolated struct PathClippedValueTests {
         ])
         #expect(segment([-50, 50], [50, -50]).clipped(to: square).subpaths.isEmpty)
         #expect(polyline([[-50, 50], [0, 0], [-50, -50]]).clipped(to: square).subpaths.isEmpty)
+        // 尖った頂点の先をかすめる線: 内側の区間はあるが、幅 (1.5e-6 ほど) が x = 100 の Float の刻み (7.6e-6) より
+        // 狭く、両端が同じ点に丸まる。長さ 0 の片は残さない
+        let spike = Path(subpaths: [
+            Path.Subpath(
+                points: [[90, 0], [110, 0], [100, 100.0000076]], isClosed: true, isCurveStep: [false, false, false])
+        ])
+        #expect(spike.contains([100, 99.99]))
+        #expect(segment([0, 100], [200, 100]).clipped(to: spike).subpaths.isEmpty)
     }
 
     /// 縁の上をなぞる線は、`contains` が辺の上の点に答えるのと同じく、辺によって残ったり消えたりする。
