@@ -91,9 +91,9 @@ extension Canvas {
     /// 周として引かれるので、閉じていない 2 本目以降の線を穴にすると、SVG に無い閉じる辺が
     /// 引かれてしまう。
     ///
-    /// **線は 1 本ずつ引いても、全部の線で 1 つの図形** (``strokingOneFigure(_:)``・#3564)。半透明の線で
-    /// 部分パスどうしが重なっても、重なりは 1 回だけ混ざる (SVG の 1 つの `<path>` の線と同じ。``Path`` の
-    /// 道 (`shape(_:)`) と同じ作り)。
+    /// **半透明の線は、1 本ずつ引いても全部の線で 1 つの図形** (``strokingOneFigure(_:)``・#3564)。部分パス
+    /// どうしが重なっても、重なりは 1 回だけ混ざる (SVG の 1 つの `<path>` の線と同じ。``Path`` の道
+    /// (`shape(_:)`) と同じ作り)。不透明な線は、これまでどおり 1 本ずつの図形にする。
     private func recordPath(_ subpaths: [SVGFile.Subpath], _ item: SVGFile.Item) {
         let scale = item.transform.largestScale
         // `evenodd` は、回り数が奇数の所だけを塗る規則で塗る。自分と交わる 1 本の周 (一筆書きの
@@ -120,13 +120,17 @@ extension Canvas {
         if let color = item.stroke {
             noFill()
             stroke(Self.linear(color))
-            strokingOneFigure {
+            func strokes() {
                 for subpath in subpaths {
                     beginShape()
                     trace(subpath, scale: scale)
                     endShape(subpath.isClosed ? .close : .open)
                 }
             }
+            // 1 つの図形にするのは半透明の線だけ。不透明な線は重なっても絵が変わらないので前と同じ引き方のまま
+            // (一部の線だけが細くなる置き方で、型板が先に引いた細い線の被覆だけを残し、交わる所の太い線を
+            // 薄くしない・反証 4)
+            if color.alpha < 1 { strokingOneFigure(strokes) } else { strokes() }
         }
     }
 
