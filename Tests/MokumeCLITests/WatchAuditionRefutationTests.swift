@@ -605,7 +605,9 @@ struct WatchAuditionRefutationTests {
         let before = harness.previewLines.count
         await release(harness, building)
         let shown = Array(harness.previewLines[before...])
-        #expect(shown == [WatchCommand.auditionDiscardedLine], "捨てた作り直しの後にプレビューへ出た行: \(shown)")
+        #expect(
+            shown == [WatchCommand.auditionDiscardedLine(productionRunning: true)],
+            "捨てた作り直しの後にプレビューへ出た行: \(shown)")
         #expect(harness.previewSpinning.last == false, "捨てた後もプレビューが回る印のまま")
         // 捨てたことは 1 度だけ名乗る
         await harness.beat()

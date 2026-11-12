@@ -893,12 +893,14 @@ enum WatchCommand {
             case .abandoned(let pid): say(abandonedLine(pid: pid))
             default: break
             }
-        } else if session.takeDiscardedAudition() {
-            // **始まりを名乗った作り直しを捨てた回は、捨てたことを名乗り、プレビューの回る印を止める** (#3796)
+        } else if let discarded = session.takeDiscardedAudition() {
+            // **終わった試聴の版を捨てた回は、捨てたことを名乗り、プレビューの回る印を止める** (#3796)。作り直しの始まりを
+            // 名乗った回も、取りかかる前に捨てた回も同じ行
             guard !session.stopRequested else { return true }
-            say(auditionDiscardedLine)
+            let line = auditionDiscardedLine(productionRunning: discarded.productionRunning)
+            say(line)
             viewer?.firstFrame.settle()
-            showInPreview(auditionDiscardedLine, false)
+            showInPreview(line, false)
         }
         return true
     }
@@ -1217,11 +1219,17 @@ enum WatchCommand {
         outcome.audition == true && outcome.ok && outcome.launched ? [auditionStartedLine] : []
     }
 
-    /// 試聴の中で読んだ版の作り直しを、その試聴を出た後に捨てたことを名乗る行 ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
-    /// 始まりの行 (``rebuildingLine``) の後に出る。
-    static let auditionDiscardedLine =
-        "Dropped the version being built — it was saved during an audition that has ended, so the work's "
-        + "window keeps the version it has. Change the source and save to show it there"
+    /// 試聴の中で読んだ版を、その試聴を出た後に捨てたことを名乗る行 ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
+    /// 作り直しの始まりの行 (``rebuildingLine``) の後にも、取りかかる前に捨てた回にも出る。
+    ///
+    /// **本番が走っていないときは「作品のウィンドウは今の版のまま」と言わない** — 走っている版が無い。
+    static func auditionDiscardedLine(productionRunning: Bool) -> String {
+        productionRunning
+            ? "Dropped the version saved during an audition that has ended — the work's window keeps the "
+                + "version it has. Change the source and save to show it there"
+            : "Dropped the version saved during an audition that has ended — nothing is running in the "
+                + "work's window. Change the source and save to start it there"
+    }
 
     /// 試聴の版を起こしたことを名乗る行 (#3565)。端末の要約 (`Rebuilt: …`) の次に出す。
     static let auditionStartedLine =
