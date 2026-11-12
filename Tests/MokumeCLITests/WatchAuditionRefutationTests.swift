@@ -709,24 +709,26 @@ struct WatchAuditionRefutationTests {
     func revertingToTheVersionBeingBuiltDropsTheFirstRead() async throws {
         let harness = try Harness()
         let session = harness.session
-        let production = try #require(await harness.save())  // s1
-        _ = try await harness.ask("audition")
-        let building = try await holdBuild(harness)  // s2 (試聴の版)
-        harness.stampOverride = "s3"  // s3 を試聴の中で読む
+        _ = try #require(await harness.save())  // s1
+        let building = try await holdBuild(harness)  // s2 (本番の版)
+        harness.stampOverride = "s3"  // s3 を本番のまま読む
         await harness.beat()
         harness.stampOverride = "s2"  // 作り直している版へ戻す
         await harness.beat()
         await release(harness, building)
-        let audition = try #require(session.auditionChild)
+        let production = try #require(harness.gens.last)
+        #expect(session.child === production)
+        await session.generationPromoted(pid: production.processIdentifier)
         let launched = harness.gens.count
         await harness.beat()
         #expect(harness.gens.count == launched, "作り直した版へ戻したのに、もう 1 度作り直した")
-        _ = try await harness.ask("leave")
-        #expect(!audition.isRunning && session.child === production)
-        // 出た後に s3 へ変えた中身は、出た後の読みで本番の版になる
+        // 入った後に s3 へ変えた中身は、入った後の読みで試聴の版になる (本番のまま読んだ前の読みの役を引き継がない)
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
         harness.stampOverride = "s3"
         await harness.beat()
-        #expect(harness.gens.count == launched + 1 && session.child === harness.gens.last, "出た後に読んだ版が本番にならない")
+        #expect(harness.gens.count == launched + 1)
+        #expect(session.auditionChild === harness.gens.last, "入った後に読んだ版が試聴の子にならない")
+        #expect(session.child === production && production.isRunning)
     }
 
     /// 前の試聴の作り直しが、いつの出入りの後に済むか。
