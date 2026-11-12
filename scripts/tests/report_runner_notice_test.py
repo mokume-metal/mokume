@@ -528,12 +528,14 @@ class ReportRunnerNoticeTest(unittest.TestCase):
         (self.fake / "issues.json").write_text(
             json.dumps(
                 [
+                    # 検索は語の照合なので、題を含む別の題も返る。完全一致で絞る
+                    {"number": 4102, "title": NOTICE_TITLE + " の振り返り", "state": "open"},
                     {"number": 4100, "title": NOTICE_TITLE, "state": "closed"},
                     {"number": 4101, "title": RED_TITLE, "state": "open"},
                 ]
             )
         )
-        for n in (4100, 4101):
+        for n in (4100, 4101, 4102):
             (self.fake / f"issue-{n}.json").write_text(json.dumps({"body": mark, "comments": []}))
         self.assertTrue(self.report(803, self.count(803, "mediaanalysisd")))
         self.assertIn("issue create", self.log.read_text())
