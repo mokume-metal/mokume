@@ -5,7 +5,8 @@ import Foundation
 
 /// JSON の配列 (`[ 値, … ]`)。オブジェクトの中の配列は ``JSONObject/getJSONArray(_:)`` で、最上位が
 /// 配列の JSON は ``SketchPart/loadJSONArray(_:)`` で読んで作り、`for-in` で回すか、番号で値を
-/// 取り出す。
+/// 取り出す。空から作って (``init()``) 値を足し (``append(_:)-(Int)``)、``SketchPart/saveJSONArray(_:_:)``
+/// で書き出すこともできる。
 ///
 /// <!-- example: 文脈 var quakes: JSONObject? -->
 /// ```swift
@@ -41,7 +42,14 @@ import Foundation
 ///
 /// ## 値の型である
 ///
-/// 代入すると写しになる (``JSONObject`` と同じ)。読むだけで、書き換える口は持たない。
+/// 代入すると写しになる (``JSONObject`` と同じ)。書き換える口 (``append(_:)-(Int)``・``remove(_:)``・
+/// ``setFloat(_:_:)`` ほか) は `mutating` で、`var` で持った配列にだけ書ける。入れ子の配列やオブジェクトへは
+/// 直に書けないので、写しを書き換えて ``setJSONArray(_:_:)``・``setJSONObject(_:_:)`` で戻す
+/// (``JSONObject`` の「値の型である」と同じ)。
+///
+/// **範囲の外の番号には書かず、初回だけ理由を知らせる** (2026-10-31 の決定)。Processing は間を `null` で
+/// 埋めて伸ばすが、番号の打ち間違いが黙って長い配列を作らないようにする。伸ばすのは ``append(_:)-(Int)``
+/// である。
 /// 読み出しは main actor の上にあるので、`DispatchQueue.concurrentPerform` などで並列に回すときは、分ける前に値へ写しておく (形は ``map(_:_:_:_:_:)`` の説明)。
 ///
 /// ## 値が無くても落ちない
@@ -56,10 +64,201 @@ import Foundation
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public struct JSONArray: Equatable, Sendable {
     /// 要素。
-    let items: [JSONValue]
+    var items: [JSONValue]
 
     init(_ items: [JSONValue]) {
         self.items = items
+    }
+
+    /// 空の配列を作る。値は ``append(_:)-(Int)`` で足し、``SketchPart/saveJSONArray(_:_:)`` で書き出す。
+    /// Processing の `new JSONArray()`。
+    ///
+    /// <!-- example: 文脈 var clicks = JSONArray() -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     var point = JSONObject()
+    ///     point.setFloat("x", mouseX)
+    ///     point.setFloat("y", mouseY)
+    ///     clicks.append(point)
+    ///     try? saveJSONArray(clicks, "out/clicks.json")
+    /// }
+    /// ```
+    public init() {
+        items = []
+    }
+
+    // MARK: - 足す・除く
+
+    /// 末尾に整数を足す。整数の綴り (`2`) で書かれる。
+    ///
+    /// <!-- example: 文脈 var counts = JSONArray() -->
+    /// ```swift
+    /// counts.append(frameCount)
+    /// ```
+    public mutating func append(_ value: Int) {
+        items.append(.integer(value))
+    }
+
+    /// 末尾に数を足す。書き出すと `Float` の最も短い綴りになる (``JSONObject/setFloat(_:_:)`` と同じ)。
+    ///
+    /// <!-- example: 文脈 var coordinates = JSONArray() -->
+    /// ```swift
+    /// coordinates.append(mouseX)
+    /// coordinates.append(mouseY)
+    /// ```
+    ///
+    /// **NaN と無限は足さず、初回だけ理由を知らせる** (口ごとに 1 度。``JSONObject/setFloat(_:_:)`` と同じ
+    /// 決まり)。
+    public mutating func append(_ value: Float) {
+        guard finite(value, call: "append", index: nil) else { return }
+        items.append(.number(shortest: value))
+    }
+
+    /// 末尾に文字を足す。
+    ///
+    /// <!-- example: 文脈 var names = JSONArray() -->
+    /// ```swift
+    /// names.append("Sapporo")
+    /// ```
+    public mutating func append(_ value: String) {
+        items.append(.string(value))
+    }
+
+    /// 末尾に真偽を足す。
+    ///
+    /// <!-- example: 文脈 var flags = JSONArray() -->
+    /// ```swift
+    /// flags.append(mouseX > width / 2)
+    /// ```
+    public mutating func append(_ value: Bool) {
+        items.append(.bool(value))
+    }
+
+    /// 末尾にオブジェクトを足す。足すのは渡した時点の写しである。
+    ///
+    /// <!-- example: 文脈 var features = JSONArray() -->
+    /// ```swift
+    /// var feature = JSONObject()
+    /// feature.setString("place", "Off the coast")
+    /// features.append(feature)
+    /// ```
+    public mutating func append(_ value: JSONObject) {
+        items.append(.object(value.members))
+    }
+
+    /// 末尾に配列を足す。配列の配列 (GeoJSON の `coordinates`) はこれで組む。足すのは渡した時点の写しである。
+    ///
+    /// <!-- example: 文脈 var ring = JSONArray() -->
+    /// ```swift
+    /// var corner = JSONArray()
+    /// corner.append(142.4 as Float)
+    /// corner.append(38.3 as Float)
+    /// ring.append(corner)
+    /// ```
+    public mutating func append(_ value: JSONArray) {
+        items.append(.array(value.items))
+    }
+
+    /// 番号の要素を除く。後ろの要素は 1 つずつ前へ詰まる。
+    ///
+    /// <!-- example: 文脈 var history = JSONArray() -->
+    /// ```swift
+    /// history.append(mouseX)
+    /// if history.count > 60 { history.remove(0) }
+    /// ```
+    ///
+    /// 除いた値は返さない。要素の種類が決まらず、`Any` を面に出さないため ([ADR-0020] 決定 6)。値が要るなら
+    /// 先に ``getFloat(_:)`` などで読む。
+    ///
+    /// **範囲の外の番号には何もせず、初回だけ理由を知らせる** (口ごとに 1 度)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public mutating func remove(_ index: Int) {
+        guard inRange(index, call: "remove", doing: "Nothing was removed") else { return }
+        items.remove(at: index)
+    }
+
+    // MARK: - 番号へ書く
+
+    /// 番号の要素を真偽で置き換える。値の種類が変わってもよい。
+    ///
+    /// <!-- example: 文脈 var flags: JSONArray! -->
+    /// ```swift
+    /// flags.setBoolean(0, true)
+    /// ```
+    ///
+    /// **範囲の外の番号には書かず、初回だけ理由を知らせる** (口ごとに 1 度。2026-10-31 の決定)。伸ばすのは
+    /// ``append(_:)-(Bool)`` である。
+    public mutating func setBoolean(_ index: Int, _ value: Bool) {
+        set(index, .bool(value), call: "setBoolean")
+    }
+
+    /// 番号の要素を数で置き換える。値の種類が変わってもよい。
+    ///
+    /// <!-- example: 文脈 var levels: JSONArray! -->
+    /// ```swift
+    /// levels.setFloat(0, mouseX / width)
+    /// ```
+    ///
+    /// 範囲の外の番号の扱いは ``setBoolean(_:_:)`` と同じ。**NaN と無限は書かず、初回だけ理由を知らせる**
+    /// (``append(_:)-(Float)`` と同じ決まり)。
+    public mutating func setFloat(_ index: Int, _ value: Float) {
+        guard inRange(index, call: "setFloat", doing: "Nothing was written"),
+            finite(value, call: "setFloat", index: index)
+        else { return }
+        items[index] = .number(shortest: value)
+    }
+
+    /// 番号の要素を整数で置き換える。整数の綴り (`2`) で書かれる。
+    ///
+    /// <!-- example: 文脈 var counts: JSONArray! -->
+    /// ```swift
+    /// counts.setInt(0, counts.getInt(0) + 1)
+    /// ```
+    ///
+    /// 範囲の外の番号の扱いは ``setBoolean(_:_:)`` と同じ。
+    public mutating func setInt(_ index: Int, _ value: Int) {
+        set(index, .integer(value), call: "setInt")
+    }
+
+    /// 番号の要素を文字で置き換える。
+    ///
+    /// <!-- example: 文脈 var names: JSONArray! -->
+    /// ```swift
+    /// names.setString(0, "Naha")
+    /// ```
+    ///
+    /// 範囲の外の番号の扱いは ``setBoolean(_:_:)`` と同じ。
+    public mutating func setString(_ index: Int, _ value: String) {
+        set(index, .string(value), call: "setString")
+    }
+
+    /// 番号の要素をオブジェクトで置き換える。入れ子のオブジェクトは、写しを書き換えてここで戻す。
+    ///
+    /// <!-- example: 文脈 var features: JSONArray! -->
+    /// ```swift
+    /// var first = features.getJSONObject(0)
+    /// first.setString("place", "Off the coast")
+    /// features.setJSONObject(0, first)
+    /// ```
+    ///
+    /// 範囲の外の番号の扱いは ``setBoolean(_:_:)`` と同じ。
+    public mutating func setJSONObject(_ index: Int, _ value: JSONObject) {
+        set(index, .object(value.members), call: "setJSONObject")
+    }
+
+    /// 番号の要素を配列で置き換える。入れ子の配列は、写しを書き換えてここで戻す。
+    ///
+    /// <!-- example: 文脈 var ring: JSONArray! -->
+    /// ```swift
+    /// var corner = ring.getJSONArray(0)
+    /// corner.setFloat(0, 140)
+    /// ring.setJSONArray(0, corner)
+    /// ```
+    ///
+    /// 範囲の外の番号の扱いは ``setBoolean(_:_:)`` と同じ。
+    public mutating func setJSONArray(_ index: Int, _ value: JSONArray) {
+        set(index, .array(value.items), call: "setJSONArray")
     }
 
     // MARK: - 番号で取り出す
@@ -93,6 +292,14 @@ public struct JSONArray: Equatable, Sendable {
     /// ```
     ///
     /// 読み方は ``JSONObject/getInt(_:)`` と同じ (**丸めない**。`2` と `2.0` は `2`、`2.5` は `0`)。
+    /// **JSON の数の値は、`JSONSerialization` が返した値で整数かを決める** ので、読み込みの時点で端数や
+    /// 下位の桁が失われる場合がある。正確な整数が要るときは、同じ桁を文字で渡す。
+    ///
+    /// ```
+    /// [9007199254740993.0]    getInt(0) → 9007199254740992 (数の値。下位の桁が失われた後の整数)
+    /// ["9007199254740993.0"]  getInt(0) → 9007199254740993 (数の文字。桁のまま)
+    /// ```
+    ///
     /// **整数にならないときは 0 を返し、初回だけ理由を知らせる** — 範囲の外の番号・整数でない値の
     /// どちらでも (口ごとに 1 度)。
     public func getInt(_ index: Int) -> Int {
@@ -179,7 +386,50 @@ public struct JSONArray: Equatable, Sendable {
         return JSONArray([])
     }
 
+    /// 番号の要素が `null` か。**範囲の外の番号も `true`** (Processing の `isNull()` と同じ)。
+    ///
+    /// <!-- example: 文脈 var readings: JSONArray! -->
+    /// ```swift
+    /// for i in 0..<readings.count where !readings.isNull(i) {
+    ///     circle(20 + Float(i) * 24, height - readings.getFloat(i), 8)
+    /// }
+    /// ```
+    ///
+    /// 番号が範囲の中かは `count` で分かる。**知らせない** — 値が欠けているかもしれないことを分かって
+    /// 尋ねる口である (``JSONObject/isNull(_:)`` と同じ)。
+    public func isNull(_ index: Int) -> Bool {
+        guard items.indices.contains(index) else { return true }
+        return items[index] == .null
+    }
+
     // MARK: - 内部
+
+    /// 書く口の共通の道。範囲の外なら書かずに、口ごとに 1 度知らせる。
+    private mutating func set(_ index: Int, _ value: JSONValue, call: String) {
+        guard inRange(index, call: call, doing: "Nothing was written") else { return }
+        items[index] = value
+    }
+
+    /// 書き換える番号が範囲の中か。外なら初回だけ知らせて `false`。
+    private func inRange(_ index: Int, call: String, doing outcome: String) -> Bool {
+        if items.indices.contains(index) { return true }
+        DocumentValues.warnOnce(
+            .arrayElement(call: call, problem: .outOfRange),
+            "\(call)(\(index)): the JSON array has \(items.count) element\(items.count == 1 ? "" : "s"), "
+                + "so there is no element \(index). \(outcome) (said once per call)")
+        return false
+    }
+
+    /// 書く数が有限か。NaN と無限なら初回だけ知らせて `false` (JSON には綴りが無い)。
+    private func finite(_ value: Float, call: String, index: Int?) -> Bool {
+        if value.isFinite { return true }
+        let place = index.map { "\($0), " } ?? ""
+        DocumentValues.warnOnce(
+            .arrayElement(call: call, problem: .notFinite),
+            "\(call)(\(place)\(value)): JSON has no spelling for \(value), so nothing was written "
+                + "(said once per call)")
+        return false
+    }
 
     /// 番号の要素。範囲の外なら初回だけ知らせて `nil`。
     private func element(_ index: Int, call: String, reading: String) -> JSONValue? {

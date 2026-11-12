@@ -401,6 +401,76 @@ extension SketchPart {
             try JSONFile.parseObject(try readText(path), path: path, instead: "loadJSONArray(_:)"))
     }
 
+    /// オブジェクトを JSON のファイルにする。書き終わるまで返らない。
+    ///
+    /// <!-- example: 文脈 var points: [Float] = [] -->
+    /// ```swift
+    /// func keyPressed() {
+    ///     guard key == "s" else { return }
+    ///     var summary = JSONObject()
+    ///     summary.setInt("count", points.count)
+    ///     summary.setFloat("mean", points.isEmpty ? 0 : points.reduce(0, +) / Float(points.count))
+    ///     summary.setString("savedAt", "frame \(frameCount)")
+    ///     try? saveJSONObject(summary, "out/summary.json")
+    /// }
+    /// ```
+    ///
+    /// 例の `keyPressed()` は投げ返せない所で、書けなくても絵は続くので `try?` で受けている。
+    ///
+    /// ## 書き方
+    ///
+    /// - **同じオブジェクトからは同じバイト列のファイルになる。** キーは ``JSONObject/keys`` と同じ
+    ///   文字の順で書く (書いた順によらない)
+    /// - 文字は UTF-8 (BOM なし)、行の終わりは LF、字下げは 2 (Processing の既定)
+    /// - 数は ``JSONObject/setInt(_:_:)`` で書いたものが整数の綴り (`2`)、``JSONObject/setFloat(_:_:)``
+    ///   で書いたものが `Float` の最も短い綴り (`-3.5`)。読んだオブジェクトの数は、読んだ値のまま書く
+    ///   (`JSONSerialization` が桁の多い数として渡した `-9223372036854775809` や
+    ///   `1.00000000000000000000001` は綴りのまま)。**読み込みの時点で丸まった数は、丸まった値を書く**
+    ///   (`9007199254740993.0` は `9007199254740992.0`、`1.0000000000000001` は `1.0`)。
+    ///   `JSONFile` の読み方と ``JSONObject/getInt(_:)`` の説明を参照
+    ///
+    /// 書いたファイルを ``loadJSONObject(_:)`` で読み直すと、同じオブジェクトに戻る。
+    ///
+    /// 引数は書く値が先で、置き場が後 (``saveTable(_:_:)`` と同じ順。Processing の
+    /// `saveJSONObject(json, filename)` も同じ)。置き場は**作業ディレクトリが基準**で、途中の
+    /// ディレクトリは無ければ作り、**書きかけを残さない**ことも ``saveTable(_:_:)`` と同じ。
+    ///
+    /// **書き出しは投げる。** 書けなかったときに別の道を選ぶ判断が要るので、黙って捨てない。
+    ///
+    /// - Throws: 書けなかったときに ``DataFailure/unwritable(path:reason:)``。
+    // shot: 撮れない 結果が絵ではなくファイルになる
+    public func saveJSONObject(_ json: JSONObject, _ path: String) throws(DataFailure) {
+        try TextFile.write(JSONFile.format(.object(json.members)), to: path)
+    }
+
+    /// 配列を、最上位が配列の JSON のファイルにする。書き終わるまで返らない。
+    ///
+    /// <!-- example: 文脈 var trail = JSONArray() -->
+    /// ```swift
+    /// func mouseDragged(deltaX: Float, deltaY: Float) {
+    ///     var point = JSONArray()
+    ///     point.append(mouseX)
+    ///     point.append(mouseY)
+    ///     trail.append(point)
+    /// }
+    ///
+    /// func keyPressed() {
+    ///     if key == "s" { try? saveJSONArray(trail, "out/trail.json") }
+    /// }
+    /// ```
+    ///
+    /// 書き方 (要素は並んだ順のまま、入れ子のオブジェクトのキーは文字の順・UTF-8 (BOM なし)・LF・字下げ 2・
+    /// 同じ値から同じバイト列) と、置き場・書きかけを残さないこと・書けなければ投げることは
+    /// ``saveJSONObject(_:_:)`` と同じ。書いたファイルを ``loadJSONArray(_:)`` で読み直すと、同じ配列に戻る。
+    ///
+    /// 引数は書く値が先で、置き場が後 (Processing の `saveJSONArray(json, filename)` と同じ順)。
+    ///
+    /// - Throws: 書けなかったときに ``DataFailure/unwritable(path:reason:)``。
+    // shot: 撮れない 結果が絵ではなくファイルになる
+    public func saveJSONArray(_ json: JSONArray, _ path: String) throws(DataFailure) {
+        try TextFile.write(JSONFile.format(.array(json.items)), to: path)
+    }
+
     /// JSON のファイルか URL を読み、オブジェクトにする。**読んでいる間、他の仕事を止めない。**
     ///
     /// <!-- example: 文脈 var temp: Float?; var reason = "" -->
@@ -602,9 +672,10 @@ extension SketchPart {
     /// }
     /// ```
     ///
-    /// 子の要素は名前で取り出し (``XML/getChildren(_:)``・最初の 1 つは ``XML/getChild(_:)``)、属性は
-    /// 数として (``XML/getFloat(_:)``)・文字として (``XML/getString(_:)``) 読む。要素の中の文字は
-    /// ``XML/getContent()`` で読む。
+    /// 子の要素は名前で取り出し (``XML/getChildren(_:)``・最初の 1 つは ``XML/getChild(_:)``・すべての子は
+    /// ``XML/getChildren()``)、属性は数として (``XML/getFloat(_:)``・整数は ``XML/getInt(_:)``)・文字として
+    /// (``XML/getString(_:)``) 読む。要素の中の文字は ``XML/getContent()`` で読む。届いた文字の XML は
+    /// ``parseXML(_:)`` で読む。
     ///
     /// URL の扱い (`http://` か `https://` で始まる名前は URL から読み、届くまで返らない) と、
     /// 探す場所は ``loadJSONObject(_:)`` と同じ。
@@ -667,6 +738,35 @@ extension SketchPart {
             try await requestParsed(path) { text throws(DataFailure) in
                 try XMLFile.parse(text, path: path)
             })
+    }
+
+    /// XML の文字を読み、根の要素にする。ファイルも URL も読まない。
+    ///
+    /// <!-- example: 文脈 var size = 0 as Float -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     // 通信で届いた文字 (たとえば別のアプリが送ってきた XML)
+    ///     let message = "<star x=\"120\" size=\"6\"/>"
+    ///     if let star = try? parseXML(message) {
+    ///         size = star.getFloat("size")
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// 届く文字は作者が選べないので、壊れていたら読まずに前の値のまま続ける (`try?` で受ける)。理由が要る
+    /// なら `do` / `catch` で受ける (``parseJSONObject(_:)`` と同じ)。
+    ///
+    /// TCP・UDP・WebSocket で届くのは文字なので、その文字を ``XML`` にする口である。読み方と壊れたときの
+    /// 失敗は ``loadXML(_:)`` と同じ (XML 宣言の `encoding` は読まない・外の実体は読まない・入れ子は根の
+    /// 下に 512 段まで)。壊れた文字は ``DataFailure/malformed(path:line:reason:)`` で、壊れていた行を添えて
+    /// 投げる。**`path` には口の名前** (`"parseXML(_:)"`) が入る — 文字には名前が無い。
+    ///
+    /// ファイルを読まず待たないので、`draw()` の中で呼んでも知らせない。
+    ///
+    /// - Throws: ``DataFailure/malformed(path:line:reason:)``。
+    // shot: 撮れない 文字を読んだ値を返す口で、描き場所には触れない
+    public func parseXML(_ text: String) throws(DataFailure) -> XML {
+        XML(try XMLFile.parse(text, path: "parseXML(_:)"))
     }
 
     // MARK: - 共通の道

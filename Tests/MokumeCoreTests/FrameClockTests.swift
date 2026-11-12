@@ -621,7 +621,7 @@ struct SketchFrameClockTests {
     }
 
     /// 最上位が配列の JSON を読む口 (#2466)。待たない口 `requestJSONArray` を案内する。文字から読む口
-    /// (`parseJSONObject`・`parseJSONArray`) はファイルを読まないので、`draw()` の中でも知らせない。
+    /// (`parseJSONObject`・`parseJSONArray`・`parseXML` (#3645)) はファイルを読まないので、`draw()` の中でも知らせない。
     @Test("draw() の中の loadJSONArray は口の名前で 1 度だけ requestJSONArray を案内し、setup() の中と parse は知らせない")
     func loadJSONArrayInDrawIsNoticed() throws {
         let url = TestScratch.path("mokume-frame-clock", pathExtension: "json")
@@ -640,6 +640,7 @@ struct SketchFrameClockTests {
             if (try? probe.loadJSONArray(url.path)) != nil { loaded += 1 }
             _ = try? probe.parseJSONObject("{}")
             _ = try? probe.parseJSONArray("[]")
+            _ = try? probe.parseXML("<a/>")
         }
         let noisy = try SketchRuntime(sketch: inDraw, gpu: RenderDevice())
         for _ in 0..<3 { try noisy.advance() }
@@ -649,6 +650,7 @@ struct SketchFrameClockTests {
         #expect(message.contains("requestJSONArray(_:)"), "\(message)")
         #expect(noisy.blockingLoads.message(for: "parseJSONObject(_:)") == nil)
         #expect(noisy.blockingLoads.message(for: "parseJSONArray(_:)") == nil)
+        #expect(noisy.blockingLoads.message(for: "parseXML(_:)") == nil)
     }
 
     /// 書体の読み込みは走っている面を使わないので、走っていなくても読め、走っていない口の警告も出ない。

@@ -182,7 +182,7 @@ nonisolated struct AppIdentity: Equatable {
     /// `--out` が深くて `<name>.app` の中のパスが 1024 バイト (PATH_MAX) を越えるとき。
     /// 置く場所での試し書きや、Unicode の規則の写しは採らなかった (覆えるのは名前 2 つまでで、
     /// 規則は APFS と Swift の Unicode の版のずれを確かめる手段が無い)。落ちたときは
-    /// ``BundleCommand/run(_:)`` が理由を名乗り、紙は署名の前に書くので署名済みの `.app` は残らない。
+    /// ``BundleCommand/run(_:writing:)`` が理由を名乗り、紙は署名の前に書くので署名済みの `.app` は残らない。
     static let maximumNameLength = 239
 
     /// 名乗れる中身があるなら、前後を落とした文字列。無ければ `nil`。

@@ -429,6 +429,60 @@ class ToolPinsTest(unittest.TestCase):
             self.assertIn("--require-hashes", line)
 
 
+class ToolsCacheTest(unittest.TestCase):
+    """道具の cache は ci-static と、main で温める warm-tools-cache.yml で同じ path・key を使う (#3885)。
+
+    片方だけ鍵がずれると、main の cache を ci-static が当てられず、PR の初回と merge queue の run が
+    また GitHub Releases から取りに行く (外れても落ちないので、ずれは黙って効かなくなる)。
+    """
+
+    WARM = REPO / ".github" / "workflows" / "warm-tools-cache.yml"
+    SCRIPT = REPO / "scripts" / "check-workflows.sh"
+
+    @staticmethod
+    def cache_step(body):
+        """cache の step の (path, key)。step が 1 つだけであることも見る。"""
+        found = re.findall(
+            r"uses: actions/cache@\S+\s+with:\s+path: (.+)\s+key: (.+)", body
+        )
+        assert len(found) == 1, found
+        return found[0][0].strip(), found[0][1].strip()
+
+    @classmethod
+    def setUpClass(cls):
+        _, jobs = workflow.split(CI.read_text(encoding="utf-8"))
+        cls.static = jobs["ci-static"]
+        _, warm = workflow.split(cls.WARM.read_text(encoding="utf-8"))
+        cls.warm = warm["warm"]
+
+    def test_2_つの_cache_の_path_と_key_が同じ文字列(self):
+        self.assertEqual(self.cache_step(self.static), self.cache_step(self.warm))
+
+    def test_path_は_check_workflows_の_TOOLS_DIR(self):
+        path, _ = self.cache_step(self.static)
+        m = re.search(r'(?m)^TOOLS_DIR="([^"]+)"', self.SCRIPT.read_text(encoding="utf-8"))
+        self.assertEqual(path, m.group(1))
+
+    def test_key_は_check_workflows_を_hashFiles_する(self):
+        for body in (self.static, self.warm):
+            _, key = self.cache_step(body)
+            self.assertIn("hashFiles('scripts/check-workflows.sh')", key)
+
+    def test_ci_static_の_cache_は_checkout_の後で_make_ci_check_の前(self):
+        order = [self.static.index(s) for s in ("actions/checkout", "actions/cache", "make ci-check")]
+        self.assertEqual(order, sorted(order))
+
+    def test_cache_を温めるワークフローは_main_への_push_で走り_権限と_token_を持たない(self):
+        text = self.WARM.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^  push:\n    branches: \[main\]$")
+        self.assertRegex(text, r"(?m)^permissions:\n  contents: read$")
+        self.assertNotRegex(re.sub(r"(?m)^\s*#.*$", "", text), r"GH_TOKEN|GITHUB_TOKEN|secrets\.")
+
+    def test_ci_yml_は_push_で走らせない(self):
+        top, _ = workflow.split(CI.read_text(encoding="utf-8"))
+        self.assertNotRegex(top["on"], r"(?m)^  push:")
+
+
 @unittest.skipUnless(MAKE, "make が PATH に無い")
 class StaticShellStepsTest(unittest.TestCase):
     """ubuntu へ出したシェルの段は、macOS の hooks-test が `/bin/bash` で起こす (#2612・#702)。

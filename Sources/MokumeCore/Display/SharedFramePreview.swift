@@ -26,7 +26,7 @@ import AppKit
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
-public final class SharedFramePreview {
+package final class SharedFramePreview {
     /// 覚えている枠が無いときの大きさ。作品のウィンドウ (`SharedFrameWindow.defaultSize`) と揃える。
     static let defaultSize = NSSize(width: 480, height: 270)
 

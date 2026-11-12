@@ -454,7 +454,7 @@ final class ParamSurface: DeclarationWatcher {
 
     /// 残っていた応答のうち、ここが読むのは番号だけ。識別子は ``RequestFile`` が読む。
     private struct LeftReport: Decodable {
-        let revision: Int
+        @WholeNumber var revision: Int
     }
 
     private func write(_ report: ParamReport) {

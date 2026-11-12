@@ -45,7 +45,7 @@ import Foundation
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [#1285]: https://github.com/mokume-metal/mokume/issues/1285
 /// [#2392]: https://github.com/mokume-metal/mokume/issues/2392
-public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
+package struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 撮れる枚数の上限。60fps で 2 秒ぶん。
     ///
     /// 撮った絵は 1 枚ずつ区画へ書き出されるので、際限なく頼めるとディスクが埋まる。

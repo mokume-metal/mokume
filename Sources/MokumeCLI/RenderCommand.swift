@@ -77,10 +77,11 @@ enum RenderCommand {
         guard FileManager.default.fileExists(atPath: package.path) else {
             throw .packageNotFound(path: directory.path)
         }
-        try ResourceDeclaration.check(in: directory)
-
         print("Tool: \(ToolVersion.describe())")
-        let context = try RunCommand.context(in: directory, invocation: options.invocation)
+        // 資材の宣言は、宣言を読んだ直後・ビルドの前に見る (`run` と同じ・#3984)
+        let context = try RunCommand.context(
+            in: directory, invocation: options.invocation,
+            afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
         try render(executable, in: directory, request: options.request)
@@ -223,6 +224,12 @@ enum RenderCommand {
                     + " movie. Call save(\"plot.svg\") inside the sketch (it is written when the sketch runs,"
                     + " with render too), and give \(outFlags[0]) a .mov, .mp4 or .gif, or a numbered series"
                     + " (out/frame-####.png): \(out)")
+        }
+        // **`.png` で終わらない連番も、ビルドの前に断る** (#3961)。連番は PNG の絵を書くので、受けると PNG の中身が
+        // `.jpg`・`.gif` の名前で並ぶ (子の警告はビルドの後にしか出ない)。頼みの型も組まないので、ここで理由を
+        // 名乗る。文面は子が環境変数の頼みを断るときと同じ 1 つで、打った綴りから名前を案内する
+        if let reason = RenderRequest.seriesNotPNGReason(destination: out) {
+            throw .usage("\(outFlags[0]): \(reason): \(out)")
         }
         guard RenderRequest.accepts(destination: out),
             let request = RenderRequest(

@@ -9,9 +9,9 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 112 |
-| 入れる | 8 |
-| 作例待ち | 34 |
+| 同等 | 114 |
+| 入れる | 4 |
+| 作例待ち | 36 |
 | 持たない | 11 |
 | 計 | 165 |
 
@@ -32,11 +32,11 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 | 束 | API | 件数 |
 | --- | --- | --- |
 | [#3473] `SoundFile` の再生速度と定位 (既存の Issue。意味は決定済みで、型を `Feature` に替えてラベルを付ければ着手できる。`pan` と `rate` は別の PR でよい) | `SoundFile.rate()`・`pan()`・`AudioSample.rate()`・`pan()` | 4 |
-| [#3705] `SoundFile` のチャンネルの数と標本の数 | `SoundFile.channels()`・`frames()`・`AudioSample.channels()`・`frames()` | 4 |
+| [#3705] `SoundFile` のチャンネルの数と標本の数 (入れた。`SoundFile` の 2 件は「SoundFile と AudioSample」の節で同等、`AudioSample` の 2 件は型が無いので作例待ちに揃えた) | `SoundFile.channels()`・`frames()`・`AudioSample.channels()`・`frames()` | 4 |
 | [#3706] `BandPass` を Q で決める (入れた。行は「エフェクト」の節で同等) | `BandPass.res()` | 1 |
 | [#3718] `BrownNoise` (入れた。行は「ノイズ」の節で同等) | `BrownNoise` (クラス)・`amp()`・`pan()`・`play()`・`set()`・`stop()` | 6 |
 
-件数に入らない行が 1 つある。`Env.play()` が `SoundFile` を受ける形は、`Env.play()` (同等) の「無い形」で、参照の項目ではないので件数に数えず、「Env」の節に子の行として置いた。これも「入れる」で、束は既存の [#3099] (型を `Feature` に替えて着手できる)。
+件数に入らない行が 1 つある。`Env.play()` が `SoundFile` を受ける形は、`Env.play()` (同等) の「無い形」で、参照の項目ではないので件数に数えず、「Env」の節に子の行として置いた。これも「入れる」で、束は既存の [#3099] (入れた。子の行は「同等」に直した)。
 
 ## オシレータ
 
@@ -77,8 +77,8 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `Env` (クラス) | `Env` (`Sketch.createEnv()` が作る) | 同等 | ASR (台形) の包絡。Processing と同じで、ADSR にはしない | [#1980]・PR [#2221] |
-| `Env.play()` | `Env.play(_:_:_:_:_:)`・`play(_:_:_:_:_:at:)` | 同等 | 音源 (`SynthSource`) に形を掛ける。形が終わると音源の音は 0 のまま、次に `env.play` を呼ぶまで無音。音源の音量にさらに掛かる。無い形: `input` に `SoundFile` を渡す形 (下の子の行)。エフェクトの出口には掛けられない (手本の `Effect` も `SoundObject` を継がず、掛けられない)。mokume にだけ、先の時刻から始める `at:` がある | [#1980]・PR [#2221]・[#3517] |
-| └ `Env.play()` のうち `SoundFile` を受ける形 (子の行・件数に数えない) | — | 入れる | 曲の頭の立ち上げ・終わりのフェードが `amp(_:)` を毎フレーム動かさずに書ける。受ける範囲 (`SynthSource` と `SoundFile` の多重定義。エフェクトの出口と `AudioIn` は受けない) と完了条件は [#3099] で決まっていて、割れる点は無い。基準 2〜5 も満たす (標本をラックの節の包絡の形に載せる) | [#3099] |
+| `Env.play()` | `Env.play(_:_:_:_:_:)`・`play(_:_:_:_:_:at:)` | 同等 | 音源 (`SynthSource`) と `SoundFile` に形を掛ける (下の子の行)。形が終わると音源の音は 0 のまま、次に `env.play` を呼ぶまで無音。音源の音量にさらに掛かる。エフェクトの出口には掛けられない (手本の `Effect` も `SoundObject` を継がず、掛けられない)。mokume にだけ、合成した音源を先の時刻から始める `at:` がある | [#1980]・PR [#2221]・[#3517] |
+| └ `Env.play()` のうち `SoundFile` を受ける形 (子の行・件数に数えない) | `Env.play(_:_:_:_:_:)` の `SoundFile` を受ける多重定義 | 同等 | 曲の頭の立ち上げ・終わりのフェードが `amp(_:)` を毎フレーム動かさずに書ける。手本と同じく、再生中なら位置を動かさず、再生していなければ `play()` と同じ位置から鳴らし、形が終わっても再生は止めない。形は再生した標本の数で進む (一時停止の間は止まる)。`at:` の形は無い。エフェクトの出口と `AudioIn` は受けない | [#3099] |
 
 ## エフェクト
 
@@ -136,7 +136,8 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 | `AudioSample.stop()` | `SoundFile.stop()` | 同等 | 止めて頭へ戻す | PR [#2200] |
 | `SoundFile.isPlaying()` | `SoundFile.isPlaying` | 同等 | プロパティ。値はそのフレームの始まりのもの | PR [#2200] |
 | `SoundFile`・`AudioSample` の `rate()`・`pan()` (2 つ × 2 = 4 件) | — | 入れる | 速さ (再標本化で音程も変わる) と定位。意味は [#3473] の本文で決まっていて (速さは 0 以上・位置はファイルの秒のまま・解析は鳴った音・定位は合成音と同じ API の形)、割れる点は残っていない。実装は 4 つの歩み (固定の時計のフレーム・実時間・直に鳴らす経路・エフェクトを通した経路) すべてに入れる必要があり重いが、それは束の中で分ける (`pan` と `rate` は別の PR でよい)。基準 2〜5 を満たす (再標本化は AVFAudio だけで書ける) | [#3473]・[#2464] |
-| `SoundFile`・`AudioSample` の `channels()`・`frames()` (2 つ × 2 = 4 件) | — | 入れる | チャンネルの数と標本の数。読み取り専用で、割れる点は無い。`duration * sampleRate` では単精度の丸めで長いファイルの標本の数が合わない | [#3705] |
+| `SoundFile.channels()`・`frames()` (2 件) | `SoundFile.channels`・`SoundFile.frames` | 同等 | チャンネルの数と標本の数を読むプロパティ。`channels` は 3 チャンネル以上でも 2 に畳まず数をそのまま返す (解析の値はチャンネルを平均したものだが、この数は平均する前)。`frames` は読み込んだ標本の数そのもので、`duration * sampleRate` の近似ではない (単精度の丸めで長いファイルの標本の数が合わない)。外した後も足し直した後も同じ値 | [#3705]・[#3969] |
+| `AudioSample.channels()`・`frames()` (2 件) | — | 作例待ち | 読み取りの意味は `SoundFile` の行と同じだが、`AudioSample` の型が無い (上の `AudioSample` (クラス) の行が作例待ち)。型を足すときに、`SoundFile` と同じプロパティを持たせる | [#3705] |
 | `SoundFile`・`AudioSample` の `cue()` (2 件) | `SoundFile.jump(_:)` (止まっている間) | 持たない | 止まっている間の `jump(_:)` が、次の `play()` の位置を決める。参照の `cue()` は `play()` の位置にだけ効き `loop()` には効かないが、mokume の位置は両方に効く | [#2464] |
 | `AudioSample.percent()` | `song.position / song.duration` | 持たない | 割り算 1 つで、百分率は作者の単位 | — |
 | `AudioSample.set()` | `rate(_:)`・`pan(_:)`・`amp(_:)` | 持たない | 速さ・定位・音量を続けて呼ぶ (`rate`・`pan` は [#3473] で入れる)。3 つをまとめる API は足さない | — |
@@ -182,3 +183,4 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 [#3705]: https://github.com/mokume-metal/mokume/issues/3705
 [#3706]: https://github.com/mokume-metal/mokume/issues/3706
 [#3718]: https://github.com/mokume-metal/mokume/issues/3718
+[#3969]: https://github.com/mokume-metal/mokume/issues/3969

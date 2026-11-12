@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeTestSupport
+import Synchronization
 import Testing
 
 @testable import MokumeCore
@@ -407,6 +408,278 @@ struct ReplayRecordFormatTests {
         #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
     }
 
+    // MARK: - 錠のファイルの持ち主 (#3970)
+
+    @Test("行き先の隣に元から在る通常ファイルの .lock は、錠に使っても終わった後に同じ内容で残る (#3970)")
+    func anExistingLockFileIsKept() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let lock = directory.appendingPathComponent("take.json.lock")
+        try Data("mine".utf8).write(to: lock)
+
+        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        // 在るファイルを錠に使っても、排他は効く
+        #expect(ReplayRecorder.open(destination: destination).recorder == nil)
+        recorder.finish(last: nil)
+        #expect((try? Data(contentsOf: lock)) == Data("mine".utf8), "利用者の .lock を消した・書き換えた")
+        #expect(try object(at: destination)["complete"] as? Bool == true)
+    }
+
+    @Test("今回作った .lock だけを終わりに消し、落ちた回が残した .lock は次の実行が使って残す (#3970)")
+    func onlyTheLockFileThisRunMadeIsRemoved() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let lock = directory.appendingPathComponent("take.json.lock")
+        // 落ちた回の残り (記録が作る形の、中身の無い通常ファイル)
+        try Data().write(to: lock)
+
+        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        claim.release()
+        #expect(FileManager.default.fileExists(atPath: lock.path), "今回作っていない .lock を消した")
+
+        // 何も無いところから始めた回は、自分の .lock を消す
+        try FileManager.default.removeItem(at: lock)
+        let fresh = try #require(ReplayClaim.take(destination: destination).claim)
+        #expect(FileManager.default.fileExists(atPath: lock.path))
+        fresh.release()
+        #expect(!FileManager.default.fileExists(atPath: lock.path), "今回作った .lock が残った")
+    }
+
+    @Test(
+        ".lock の名前のシンボリックリンクはたどらず、リンクも指す先も残し、指す先が無ければ作らない (#3970)",
+        arguments: [true, false])
+    func aLockFileLinkIsNotFollowed(targetExists: Bool) throws {
+        let manager = FileManager.default
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let target = directory.appendingPathComponent("elsewhere.txt")
+        if targetExists { try Data("theirs".utf8).write(to: target) }
+        let link = directory.appendingPathComponent("take.json.lock")
+        try manager.createSymbolicLink(atPath: link.path, withDestinationPath: target.path)
+
+        let taken = ReplayClaim.take(destination: destination)
+        taken.claim?.release()
+        #expect(taken.claim == nil, "リンクを錠に使った")
+        #expect(taken.failure?.contains("symbolic link") == true, "理由: \(taken.failure ?? "nil")")
+        #expect((try? manager.destinationOfSymbolicLink(atPath: link.path)) == target.path, "リンクを外した")
+        if targetExists {
+            #expect((try? Data(contentsOf: target)) == Data("theirs".utf8), "指す先を書き換えた")
+        } else {
+            #expect(!manager.fileExists(atPath: target.path), "指す先にファイルを作った")
+        }
+    }
+
+    /// `body` を別の糸で走らせ、期限 (10 秒) までに戻るか。戻らなければ `fifo` を書き手として開いて、読みに開いて
+    /// 止まっている糸を起こしてから `false` を返す。
+    private func returnsInTime(unblocking fifo: String, _ body: @escaping @Sendable () -> Void) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            body()
+            done.signal()
+        }
+        guard done.wait(timeout: .now() + 10) == .success else {
+            let writer = open(fifo, O_WRONLY | O_NONBLOCK)
+            if writer >= 0 { close(writer) }
+            _ = done.wait(timeout: .now() + 10)
+            return false
+        }
+        return true
+    }
+
+    @Test("watch の始まりは、記録を指すリンクの世代をリンクごと残し、指す先も残す (#3970)")
+    func generationCleanupKeepsALinkToARecord() throws {
+        let manager = FileManager.default
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json")
+        let elsewhere = directory.appendingPathComponent("mine.json")
+        try writeRecordHead(elsewhere)
+        let link = directory.appendingPathComponent("take-1.json")
+        try manager.createSymbolicLink(atPath: link.path, withDestinationPath: elsewhere.path)
+
+        #expect(ReplayRequest.discardGenerations(of: base.path).isEmpty)
+        #expect((try? manager.destinationOfSymbolicLink(atPath: link.path)) == elsewhere.path, "リンクを消した")
+        #expect(ReplayRequest.isRecordFile(elsewhere.path))
+        // 番号を選ぶ側も同じ判定で飛ばす
+        #expect(ReplayRequest.nextGeneration(of: base.path, after: 0) == (2, ["take-1.json"]))
+    }
+
+    @Test("watch の始まりは、FIFO の世代を読みに開かずに残し、止まらない (#3970)")
+    func generationCleanupDoesNotOpenAFIFO() throws {
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json").path
+        let fifo = directory.appendingPathComponent("take-1.json").path
+        try #require(mkfifo(fifo, 0o644) == 0)
+
+        // 掃除も番号選びも期限の中で呼ぶ (どちらも FIFO を読みに開けば止まる)
+        let next = Mutex<(Int, [String])?>(nil)
+        let returned = returnsInTime(unblocking: fifo) {
+            _ = ReplayRequest.discardGenerations(of: base)
+            let found = ReplayRequest.nextGeneration(of: base, after: 0)
+            next.withLock { $0 = (found.number, found.skipped) }
+        }
+        #expect(returned, "FIFO を読みに開いて止まった")
+        var status = stat()
+        #expect(lstat(fifo, &status) == 0 && (status.st_mode & S_IFMT) == S_IFIFO, "FIFO を消した")
+        #expect(next.withLock { $0 }.map { $0 == (2, ["take-1.json"]) } == true)
+    }
+
+    /// 書き手が記録の頭を書き込んだ FIFO は、読めば記録の頭が返る。それでも通常ファイルでないので記録に数えない。
+    @Test("記録の頭が読める FIFO も記録に数えず、掃除は残し、番号は飛ばす (#3970)")
+    func aFIFOThatReadsLikeARecordIsNotARecord() throws {
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json").path
+        let fifo = directory.appendingPathComponent("take-1.json").path
+        try #require(mkfifo(fifo, 0o644) == 0)
+        // 読み手を先に開いておくと、書き手も止まらずに開け、書いたバイトは管に溜まる
+        let reader = open(fifo, O_RDONLY | O_NONBLOCK)
+        try #require(reader >= 0)
+        defer { close(reader) }
+        let writer = open(fifo, O_WRONLY | O_NONBLOCK)
+        try #require(writer >= 0)
+        defer { close(writer) }
+        let head = Array("{\"schemaVersion\":1}\n".utf8)
+        let fill: @Sendable () -> Void = { _ = head.withUnsafeBytes { write(writer, $0.baseAddress, $0.count) } }
+
+        fill()
+        let isRecord = Mutex<Bool?>(nil)
+        let removed = Mutex<[String]?>(nil)
+        let next = Mutex<(Int, [String])?>(nil)
+        let returned = returnsInTime(unblocking: fifo) {
+            isRecord.withLock { $0 = ReplayRequest.isRecordFile(fifo) }
+            fill()
+            removed.withLock { $0 = ReplayRequest.discardGenerations(of: base) }
+            fill()
+            let found = ReplayRequest.nextGeneration(of: base, after: 0)
+            next.withLock { $0 = (found.number, found.skipped) }
+        }
+        #expect(returned)
+        #expect(isRecord.withLock { $0 } == false, "記録の頭が読める FIFO を記録に数えた")
+        #expect(removed.withLock { $0 } == [], "FIFO を消した")
+        var status = stat()
+        #expect(lstat(fifo, &status) == 0 && (status.st_mode & S_IFMT) == S_IFIFO)
+        #expect(next.withLock { $0 }.map { $0 == (2, ["take-1.json"]) } == true)
+    }
+
+    @Test("空のファイル・頭の違うファイル・読めないファイルは記録でなく、掃除は残し、番号は飛ばす (#3970)")
+    func filesThatAreNotRecordsAreKeptAndSkipped() throws {
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json").path
+        let empty = directory.appendingPathComponent("take-1.json")
+        try Data().write(to: empty)
+        let otherHead = directory.appendingPathComponent("take-2.json")
+        try Data("{\"version\":1}".utf8).write(to: otherHead)
+        var expected = ["take-1.json", "take-2.json"]
+        // 読めないファイル (権限なし) は root では読めてしまうので、root でないときだけ置く
+        let unreadable = directory.appendingPathComponent("take-3.json")
+        if getuid() != 0 {
+            try writeRecordHead(unreadable)
+            try #require(chmod(unreadable.path, 0) == 0)
+            expected.append("take-3.json")
+        }
+        defer { chmod(unreadable.path, 0o644) }
+
+        #expect(ReplayRequest.discardGenerations(of: base).isEmpty)
+        #expect(FileManager.default.fileExists(atPath: empty.path))
+        #expect((try? Data(contentsOf: otherHead)) == Data("{\"version\":1}".utf8))
+        let found = ReplayRequest.nextGeneration(of: base, after: 0)
+        #expect(found.number == expected.count + 1)
+        #expect(found.skipped == expected)
+        if getuid() != 0 { #expect(FileManager.default.fileExists(atPath: unreadable.path)) }
+    }
+
+    @Test("世代の錠の名前にフォルダ・リンク・FIFO が在る番号は飛ばし、通常ファイルなら使う (#3970)")
+    func aGenerationWhoseLockNameIsTakenIsSkipped() throws {
+        let manager = FileManager.default
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json").path
+        try manager.createDirectory(
+            at: directory.appendingPathComponent("take-1.json.lock"), withIntermediateDirectories: false)
+        try manager.createSymbolicLink(
+            atPath: directory.appendingPathComponent("take-2.json.lock").path, withDestinationPath: "/nowhere")
+        let fifo = directory.appendingPathComponent("take-3.json.lock").path
+        try #require(mkfifo(fifo, 0o644) == 0)
+        try Data("mine".utf8).write(to: directory.appendingPathComponent("take-4.json.lock"))
+
+        // 飛ばした名前は、塞いでいた錠の名前を名指す。FIFO の錠の名前でも期限の中で返る
+        let next = Mutex<(Int, [String])?>(nil)
+        let returned = returnsInTime(unblocking: fifo) {
+            let found = ReplayRequest.nextGeneration(of: base, after: 0)
+            next.withLock { $0 = (found.number, found.skipped) }
+        }
+        #expect(returned)
+        #expect(
+            next.withLock { $0 }.map { $0 == (4, ["take-1.json.lock", "take-2.json.lock", "take-3.json.lock"]) }
+                == true, "\(String(describing: next.withLock { $0 }))")
+    }
+
+    @Test(".lock の名前がフォルダなら錠に使わず断り、フォルダは残す (#3970)")
+    func aLockNameThatIsAFolderIsRefused() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let folder = directory.appendingPathComponent("take.json.lock", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let kept = folder.appendingPathComponent("keep.txt")
+        try Data("mine".utf8).write(to: kept)
+
+        let taken = ReplayClaim.take(destination: destination)
+        taken.claim?.release()
+        #expect(taken.claim == nil, "フォルダを錠に使った")
+        #expect(taken.failure?.contains("not a regular file") == true, "理由: \(taken.failure ?? "nil")")
+        #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
+    }
+
+    @Test(".lock の名前が FIFO でも止まらずに断り、FIFO は残す (#3970)")
+    func aLockNameThatIsAFIFOIsRefusedInTime() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let fifo = destination.path + ReplayClaim.lockSuffix
+        try #require(mkfifo(fifo, 0o644) == 0)
+
+        let failure = Mutex<String?>(nil)
+        let returned = returnsInTime(unblocking: fifo) {
+            let taken = ReplayClaim.take(destination: destination)
+            taken.claim?.release()
+            failure.withLock { $0 = taken.failure }
+        }
+        #expect(returned, "FIFO の錠を開いて止まった")
+        #expect(failure.withLock { $0 }?.contains("not a regular file") == true)
+        var status = stat()
+        #expect(lstat(fifo, &status) == 0 && (status.st_mode & S_IFMT) == S_IFIFO, "FIFO を消した")
+    }
+
+    @Test("錠を握っている間に .lock の名前が別のファイルに替わっていたら、手放すときにそれを消さない (#3970)")
+    func aReplacedLockFileIsNotRemoved() throws {
+        let manager = FileManager.default
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let lock = directory.appendingPathComponent("take.json.lock")
+        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        // 今回作った錠のファイルを別の名前へ退け、同じ名前に利用者のファイルを置く
+        try manager.moveItem(at: lock, to: directory.appendingPathComponent("moved.lock"))
+        try Data("theirs".utf8).write(to: lock)
+
+        claim.release()
+        #expect((try? Data(contentsOf: lock)) == Data("theirs".utf8), "替わった .lock を消した")
+    }
+
+    @Test("watch の始まりも、世代の隣に元から在る .lock を残す (#3970)")
+    func generationCleanupKeepsAnExistingLockFile() throws {
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take.json")
+        let first = directory.appendingPathComponent("take-1.json")
+        try writeRecordHead(first)
+        let lock = directory.appendingPathComponent("take-1.json.lock")
+        try Data("mine".utf8).write(to: lock)
+
+        #expect(ReplayRequest.discardGenerations(of: base.path) == ["take-1.json"])
+        #expect((try? Data(contentsOf: lock)) == Data("mine".utf8), "利用者の .lock を消した")
+        // 今回作った世代の .lock は残さない
+        let second = directory.appendingPathComponent("take-2.json")
+        try writeRecordHead(second)
+        #expect(ReplayRequest.discardGenerations(of: base.path) == ["take-2.json"])
+        #expect(!FileManager.default.fileExists(atPath: second.path + ".lock"))
+    }
+
     @Test("合図は使わなくても環境から消す: 記録しない実行 (ホストのアプリ・書き出しの子) が孫へ継がせない")
     func theSignalIsForgottenEvenWhenUnused() {
         var unset: [String] = []
@@ -556,6 +829,57 @@ struct ReplayRecordFormatTests {
         #expect(InputEvent.pinched(amount: .nan).hasNonFiniteNumber)
         #expect(!InputEvent.mouseMovedBy(dx: 3e38, dy: 3e38).hasNonFiniteNumber, "極端でも有限なら生の形で残せる")
         #expect(!InputEvent.keyUp(code: .a).hasNonFiniteNumber)
+    }
+}
+
+/// 錠の排他を、別のプロセスが握った錠で確かめる ([#3970])。
+///
+/// 落ちた回が残した `.lock` (錠のファイル) を、**別のプロセス** (`perl` の `flock`) が握っている間は、このプロセスは
+/// 記録を始めない。手放されたら使え、使い終えても今回作っていないので残す。待つのは期限つき。
+///
+/// [#3970]: https://github.com/mokume-metal/mokume/issues/3970
+@Suite(
+    "記録の錠: 別のプロセスとの排他",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/perl"), "/usr/bin/perl が要る"))
+struct ReplayClaimProcessTests {
+    @Test("別のプロセスが握る .lock は取れず、手放された後は使えて、今回作っていない .lock は残る")
+    func anotherProcessHoldsTheLock() throws {
+        let directory = try TestScratch.directory("mokume-replay-claim-process")
+        let destination = directory.appendingPathComponent("take.json")
+        let lock = directory.appendingPathComponent("take.json.lock")
+        try Data().write(to: lock)
+        let marker = directory.appendingPathComponent("held")
+
+        // 錠を握ったら印を書き、標準入力が閉じるまで握り続ける
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        process.arguments = [
+            "-e",
+            "use Fcntl ':flock'; open(my $f, '<', $ARGV[0]) or die; flock($f, LOCK_EX) or die; "
+                + "open(my $m, '>', $ARGV[1]) or die; close($m); <STDIN>;",
+            lock.path, marker.path,
+        ]
+        let input = Pipe()
+        process.standardInput = input
+        try process.run()
+        defer { if process.isRunning { kill(process.processIdentifier, SIGKILL) } }
+
+        let held = try ReplayRecordProcess.wait(upTo: .seconds(30)) {
+            FileManager.default.fileExists(atPath: marker.path)
+        }
+        try #require(held, "別のプロセスが錠を握らない")
+
+        let refused = ReplayClaim.take(destination: destination)
+        #expect(refused.claim == nil)
+        #expect(refused.failure?.contains("another run is already recording") == true, "理由: \(refused.failure ?? "nil")")
+
+        try input.fileHandleForWriting.close()
+        let exited = try ReplayRecordProcess.wait(upTo: .seconds(30)) { !process.isRunning }
+        try #require(exited, "別のプロセスが終わらない")
+
+        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        claim.release()
+        #expect(FileManager.default.fileExists(atPath: lock.path), "今回作っていない .lock を消した")
     }
 }
 
@@ -1057,6 +1381,32 @@ struct ReplayRecordingRuntimeTests {
         let local = directory.appendingPathComponent("local.json")
         let third = try run(try makeRuntime(Playground(), to: local), at: local)
         #expect(third["unreproducible"] == nil)
+    }
+
+    @Test("URL から読んだ画像も、その回に記録の保証の外と名乗る (#3715)", arguments: [false, true])
+    func aWebImageIsNotInTheRecord(withKind: Bool) throws {
+        final class ImageFetcher: Sketch {
+            var url = ""
+            var withKind = false
+            var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+            init() {}
+            convenience init(_ url: String, withKind: Bool) {
+                self.init()
+                self.url = url
+                self.withKind = withKind
+            }
+            func draw() {
+                background(0.1)
+                guard frameCount == 3 else { return }
+                _ = withKind ? try? loadImage(url, extension: "png") : try? loadImage(url)
+            }
+        }
+        let directory = try scratch()
+        let fetched = directory.appendingPathComponent("fetched.json")
+        let url = CannedResponses.serve("not an image")
+        let record = try run(try makeRuntime(ImageFetcher(url, withKind: withKind), to: fetched), frames: 5, at: fetched)
+        #expect(reasons(of: record) == [ReplayRecorder.Reason.webFile], "\(reasons(of: record))")
+        #expect((record["unreproducible"] as? [[String: Any]])?.first?["step"] as? Int == 2, "3 枚目の draw の中")
     }
 
     @Test("描くのに失敗した枚は drew が偽で画素のハッシュを取らず、理由を名乗り、最後の絵も書かない")

@@ -260,14 +260,14 @@ public class SynthSound: EffectInput {
     /// 値の変更と操作を、位置 `position` の 1 つの予約にして渡す。ステージが閉じていれば捨てる。
     /// 位置が今以前 (0 を含む) なら、次に作る標本の頭で全部が順に効く。
     ///
-    /// - Returns: 操作が溢れてラックが受け付けなかったら `false` (#3944)。**呼ぶ側は、そのとき状態
-    ///   (``SynthSource/isPlaying``) を変えない** — 鳴らない音を鳴っていると読ませない。節が無い・閉じている
-    ///   ときは、これまでどおり `true`。
+    /// - Returns: 載せたら `true`。操作が溢れてラックが受け付けなかったとき (#3944)、置き場が埋まって節を
+    ///   持てなかったとき、ステージが閉じた後 (#3964) は `false`。**呼ぶ側は、そのとき状態
+    ///   (``SynthSource/isPlaying``) を変えない** — 鳴らない音を鳴っていると読ませない。
     @discardableResult
     func postReservation(
         values: [(param: SynthParam, value: Float)], ops: [SynthCommand.Op], at position: Int
     ) -> Bool {
-        guard let node, !stage.isClosed else { return true }
+        guard let node, !stage.isClosed else { return false }
         var commands: [SynthCommand] = values.map {
             SynthCommand(
                 op: .set, node: UInt8(node.id), param: $0.param, bits: UInt64($0.value.bitPattern),
@@ -323,6 +323,8 @@ public class SynthSource: SynthSound {
     ///
     /// ``Env`` のエンベロープが終わって音が 0 になっても `true` のまま (停止するのは ``stop()``)。1 フレームに
     /// 数千回の操作を頼んで受け付けられなかった ``play()`` は、音を鳴らさず、この値も変えない (1 度だけ警告する)。
+    /// 同時に存在できる数 (64 個) を越えて作った音と、スケッチが終わった後の ``play()`` も、鳴らないのでこの値を
+    /// 変えない (スケッチが終わる前から鳴らしていた音は `true` のまま)。
     public internal(set) var isPlaying = false
 
     /// 再生を始める。現在の周波数・音量・オフセット・定位のまま。
@@ -438,42 +440,101 @@ public class SynthSource: SynthSound {
     ) {
         guard
             let position = reservationPosition(time, call: "Env.play"),
-            let attackTime = acceptTime(attack, call: "Env.play", meaning: "attackTime"),
-            let sustainTime = acceptTime(sustain, call: "Env.play", meaning: "sustainTime"),
-            let releaseTime = acceptTime(release, call: "Env.play", meaning: "releaseTime"),
-            let sustainLevel = accept(
-                level, 0...1, call: "Env.play", meaning: "a sustainLevel")
+            let accepted = EnvelopeArguments.accept(
+                attack: attack, sustain: sustain, level: level, release: release,
+                sampleRate: stage.rack.sampleRate, subject: "this \(name)", notice: notice)
         else { return }
         // 値・包絡・鳴らす操作を 1 つの予約として渡す。時刻が先なら、前の予約の値を書き換えないよう全部がその時刻に効く
         guard
             postReservation(
                 values: [
-                    (.attack, attackTime), (.sustain, sustainTime), (.level, sustainLevel),
-                    (.release, releaseTime),
+                    (.attack, accepted.attack), (.sustain, accepted.sustain),
+                    (.level, accepted.level), (.release, accepted.release),
                 ],
                 ops: [.trigger, .play], at: position)
         else { return }
         isActive = true
         isPlaying = true
     }
+}
 
-    /// 秒の長さを受ける。負の値は 0 へ丸め、数でない値・無限の値は `nil` (無視する)。
-    private func acceptTime(_ value: Float, call: String, meaning: String) -> Float? {
-        guard value.isFinite else {
+/// `Env.play` の引数の検め。**合成した音源 (``SynthSource``) と ``SoundFile`` が同じここを通る** (#3099)。
+///
+/// 秒数が負なら 0 へ、`sustainLevel` が 0〜1 の外なら端へ丸め、数でない値・無限の値があれば呼び出し全体を
+/// 無視する。有限でも、標本の数で表せない長さ (区間か合計が `Int` を越える) は、音の側で落ちる前に呼び出しごと
+/// 拒む (#3951)。どれも投げず、知らせの種類ごとに 1 度だけ知らせる ([ADR-0020] 決定 5)。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+enum EnvelopeArguments {
+    /// 受けた値 (秒と高さ)。
+    struct Accepted: Equatable {
+        var attack: Float
+        var sustain: Float
+        var level: Float
+        var release: Float
+    }
+
+    /// - Parameters:
+    ///   - sampleRate: 標本の数で表せるかを見る標本化率 (合成した音はラックの率、``SoundFile`` はファイルの率)。
+    ///   - subject: 知らせの末尾に載せる、音の呼び名 (`this SinOsc`・`"song.wav"`)。
+    ///   - notice: 知らせの種類 (`Env.play.notFinite` など) と文面を受ける。同じ種類を 1 度だけ言うのは受ける側。
+    /// - Returns: 呼び出し全体を無視するときは `nil`。
+    static func accept(
+        attack: Float, sustain: Float, level: Float, release: Float, sampleRate: Double,
+        subject: String, notice: (String, String) -> Void
+    ) -> Accepted? {
+        let call = "Env.play"
+        /// 秒の長さを受ける。負の値は 0 へ丸め、数でない値・無限の値は `nil` (無視する)。
+        func time(_ value: Float, meaning: String) -> Float? {
+            guard value.isFinite else {
+                notice(
+                    "\(call).notFinite",
+                    "\(call)() got a value that is not a number, or an infinite one, so the call is "
+                        + "ignored for \(subject)")
+                return nil
+            }
+            guard value >= 0 else {
+                notice(
+                    "\(call).negative",
+                    "\(call)() takes \(meaning) of 0 seconds or more, so \(value) was changed to 0 "
+                        + "for \(subject)")
+                return 0
+            }
+            return value
+        }
+        guard
+            let attackTime = time(attack, meaning: "attackTime"),
+            let sustainTime = time(sustain, meaning: "sustainTime"),
+            let releaseTime = time(release, meaning: "releaseTime")
+        else { return nil }
+        guard level.isFinite else {
             notice(
                 "\(call).notFinite",
-                "\(call)() got a value that is not a number, or an infinite one, so the call is "
-                    + "ignored for this \(name)")
+                "\(call)() got a value that is not a number, or an infinite one, so a sustainLevel "
+                    + "of \(subject) is not changed")
             return nil
         }
-        guard value >= 0 else {
+        let range: ClosedRange<Float> = 0...1
+        let sustainLevel = min(max(level, range.lowerBound), range.upperBound)
+        if sustainLevel != level {
             notice(
-                "\(call).negative",
-                "\(call)() takes \(meaning) of 0 seconds or more, so \(value) was changed to 0 "
-                    + "for this \(name)")
-            return 0
+                "\(call).range",
+                "\(call)() takes a sustainLevel from \(range.lowerBound) to \(range.upperBound), so "
+                    + "\(level) was clamped to \(sustainLevel) for \(subject)")
         }
-        return value
+        guard
+            EnvelopeShape.sampleCounts(
+                attack: attackTime, sustain: sustainTime, release: releaseTime,
+                sampleRate: sampleRate) != nil
+        else {
+            notice(
+                "\(call).tooLong",
+                "\(call)() got times that are too long to count in samples (each, or all three "
+                    + "together), so the call is ignored for \(subject)")
+            return nil
+        }
+        return Accepted(
+            attack: attackTime, sustain: sustainTime, level: sustainLevel, release: releaseTime)
     }
 }
 
@@ -765,8 +826,12 @@ public final class BrownNoise: Noise {
 /// }
 /// ```
 ///
-/// エンベロープは呼ぶたびに最初から始まる。エンベロープが終わると音源の音は 0 (無音) になり、次に ``play(_:_:_:_:_:)`` を
+/// エンベロープは呼ぶたびに最初から始まる。エンベロープが終わると音源の音は 0 (無音) になり、次に ``play(_:_:_:_:_:)-(SynthSource,_,_,_,_)`` を
 /// 呼ぶまでそのままで、``SynthSource/play()`` で再生し直しても戻らない。
+///
+/// かけられるのは、合成した音源 (``SynthSource``) と音声ファイル (``SoundFile``) — `play(_:_:_:_:_:)` の 2 つの形。
+/// **エフェクトの出口にはかけられない** (Processing Sound と同じ)。エフェクトを通した音に形を付けるなら、入力の音源に
+/// かける: `env.play(osc, …)` → `filter.process(osc, 800)` (エフェクトの尾は残る)。
 public final class Env {
     init() {}
 
@@ -793,6 +858,9 @@ public final class Env {
     ///
     /// 秒数が負なら 0 に、`sustainLevel` が 0〜1 の外なら端にクランプし、NaN・無限大があれば
     /// 呼び出し全体を無視する。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
+    /// 有限でも、秒数のどれか 1 つ、または 3 つの合計がサンプル数で表せないほど長い (48 kHz で
+    /// およそ 1.9 × 10¹⁴ 秒を越える) ときは、同じく呼び出し全体を無視して 1 度だけ警告する。
+    /// 鳴っている音の包絡も先の予約もそのまま残る。
     /// すぐに始める。先の時刻に始めるなら ``play(_:_:_:_:_:at:)``。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -803,10 +871,61 @@ public final class Env {
         play(input, attackTime, sustainTime, sustainLevel, releaseTime, at: 0)
     }
 
+    /// エンベロープを音声ファイル `input` の音量にかけ、最初から始める。`input` が再生されていなければ再生を始める。
+    ///
+    /// 曲の頭を立ち上げる・終わりをフェードさせるのに、``SoundFile/amp(_:)`` を毎フレーム動かさずに書ける。
+    /// 形 (0 から `sustainLevel` まで `attackTime` 秒で上がり、`sustainTime` 秒保ち、`releaseTime` 秒で 0 へ下がる)・
+    /// 引数の丸め方と無視の仕方は、合成した音源に掛ける ``play(_:_:_:_:_:)-(SynthSource,_,_,_,_)`` と同じ。``SoundFile/amp(_:)`` の音量に
+    /// さらに掛かる。
+    ///
+    /// <!-- example: 文脈 var song: SoundFile?; var env: Env? -->
+    /// ```swift
+    /// func keyPressed() {
+    ///     guard let song, let env else { return }
+    ///     // 曲の頭を 0.5 秒かけて 0.8 まで立ち上げ、2 秒保ち、1 秒で消す
+    ///     if key == " " { env.play(song, 0.5, 2, 0.8, 1) }
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - input: エンベロープをかける音声ファイル。
+    ///   - attackTime: アタック (立ち上がり) の秒数。
+    ///   - sustainTime: サステイン (保持) の秒数。
+    ///   - sustainLevel: サステインのレベル (0〜1)。
+    ///   - releaseTime: リリース (減衰) の秒数。
+    ///
+    /// - **再生中なら、位置を動かさない** (音量に形を掛け直すだけ)。``SoundFile/play()`` と違い、先頭へ戻らない
+    /// - **再生していなければ、``SoundFile/play()`` と同じ位置から 1 度だけ再生する** — ``SoundFile/pause()`` の後なら
+    ///   停止した位置から、``SoundFile/stop()`` の後と再生が終わった後は先頭から。ループはしない
+    ///   (Processing Sound の `Env.play` も、再生していない音にだけ `play()` を呼ぶ)
+    /// - **エンベロープが終わると音は 0 (無音) になるが、再生は止めない。** ``SoundFile/isPlaying`` は `true` のまま、
+    ///   ``SoundFile/position`` も進み続け、1 度だけの再生なら末尾で終わる。次にこのメソッドを呼ぶまで無音で、
+    ///   ``SoundFile/play()``・``SoundFile/loop()`` で再生し直しても戻らない (合成した音源と同じ)
+    /// - エンベロープは**再生した標本の数で進む**。``SoundFile/pause()`` の間は止まり、``SoundFile/jump(_:)``・
+    ///   ``SoundFile/play()`` で位置が変わっても、途切れずに続く
+    /// - 解析の値 (``SoundFile/level`` ほか) はエンベロープを掛けた後の音で、書き出しの動画の音声トラックにも
+    ///   エンベロープを掛けた音が入る。固定クロックの書き出しでは、``SoundFile/play()`` と同じく区間の先頭のサンプルから
+    ///   効き、何度書き出しても同じ音になる。エフェクトに通したファイルも、エフェクトの入力に入る前に掛かる
+    /// - **エフェクトの出口には掛けられない** (Processing Sound と同じ — `env.play(filter, …)` は型が合わない)。
+    ///   入力の音源に掛ける: `env.play(osc, …)` → `filter.process(osc, 800)`。エフェクトの尾は残る
+    /// - 先の時刻へ予約する形 (`at:`) は無い (``SoundFile`` の操作は、どれもフレームの区切りで効く)
+    ///
+    /// 秒数が負なら 0 に、`sustainLevel` が 0〜1 の外なら端にクランプし、NaN・無限大と、サンプル数で表せない
+    /// ほど長い秒数があれば呼び出し全体を無視する。どれもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func play(
+        _ input: SoundFile, _ attackTime: Float, _ sustainTime: Float, _ sustainLevel: Float,
+        _ releaseTime: Float
+    ) {
+        input.triggerEnvelope(
+            attack: attackTime, sustain: sustainTime, level: sustainLevel, release: releaseTime)
+    }
+
     /// エンベロープを `input` にかけ、オーディオクロックの `time` 秒のサンプルの先頭から始める (先の時刻へ予約する)。`input` が再生されていなければ
     /// 再生を始める。
     ///
-    /// エンベロープの形・引数・クランプの仕方は ``play(_:_:_:_:_:)`` と同じ。
+    /// エンベロープの形・引数・クランプの仕方は ``play(_:_:_:_:_:)-(SynthSource,_,_,_,_)`` と同じ。
     ///
     /// - Parameters:
     ///   - input: エンベロープをかける音源。
@@ -817,8 +936,8 @@ public final class Env {
     ///   - at: 始める時刻 (オーディオクロックの秒。``Sketch/soundTime`` と同じクロック)。現在より前 (負を含む) なら、次に生成する
     ///     サンプルの先頭で始める。
     ///
-    /// NaN・無限大 (`time` を含む) があれば呼び出し全体を無視して 1 度だけ警告する (投げない —
-    /// [ADR-0020] 決定 5)。
+    /// NaN・無限大 (`time` を含む) と、サンプル数で表せないほど長い秒数があれば、呼び出し全体を無視して
+    /// 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
     ///
     /// ## 先の時刻へ予約する
     ///

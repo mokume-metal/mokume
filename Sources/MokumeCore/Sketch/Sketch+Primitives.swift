@@ -395,6 +395,38 @@ extension SketchPart {
         canvas.arc(a, b, c, d, start, stop, mode)
     }
 
+    /// 円弧。範囲を ``Rect`` で渡す。
+    ///
+    /// ``ellipseMode(_:)`` が `.corner` のときの ``arc(_:_:_:_:_:_:)`` に、`bounds` の左上と幅・高さを渡すのと
+    /// 同じ絵になる (塗りは扇・輪郭は開いた弧)。角度の読み方・受けない値の扱いもそちらと同じで、違いは
+    /// **どの数が範囲でどれが角度かを呼び出しの行で読める**ことと、**``ellipseMode(_:)`` に従わない**こと
+    /// である — ``Rect`` は左上で置く値なので、既定の `.center` のままでも値のとおり左上から読む。
+    ///
+    /// ```swift
+    /// // ellipseMode(.corner) の arc(40, 60, 200, 120, 0, Float.pi) と同じ絵
+    /// arc(in: Rect(left: 40, top: 60, width: 200, height: 120), start: 0, stop: Float.pi)
+    /// ```
+    // shot: 参照 arc(_:_:_:_:_:_:)
+    public func arc(in bounds: Rect, start: some ScalarConvertible, stop: some ScalarConvertible) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.arc(in: bounds, start: start.asFloat, stop: stop.asFloat)
+    }
+
+    /// 円弧を、閉じ方 (``ArcMode``) を選んで描く。範囲を ``Rect`` で渡す。
+    ///
+    /// ``ellipseMode(_:)`` が `.corner` のときの ``arc(_:_:_:_:_:_:_:)`` と同じ絵になる。閉じ方の意味は
+    /// そちらの表のとおりで、違いは**呼び出しの行で読める**ことと、**``ellipseMode(_:)`` に従わない**ことである。
+    /// 閉じ方を渡さない形 (``arc(in:start:stop:)``) とは塗りが違うので、`mode:` に既定値は置いていない。
+    ///
+    /// ```swift
+    /// arc(in: Rect(left: 40, top: 60, width: 200, height: 120), start: 0, stop: Float.pi, mode: .chord)
+    /// ```
+    // shot: 参照 arc(_:_:_:_:_:_:)
+    public func arc(in bounds: Rect, start: some ScalarConvertible, stop: some ScalarConvertible, mode: ArcMode) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.arc(in: bounds, start: start.asFloat, stop: stop.asFloat, mode: mode)
+    }
+
     /// 三角形を塗る。3 つの頂点をそのまま与える。
     ///
     /// @Row {

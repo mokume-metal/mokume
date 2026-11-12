@@ -24,7 +24,7 @@ import AppKit
 ///
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
-public final class SharedFrameWindow {
+package final class SharedFrameWindow {
     /// 覚えている枠が無く、**差し出し元がまだ来ていない**ときの大きさ。
     ///
     /// 差し出し元がウィンドウの倍率を名乗れば、最初の絵が出るときにその大きさ (描く大きさ ×

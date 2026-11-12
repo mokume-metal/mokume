@@ -42,7 +42,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         #expect(app.lastPathComponent == "Demo.app")
         for path in ["Contents/Info.plist", "Contents/MacOS/demo", "Contents/Resources/demo_demo.bundle"] {
@@ -60,7 +60,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         let data = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
         let plist =
@@ -83,7 +83,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: written, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         let plist = try readInfoPlist(of: app)
         #expect(plist["NSCameraUsageDescription"] as? String == "木目のカメラ映像を絵にするため")
@@ -101,7 +101,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         let plist = try readInfoPlist(of: app)
         #expect(plist["NSCameraUsageDescription"] == nil)
@@ -124,12 +124,12 @@ struct BundleCommandTests {
         let out = root.appendingPathComponent("out", isDirectory: true)
 
         let app = try BundleCommand.assemble(
-            executable: executable, identity: identity, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: identity, minimumSystemVersion: "26.0", into: out, excluding: [])
         let stale = app.appendingPathComponent("Contents/Resources/old.bundle", isDirectory: true)
         try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
 
         _ = try BundleCommand.assemble(
-            executable: executable, identity: identity, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: identity, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(!FileManager.default.fileExists(atPath: stale.path))
     }
 
@@ -169,7 +169,7 @@ struct BundleCommandTests {
             #expect(throws: CommandFailure.self, "\(name) で投げなかった") {
                 try BundleCommand.assemble(
                     executable: executable, identity: unchecked, minimumSystemVersion: "26.0",
-                    into: out)
+                    into: out, excluding: [])
             }
         }
         for keep in kept {
@@ -241,7 +241,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: app) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(FileManager.default.fileExists(atPath: keep.path), "keep.txt が消えた")
     }
@@ -258,7 +258,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: app) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(FileManager.default.fileExists(atPath: keep.path), "keep.txt が消えた")
     }
@@ -273,7 +273,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: file) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(try String(contentsOf: file, encoding: .utf8) == "keep")
     }
@@ -306,12 +306,12 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let out = root.appendingPathComponent("out", isDirectory: true)
         let app = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         let added = app.appendingPathComponent("added.txt")
         try "x".write(to: added, atomically: true, encoding: .utf8)
 
         _ = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(!FileManager.default.fileExists(atPath: added.path))
     }
 
@@ -323,13 +323,13 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let out = root.appendingPathComponent("out", isDirectory: true)
         let app = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         let added = app.appendingPathComponent("added.txt")
         try "x".write(to: added, atomically: true, encoding: .utf8)
 
         let renamed = AppIdentity(name: "Grain", identifier: "org.example.other", version: "0.2.0")
         _ = try BundleCommand.assemble(
-            executable: executable, identity: renamed, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: renamed, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(!FileManager.default.fileExists(atPath: added.path))
         #expect(
             try readInfoPlist(of: app)["CFBundleIdentifier"] as? String == "org.example.other")
@@ -347,7 +347,7 @@ struct BundleCommandTests {
         try writeUnmarkedInfoPlist(identifier: grain.identifier, into: app)
 
         _ = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(!FileManager.default.fileExists(atPath: keep.path), "前の出力が残った")
         #expect(try readInfoPlist(of: app)[AppIdentity.bundledMarkKey] as? Bool == true)
     }
@@ -605,7 +605,7 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let out = root.appendingPathComponent("out", isDirectory: true)
         let app = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         let locked = app.appendingPathComponent("Contents/Resources/locked", isDirectory: true)
         try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
         try "old".write(
@@ -625,7 +625,7 @@ struct BundleCommandTests {
         }
 
         let rebuilt = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
 
         #expect(rebuilt.path == app.path)
         #expect(
@@ -634,8 +634,10 @@ struct BundleCommandTests {
             "前の出力の消し残りが Grain.app に残った")
         #expect(try readInfoPlist(of: rebuilt)[AppIdentity.bundledMarkKey] as? Bool == true)
         let names = try FileManager.default.contentsOfDirectory(atPath: out.path)
-        let remnants = names.filter { BundleCommand.isRetiredRemnant($0, name: "Grain") }
-        #expect(remnants.count == 1, "消し損ねが一時の名前に残っていない: \(names)")
+        let remnants = names.filter {
+            BundleCommand.isOwnRemnant(out.appendingPathComponent($0), name: grain)
+        }
+        #expect(remnants.count == 1, "消し損ねが一時の置き場に残っていない: \(names)")
     }
 
     @Test("消し損ねた一時の名前は、次の回に、その形のものだけ消える")
@@ -660,7 +662,7 @@ struct BundleCommandTests {
         }
 
         _ = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
 
         #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent(mine).path))
         for name in others {
@@ -676,7 +678,7 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let out = root.appendingPathComponent("out", isDirectory: true)
         let app = try BundleCommand.assemble(
-            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         let added = app.appendingPathComponent("added.txt")
         try "x".write(to: added, atomically: true, encoding: .utf8)
         chmod(out.path, 0o555)  // --out の中で名前を変えられない
@@ -687,7 +689,7 @@ struct BundleCommandTests {
 
         do {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
             Issue.record("投げなかった")
         } catch {
             guard case .cannotCreate(let path, _) = error else {
@@ -712,7 +714,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: link) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(
             (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == target.path,
@@ -734,7 +736,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: link) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) != nil)
     }
@@ -778,7 +780,7 @@ struct BundleCommandTests {
 
         expectRefusal(at: app) {
             _ = try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(FileManager.default.fileExists(atPath: keep.path), "\(shape) で keep.txt が消えた")
     }
@@ -800,11 +802,11 @@ struct BundleCommandTests {
 
         #expect(throws: CommandFailure.self) {
             try BundleCommand.assemble(
-                executable: missing, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: missing, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
         #expect(throws: Never.self) {
             try BundleCommand.assemble(
-                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out, excluding: [])
         }
     }
 
@@ -818,7 +820,7 @@ struct BundleCommandTests {
         let named = AppIdentity(name: name, identifier: "org.example.bund", version: "0.1.0")
 
         let app = try BundleCommand.assemble(
-            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out, excluding: [])
         let note = try BundleCommand.writeOpeningNote(for: named, beside: app)
 
         #expect(app.standardizedFileURL == out.appendingPathComponent("\(name).app").standardizedFileURL)
@@ -851,7 +853,7 @@ struct BundleCommandTests {
             path: root.appendingPathComponent(AppIdentity.fileName).path)
 
         let app = try BundleCommand.assemble(
-            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out, excluding: [])
         let note = try BundleCommand.writeOpeningNote(for: named, beside: app)
 
         #expect(FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Info.plist").path))
@@ -880,7 +882,7 @@ struct BundleCommandTests {
             name: given.name, identifier: "org.example.bund", version: "0.1.0")
 
         let app = try BundleCommand.assemble(
-            executable: executable, identity: unchecked, minimumSystemVersion: "26.0", into: out)
+            executable: executable, identity: unchecked, minimumSystemVersion: "26.0", into: out, excluding: [])
         #expect(throws: CommandFailure.self, "\(given.testDescription) の紙が書けた") {
             try BundleCommand.writeOpeningNote(for: unchecked, beside: app)
         }
@@ -905,12 +907,238 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
 
         #expect(throws: Never.self) { try BundleCommand.check(app, contains: ["demo_demo.bundle"]) }
         #expect(throws: (any Error).self) {
             try BundleCommand.check(app, contains: ["demo_other.bundle"])
         }
+    }
+
+    /// **実行 product が使わない target の包みは入れず、必須の検査も同じ範囲を見る** (#3982)。
+    /// テストの target の fixture (`<pkg>_DemoTests.bundle`) が配る `.app` に入っていた。除く範囲は
+    /// 宣言の依存の閉包で決める (``SwiftPM/Package/ResourceScope/excluded``)。
+    /// 依存のパッケージの包み (`mokume_MokumeCore.bundle`) は宣言を辿らずに入れる。コピーから
+    /// 除いた包みを「欠けている」と読まないことと、要る包みが欠ければ従来どおり止まることも見る。
+    ///
+    /// 期待する一覧は完了条件から: テストの target だけの包み (`Sketch_DemoTests`) は入らない。作品の
+    /// 実行 target (`Sketch_Demo`)・作品のライブラリ (`Sketch_Lib`、組めた回)・依存のパッケージ
+    /// (`mokume_MokumeCore`、`makeBuildOutput` の `demo_demo`) は入る。パッケージ名を `Sketch` に
+    /// するのは、`demo_demo.bundle` と大文字小文字だけ違う名前がファイルシステムで同じ場所になるのを避けるため。
+    @Test(
+        "テストの target の包みは入らず、作品と依存の包みは入り、検査も同じ範囲を見る",
+        arguments: [true, false])
+    func bundlesOutsideTheProductStayOut(libraryBuilt: Bool) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let bin = executable.deletingLastPathComponent()
+        var beside = ["Sketch_Demo.bundle", "Sketch_DemoTests.bundle", "mokume_MokumeCore.bundle"]
+        if libraryBuilt { beside.append("Sketch_Lib.bundle") }
+        for name in beside {
+            let inside = bin.appendingPathComponent("\(name)/Contents/Resources", isDirectory: true)
+            try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+            try name.write(
+                to: inside.appendingPathComponent("sample.txt"), atomically: true, encoding: .utf8)
+        }
+        let dump = """
+            {"name":"Sketch",
+             "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
+             "targets":[
+               {"name":"Demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
+                "dependencies":[{"byName":["Lib",null]},{"product":["Mokume","mokume",null,null]}]},
+               {"name":"Lib","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}]},
+               {"name":"DemoTests","type":"test","resources":[{"rule":{"copy":{}},"path":"fixtures"}],
+                "dependencies":[{"byName":["Demo",null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: identity, minimumSystemVersion: "26.0",
+            into: root.appendingPathComponent("out", isDirectory: true),
+            excluding: package.resourceScope(forProduct: "Demo").excluded)
+        let resources = app.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let shipped = try FileManager.default.contentsOfDirectory(atPath: resources.path).sorted()
+        #expect(
+            shipped
+                == (["Sketch_Demo.bundle", "demo_demo.bundle", "mokume_MokumeCore.bundle"]
+                    + (libraryBuilt ? ["Sketch_Lib.bundle"] : [])).sorted())
+
+        let required = package.resourceScope(forProduct: "Demo").required
+        #expect(required == ["Sketch_Demo.bundle", "Sketch_Lib.bundle"])
+        if libraryBuilt {
+            #expect(throws: Never.self) { try BundleCommand.check(app, contains: required) }
+        } else {
+            #expect(throws: CommandFailure.self) { try BundleCommand.check(app, contains: required) }
+        }
+    }
+
+    /// 道具立てが返す依存の木 (`show-dependencies --format json`) の 3 つの形。
+    enum DependencyAnswer: String, CaseIterable, CustomTestStringConvertible {
+        /// 宣言の名前が揃っている。自分の名前で始まる依存 `Sketch_Extras` は、`mokume` の下 (推移) に在る。
+        case declaredNames
+        /// 依存の宣言の名前が包みの名前と食い違う (`name` も identity も `Sketch_Extras` でない)。
+        case mismatchedNames
+        /// 道具立てが答えない (0 以外で終わる)。
+        case unanswered
+
+        var testDescription: String { rawValue }
+
+        var answer: (status: Int32, output: String) {
+            switch self {
+            case .declaredNames:
+                (0, Self.tree(extras: #""identity":"extras","name":"Sketch_Extras""#))
+            case .mismatchedNames:
+                (0, Self.tree(extras: #""identity":"extras","name":"extras-pkg""#))
+            case .unanswered: (1, "")
+            }
+        }
+
+        /// Swift 6.3.3 が書いた形を写した。根はこのパッケージ自身。
+        private static func tree(extras: String) -> String {
+            """
+            {"identity":"sketch","name":"Sketch","url":"/work/sketch","version":"unspecified",
+             "path":"/work/sketch","traits":["default"],"dependencies":[
+              {"identity":"mokume","name":"mokume","url":"https://example.com/mokume.git",
+               "version":"1.0.0","path":"/work/sketch/.build/checkouts/mokume","traits":["default"],
+               "dependencies":[
+                {\(extras),"url":"/work/extras","version":"unspecified","path":"/work/extras",
+                 "traits":["default"],"dependencies":[]}]}]}
+            """
+        }
+
+        /// 入れなかった古い包み (束ねた報せで `Left out:` と名乗るもの)。
+        var leftOut: Set<String> {
+            switch self {
+            case .declaredNames: ["Sketch_DemoTests.bundle"]
+            case .mismatchedNames: ["Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle"]
+            case .unanswered: []
+            }
+        }
+
+        /// 問えずに入れた候補 (束ねた報せで `Kept:` と名乗るもの)。
+        var kept: Set<String> {
+            switch self {
+            case .declaredNames, .mismatchedNames: []
+            case .unanswered: ["Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle"]
+            }
+        }
+    }
+
+    /// **`Package.swift` から消した target の古い包みは入れず、入れなかったものは報せで名乗る** (#4005)。
+    /// 束ねる置き場は利用者の `swift build` / `swift test` と共有なので、消す前に組んだ
+    /// `Sketch_DemoTests.bundle` が隣に残る。宣言の閉包からは出てこないので、隣の並びと依存の木の宣言の
+    /// 名前から決める。依存の木は束ねる置き場で、パッケージの場所に問う。
+    ///
+    /// - 宣言の名前が揃っていれば、自分の名前で始まる依存 (`Sketch_Extras`) の包みは入れる
+    /// - 依存の名前が包みの名前と食い違えば、その依存の包みも古い包みと読んで除く。**黙っては除かず、
+    ///   報せに 1 行ずつ名乗る** (反証の指摘: 名前の出どころを信じ切らない)
+    /// - 道具立てが答えなければ、何も足さずに除かず、入れた候補を `Kept:` と名乗る
+    @Test(
+        "宣言から消えた target の古い包みは入らず、入れなかったものを名乗る",
+        arguments: DependencyAnswer.allCases)
+    func leftoverBundlesOfRemovedTargetsStayOut(answer: DependencyAnswer) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let bin = executable.deletingLastPathComponent()
+        let beside = [
+            "Sketch_Demo.bundle", "Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle",
+            "mokume_MokumeCore.bundle",
+        ]
+        for name in beside {
+            let inside = bin.appendingPathComponent("\(name)/Contents/Resources", isDirectory: true)
+            try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        }
+        let dump = """
+            {"name":"Sketch",
+             "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
+             "targets":[
+               {"name":"Demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
+                "dependencies":[{"product":["Foo","extras",null,null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+        var asked: [(arguments: [String], directory: URL)] = []
+        let scope = BundleCommand.resourceScope(
+            of: package, product: "Demo", executable: executable, package: root
+        ) { arguments, directory in
+            asked.append((arguments, directory))
+            return answer.answer
+        }
+        // 束ねる置き場 (パッケージ直下の `.build`) で、パッケージの場所に問う
+        #expect(asked.map(\.arguments) == [["package", "show-dependencies", "--format", "json"]])
+        #expect(asked.map(\.directory.path) == [root.path])
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: identity, minimumSystemVersion: "26.0",
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: scope.excluded)
+        let resources = app.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let shipped = try FileManager.default.contentsOfDirectory(atPath: resources.path).sorted()
+        #expect(shipped == Set(beside + ["demo_demo.bundle"]).subtracting(answer.leftOut).sorted())
+        #expect(scope.leftovers == answer.leftOut)
+        #expect(scope.kept == answer.kept)
+        #expect(scope.required == ["Sketch_Demo.bundle"])
+        #expect(throws: Never.self) { try BundleCommand.check(app, contains: scope.required) }
+
+        // 入れなかったもの・問えずに入れたものは、束ねた報せに 1 行ずつ名乗る (見本の名乗りの警告より前)
+        let report = BundleCommand.report(
+            for: app, package: root, note: root.appendingPathComponent("How to open Demo.txt"),
+            signedAs: nil, identity: identity, leftOut: scope.leftovers, kept: scope.kept)
+        let lines = report.split(separator: "\n").map(String.init)
+        #expect(lines.filter { $0.hasPrefix("Left out: ") }.count == answer.leftOut.count)
+        #expect(lines.filter { $0.hasPrefix("Kept: ") }.count == answer.kept.count)
+        for name in answer.leftOut {
+            #expect(
+                lines.contains(
+                    "Left out: \(name) — in .build, but no target in Package.swift and no dependency builds it now"))
+        }
+        for name in answer.kept {
+            #expect(lines.contains("Kept: \(name) — could not ask SwiftPM whether a dependency builds it"))
+        }
+    }
+
+    /// **古い包みの候補が無ければ、道具立てに問わない** (#4005 の 2 回目の反証)。隣に並ぶのがいまの宣言の
+    /// target の包みと、自分の名前で始まらない依存の包みだけなら、`show-dependencies` を起こさない。
+    @Test("古い包みの候補が無ければ、依存の木を問わない")
+    func noCandidatesAskNothing() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let bin = executable.deletingLastPathComponent()
+        for name in ["Sketch_Demo.bundle", "mokume_MokumeCore.bundle"] {
+            try FileManager.default.createDirectory(
+                at: bin.appendingPathComponent(name, isDirectory: true), withIntermediateDirectories: true)
+        }
+        let package = try #require(
+            SwiftPM.package(
+                inDumpOf: """
+                    {"name":"Sketch",
+                     "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
+                     "targets":[{"name":"Demo","type":"executable"}]}
+                    """))
+        var asked = 0
+        let scope = BundleCommand.resourceScope(
+            of: package, product: "Demo", executable: executable, package: root
+        ) { _, _ in
+            asked += 1
+            return (1, "")
+        }
+        #expect(asked == 0)
+        #expect(scope.excluded.isEmpty)
+        #expect(scope.kept.isEmpty)
+    }
+
+    /// 入れなかったものが無ければ、報せは何も足さない。
+    @Test("入れなかった古い包みが無ければ、報せに名乗りの行は無い")
+    func nothingLeftOutAddsNothing() {
+        #expect(BundleCommand.leftOutNotice([], kept: []) == nil)
+        let report = BundleCommand.report(
+            for: URL(fileURLWithPath: "/tmp/Demo.app"),
+            package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity,
+            leftOut: [], kept: [])
+        #expect(!report.contains("Left out"))
+        #expect(report.hasSuffix("the bundle carries all it needs."))
     }
 
     /// 確かめ方まで言わないと、束ねた側の手元では成功したようにしか見えない。
@@ -919,7 +1147,7 @@ struct BundleCommandTests {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
             package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
-            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity)
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity, leftOut: [], kept: [])
         #expect(report.contains("/tmp/Demo.app"))
         #expect(report.contains(".build"))
     }
@@ -933,11 +1161,19 @@ struct BundleCommandTests {
     /// (アプリは遅れて資材を読む)、`-W` があればアプリが終わるまで待つ。アプリが資材を読む
     /// 時点で `.build` が退避されているかを書き残させる — 本物の `.app` を開かずに、
     /// 手順の順序と、`-W` で `.build` を戻すのを遅らせていることまで見る (#2833)。
+    /// 確かめ方の行を貼られうる殻。**症状は zsh で出て**、利用ガイドの行は zsh / bash に
+    /// 貼られる (#3985 の反証)。`/bin/sh` だけで見ると、殻ごとの違い (trap の掛かり方・最後の
+    /// コマンドを exec するか) を取り逃す。手元に在る殻だけで回す。
+    nonisolated static let shells = ["/bin/sh", "/bin/zsh", "/bin/bash"].filter {
+        FileManager.default.isExecutableFile(atPath: $0)
+    }
+
     @Test(
         "確かめ方の行は、スケッチの親から貼っても、スケッチの .build を退避して戻す",
-        arguments: ["bund", "bund with space", "it's bund"])
-    func theCheckCanBePastedFromTheParent(name: String) throws {
-        let run = try runTheCheck(name: name, alreadyRunning: false, interrupted: false)
+        arguments: ["bund", "bund with space", "it's bund"], shells)
+    func theCheckCanBePastedFromTheParent(name: String, shell: String) throws {
+        let run = try runTheCheck(
+            name: name, alreadyRunning: false, interrupted: false, shell: shell)
         #expect(run.status == 0, "確かめ方の行が通らない: \(run.line)")
         // アプリが資材を読む時点でスケッチの .build は退避されていて、開いたのは束ねた .app
         #expect(run.record == "\(run.app.path)\nheld\n", "打った行: \(run.line)")
@@ -949,9 +1185,12 @@ struct BundleCommandTests {
     /// `open -W` だけでは、動いているアプリを前に出してその終了を待つだけで、新しく起動
     /// しない — 資材を読み終えているアプリが描いているのを見て、確かめ方が素通りする。
     /// 偽の `open` は、`-n` が無ければ動いているアプリを使い回す (本物の `open` と同じ)。
-    @Test("確かめ方の行は、同じアプリが既に動いていても、新しく起こして .build 無しで読ませる")
-    func theCheckStartsANewInstanceEvenIfOneIsRunning() throws {
-        let run = try runTheCheck(name: "bund", alreadyRunning: true, interrupted: false)
+    @Test(
+        "確かめ方の行は、同じアプリが既に動いていても、新しく起こして .build 無しで読ませる",
+        arguments: shells)
+    func theCheckStartsANewInstanceEvenIfOneIsRunning(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund", alreadyRunning: true, interrupted: false, shell: shell)
         #expect(run.status == 0, "確かめ方の行が通らない: \(run.line)")
         #expect(run.record == "\(run.app.path)\nheld\n", "打った行: \(run.line)")
         #expect(run.restored, "打った行: \(run.line)")
@@ -959,22 +1198,133 @@ struct BundleCommandTests {
 
     /// **途中で止められても `.build` は戻る** (#2833 の反証)。アプリを閉じるまで長く待つので、
     /// 待つ間に Ctrl-C や端末を閉じる (SIGINT・SIGHUP・SIGTERM) が起きうる。戻す手が行の
-    /// 最後にあるだけだと、`.build` が `.build-held` のまま残り、次のビルドが全部やり直しになる。
-    @Test("確かめ方の行は、待つ間に止められても .build を戻す", arguments: ["TERM", "INT", "HUP"])
-    func theCheckPutsBuildBackWhenInterrupted(signal: String) throws {
+    /// 最後にあるだけだと、`.build` が退避先に残り、次のビルドが全部やり直しになる。
+    @Test("確かめ方の行は、待つ間に止められても .build を戻す", arguments: ["TERM", "INT", "HUP"], shells)
+    func theCheckPutsBuildBackWhenInterrupted(signal: String, shell: String) throws {
         let run = try runTheCheck(
-            name: "bund", alreadyRunning: false, interrupted: true, signal: signal)
+            name: "bund", alreadyRunning: false, interrupted: true, signal: signal, shell: shell)
         #expect(run.restored, "止められたあとに .build が戻っていない: \(run.line)")
+    }
+
+    /// **退避先と同じ名前の物が既にあっても、巻き込まない** (#3985)。退避先を `.build-held` に
+    /// 決め打ちしていたので、それが既にあるディレクトリだと `mv` は `.build` をその**中へ**
+    /// 入れ、戻す手は `.build-held` ごと `.build` の中へ入れていた — 終了 0 のまま
+    /// `.build/.build` ができ、作者が置いていた `.build-held` も消えた。退避先はその回が
+    /// 作る一意な場所にし、事前にある `.build-held` には触れない。通常の起動・閉じた場合・
+    /// 止められた場合のどれでも同じに保つ。
+    @Test(
+        "確かめ方の行は、既にある .build-held を巻き込まず、.build を入れ子にせず戻す",
+        arguments: [nil, "TERM", "INT", "HUP"], shells)
+    func theCheckLeavesAnExistingHeldDirectoryAlone(signal: String?, shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: signal != nil,
+            signal: signal ?? "TERM", existingHeld: true, shell: shell)
+        if signal == nil {
+            #expect(run.status == 0, "確かめ方の行が通らない: \(run.line)")
+            #expect(run.record == "\(run.app.path)\nheld\n", "打った行: \(run.line)")
+        }
+        #expect(run.restored, "元の .build・.build-held の配置が保たれていない: \(run.line)")
+    }
+
+    /// **退避できなければ、0 以外で終わり、作った退避先を残さない** (#3985 の反証)。`.build` が
+    /// 無い (まだビルドしていない・別の場所で打った) と `mv` は失敗する。そのとき作った
+    /// `.build-held.XXXXXX` を消し忘れると、打つたびにスケッチの下へ空のディレクトリが溜まる。
+    @Test("確かめ方の行は、.build が無ければ 0 以外で終わり、退避先を残さない", arguments: shells)
+    func theCheckFailsWithoutLeavingAPlaceWhenThereIsNoBuild(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            buildPresent: false)
+        #expect(run.status != 0, "退避できないのに成功で終わった: \(run.line)")
+        #expect(run.leftEntries == ["bundle"], "スケッチに残った物: \(run.leftEntries)")
+    }
+
+    /// **確かめている間に `.build` が作り直されていたら、戻さずに在処を名乗る** (#3985 の反証)。
+    /// 戻す `mv` の先が既に在るディレクトリだと、退避側と同じく中へ入れて `.build/.build` を作る。
+    /// どちらも消さず、入れ子にもせず、退避した物の在処を標準エラーで言って 0 以外で終わる。
+    @Test(
+        "確かめ方の行は、確かめている間に .build が作り直されたら、入れ子にせず在処を名乗る",
+        arguments: shells)
+    func theCheckKeepsBothWhenBuildIsRecreated(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            recreateBuild: true)
+        #expect(run.status != 0, "戻せないのに成功で終わった: \(run.line)")
+        #expect(run.buildMarker == "new", "作り直された .build が残っていない: \(run.line)")
+        #expect(!run.nested, ".build が入れ子になった: \(run.line)")
+        let held = try #require(
+            run.leftEntries.first { $0.hasPrefix(".build-held.") },
+            "退避した物が残っていない: \(run.leftEntries)")
+        #expect(run.heldMarkers == ["current"], "退避した中身が残っていない: \(run.line)")
+        #expect(
+            run.output.contains("\(run.sketch.path)/\(held)/.build"),
+            "退避した在処を名乗っていない: \(run.output)")
+    }
+
+    /// **`.build` が切れたシンボリックリンクでも、元の場所へ戻す** (#3985 の 2 回目の反証)。
+    /// 外付けのディスクへ張って外した形。退避した物の有無を `-e` だけで見ると、切れたリンクは
+    /// 無いことになり、戻さずに退避先に取り残される。
+    @Test("確かめ方の行は、.build が切れたシンボリックリンクでも元の場所へ戻す", arguments: shells)
+    func theCheckPutsBackADanglingBuildLink(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            danglingBuildLink: true)
+        #expect(run.status == 0, "確かめ方の行が通らない: \(run.line)\n\(run.output)")
+        #expect(run.buildLink?.hasSuffix("/gone") == true, "リンクが戻っていない: \(run.leftEntries)")
+        #expect(run.leftEntries == [".build", "bundle"], "スケッチに残った物: \(run.leftEntries)")
+    }
+
+    /// **退避先に物が残って消せなければ、0 以外で終わる** (#3985 の 2 回目の反証)。`.build` は
+    /// 戻っても、退避先が残ったまま成功で終わると、溜まっていくのに気付けない。`open` が先に
+    /// 失敗していたら、その終了コードを潰さない。
+    @Test(
+        "確かめ方の行は、退避先を消せなければ、.build を戻したうえで 0 以外で終わる",
+        arguments: shells, [0, 3])
+    func theCheckFailsWhenThePlaceCannotBeRemoved(shell: String, openStatus: Int) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            strayInHeld: true, openStatus: openStatus)
+        if openStatus == 0 {
+            #expect(run.status != 0, "退避先が残ったのに成功で終わった: \(run.line)")
+        } else {
+            #expect(run.status == Int32(openStatus), "open の終了コードを潰した: \(run.line)")
+        }
+        #expect(run.buildMarker == "current", "打った行: \(run.line)")
+        #expect(!run.nested, "打った行: \(run.line)")
+    }
+
+    /// **`open` が失敗したら、その終了コードを潰さない** (#3985 の 2 回目の反証)。戻す手は
+    /// 後始末で、うまくいっても `open` の失敗を成功に変えない。
+    @Test("確かめ方の行は、open の終了コードをそのまま返し、.build も戻す", arguments: shells)
+    func theCheckKeepsTheStatusOfOpen(shell: String) throws {
+        let run = try runTheCheck(
+            name: "bund with space", alreadyRunning: false, interrupted: false, shell: shell,
+            openStatus: 3)
+        #expect(run.status == 3, "打った行: \(run.line)")
+        #expect(run.restored, "打った行: \(run.line)")
     }
 
     private struct CheckRun {
         var line: String
         var app: URL
+        var sketch: URL
         var status: Int32
+        /// 行の標準出力と標準エラー。
+        var output: String
         /// 偽の `open` が書き残したもの。アプリが資材を読んだ時点の `.build` の有無。
         var record: String?
-        /// 終わった後に `.build` が元の中身ごと戻っていて、退避の跡が無いか。
+        /// 終わった後に `.build` が元の中身ごと (入れ子にならずに) 戻っていて、その回の退避の
+        /// 跡が無く、前からあった `.build-held` があればその中身がそのままか。
         var restored: Bool
+        /// 終わった後にスケッチの直下に在る名前 (並べ替え済み)。
+        var leftEntries: [String]
+        /// 終わった後の `.build/marker` の中身。
+        var buildMarker: String?
+        /// `.build/.build` が在るか。
+        var nested: Bool
+        /// 残った `.build-held.*/.build/marker` の中身。
+        var heldMarkers: [String]
+        /// 終わった後の `.build` がシンボリックリンクなら、その指す先。
+        var buildLink: String?
     }
 
     /// 確かめ方の行を、偽の `open` を `PATH` の先に置いて走らせる。
@@ -985,15 +1335,39 @@ struct BundleCommandTests {
     /// されているかを書き残させる — 本物の `.app` を開かずに、手順の順序まで見る。
     ///
     /// - Parameter interrupted: 偽の `open` が待つ間に、行を包む殻へ `signal` を送る。
+    /// - Parameter existingHeld: 作者が前から置いていた `.build-held` (中身つき) を用意する。
+    /// - Parameter shell: 行を走らせる殻。
+    /// - Parameter buildPresent: スケッチに `.build` を置くか。
+    /// - Parameter recreateBuild: 偽のアプリが資材を読んだ後、待つ間に `.build` を作り直す。
+    /// - Parameter danglingBuildLink: `.build` を切れたシンボリックリンク (外付けへ張って外した形) にする。
+    /// - Parameter strayInHeld: 偽のアプリが待つ間に、退避先へ別のファイルを置く (`rmdir` が失敗する形)。
+    /// - Parameter openStatus: 偽の `open` の終了コード。
     private func runTheCheck(
-        name: String, alreadyRunning: Bool, interrupted: Bool, signal: String = "TERM"
+        name: String, alreadyRunning: Bool, interrupted: Bool, signal: String = "TERM",
+        existingHeld: Bool = false, shell: String = "/bin/sh", buildPresent: Bool = true,
+        recreateBuild: Bool = false, danglingBuildLink: Bool = false, strayInHeld: Bool = false,
+        openStatus: Int = 0
     ) throws -> CheckRun {
         let parent = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: parent) }
         let sketch = parent.appendingPathComponent(name, isDirectory: true)
         let build = sketch.appendingPathComponent(".build", isDirectory: true)
-        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
-        try "".write(to: build.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: sketch, withIntermediateDirectories: true)
+        if danglingBuildLink {
+            try FileManager.default.createSymbolicLink(
+                atPath: build.path, withDestinationPath: parent.appendingPathComponent("gone").path)
+        } else if buildPresent {
+            try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+            try "current".write(
+                to: build.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
+        }
+        let held = sketch.appendingPathComponent(".build-held", isDirectory: true)
+        if existingHeld {
+            try FileManager.default.createDirectory(at: held, withIntermediateDirectories: true)
+            try "existing".write(
+                to: held.appendingPathComponent("existing-content"), atomically: true,
+                encoding: .utf8)
+        }
         let app = sketch.appendingPathComponent("bundle/Bund.app", isDirectory: true)
         try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
 
@@ -1006,6 +1380,16 @@ struct BundleCommandTests {
         let quotedBuild = sketch.path.replacingOccurrences(of: "'", with: #"'\''"#) + "/.build"
         // 待つ間に止められる回は、`$PPID` (行を包む殻) へ信号を送ってから、少し待って終わる
         let interrupt = interrupted ? "kill -\(signal) \"$PPID\"; sleep 0.3; exit 1" : ""
+        // 確かめている間に、別の手が .build を作り直す
+        let recreate =
+            recreateBuild
+            ? "mkdir '\(quotedBuild)'; printf new > '\(quotedBuild)/marker'" : ""
+        // 確かめている間に、別の手が退避先へファイルを置く
+        let quotedSketch = sketch.path.replacingOccurrences(of: "'", with: #"'\''"#)
+        let stray =
+            strayInHeld
+            ? "for place in '\(quotedSketch)'/.build-held.*; do printf x > \"$place/stray\"; done"
+            : ""
         try """
             #!/bin/sh
             waits=no
@@ -1024,39 +1408,57 @@ struct BundleCommandTests {
                 if [ -e '\(running.path)' ] && [ "$new" = no ]; then echo reused
                 elif [ -e '\(quotedBuild)' ]; then echo present; else echo held; fi
               } > '\(record.path).part'
+              \(recreate)
+              \(stray)
               mv '\(record.path).part' '\(record.path)' ) >/dev/null 2>&1 &
             if [ "$waits" = yes ]; then wait; fi
+            exit \(openStatus)
             """.write(to: open, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: open.path)
 
         let report = BundleCommand.report(
             for: app, package: sketch, note: parent.appendingPathComponent("How to open Bund.txt"),
-            signedAs: nil, identity: identity)
+            signedAs: nil, identity: identity, leftOut: [], kept: [])
         let line = try #require(
             report.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
                 .first { $0.hasPrefix("(") })
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", line]
+        process.executableURL = URL(fileURLWithPath: shell)
+        // 利用者の設定 (`.zshrc` など) を読ませない — 貼った行そのものの振る舞いを見る
+        process.arguments = (shell.hasSuffix("zsh") ? ["-f"] : []) + ["-c", line]
         process.currentDirectoryURL = parent
         process.environment = ["PATH": "\(tools.path):/usr/bin:/bin"]
-        let result = try RunCommand.capture(process, capturing: true, errors: .inherit)
+        let result = try RunCommand.capture(process, capturing: true, errors: .merge)
 
         // `-W` が無いと、行は偽物のアプリが書き残すより先に戻る。遅れて書くのを、期限つきで待つ
-        // (止められた回は書き残さないので待たない)
-        if !interrupted {
+        // (止められた回・退避できなかった回は書き残さないので待たない)
+        if !interrupted, buildPresent {
             let deadline = Date().addingTimeInterval(10)
             while !FileManager.default.fileExists(atPath: record.path), Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
             }
         }
+        let files = FileManager.default
+        let left = ((try? files.contentsOfDirectory(atPath: sketch.path)) ?? []).sorted()
+        let buildMarker = try? String(
+            contentsOf: build.appendingPathComponent("marker"), encoding: .utf8)
+        let nested = files.fileExists(atPath: build.appendingPathComponent(".build").path)
+        let heldMarkers = left.filter { $0.hasPrefix(".build-held.") }.compactMap {
+            try? String(
+                contentsOf: sketch.appendingPathComponent("\($0)/.build/marker"), encoding: .utf8)
+        }
         let restored =
-            FileManager.default.fileExists(atPath: build.appendingPathComponent("marker").path)
-            && !FileManager.default.fileExists(
-                atPath: sketch.appendingPathComponent(".build-held").path)
+            buildMarker == "current" && !nested
+            && Set(left) == Set([".build", "bundle"] + (existingHeld ? [".build-held"] : []))
+            && (!existingHeld
+                || (try? String(
+                    contentsOf: held.appendingPathComponent("existing-content"), encoding: .utf8))
+                    == "existing")
         return CheckRun(
-            line: line, app: app, status: result.status,
-            record: try? String(contentsOf: record, encoding: .utf8), restored: restored)
+            line: line, app: app, sketch: sketch, status: result.status, output: result.output,
+            record: try? String(contentsOf: record, encoding: .utf8), restored: restored,
+            leftEntries: left, buildMarker: buildMarker, nested: nested, heldMarkers: heldMarkers,
+            buildLink: try? files.destinationOfSymbolicLink(atPath: build.path))
     }
 
     /// 文面の固定。スケッチの `.build` と `.app` を、引用した絶対パスで名指しする。
@@ -1066,13 +1468,21 @@ struct BundleCommandTests {
             for: URL(fileURLWithPath: "/work/bund with space/bundle/Bund.app"),
             package: URL(fileURLWithPath: "/work/bund with space", isDirectory: true),
             note: URL(fileURLWithPath: "/work/bund with space/bundle/How to open Bund.txt"),
-            signedAs: nil, identity: identity)
-        #expect(
-            report.contains(
-                "  ( build='/work/bund with space/.build'; held='/work/bund with space/.build-held';"
-                    + " mv \"$build\" \"$held\" || exit;"
-                    + " trap 'mv \"$held\" \"$build\"' EXIT; trap exit HUP INT TERM;"
-                    + " open -n -W '/work/bund with space/bundle/Bund.app' )\n"))
+            signedAs: nil, identity: identity, leftOut: [], kept: [])
+        let line: String = [
+            "  ( build='/work/bund with space/.build';",
+            " held=$(mktemp -d '/work/bund with space/.build-held.XXXXXX') || exit;",
+            " trap 's=$?; if [ -e \"$held/.build\" ] || [ -L \"$held/.build\" ]; then",
+            " if [ -e \"$build\" ] || [ -L \"$build\" ]; then",
+            " printf \"%s\\n\" \"A new .build appeared while checking;",
+            " the one moved aside was left at $held/.build\" >&2; exit 1; fi;",
+            " mv \"$held/.build\" \"$build\" || exit; fi;",
+            " rmdir \"$held\" || exit $((s ? s : 1))' EXIT;",
+            " trap exit HUP INT TERM;",
+            " mv \"$build\" \"$held/.build\" || exit;",
+            " open -n -W '/work/bund with space/bundle/Bund.app' )\n",
+        ].joined()
+        #expect(report.contains(line))
     }
 
     /// 確かめ方の行は、アプリを閉じるまで端末に戻らない (`open -n -W`)。戻らないことを
@@ -1082,7 +1492,7 @@ struct BundleCommandTests {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
             package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
-            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity)
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity, leftOut: [], kept: [])
         #expect(
             report.contains(
                 "Once it draws, quit the app: .build is put back as soon as it closes,"
@@ -1149,7 +1559,7 @@ struct BundleCommandTests {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
             package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
-            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity)
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity, leftOut: [], kept: [])
         #expect(report.contains("/tmp/How to open Demo.txt"))
         #expect(report.contains("Send it along with the work"))
     }
@@ -1369,6 +1779,38 @@ struct BundleCommandTests {
         #expect(!failure.message.contains("declares an executable"))
     }
 
+    /// **資材の宣言は、読んだ宣言で見る** (#3984 の反証)。宣言が読めない回は資材の抜けとは名乗らず、
+    /// 宣言を読む段が道具立ての失敗として止める。読めて抜けがあれば、ビルドの前に資材の抜けで止める。
+    @Test("bundle は、宣言が読めない回は道具立ての失敗で、読めて抜けがあれば資材の抜けで止まる")
+    func bundleChecksResourcesWithTheDeclarationItRead() throws {
+        for (manifest, expectsResources) in [
+            ("this is not a manifest\n", false), (ResourceDeclarationTests.manifest(), true),
+        ] {
+            let root = try makeWorkspace()
+            defer { try? FileManager.default.removeItem(at: root) }
+            try manifest.write(
+                to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+            try #"{"name": "Demo", "identifier": "org.example.demo", "version": "0.1.0"}"#.write(
+                to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
+                encoding: .utf8)
+            let assets = root.appendingPathComponent("Sources/demo/assets", isDirectory: true)
+            try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+            try "x".write(
+                to: assets.appendingPathComponent("grain.png"), atomically: true, encoding: .utf8)
+
+            let thrown = #expect(throws: CommandFailure.self) {
+                try BundleCommand.run([root.path])
+            }
+            if expectsResources {
+                #expect(thrown == .resourcesNotDeclared(directory: "Sources/demo/assets"))
+            } else if let thrown, case .toolchainFailed(let command, _) = thrown {
+                #expect(command == RunCommand.dumpCommand)
+            } else {
+                Issue.record("宣言が読めない回を道具立ての失敗と名乗らなかった: \(String(describing: thrown))")
+            }
+        }
+    }
+
     /// 署名の前まで組んだ包み (本物の Mach-O を主実行ファイルにする)。
     private func makeApplicationToSign(in root: URL) throws -> URL {
         let bin = root.appendingPathComponent("bin", isDirectory: true)
@@ -1378,7 +1820,7 @@ struct BundleCommandTests {
             at: URL(fileURLWithPath: "/usr/bin/true"), to: executable)
         return try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
     }
 
     /// 本物の Mach-O を主実行ファイルにした包みを組んで、`sign` を通す。
@@ -1395,7 +1837,7 @@ struct BundleCommandTests {
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: identity, minimumSystemVersion: "26.0",
-            into: root.appendingPathComponent("out", isDirectory: true))
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: [])
         try BundleCommand.sign(app, as: signature, entitlements: entitlements, scratch: scratch)
         return app
     }
@@ -1532,12 +1974,12 @@ struct BundleCommandTests {
             name: "Grain", identifier: AppIdentity.exampleIdentifier, version: "0.1.0")
 
         let report = BundleCommand.report(
-            for: app, package: package, note: note, signedAs: nil, identity: example)
+            for: app, package: package, note: note, signedAs: nil, identity: example, leftOut: [], kept: [])
         let warning = try #require(example.warning)
         #expect(report.hasSuffix(warning), "\(report)")
 
         let own = BundleCommand.report(
-            for: app, package: package, note: note, signedAs: nil, identity: identity)
+            for: app, package: package, note: note, signedAs: nil, identity: identity, leftOut: [], kept: [])
         #expect(!own.contains("Warning:"))
         #expect(own == String(report.dropLast(warning.count + 2)))
     }
@@ -1611,12 +2053,12 @@ struct BundleCommandTests {
         let note = URL(fileURLWithPath: "/tmp/Demo を開くには.txt")
 
         #expect(
-            BundleCommand.report(for: app, package: package, note: note, signedAs: nil, identity: identity)
+            BundleCommand.report(for: app, package: package, note: note, signedAs: nil, identity: identity, leftOut: [], kept: [])
                 .contains("ad-hoc"))
 
         let named = BundleCommand.report(
             for: app, package: package, note: note, signedAs: "Developer ID Application: X",
-            identity: identity)
+            identity: identity, leftOut: [], kept: [])
         #expect(named.contains("Developer ID Application: X"))
         #expect(named.contains("has not been notarized yet"))
     }

@@ -158,16 +158,63 @@ nonisolated struct EnvelopeShape: Equatable {
     }
 
     /// 秒で与えられた形を、標本の数の形にする。負の値は 0 秒として扱う。
+    ///
+    /// 区間か合計が `Int` に収まらない形は、長さ 0 (鳴らない) にする。**呼ぶ側
+    /// (``SynthSource``・`Env.play`) が ``sampleCounts(attack:sustain:release:sampleRate:)`` で先に
+    /// 拒む** (#3951) ので、ここは音の側で落ちないための守りにすぎない。
     init(attack: Float, sustain: Float, level: Float, release: Float, sampleRate: Double) {
-        func samples(_ seconds: Float) -> Int {
-            guard seconds.isFinite, seconds > 0 else { return 0 }
-            return Int((Double(seconds) * sampleRate).rounded())
-        }
-        self.attack = samples(attack)
-        self.sustain = samples(sustain)
-        self.release = samples(release)
+        let counts = Self.sampleCounts(
+            attack: attack, sustain: sustain, release: release, sampleRate: sampleRate)
+        self.attack = counts?.attack ?? 0
+        self.sustain = counts?.sustain ?? 0
+        self.release = counts?.release ?? 0
         self.level = level.isFinite ? min(max(level, 0), 1) : 0
     }
 
     init() {}
+
+    /// 秒の長さを標本の数にする。負・数でない値は 0。**`Int` に収まらなければ `nil`。**
+    static func sampleCount(_ seconds: Float, sampleRate: Double) -> Int? {
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        return Int(exactly: (Double(seconds) * sampleRate).rounded())
+    }
+
+    /// 3 区間の標本の数。どれかの区間、または合計 (``length``) が `Int` に収まらなければ `nil`。
+    static func sampleCounts(
+        attack: Float, sustain: Float, release: Float, sampleRate: Double
+    ) -> (attack: Int, sustain: Int, release: Int)? {
+        guard
+            let attack = sampleCount(attack, sampleRate: sampleRate),
+            let sustain = sampleCount(sustain, sampleRate: sampleRate),
+            let release = sampleCount(release, sampleRate: sampleRate)
+        else { return nil }
+        let held = attack.addingReportingOverflow(sustain)
+        guard !held.overflow, !held.partialValue.addingReportingOverflow(release).overflow else {
+            return nil
+        }
+        return (attack, sustain, release)
+    }
+}
+
+/// ``SoundFile`` に掛けた包絡 (#3099)。**形の上の位置は、掛けた時点から鳴った標本の数** (ファイルの標本) で、
+/// 区切り (鳴らし始める・飛ぶ・鳴らし直す) をまたいでも続き、止めている間は進まない。
+///
+/// 区切りの中で `n` 標本鳴ったところの位置は `n + offset`。区切りを始め直すとき、主スレッドが前の区切りで
+/// 鳴った数を ``offset`` へ畳み込んで、新しい区切りの頭からの位置にする。音の側 (``FileVoice``・``FileNode``) と
+/// 解析 (``SoundFile``) は、同じ値から同じ倍率を引く。
+nonisolated struct FileEnvelope: Equatable {
+    /// 形 (ファイルの標本の数)。
+    var shape: EnvelopeShape
+    /// 区切りの中で鳴った標本の数に足すと、形の上の位置になる数。
+    var offset: Int
+    /// 形の頭より前 (掛けた時点より前に鳴った標本) の倍率。前に掛けた形の、掛け直した時点の倍率 (前に形が
+    /// 無ければ 1)。**解析が区間の前の履歴を読むときだけ使う** — 音の側は掛けた時点より後の標本しか描かない。
+    var before: Float = 1
+
+    /// 区切りの中で `played` 標本鳴ったところの倍率。形が終わった後は 0 (次に掛けるまで)。
+    func gain(atPlayed played: Int) -> Float {
+        let position = played + offset
+        guard position >= 0 else { return before }
+        return shape.gain(at: position) ?? 0
+    }
 }

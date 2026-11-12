@@ -5,6 +5,7 @@ import Foundation
 
 /// JSON のオブジェクト (`{ "キー": 値, … }`)。ファイルか URL から読んで作り
 /// (``SketchPart/loadJSONObject(_:)``・``SketchPart/parseJSONObject(_:)``)、キーで値を取り出す。
+/// 空から作って (``init()``) キーに値を書き、``SketchPart/saveJSONObject(_:_:)`` で書き出すこともできる。
 ///
 /// <!-- example: 文脈 var temp: Float? -->
 /// ```swift
@@ -73,7 +74,20 @@ import Foundation
 ///
 /// ## 値の型である
 ///
-/// 代入すると写しになる (``Table`` と同じ)。読むだけで、書き換える口は持たない。
+/// 代入すると写しになる (``Table`` と同じ)。書き換える口 (``setFloat(_:_:)`` ほか) は `mutating` で、
+/// `var` で持ったオブジェクトにだけ書ける。
+///
+/// **入れ子へは直に書けない。** 取り出した値 (``getJSONObject(_:)``) は写しなので、
+/// `o.getJSONObject("main").setFloat("temp", 1)` はコンパイルが止める。写しを `var` で受けて書き換え、
+/// ``setJSONObject(_:_:)`` で戻す:
+///
+/// <!-- example: 文脈 var weather = JSONObject() -->
+/// ```swift
+/// var main = weather.getJSONObject("main")
+/// main.setFloat("temp", 1)
+/// weather.setJSONObject("main", main)
+/// ```
+///
 /// 読み出しは main actor の上にあるので、`DispatchQueue.concurrentPerform` などで並列に回すときは、分ける前に値へ写しておく (形は ``map(_:_:_:_:_:)`` の説明)。
 ///
 /// ## 値が無くても落ちない
@@ -88,10 +102,115 @@ import Foundation
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public struct JSONObject: Equatable, Sendable {
     /// キーと値。順は持たない (JSON のオブジェクトは順を約束しない)。
-    let members: [String: JSONValue]
+    var members: [String: JSONValue]
 
     init(_ members: [String: JSONValue]) {
         self.members = members
+    }
+
+    /// 空のオブジェクトを作る。キーに値を書くのは ``setFloat(_:_:)`` ほかで、書き出すのは
+    /// ``SketchPart/saveJSONObject(_:_:)`` である。Processing の `new JSONObject()`。
+    ///
+    /// <!-- example: 文脈 var record = JSONObject() -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     record.setInt("clicks", record.getInt("clicks") + 1)
+    ///     record.setFloat("lastX", mouseX)
+    ///     try? saveJSONObject(record, "out/record.json")
+    /// }
+    /// ```
+    ///
+    /// 最初の `getInt("clicks")` はキーが無いので 0 を返し、1 度だけ知らせる。知らせずに分けるなら
+    /// ``hasKey(_:)`` で先に確かめる。
+    public init() {
+        members = [:]
+    }
+
+    /// キーに真偽を書く。既にあるキーなら、値を置き換える (値の種類が変わってもよい)。
+    ///
+    /// <!-- example: 文脈 var settings = JSONObject() -->
+    /// ```swift
+    /// func keyPressed() {
+    ///     if key == "g" { settings.setBoolean("grid", !settings.getBoolean("grid")) }
+    /// }
+    /// ```
+    public mutating func setBoolean(_ key: String, _ value: Bool) {
+        members[key] = .bool(value)
+    }
+
+    /// キーに数を書く。既にあるキーなら、値を置き換える (値の種類が変わってもよい)。
+    ///
+    /// <!-- example: 文脈 var weather = JSONObject() -->
+    /// ```swift
+    /// weather.setString("name", "Sapporo")
+    /// weather.setFloat("temp", -3.5)
+    /// ```
+    ///
+    /// 書き出すと、`Float` の最も短い 10 進の綴りになる (`0.1` は `0.1`、`2` は `2.0`)。整数の綴りで
+    /// 書くのは ``setInt(_:_:)`` である。
+    ///
+    /// **NaN と無限は書かず、初回だけ理由を知らせる** (キーごとに 1 度)。JSON には NaN と無限の綴りが
+    /// 無く、書けば読み直せないファイルになるためで、投げない ([ADR-0020] 決定 5)。既にあるキーの値も
+    /// 置き換えない。Processing は例外を投げる。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public mutating func setFloat(_ key: String, _ value: Float) {
+        guard value.isFinite else {
+            DocumentValues.warnOnce(
+                .notFinite(key: key),
+                "setFloat(\"\(key)\", \(value)): JSON has no spelling for \(value), so nothing was "
+                    + "written (said once per key)")
+            return
+        }
+        members[key] = .number(shortest: value)
+    }
+
+    /// キーに整数を書く。既にあるキーなら、値を置き換える (値の種類が変わってもよい)。
+    ///
+    /// <!-- example: 文脈 var record = JSONObject() -->
+    /// ```swift
+    /// record.setInt("count", 2)
+    /// ```
+    ///
+    /// 整数の綴り (`2`) で書き、``getInt(_:)`` で読み直すと同じ整数に戻る。
+    public mutating func setInt(_ key: String, _ value: Int) {
+        members[key] = .integer(value)
+    }
+
+    /// キーに文字を書く。既にあるキーなら、値を置き換える (値の種類が変わってもよい)。
+    ///
+    /// <!-- example: 文脈 var record = JSONObject() -->
+    /// ```swift
+    /// record.setString("name", "Sapporo")
+    /// ```
+    ///
+    /// 引用符・`\`・改行などの制御文字は、JSON の決まりで逃がして書く。読み直すと同じ文字に戻る。
+    public mutating func setString(_ key: String, _ value: String) {
+        members[key] = .string(value)
+    }
+
+    /// キーにオブジェクトを書く。入れ子は、写しを書き換えてここで戻す (``JSONObject`` の「値の型である」)。
+    ///
+    /// <!-- example: 文脈 var weather = JSONObject() -->
+    /// ```swift
+    /// var main = JSONObject()
+    /// main.setFloat("temp", 1)
+    /// weather.setJSONObject("main", main)
+    /// ```
+    ///
+    /// 書くのは渡した時点の写しで、後で `main` を書き換えても `weather` の中は変わらない。
+    public mutating func setJSONObject(_ key: String, _ value: JSONObject) {
+        members[key] = .object(value.members)
+    }
+
+    /// キーに配列を書く。渡した時点の写しを書く (``setJSONObject(_:_:)`` と同じ)。
+    ///
+    /// <!-- example: 文脈 var record = JSONObject(); var history: JSONArray! -->
+    /// ```swift
+    /// record.setJSONArray("history", history)
+    /// ```
+    public mutating func setJSONArray(_ key: String, _ value: JSONArray) {
+        members[key] = .array(value.items)
     }
 
     /// キーの値を数として読む。
@@ -184,6 +303,16 @@ public struct JSONObject: Equatable, Sendable {
     /// OSC の `int(_:)` と同じく、整数の値だけを読む)。小数が要るときは ``getFloat(_:)``。
     /// 数の文字は、``getFloat(_:)`` と同じ 10 進の綴りで整数の値のもの (`"3"`・`"1e3"`) だけを読む。
     ///
+    /// **JSON の数の値は、`JSONSerialization` が返した値で整数かを決める。** 読み込みの時点で、端数や
+    /// 下位の桁が失われる場合がある (綴りが 17 桁前後の端数、2⁵³ を越える小数つきの綴り、39 桁以上の綴り)。失われた後の値が
+    /// 整数なら、そのまま整数として読む。正確な整数が要るときは、同じ桁を文字で渡す。数の文字は
+    /// 綴りの桁を丸めずに読む。
+    ///
+    /// ```
+    /// {"id": 9007199254740993.0}    getInt("id") → 9007199254740992 (数の値。下位の桁が失われた後の整数)
+    /// {"id": "9007199254740993.0"}  getInt("id") → 9007199254740993 (数の文字。桁のまま)
+    /// ```
+    ///
     /// **整数にならないときは 0 を返し、初回だけ理由を知らせる** — キーが無い・整数でない数・`Int`
     /// に収まらない数・数でない値のどれでも (キーごとに 1 度)。読み取りは落ちない
     /// ([ADR-0020] 決定 5)。
@@ -260,6 +389,26 @@ public struct JSONObject: Equatable, Sendable {
     /// **知らせない** — キーが無いかもしれないことを分かって尋ねる口である。
     public func hasKey(_ key: String) -> Bool {
         members[key] != nil
+    }
+
+    /// キーの値が `null` か。**キーが無いときも `true`** (Processing の `isNull()` と同じ)。
+    ///
+    /// <!-- example: 文脈 var weather: JSONObject! -->
+    /// ```swift
+    /// if !weather.isNull("rain") {
+    ///     fill(80, 120, 220)
+    ///     circle(width / 2, height / 2, weather.getFloat("rain") * 10)
+    /// }
+    /// ```
+    ///
+    /// 値が `null` なのか、キーが無いのかを分けるなら ``hasKey(_:)`` と組む
+    /// (`hasKey("rain") && isNull("rain")` は「キーはあり、値が `null`」)。
+    ///
+    /// **知らせない** — 値が欠けているかもしれないことを分かって尋ねる口である。`null` の値を
+    /// ``getFloat(_:)`` などで読むと空の値と知らせになるので、読む前にこれで確かめる。
+    public func isNull(_ key: String) -> Bool {
+        guard let value = members[key] else { return true }
+        return value == .null
     }
 
     /// キーの一覧。**文字の順に並べる。**

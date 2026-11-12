@@ -42,6 +42,13 @@ import Synchronization
 ///   低域通過 (ブラックマン窓つきの sinc) を掛けながら読む。通さずに間引くと、ラックの半分より上の音が
 ///   折り返して低い所に濁りとして出る
 ///
+/// ## 包絡 (#3099)
+///
+/// ``Env`` が ``SoundFile`` に包絡を掛けると、区切りを始める操作の直後に、その区切りの位置のずれ (``FileEnvelope``) が
+/// 届く。倍率は区切りの中で鳴ったファイルの標本の数 (``played(generation:)`` と同じ数え方) から引くので、解析
+/// (``SoundFile``) が同じ数から同じ倍率を引ける。包絡を掛けていなければ何も掛けない。始め直して消えていく区切りは、
+/// 消え始めた時点の倍率のまま消える。
+///
 /// ## 左右は畳む
 ///
 /// ``SoundFile`` が持つのはチャンネルを平均したモノラルの標本列で、この節の出口は中央に定位する
@@ -107,6 +114,15 @@ nonisolated final class FileNode: RackNode {
     private var fadingCount = 0
     /// 世代 (上位) と、区切りの中で鳴った標本の数 (下位・ファイルの標本)。
     private let progress = Atomic<UInt64>(0)
+    /// いまの区切りに掛ける包絡 (#3099)。`nil` なら掛けない。位置は区切りの中で鳴ったファイルの標本の数
+    /// (``played(generation:)`` が返す数と同じ数え方) から引く。**区切りを始め直しても外さない** — 主スレッドが
+    /// 区切りを始める操作の直後に、その区切りの位置のずれを渡す。
+    private var envelope: FileEnvelope?
+    // 包絡の形の秒 (``SourceNode`` と同じく、値で受けてから形にする)
+    private var pendingAttack: Float = 0
+    private var pendingSustain: Float = 0
+    private var pendingLevel: Float = 1
+    private var pendingRelease: Float = 0
 
     /// 消えていく区切り。位置を導くのに要るものと、いまの音量。
     private struct Fading {
@@ -163,14 +179,38 @@ nonisolated final class FileNode: RackNode {
     override var isFinished: Bool { !playing && fadingCount == 0 }
 
     override func apply(_ param: SynthParam, _ value: Float) {
-        if param == .amplitude { amplitude = value }
+        switch param {
+        case .amplitude: amplitude = value
+        case .attack: pendingAttack = value
+        case .sustain: pendingSustain = value
+        case .level: pendingLevel = value
+        case .release: pendingRelease = value
+        default: break
+        }
+    }
+
+    override func shapeEnvelope(offset: Int) {
+        // 位置はファイルの標本で数えるので、形もファイルの標本化率で作る (主スレッドと同じ値から同じ形)
+        envelope = FileEnvelope(
+            shape: EnvelopeShape(
+                attack: pendingAttack, sustain: pendingSustain, level: pendingLevel,
+                release: pendingRelease, sampleRate: fileRate),
+            offset: offset)
+    }
+
+    /// 区切りが始まってから `count` 標本 (ラックの標本) 作ったところで、鳴ったファイルの標本の数。
+    private func filePlayed(_ count: Int) -> Int {
+        Int((Double(count) * fileRate / sampleRate).rounded(.down))
     }
 
     override func begin(_ bits: UInt64) {
         // 鳴っている区切りは、消えながら残す。まだ音量が立ち上がっていない区切り (同じ描き出しの前に
         // 始め直しが 2 つ載ったときの 1 つ目) は音が出ていないので、残すものが無い。**消えていく前の区切りは
-        // ここでは捨てない** — 自分の音量が 0 になるまで鳴らす
-        if playing, gate > 0 { pushFading(Fading(start: start, count: count, looping: looping, gain: gate)) }
+        // ここでは捨てない** — 自分の音量が 0 になるまで鳴らす。包絡を掛けていれば、消え始めの倍率で止めて残す
+        if playing, gate > 0 {
+            let shaped = envelope.map { gate * $0.gain(atPlayed: filePlayed(count)) } ?? gate
+            pushFading(Fading(start: start, count: count, looping: looping, gain: shaped))
+        }
         start = min(Int(bits & Self.countMask), samples.count)
         looping = bits & Self.loopingBit != 0
         generation = Int((bits >> (Self.countBits + 1)) & Self.generationMask)
@@ -233,6 +273,7 @@ nonisolated final class FileNode: RackNode {
                             playing = false
                         } else {
                             value = read(source, at: position, looping: looping) * gate
+                            if let envelope { value *= envelope.gain(atPlayed: filePlayed(count)) }
                             count += 1
                         }
                     }
@@ -265,8 +306,7 @@ nonisolated final class FileNode: RackNode {
         }
         if made < frames { (output + made).update(repeating: 0, count: frames - made) }
         // 1 度だけで終わりに着いたら、鳴った数は終わりまでの数にする (主スレッドが終わりと読めるように)
-        let reached = Int((Double(count) * fileRate / sampleRate).rounded(.down))
-        publish(reachedEnd ? length - start : reached)
+        publish(reachedEnd ? length - start : filePlayed(count))
     }
 
     /// `index` 番目の消えていく区切りを外す (残りの順は保つ)。

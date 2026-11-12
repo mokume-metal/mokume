@@ -51,7 +51,7 @@ enum ShapeExit {
     static let poolStorageNames = [
         "vertices", "solidVertices", "solidIndices", "formInstances", "solidInstances", "batches",
         "recordedStrokeRanges", "recordedFillRanges", "recordedGeometryForms", "recordedSolidStrokes",
-        "recordedGPUStrokes",
+        "recordedGPUStrokes", "recordedCompositeGroups",
     ]
 
     static var table: [(name: String, exit: ShapeExit)] {

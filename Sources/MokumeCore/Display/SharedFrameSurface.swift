@@ -183,12 +183,12 @@ final class SharedFrameSurface {
     /// 機械の `NSScreen` から識別子で画面を引き直す — 番号は子が組み立てで選んだ後に抜き差しがあると、道具が
     /// 別の画面を指しうる。番号と名前は、引けなかったときに道具が名乗る言葉の材料である。
     struct FullScreenDisplay: Codable, Equatable, Sendable {
-        /// 子が選んだ番号 (1 から)。
-        let number: Int
+        /// 子が選んだ番号 (1 から)。整数の欄は、桁の多い端数つきの数も `2.5` と同じに断る (#4015)。
+        @WholeNumber var number: Int
         /// OS が名乗る名前。
         let name: String
         /// OS が振った識別子 (`CGDirectDisplayID`)。**道具が画面を引く鍵。**
-        let screenID: UInt32
+        @WholeNumber var screenID: UInt32
 
         init(number: Int, name: String, screenID: UInt32) {
             self.number = number
@@ -279,15 +279,16 @@ final class SharedFrameSurface {
         /// 気付くと、落ちる場所が読んだ所から遠ざかる。**
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            let version = try container.decode(Int.self, forKey: .schemaVersion)
+            // 整数の欄は、桁の多い端数つきの数も `2.5` と同じに断る (#4015)
+            let version = try container.decodeWhole(Int.self, forKey: .schemaVersion)
             guard version == Self.readableVersion else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .schemaVersion, in: container,
                     debugDescription: "Unknown version: \(version) (readable: \(Self.readableVersion))")
             }
-            ids = try container.decode([UInt32].self, forKey: .ids)
-            width = try container.decode(Int.self, forKey: .width)
-            height = try container.decode(Int.self, forKey: .height)
+            ids = try container.decodeWhole([UInt32].self, forKey: .ids)
+            width = try container.decodeWhole(Int.self, forKey: .width)
+            height = try container.decodeWhole(Int.self, forKey: .height)
             guard !ids.isEmpty else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .ids, in: container, debugDescription: "There are no surfaces")
@@ -307,7 +308,7 @@ final class SharedFrameSurface {
             fullScreenDisplay = display.flatMap { $0 }.flatMap { $0.isUsable ? $0 : nil }
             // **番号も読めなくても目録ごと捨てない。** 整数でない・正でない値は「印が無い」として扱い、
             // 読み手は推定に倒れる
-            let writer = try? container.decodeIfPresent(Int32.self, forKey: .pid)
+            let writer = try? container.decodeWholeIfPresent(Int32.self, forKey: .pid)
             pid = writer.flatMap { $0 }.flatMap { $0 > 0 ? $0 : nil }
         }
     }

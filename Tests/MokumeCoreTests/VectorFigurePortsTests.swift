@@ -67,6 +67,10 @@ struct VectorFigurePortsTests {
         #expect(try captured { $0.ellipse(50, 50, 30, 20) } == 1)
         #expect(try captured { $0.arc(50, 50, 30, 30, 0, 2) } >= 1)
         #expect(try captured { $0.arc(50, 50, 30, 30, 0, 2, .chord) } >= 1)
+        // 範囲を Rect で渡す形 (#3784)
+        #expect(try captured { $0.arc(in: Rect(left: 35, top: 35, width: 30, height: 30), start: 0, stop: 2) } >= 1)
+        #expect(
+            try captured { $0.arc(in: Rect(left: 35, top: 35, width: 30, height: 30), start: 0, stop: 2, mode: .chord) } >= 1)
         #expect(try captured { $0.line(0, 0, 10, 10) } == 1)
         #expect(try captured { $0.point(5, 5) } == 1)
         #expect(try captured { $0.line(Vector2(0, 0), Vector2(10, 10)) } == 1)
@@ -77,6 +81,11 @@ struct VectorFigurePortsTests {
         #expect(
             try captured {
                 $0.bezier(from: Vector2(0, 0), control1: Vector2(10, 0), control2: Vector2(20, 10), to: Vector2(30, 10))
+            } == 1)
+        #expect(try captured { $0.curve(0, 10, 10, 0, 20, 10, 30, 0) } == 1)
+        #expect(
+            try captured {
+                $0.curve(from: Vector2(10, 0), control1: Vector2(0, 10), control2: Vector2(30, 0), to: Vector2(20, 10))
             } == 1)
     }
 
@@ -163,6 +172,7 @@ struct VectorFigurePortsTests {
         let dust = try canvas.makeParticles(count: 8)
         #expect(try handled(canvas) { $0.text("a", 10, 10) } == 1)
         #expect(try handled(canvas) { $0.text("a b", 5, 5, 40, 40) } == 1)
+        #expect(try handled(canvas) { $0.text("a b", in: Rect(left: 5, top: 5, width: 40, height: 40)) } == 1)
         #expect(try handled(canvas) { $0.shapedText("ab", 10, 10) } == 1)
         #expect(try handled(canvas) { $0.image(image, 0, 0) } == 1)
         #expect(try handled(canvas) { $0.image(image, 0, 0, 10, 10) } == 1)
@@ -170,6 +180,13 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.image(layer, 0, 0) } == 1)
         #expect(try handled(canvas) { $0.image(layer, 0, 0, 10, 10) } == 1)
         #expect(try handled(canvas) { $0.image(layer, 0, 0, 10, 10, 0, 0, 2, 2) } == 1)
+        // 範囲を Rect で渡す形 (#3783)
+        let box = Rect(left: 0, top: 0, width: 10, height: 10)
+        let part = Rect(left: 0, top: 0, width: 2, height: 2)
+        #expect(try handled(canvas) { $0.image(image, in: box) } == 1)
+        #expect(try handled(canvas) { $0.image(image, in: box, from: part) } == 1)
+        #expect(try handled(canvas) { $0.image(layer, in: box) } == 1)
+        #expect(try handled(canvas) { $0.image(layer, in: box, from: part) } == 1)
         #expect(try handled(canvas) { $0.shape(shape) } == 1)
         #expect(try handled(canvas) { $0.shape(shape, at: [Placement(x: 1, y: 1)]) } == 1)
         // 数の並びを置き場所として読む口 (#3581)。置くのは GPU で、何個になるかは CPU に分からないので、
@@ -182,6 +199,7 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.shape(solid, at: positions, layout: .position) } == 1)
         #expect(try handled(canvas) { $0.shape(shape, at: positions, layout: .position) } == 0)
         #expect(try handled(canvas) { $0.set(1, 1, .linear(red: 1, green: 0, blue: 0)) } == 1)
+        #expect(try handled(canvas) { $0.set(x: 1, y: 1, to: .linear(red: 1, green: 0, blue: 0)) } == 1)
         // 画素のビュー (`pixels`) からの書き込みも、`set` と同じく数える。種類は「読み取り」だが、
         // `VECTOR_ALSO` が「図形」の口と同じに見る (#3139)
         #expect(try handled(canvas) { $0.pixels[1, 1] = .linear(red: 1, green: 0, blue: 0) } == 1)
