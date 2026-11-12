@@ -282,6 +282,171 @@ nonisolated struct PathClippedValueTests {
         // 始点が外側なら繋がない
         #expect(Path.joinedAcrossStart([head, tail], isClosed: true, startsInside: false, endsInside: true).count == 2)
     }
+
+    /// 四角 (0, 0)–(100, 100)。点は `[[0, 0], [100, 0], [100, 100], [0, 100]]` の順。
+    private var square: Path { closed([[0, 0], [100, 0], [100, 100], [0, 100]]) }
+
+    private func closed(_ points: [SIMD2<Float>]) -> Path {
+        Path(subpaths: [
+            Path.Subpath(points: points, isClosed: true, isCurveStep: Array(repeating: false, count: points.count))
+        ])
+    }
+
+    /// 相手の内側の回り数が -1 でも内側 (回り数が正の所だけを内側にしない)。
+    @Test("逆回りの相手 (回り数 -1) の内側も残る")
+    func reversedRegionIsInside() {
+        let reversed = closed([[0, 0], [0, 100], [100, 100], [100, 0]])
+        let clipped = segment([-50, 50], [150, 50]).clipped(to: reversed)
+        #expect(clipped.subpaths.count == 1)
+        #expect(abs(clipped.length - 100) < 1e-3, "length = \(clipped.length)")
+        #expect(clipped.subpaths.first?.points == [[0, 50], [100, 50]])
+    }
+
+    /// 縁に乗る線は `contains` が縁の点に返す答えのとおり: 四角なら x の小さい側の縦の辺と y の小さい側の横の辺が
+    /// 残り、反対側の 2 辺は消える。
+    @Test("縁に乗る線: 四角を自分自身で切ると、残る 2 辺を繋いだ開いた L 字の 1 片になる")
+    func squareClippedToItself() {
+        let clipped = square.clipped(to: square)
+        #expect(clipped.subpaths.count == 1)
+        #expect(clipped.subpaths.first?.isClosed == false)
+        // 左の辺 (0, 100)→(0, 0) と上の辺 (0, 0)→(100, 0) が、始点の前後で繋がる
+        #expect(clipped.subpaths.first?.points == [[0, 100], [0, 0], [100, 0]])
+        #expect(abs(clipped.length - 200) < 1e-3, "length = \(clipped.length)")
+        // 逆回りの四角を相手にしても、残る辺は同じ (左の辺と上の辺)
+        let reversed = closed([[0, 0], [0, 100], [100, 100], [100, 0]])
+        #expect(square.clipped(to: reversed).subpaths.first?.points == [[0, 100], [0, 0], [100, 0]])
+        // 内側の三角形が右の辺 (x = 100) を共有すると、その辺が消えて開いた 1 片になる (長さは斜めの 2 辺の 2 × 50√2)
+        let sharing = closed([[100, 0], [100, 100], [50, 50]]).clipped(to: square)
+        #expect(sharing.subpaths.count == 1 && sharing.subpaths.first?.isClosed == false)
+        #expect(sharing.subpaths.first?.points == [[100, 100], [50, 50], [100, 0]])
+        #expect(abs(sharing.length - 100 * Float(2.0.squareRoot())) < 1e-3, "length = \(sharing.length)")
+        // 説明文の勧め: 少し内側へ寄せた四角は、閉じたまま全部が残る
+        let inset = closed([[0.5, 0.5], [99.5, 0.5], [99.5, 99.5], [0.5, 99.5]]).clipped(to: square)
+        #expect(inset.subpaths.count == 1 && inset.subpaths.first?.isClosed == true)
+        #expect(abs(inset.length - 396) < 1e-3, "length = \(inset.length)")
+    }
+
+    /// 閉じた道が四角の右の辺 (x = 100) を 4 回出入りし、始点 (10, 50) は内側。入る点は (100, 60)・(100, 80)・
+    /// (10, 100) の順で、最後の (10, 100) から始まる片が始点をまたいで最初の片と繋がる。
+    @Test("片の順: 元の道を辿って片が始まる位置の順。始点をまたいで繋いだ片は最後")
+    func pieceOrderFollowsTheEntries() {
+        let comb = closed([
+            [10, 50], [150, 50], [150, 60], [60, 60], [60, 70], [150, 70], [150, 80], [50, 80], [50, 120], [10, 120],
+        ])
+        let clipped = comb.clipped(to: square)
+        #expect(clipped.subpaths.map(\.points) == [
+            [[100, 60], [60, 60], [60, 70], [100, 70]],
+            [[100, 80], [50, 80], [50, 100]],
+            [[10, 100], [10, 50], [100, 50]],
+        ])
+        #expect(abs(clipped.length - 300) < 1e-3, "length = \(clipped.length)")
+    }
+
+    @Test("相手の頂点 (四角の角) を通って外から中へ入る線は、角から始まる 1 片")
+    func lineEnteringThroughAVertex() {
+        let clipped = segment([-50, -50], [50, 50]).clipped(to: square)
+        #expect(clipped.subpaths.map(\.points) == [[[0, 0], [50, 50]]])
+        #expect(abs(clipped.length - 50 * Float(2.0.squareRoot())) < 1e-3, "length = \(clipped.length)")
+    }
+
+    /// 原点が中心の円は、左端の頂点の y が -4.4e-6 ほどで、ほかの座標 (50 前後) と桁が混ざる。その頂点を通って
+    /// 45° で入る線の内側は、円の弦 2 × 50 × cos 45° = 70.71 (折れ線の円なので 0.05 まで許す)。
+    @Test("桁の混ざる頂点 (原点の円の左端) を通って入る線も、頂点から始まる 1 片")
+    func lineEnteringThroughATinyCoordinateVertex() {
+        let circle = disc(0, 0, 50)
+        let points = circle.subpaths[0].points
+        let vertex = points[points.count / 2]
+        #expect(vertex.x == -50 && vertex.y != 0 && abs(vertex.y) < 1e-5, "\(vertex)")
+        let clipped = segment(Vector2(vertex - [50, 50]), Vector2(vertex + [100, 100])).clipped(to: circle)
+        #expect(clipped.subpaths.count == 1)
+        #expect(abs(clipped.length - 50 * Float(2.0.squareRoot())) < 0.05, "length = \(clipped.length)")
+        #expect(near(clipped.point(at: 0), Vector2(vertex), within: 1e-3), "point(at: 0) = \(clipped.point(at: 0))")
+    }
+
+    @Test("内側から縁に 1 点で触れる閉じた道は、閉じたまま返る")
+    func closedPathTouchingTheEdgeStaysClosed() {
+        // 下の辺 (y = 100。縁に乗る線なら消える側) に頂点 (50, 100) で触れる三角形
+        let triangle = closed([[50, 100], [20, 50], [80, 50]])
+        let clipped = triangle.clipped(to: square)
+        #expect(clipped.subpaths.count == 1 && clipped.subpaths.first?.isClosed == true)
+        #expect(abs(clipped.length - triangle.length) < 1e-3, "length = \(clipped.length) / 元 \(triangle.length)")
+    }
+
+    @Test("閉じた道の始点がちょうど縁の上: 始点から内側へ入る片が 1 つ")
+    func closedPathStartingOnTheEdge() {
+        // 始点 (100, 20) は右の辺の上。内側を (70, 50) を通って (100, 80) まで進み、外を回って戻る
+        let diamond = closed([[100, 20], [70, 50], [100, 80], [130, 50]])
+        let clipped = diamond.clipped(to: square)
+        #expect(clipped.subpaths.map(\.points) == [[[100, 20], [70, 50], [100, 80]]])
+        #expect(clipped.subpaths.first?.isClosed == false)
+        #expect(abs(clipped.length - 60 * Float(2.0.squareRoot())) < 1e-3, "length = \(clipped.length)")
+    }
+
+    @Test("縁と一部だけ重なる線: 残る側の辺 (y = 0) では重なった所が残り、消える側の辺 (y = 100) では消える")
+    func linePartlyAlongTheEdge() {
+        let top = segment([-50, 0], [50, 0]).clipped(to: square)
+        #expect(top.subpaths.map(\.points) == [[[0, 0], [50, 0]]])
+        #expect(segment([-50, 100], [50, 100]).clipped(to: square).subpaths.isEmpty)
+    }
+
+    @Test("座標が 1e6 級の形でも、縁の上で切る")
+    func largeCoordinates() {
+        let far = closed([[1e6, 1e6], [1e6 + 1000, 1e6], [1e6 + 1000, 1e6 + 1000], [1e6, 1e6 + 1000]])
+        let clipped = segment([1e6 - 500, 1e6 + 500], [1e6 + 1500, 1e6 + 500]).clipped(to: far)
+        let expected: [[SIMD2<Float>]] = [[[1_000_000, 1_000_500], [1_001_000, 1_000_500]]]
+        #expect(clipped.subpaths.map(\.points) == expected)
+    }
+
+    @Test("同じ点が続く (長さ 0 の辺を持つ) 線と相手も切れる")
+    func repeatedPoints() {
+        let clipped = polyline([[-50, 50], [50, 50], [50, 50], [150, 50]]).clipped(to: square)
+        #expect(clipped.subpaths.map(\.points) == [[[0, 50], [50, 50], [100, 50]]])
+        let doubled = closed([[0, 0], [0, 0], [100, 0], [100, 100], [0, 100], [0, 100]])
+        let across = segment([-50, 50], [150, 50]).clipped(to: doubled)
+        #expect(across.subpaths.map(\.points) == [[[0, 50], [100, 50]]])
+    }
+
+    /// 相手の頂点をちょうど通る線と、Float の数刻みだけ脇を通る線を種から作り、線を細かく刻んだ点を `contains` に
+    /// 問った長さと比べる。刻みの粗さの分 (縁をまたぐ所ごとに 2 刻み) を許す。
+    @Test("生成: 相手の頂点を通る・かすめる線の長さは、刻んだ点を contains に問った長さと合う")
+    func linesThroughVerticesMatchTheSampledReference() {
+        var random = RandomSource(seed: 3649)
+        let shapes = [
+            disc(0, 0, 50),
+            closed((0..<7).map { i in
+                let angle = 0.3 + Double(i) / 7 * 2 * .pi
+                return SIMD2<Float>(Float(123.4 + 80 * cos(angle)), Float(-56.7 + 80 * sin(angle)))
+            }),
+        ]
+        for shape in shapes {
+            let vertices = shape.subpaths[0].points
+            for _ in 0..<150 {
+                var through = vertices[Int.random(in: 0..<vertices.count, using: &random)]
+                let nudge = Int32.random(in: -3...3, using: &random)
+                through.y = Float(bitPattern: UInt32(bitPattern: Int32(bitPattern: through.y.bitPattern) &+ nudge))
+                let angle = Double.random(in: 0..<(2 * .pi), using: &random)
+                let direction = SIMD2<Double>(cos(angle), sin(angle))
+                let from = SIMD2<Float>(SIMD2<Double>(through) - direction * Double.random(in: 30...300, using: &random))
+                let to = SIMD2<Float>(SIMD2<Double>(through) + direction * Double.random(in: 30...300, using: &random))
+                let steps = 400
+                let length = Double(simd_distance(from, to))
+                var expected = 0.0
+                var transitions = 0
+                var previous: Bool?
+                for step in 0..<steps {
+                    let t = (Double(step) + 0.5) / Double(steps)
+                    let point = SIMD2<Double>(from) + (SIMD2<Double>(to) - SIMD2<Double>(from)) * t
+                    let inside = shape.contains(Vector2(Float(point.x), Float(point.y)))
+                    if inside { expected += length / Double(steps) }
+                    if let previous, previous != inside { transitions += 1 }
+                    previous = inside
+                }
+                let allowed = length / Double(steps) * Double(2 * transitions + 2)
+                let got = Double(segment(Vector2(from), Vector2(to)).clipped(to: shape).length)
+                #expect(abs(got - expected) <= allowed, "from \(from) to \(to): \(got) / 刻んだ長さ \(expected)")
+            }
+        }
+    }
 }
 
 /// 切った線と、道の破線を描いた画素 (#3649・#2432 の条件 2)。
