@@ -191,7 +191,7 @@ struct SVGGradientTests {
 
     @Test("区切りが 10 個を越えた分は使わず、名乗る")
     func stopsBeyondTenAreNamed() throws {
-        let stops = (0...11).map { "<stop offset='\(Float($0) / 11)' stop-color='red'/>" }.joined()
+        let stops = (0...10).map { "<stop offset='\(Float($0) / 10)' stop-color='red'/>" }.joined()
         let drawing = try document(
             "<linearGradient id='g'>\(stops)</linearGradient><rect width='80' height='50' fill='url(#g)'/>")
         #expect(drawing.skipped.map(\.what) == ["<linearGradient> stops after the first 10"])
