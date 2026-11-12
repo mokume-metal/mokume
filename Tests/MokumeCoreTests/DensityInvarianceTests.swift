@@ -1077,7 +1077,8 @@ struct DensityInvarianceTests {
         arguments: [Float(0.01), 0.1, 0.25, 0.5, 0.7107762, 1])
     func rotationFreeKeyIgnoresOnlyTurns(_ squash: Float) throws {
         let canvas = try Self.makeCanvas(density: Self.roundingBoundaryRing.density)
-        let tolerance = Canvas.rotationFreeKeyTolerance
+        // 幅は実装の定数を読まず、注釈が根拠を書いた値 (2⁻¹²) で持つ。定数を読むと、幅を広げても緑のまま
+        let tolerance: Float = 1.0 / 4096
         try Self.draw(on: canvas) {
             @MainActor func fold(turn: Float, scale: Float = 1, squash: Float) -> Canvas.ThinFold {
                 canvas.pushMatrix()
