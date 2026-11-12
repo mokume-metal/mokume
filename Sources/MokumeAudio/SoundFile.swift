@@ -180,6 +180,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// 鳴っている間に頼まれた飛び先 (標本)。次のフレームの ``supply()`` で、そこから区切りを始め直す。
     private var pendingJump: Int?
     private var volume: Float = 1
+    /// 左右の定位 (-1〜1。範囲へ寄せた値)。鳴らす player へ渡す。解析には掛けない (#3473)。
+    private var panning: Float = 0
     /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
     private var deferred = DeferredLevels()
     private var levels: AudioLevels { deferred.levels() }
@@ -325,6 +327,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case cannotCarry
         case volumeOutOfRange
         case volumeNotANumber
+        case panOutOfRange
+        case panNotANumber
         case jumpNotANumber
         case energyNotANumber
         case cannotProcess
@@ -551,6 +555,49 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         if let feed, !feed.amp(clamped) { return }
         self.volume = clamped
         if case .speaker(let player) = pace { player.volume = clamped }
+    }
+
+    /// 左右の定位を設定する。-1 で左、0 で中央、1 で右。既定は 0。
+    ///
+    /// <!-- example: 文脈 var song: SoundFile? -->
+    /// ```swift
+    /// song?.pan(map(mouseX, 0, width, -1, 1))
+    /// ```
+    ///
+    /// - **モノラルのファイル**は、左右を合わせた大きさが変わらない定位で、**中央では左右とも元の大きさ** (1 倍)
+    ///   になる (左 = √2·cos θ・右 = √2·sin θ。θ は -1〜1 を 0〜π/2 へ写したもの)。**代償: 端 (`pan(-1)`・`pan(1)`)
+    ///   では片側が元の √2 倍 (+3 dB) になり、``amp(_:)`` が 1 で目一杯の大きさのファイルは 1 を越えうる。**
+    ///   合成した音の ``SynthSource/pan(_:)`` は中央で左右とも 1/√2 なので、同じ定位でも基準の大きさが違う
+    /// - **ステレオのファイル**はバランスで、反対側にだけ 1 - |位置| を掛ける。`pan(-1)` で右が無音・左は元の左のまま。
+    ///   左右を畳まない。3 チャンネル以上のファイルは、先頭の 2 チャンネルを左・右として同じに掛ける
+    /// - **解析の値 (``level``・``rms`` ほか) は定位で変わらない** — 解析するのは定位を掛ける前の音
+    ///   (合成した音の解析と同じ)
+    /// - フレーム `N` の `draw()` で呼ぶと、区間 `N` の先頭のサンプルから約 5 ミリ秒かけて新しい定位へ移る
+    ///   (書き出しでも同じ操作から同じサンプルになる)。停止中に呼べば、次に再生した先頭からその定位で鳴る
+    /// - **エフェクトに通したファイルの定位は、エフェクトの出力で中央になる** (``SynthSource/pan(_:)`` と同じ)。
+    ///   エフェクトを解除しても中央のまま
+    ///
+    /// -1〜1 の外は端にクランプし、NaN・無限大は無視する。どちらもそのことを 1 度だけ警告する (投げない —
+    /// [ADR-0020] 決定 5。``SynthSource/pan(_:)`` と同じ扱い)。Processing Sound の `SoundFile.pan()` に当たる。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func pan(_ position: Float) {
+        guard position.isFinite else {
+            notice(
+                .panNotANumber,
+                "pan() got a value that is not a number, or an infinite one, so the position of "
+                    + "\"\(name)\" stays at \(panning)")
+            return
+        }
+        let clamped = min(max(position, -1), 1)
+        if clamped != position {
+            notice(
+                .panOutOfRange,
+                "pan() takes a position from -1 to 1, so \(position) was clamped to \(clamped) for "
+                    + "\"\(name)\"")
+        }
+        panning = clamped
+        if case .speaker(let player) = pace { player.pan = clamped }
     }
 
     /// 再生中か。``play()`` か ``loop()`` で `true` になり、``pause()``・``stop()``・
@@ -936,6 +983,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     private func startPlayer(through flow: SoundFlow, buffer: AVAudioPCMBuffer) {
         if let player = FilePlayer(flow: flow, buffer: buffer) {
             player.volume = volume
+            player.pan = panning
             pace = .speaker(player)
             return
         }
@@ -987,6 +1035,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             return
         }
         player.volume = volume
+        player.pan = panning
         let wasPlaying = playhead.isPlaying
         // 位置は、切り替える前の測り方 (フレームの数) で読む
         let playedNow = played()

@@ -3,6 +3,7 @@
 
 import AVFAudio
 import Foundation
+import MokumeCore
 import Synchronization
 
 /// 読み込んだ音を、音の流れ (``SoundFlow``) で実際に鳴らす。AVFAudio で鳴らすのはこの型だけ
@@ -32,6 +33,13 @@ import Synchronization
 /// 止めた位置から鳴らし直すとき (``Playhead/pause(after:)`` の後・途中からのループ) は、読む位置を
 /// 動かすだけで、器をコピーしない。曲 1 本ぶんの写しを鳴らし直すたびに作ると、それだけでフレームが詰まる。
 ///
+/// ## 左右は自分で配る (#3473)
+///
+/// 定位 (``pan``) は、節の `AVAudioMixing.pan` ではなく ``FileVoice`` が左右の倍率を掛けて決める。節の
+/// `pan` は、機材に出さない流れ (macOS 27) で 1 チャンネルにも 2 チャンネルにも効かなかった。**1 チャンネルの器は
+/// 2 チャンネルの節にして、左右へ同じ標本を配る** — 定位を入れる前は流れの混ぜる節が左右とも 1 倍で配っていた
+/// ので、既定 (`pan` 0) では標本が 1 つも変わらない。
+///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 final class FilePlayer {
     let flow: SoundFlow
@@ -46,16 +54,29 @@ final class FilePlayer {
     /// 流れに入れる。鳴らせなければ (出力が開けない・標本が読めない) `nil`。
     init?(flow: SoundFlow, buffer: AVAudioPCMBuffer) {
         self.flow = flow
-        guard let voice = FileVoice(buffer: buffer) else { return nil }
+        guard let voice = FileVoice(buffer: buffer),
+            let format = Self.nodeFormat(for: buffer.format)
+        else { return nil }
         self.voice = voice
-        node = Self.makeNode(voice: voice, format: buffer.format)
-        guard flow.join(node, format: buffer.format) else { return nil }
+        node = Self.makeNode(voice: voice, format: format)
+        guard flow.join(node, format: format) else { return nil }
+    }
+
+    /// 節の形式。1 チャンネルの器は、左右へ配るので 2 チャンネルにする。ほかは器のまま。
+    private static func nodeFormat(for format: AVAudioFormat) -> AVAudioFormat? {
+        guard format.channelCount == 1 else { return format }
+        return AVAudioFormat(standardFormatWithSampleRate: format.sampleRate, channels: 2)
     }
 
     /// 音量 (0〜1)。
     var volume: Float {
         get { node.volume }
         set { node.volume = newValue }
+    }
+
+    /// 定位 (-1〜1。範囲へ寄せた値を渡す)。次の描き出しの先頭から移り始める (``FileVoice/pan(_:)``)。
+    var pan: Float = 0 {
+        didSet { voice.pan(pan) }
     }
 
     /// 区切りの始まりから描いた標本の数。まだ描いていなければ 0、鳴らしていなければ `nil`。
@@ -134,6 +155,9 @@ final class FilePlayer {
 ///   偶数に戻す (どれも release)。音の側は版・各値・版の順に読み (値は acquire)、版が偶数で前後が同じときだけ
 ///   受ける。書いている途中に読んだら受けず、次の描き出しで読み直す — **待たない**。包絡を掛けていないファイルは
 ///   版が 0 のままで包絡を受けず待ちもせず、標本は器の標本そのまま (掛ける前と 1 つも変わらない)。
+/// - 定位 (``panTarget``。#3473): **主スレッドが書き、音の側が読む**。単精度のビット列を 1 つの原子値で渡す。
+///   音の側は描き出しの先頭で読み、変わっていれば、そこから ``panRamp`` 標本かけて直線で移る (移る途中の位置・
+///   倍率は音の側だけが持つ)。移り方は描いた標本の数だけで決まるので、描き出しの区切り方に依らない。
 ///
 /// 包絡は、区切りの世代が同じときだけ受ける。主スレッドは区切りを始める命令 (``command``) より先に、その世代の
 /// 包絡を書く (``FilePlayer/play(from:looping:envelope:)``) ので、新しい区切りを読んだ描き出しで、ふつうはその包絡も
@@ -174,6 +198,8 @@ nonisolated final class FileVoice: @unchecked Sendable {
     private let channels: UnsafeMutablePointer<UnsafePointer<Float>>
     private let channelCount: Int
     private let length: Int
+    /// 定位が移りきるまでの標本の数 (器の標本化率で約 5 ミリ秒。合成音の定位と同じくらい)。
+    private let panRamp: Int
 
     private let command = Atomic<UInt64>(FileVoice.haltedBit)
     private let progress = Atomic<UInt64>(0)
@@ -187,8 +213,18 @@ nonisolated final class FileVoice: @unchecked Sendable {
     private let envelopeLevel = Atomic<UInt64>(0)
     private let envelopeOffset = Atomic<UInt64>(0)
     private let envelopeGeneration = Atomic<UInt64>(0)
+    /// 頼まれた定位 (単精度のビット列)。
+    private let panTarget = Atomic<UInt32>(Float(0).bitPattern)
 
     // 音の側だけが読み書きする。
+    /// 目指している定位と、いまの定位・移り始めた定位・移りきるまでの残りの標本の数。
+    private var panGoal: Float = 0
+    private var panNow: Float = 0
+    private var panFrom: Float = 0
+    private var panRemaining = 0
+    /// いまの定位の左右の倍率。
+    private var leftGain: Float = 1
+    private var rightGain: Float = 1
     private var applied = FileVoice.haltedBit
     private var active = false
     private var looping = false
@@ -214,6 +250,7 @@ nonisolated final class FileVoice: @unchecked Sendable {
         channels = table
         channelCount = count
         length = Int(buffer.frameLength)
+        panRamp = max(1, Int((buffer.format.sampleRate * 0.005).rounded()))
     }
 
     deinit {
@@ -257,6 +294,30 @@ nonisolated final class FileVoice: @unchecked Sendable {
         envelopeSequence.store(version &+ 2, ordering: .releasing)
     }
 
+    /// 定位 (-1〜1。範囲へ寄せた値) を音の側へ渡す。次の描き出しの先頭から移り始める。
+    func pan(_ position: Float) {
+        panTarget.store(position.bitPattern, ordering: .releasing)
+    }
+
+    /// 定位 `position` の左右の倍率 (#3473 の 2026-11-13 の決定)。
+    ///
+    /// - 1 チャンネル (`mono`): 中央で 1 になるよう掛け直した、左右を合わせた大きさが変わらない定位。左 = √2·cos θ、
+    ///   右 = √2·sin θ (θ は -1…1 を 0…π/2 へ写したもの)。端では片側が √2 倍・反対側が 0
+    /// - 2 チャンネル以上 (バランス): 反対側にだけ 1 - |position| を掛ける。端で反対側が 0、手前の側は元のまま
+    ///
+    /// 0 と両端は式を通さずに返す — 中央が 1 から、端の反対側が 0 から、丸めで外れない。
+    nonisolated static func gains(at position: Float, mono: Bool) -> (left: Float, right: Float) {
+        if position == 0 { return (1, 1) }
+        guard mono else {
+            return (position > 0 ? 1 - position : 1, position < 0 ? 1 + position : 1)
+        }
+        let root2 = 2.0.squareRoot()
+        if position <= -1 { return (Float(root2), 0) }
+        if position >= 1 { return (0, Float(root2)) }
+        let angle = Double(position + 1) * 0.25 * Double.pi
+        return (Float(root2 * RuntimeMath.cos(angle)), Float(root2 * RuntimeMath.sin(angle)))
+    }
+
     /// 世代 `generation` の区切りで、いままでに描いた標本の数。その区切りがまだ音の側へ届いていなければ 0。
     func played(generation: Int) -> Int {
         let value = progress.load(ordering: .acquiring)
@@ -273,8 +334,12 @@ nonisolated final class FileVoice: @unchecked Sendable {
     @discardableResult
     func render(frames: Int, into output: UnsafeMutableAudioBufferListPointer) -> Bool {
         let word = command.load(ordering: .acquiring)
-        if word != applied { begin(word) }
+        let begins = word != applied
+        if begins { begin(word) }
         if envelopeSequence.load(ordering: .relaxed) != envelopeApplied { receiveEnvelope() }
+        receivePan()
+        // 区切りの頭 (鳴らし始め・鳴らし直し) と鳴っていない間は、移らずにその定位から鳴らす
+        if begins || !active { settlePan() }
         guard active, frames > 0 else {
             Self.silence(output, channels: 0..<output.count, from: 0, to: frames)
             return true
@@ -305,6 +370,15 @@ nonisolated final class FileVoice: @unchecked Sendable {
         // 器の終わりで 1 度だけの区切りが尽きたぶんと、器に無いチャンネルは無音
         Self.silence(output, channels: 0..<copied, from: made, to: frames)
         Self.silence(output, channels: copied..<output.count, from: 0, to: frames)
+        if output.count >= 2 {
+            // 1 チャンネルの器は、左へ描いた標本を右へも配る (節は 2 チャンネル)
+            if channelCount == 1, let left = output[0].mData?.assumingMemoryBound(to: Float.self),
+                let right = output[1].mData?.assumingMemoryBound(to: Float.self)
+            {
+                right.update(from: left, count: frames)
+            }
+            applyPan(output, frames: frames)
+        }
         count += frames
         let bounded = UInt64(count) & Self.startMask
         progress.store(generation << Self.startBits | bounded, ordering: .releasing)
@@ -353,6 +427,45 @@ nonisolated final class FileVoice: @unchecked Sendable {
         shape.release = Int(truncatingIfNeeded: release)
         shape.level = Float(bitPattern: UInt32(truncatingIfNeeded: level))
         envelope = FileEnvelope(shape: shape, offset: Int(Int64(bitPattern: offset)))
+    }
+
+    /// 頼まれた定位を読む。変わっていれば、いまの定位からそこへ移り始める。
+    private func receivePan() {
+        let target = Float(bitPattern: panTarget.load(ordering: .acquiring))
+        guard target != panGoal else { return }
+        panGoal = target
+        panFrom = panNow
+        panRemaining = panRamp
+    }
+
+    /// 移る途中を飛ばして、目指す定位にする。
+    private func settlePan() {
+        guard panRemaining > 0 || panNow != panGoal else { return }
+        panRemaining = 0
+        panNow = panGoal
+        (leftGain, rightGain) = Self.gains(at: panNow, mono: channelCount == 1)
+    }
+
+    /// 左 (出力の 0) と右 (1) に定位の倍率を掛ける。**既定の中央で移る途中でなければ、何も掛けない** (標本は
+    /// 掛ける前と 1 つも変わらない)。移る途中は標本ごとに倍率を求め直す。
+    private func applyPan(_ output: UnsafeMutableAudioBufferListPointer, frames: Int) {
+        guard panRemaining > 0 || leftGain != 1 || rightGain != 1 else { return }
+        guard let left = output[0].mData?.assumingMemoryBound(to: Float.self),
+            let right = output[1].mData?.assumingMemoryBound(to: Float.self)
+        else { return }
+        let mono = channelCount == 1
+        for index in 0..<frames {
+            if panRemaining > 0 {
+                panRemaining -= 1
+                panNow =
+                    panRemaining == 0
+                    ? panGoal
+                    : panFrom + (panGoal - panFrom) * Float(panRamp - panRemaining) / Float(panRamp)
+                (leftGain, rightGain) = Self.gains(at: panNow, mono: mono)
+            }
+            left[index] *= leftGain
+            right[index] *= rightGain
+        }
     }
 
     /// 描いた `made` 標本に、包絡の倍率を掛ける。区切りの中の標本の数は ``count`` から数える (``FileEnvelope``)。
