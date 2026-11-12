@@ -63,7 +63,13 @@ extension Canvas {
     private func record(_ item: SVGFile.Item) {
         // 要素ごとに変換を置き直す。祖先の変換と viewBox は読み解く側で畳んである
         transform = Self.transform(item.transform)
-        if let color = item.fill { fill(Self.linear(color)) } else { noFill() }
+        if let gradient = item.gradient, let paint = item.fill {
+            recordGradientFill(gradient, opacity: paint.alpha, item)
+        } else if let color = item.fill {
+            fill(Self.linear(color))
+        } else {
+            noFill()
+        }
         if let color = item.stroke {
             stroke(Self.linear(color))
             strokeWeight(item.strokeWidth)
@@ -82,6 +88,30 @@ extension Canvas {
         case .path(let subpaths):
             recordPath(subpaths, item)
         }
+    }
+
+    /// 塗りを、SVG に書いた勾配にする (#3031)。**利用者と同じ ``fill(_:)-(Gradient)`` を、勾配の座標の変換の下で
+    /// 呼ぶ** — 勾配は呼んだときの変換で読まれ、形に焼き付いて置き場所と一緒に動く (#3009)。呼んだ後に変換を
+    /// 要素の座標へ戻す。`opacity` (要素の `fill-opacity` と `opacity`) は区切りの不透明度に掛ける。
+    ///
+    /// 先に最後の区切りの色を塗りに置く。勾配を受けられないとき (読み解く側が弾くので、値があふれたときだけ) に、
+    /// 前の要素の塗りが残らないように。
+    private func recordGradientFill(_ gradient: SVGFile.GradientFill, opacity: Float, _ item: SVGFile.Item) {
+        func ink(_ stop: SVGFile.GradientFill.Stop) -> LinearRGBA {
+            var color = stop.color
+            color.alpha *= opacity
+            return Self.linear(color)
+        }
+        if let last = gradient.stops.last { fill(ink(last)) }
+        let stops = gradient.stops.map { (ink($0), $0.offset) }
+        transform = Self.transform(item.transform * gradient.space)
+        switch gradient.geometry {
+        case .linear(let from, let to):
+            fill(.linearGradient(stops, from: Vector2(from), to: Vector2(to)))
+        case .radial(let center, let radius):
+            fill(.radialGradient(stops, center: Vector2(center), radius: radius))
+        }
+        transform = Self.transform(item.transform)
     }
 
     /// 線の集まりを記録する。
