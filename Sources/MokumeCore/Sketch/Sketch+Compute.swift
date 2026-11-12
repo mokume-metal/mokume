@@ -407,7 +407,7 @@ extension SketchPart {
     /// (`maxTotalThreadsPerThreadgroup`) が 32 に満たないときは、その数に収まる。
     ///
     /// 2 次元の ``compute(_:over:by:reads:writes:)`` の組の大きさは**約束しない**。断片ごとに変わりうるので、
-    /// `[[dispatch_threads_per_threadgroup]]` で読んで使う。
+    /// `[[dispatch_threads_per_threadgroup]]` で読んで使う (`[[threads_per_threadgroup]]` は端の組で端数になる)。
     ///
     /// ## 描くところで呼ぶ
     ///
@@ -732,7 +732,8 @@ extension SketchPart {
     ///
     /// シェーダは `uint2 at [[thread_position_in_grid]]` で位置を受け取る。ほかは 1 次元の
     /// ``compute(_:over:reads:writes:)`` と同じ。
-    /// 組の大きさだけは違い、2 次元では約束しない (断片ごとに変わりうる。`[[threads_per_threadgroup]]` で読む)。
+    /// 組の大きさだけは違い、2 次元では約束しない (断片ごとに変わりうる。全部の組で同じ値が読めるのは `[[dispatch_threads_per_threadgroup]]` で、
+    /// `[[threads_per_threadgroup]]` は端の組で端数になる)。
     ///
     /// 下は、8 × 6 の升目 (CPU が市松に埋めたもの) を 3 枚用意し、実行された位置の升を白くする計算を、
     /// 基準の 4 × 3 から幅 (`width`) を 8 に、高さ (`height`) を 6 に 1 つずつ動かして呼んだもの。

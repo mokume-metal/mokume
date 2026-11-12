@@ -251,6 +251,38 @@ struct ComputeTests {
         #expect(canvas.read(actual) == expected)
     }
 
+    /// 2 次元でも `dispatchThreads` の非一様な組で、`[[threads_per_threadgroup]]` は端の組で端数になる ([#3902])。
+    /// 大きさは約束しないので、数は固定せず「組が 1 つに収まる小さい面なら、組の大きさが面の大きさになる」ことと、
+    /// `[[dispatch_threads_per_threadgroup]]` がそれ以上であることだけを見る。
+    @Test("2 次元の compute も、面より大きい組では threads_per_threadgroup が面の大きさになる")
+    func twoDimensionalEdgeThreadgroupIsTruncated() throws {
+        let canvas = try makeCanvas()
+        let seen = try canvas.makeNumbers(count: 15 * 4)
+        let probe = try canvas.makeComputation(
+            """
+            kernel void probe(device float *out [[buffer(0)]],
+                              uint2 at [[thread_position_in_grid]],
+                              uint2 grid [[threads_per_grid]],
+                              uint2 size [[dispatch_threads_per_threadgroup]],
+                              uint2 own [[threads_per_threadgroup]])
+            {
+                uint i = (at.y * grid.x + at.x) * 4;
+                out[i] = float(own.x);
+                out[i + 1] = float(own.y);
+                out[i + 2] = float(size.x);
+                out[i + 3] = float(size.y);
+            }
+            """, name: "probe")
+        try canvas.draw {
+            canvas.compute(probe, over: 5, by: 3, writes: [seen])
+        }
+        let values = canvas.read(seen)
+        for cell in 0..<15 {
+            #expect(values[cell * 4] == 5 && values[cell * 4 + 1] == 3, "組の大きさが面の大きさでない")
+            #expect(values[cell * 4 + 2] >= 5 && values[cell * 4 + 3] >= 3, "dispatch の大きさが面より小さい")
+        }
+    }
+
     @Test("渡した値が計算に届く")
     func carriesTheValuesIntoTheComputation() throws {
         let canvas = try makeCanvas()
