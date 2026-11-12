@@ -659,6 +659,144 @@ struct JSONReadingTests {
         #expect(try String(contentsOfFile: existing, encoding: .utf8) == "{\"old\": true}\n")
     }
 
+    // MARK: - 配列を作って書く (#3644)
+
+    @Test("空から作った配列に足して書き、saveJSONArray → loadJSONArray で読み直すと同じ")
+    func writtenArrayRoundTrips() throws {
+        defer { cleanUp() }
+        var a = JSONArray()
+        a.append(1)
+        a.append("two")
+        a.append(true)
+        #expect(a.count == 3)
+        #expect(a.getInt(0) == 1)
+        #expect(a.getString(1) == "two")
+        #expect(a.getBoolean(2) == true)
+        a.append(-3.5 as Float)
+        var o = JSONObject()
+        o.setInt("n", 7)
+        a.append(o)
+        let path = folder.appendingPathComponent("out/a.json").path
+        try Bare().saveJSONArray(a, path)
+        let read = try Bare().loadJSONArray(path)
+        #expect(read == a)
+        #expect(read.getFloat(3) == -3.5)
+        #expect(read.getJSONObject(4).getInt("n") == 7)
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        #expect(text == "[\n  1,\n  \"two\",\n  true,\n  -3.5,\n  {\n    \"n\": 7\n  }\n]\n", "要素は並んだ順のまま、字下げ 2・LF")
+    }
+
+    @Test("remove は 1 つ除いて後ろを詰め、範囲の外は何もせず 1 度だけ知らせる")
+    func removeShiftsAndIgnoresOutside() throws {
+        var a = try array(#"[10, 20, 30]"#)
+        a.remove(1)
+        #expect(a.count == 2)
+        #expect(a.getInt(0) == 10)
+        #expect(a.getInt(1) == 30)
+        let before = a
+        a.remove(2)
+        a.remove(-1)
+        #expect(a == before)
+        let message = said(.arrayElement(call: "remove", problem: .outOfRange))
+        #expect(message?.hasPrefix("remove(2): the JSON array has 2 elements, so there is no element 2. Nothing was removed") == true)
+    }
+
+    @Test("set は範囲の中なら種類が変わっても置き換え、範囲の外には書かず口ごとに 1 度知らせる")
+    func setReplacesInsideAndIgnoresOutside() throws {
+        var a = try array(#"[1, "x", true]"#)
+        let before = a
+        a.setFloat(5, 1)
+        #expect(a == before, "伸ばさない (Processing は null で埋める)")
+        #expect(
+            said(.arrayElement(call: "setFloat", problem: .outOfRange))?
+                .hasPrefix("setFloat(5): the JSON array has 3 elements, so there is no element 5. Nothing was written") == true)
+        a.setInt(3, 1)
+        a.setString(-1, "y")
+        a.setBoolean(9, false)
+        a.setJSONObject(3, JSONObject())
+        a.setJSONArray(3, JSONArray())
+        #expect(a == before)
+        for call in ["setInt", "setString", "setBoolean", "setJSONObject", "setJSONArray"] {
+            #expect(said(.arrayElement(call: call, problem: .outOfRange))?.contains("Nothing was written") == true, "\(call)")
+        }
+
+        a.setFloat(0, 2.5)
+        a.setInt(1, 4)
+        a.setString(2, "z")
+        #expect(a.getFloat(0) == 2.5)
+        #expect(a.getInt(1) == 4)
+        #expect(a.getString(2) == "z")
+        a.setBoolean(0, true)
+        var inner = JSONObject()
+        inner.setString("k", "v")
+        a.setJSONObject(1, inner)
+        a.setJSONArray(2, try array("[9]"))
+        #expect(a.getBoolean(0) == true)
+        #expect(a.getJSONObject(1).getString("k") == "v")
+        #expect(a.getJSONArray(2).getInt(0) == 9)
+    }
+
+    @Test("配列の配列を append(JSONArray) で組み、読み直すと getJSONArray(0).getFloat(1) で戻る")
+    func nestedArraysRoundTrip() throws {
+        defer { cleanUp() }
+        var ring = JSONArray()
+        for (x, y) in [(142.4, 38.3), (141.0, 43.1)] as [(Float, Float)] {
+            var corner = JSONArray()
+            corner.append(x)
+            corner.append(y)
+            ring.append(corner)
+        }
+        let path = folder.appendingPathComponent("ring.json").path
+        try Bare().saveJSONArray(ring, path)
+        let read = try Bare().loadJSONArray(path)
+        #expect(read.getJSONArray(0).getFloat(1) == 38.3)
+        #expect(read.getJSONArray(1).getFloat(0) == 141)
+        #expect(read == ring)
+        let empty = folder.appendingPathComponent("empty.json").path
+        try Bare().saveJSONArray(JSONArray(), empty)
+        #expect(try String(contentsOfFile: empty, encoding: .utf8) == "[]\n")
+    }
+
+    @Test("NaN と無限は append でも setFloat でも書かず、口ごとに 1 度知らせる")
+    func arrayNonFiniteIsNotWritten() {
+        var a = JSONArray()
+        a.append(.nan)
+        a.append(Float.infinity)
+        #expect(a.isEmpty)
+        #expect(said(.arrayElement(call: "append", problem: .notFinite))?.contains("JSON has no spelling for nan") == true)
+        a.append(1 as Float)
+        a.setFloat(0, -.infinity)
+        #expect(a.getFloat(0) == 1)
+        #expect(said(.arrayElement(call: "setFloat", problem: .notFinite))?.hasPrefix("setFloat(0, -inf)") == true)
+    }
+
+    @Test("書き方と書けない置き場は saveJSONObject と同じ: 同じ値は同じバイト列、unwritable を投げて前の中身を残す")
+    func arrayWritingMatchesObjectWriting() throws {
+        defer { cleanUp() }
+        var o = JSONObject()
+        o.setInt("b", 1)
+        o.setInt("a", 2)
+        var a = JSONArray()
+        a.append(o)
+        let path = folder.appendingPathComponent("same.json").path
+        try Bare().saveJSONArray(a, path)
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        #expect(text == "[\n  {\n    \"a\": 2,\n    \"b\": 1\n  }\n]\n", "入れ子のオブジェクトのキーは文字の順")
+        let long = try array("[-9223372036854775809]")
+        try Bare().saveJSONArray(long, path)
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "[\n  -9223372036854775809\n]\n")
+
+        let blocker = try file("blocker", "x")
+        let failure = #expect(throws: DataFailure.self) {
+            try Bare().saveJSONArray(a, blocker + "/inside.json")
+        }
+        guard case .unwritable(let failedPath, _) = failure else {
+            Issue.record("unwritable で投げなかった: \(String(describing: failure))")
+            return
+        }
+        #expect(failedPath == blocker + "/inside.json")
+    }
+
     // MARK: - 完了条件 8: XML
 
     private static let feed = """

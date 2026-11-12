@@ -77,6 +77,10 @@ final class JSONAndXML: Sketch {
             if let temp { summary.setFloat(name, temp) }
         }
         try saveJSONObject(summary, Self.written)
+        // 読めた気温を、並んだ順の配列としても書き出す (普通のスケッチなら `saveJSONArray(list, "out/temperatures-list.json")`)
+        var list = JSONArray()
+        for temp in temps.compactMap({ $0 }) { list.append(temp) }
+        try saveJSONArray(list, Self.writtenList)
 
         // 同じ URL とファイルを、待たない口で読み直す。待つのは Task の仕事で、届くまでは
         // 下の draw() が「読み直している…」と出す
@@ -187,6 +191,10 @@ final class JSONAndXML: Sketch {
     /// 読めた街の気温を書き出す先。
     private static let written = FileManager.default.temporaryDirectory
         .appendingPathComponent("mokume-reference-temperatures.json").path
+
+    /// 読めた気温の並びを書き出す先。
+    private static let writtenList = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mokume-reference-temperatures-list.json").path
 }
 
 /// `weather.example` への要求に、置いた応答を返す。**普通のスケッチには要らない** — 本物の

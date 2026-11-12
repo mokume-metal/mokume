@@ -1127,6 +1127,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "saveStrings": (ASSEMBLY, "文字列を外へ書き出す。絵にもフレームの状態にも触れない"),
     "saveBytes": (ASSEMBLY, "saveStrings と同じ理由"),
     "saveJSONObject": (ASSEMBLY, "JSON のオブジェクトを外へ書き出す。絵にもフレームの状態にも触れない"),
+    "saveJSONArray": (ASSEMBLY, "saveJSONObject と同じ理由 (最上位が配列の JSON)"),
     "beginRecord": (ASSEMBLY, "save と同じ理由"),
     "attach": (ASSEMBLY, "走っているスケッチの差込口の並びを組み替える (plugins の実行中版)"),
     "detach": (ASSEMBLY, "attach と同じ理由"),

@@ -440,6 +440,34 @@ extension SketchPart {
         try TextFile.write(JSONFile.format(.object(json.members)), to: path)
     }
 
+    /// 配列を、最上位が配列の JSON のファイルにする。書き終わるまで返らない。
+    ///
+    /// <!-- example: 文脈 var trail = JSONArray() -->
+    /// ```swift
+    /// func mouseDragged(deltaX: Float, deltaY: Float) {
+    ///     var point = JSONArray()
+    ///     point.append(mouseX)
+    ///     point.append(mouseY)
+    ///     trail.append(point)
+    /// }
+    ///
+    /// func keyPressed() {
+    ///     if key == "s" { try? saveJSONArray(trail, "out/trail.json") }
+    /// }
+    /// ```
+    ///
+    /// 書き方 (要素は並んだ順のまま、入れ子のオブジェクトのキーは文字の順・UTF-8 (BOM なし)・LF・字下げ 2・
+    /// 同じ値から同じバイト列) と、置き場・書きかけを残さないこと・書けなければ投げることは
+    /// ``saveJSONObject(_:_:)`` と同じ。書いたファイルを ``loadJSONArray(_:)`` で読み直すと、同じ配列に戻る。
+    ///
+    /// 引数は書く値が先で、置き場が後 (Processing の `saveJSONArray(json, filename)` と同じ順)。
+    ///
+    /// - Throws: 書けなかったときに ``DataFailure/unwritable(path:reason:)``。
+    // shot: 撮れない 結果が絵ではなくファイルになる
+    public func saveJSONArray(_ json: JSONArray, _ path: String) throws(DataFailure) {
+        try TextFile.write(JSONFile.format(.array(json.items)), to: path)
+    }
+
     /// JSON のファイルか URL を読み、オブジェクトにする。**読んでいる間、他の仕事を止めない。**
     ///
     /// <!-- example: 文脈 var temp: Float?; var reason = "" -->
