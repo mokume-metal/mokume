@@ -634,8 +634,10 @@ struct BundleCommandTests {
             "前の出力の消し残りが Grain.app に残った")
         #expect(try readInfoPlist(of: rebuilt)[AppIdentity.bundledMarkKey] as? Bool == true)
         let names = try FileManager.default.contentsOfDirectory(atPath: out.path)
-        let remnants = names.filter { BundleCommand.isRetiredRemnant($0, name: "Grain") }
-        #expect(remnants.count == 1, "消し損ねが一時の名前に残っていない: \(names)")
+        let remnants = names.filter {
+            BundleCommand.isOwnRemnant(out.appendingPathComponent($0), name: grain)
+        }
+        #expect(remnants.count == 1, "消し損ねが一時の置き場に残っていない: \(names)")
     }
 
     @Test("消し損ねた一時の名前は、次の回に、その形のものだけ消える")

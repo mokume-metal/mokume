@@ -25,7 +25,7 @@ import QuartzCore
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
 @MainActor
-public final class SketchRuntime {
+package final class SketchRuntime {
     /// 走らせているスケッチ。
     public let sketch: any Sketch
     /// 描いている面。

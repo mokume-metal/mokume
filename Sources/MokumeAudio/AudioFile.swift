@@ -38,14 +38,96 @@ nonisolated enum AudioFile {
         // 器は長さ 0 では作れないので、空のファイルは器を作る前に見分ける
         guard file.length > 0, file.processingFormat.channelCount > 0 else { throw .empty }
         guard
-            let buffer = AVAudioPCMBuffer(
-                pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
-            (try? file.read(into: buffer)) != nil,
-            buffer.floatChannelData != nil
+            let capacity = capacity(forLength: file.length),
+            let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: capacity),
+            buffer.floatChannelData != nil,
+            readAll(file, into: buffer)
         else { throw .unreadable(path: path) }
         guard buffer.frameLength > 0 else { throw .empty }
         return buffer
     }
+
+    /// 長さ `length` のファイルを入れる器の容量。器の容量は `AVAudioFrameCount` (UInt32) なので、
+    /// 2^32 標本 (48 kHz で約 24.8 時間) 以上は収まらず `nil` — 変換で落とさない (#3969)。
+    static func capacity(forLength length: AVAudioFramePosition) -> AVAudioFrameCount? {
+        AVAudioFrameCount(exactly: length)
+    }
+
+    /// 1 回に読む標本の数の上限。`AVAudioFile.read(into:)` は器の容量にかかわらず 1 回に 2^24 標本までしか
+    /// 読まないので (#3969)、それより小さな塊で読む。
+    static let readChunk: AVAudioFrameCount = 1 << 20
+
+    /// `file` を、塊 (``readChunk``) ごとにファイルの終わりまで読んで `buffer` の頭から並べる。
+    /// 塊の器は 1 つだけで、メモリの上限は塊の大きさしか増えない。
+    ///
+    /// **見出しの長さ (`file.length`) と実際が食い違うファイルも、これまで読めていたものを読めなくしない** (#3969):
+    /// - 見出しより実際が短い (終わりを削った) ファイルは、読めた所までを返す。`read` は終わりに着くと
+    ///   ファイルの終わりの誤り (`kAudioFileEndOfFileError`) を投げるので、それを終わりの合図として扱う
+    /// - 見出しより実際が長いファイルの余りは読めない。`AVAudioFile` は見出しの長さの所で終わりの誤りを投げ、
+    ///   位置を動かしても読ませない (2026-11-11 に WAV・CAF で実測)
+    ///
+    /// **終わりの誤りの形は OS で違う** (#3969。終わりを削った 100,000 標本の CAF で 2026-11-12 に実測)。
+    /// `read` が返す標本の数は macOS 26 (下限) と macOS 27 で同じ (100,000 を求めると 50,000 を返す) だが、
+    /// 終わりに着いた次の `read` が投げる誤りは、macOS 27 では `kAudioFileEndOfFileError` (-39)、macOS 26 では
+    /// 中身の無い誤り (`Foundation._GenericObjCError` の code 0。ObjC の側が誤りを入れずに失敗を返した形) だった。
+    /// 1 標本以上読めた後のこの 2 つは、どちらも終わりの合図として扱う (``isEndOfFile(_:)``)。
+    ///
+    /// `false` を返すのは、`read` が終わりの合図でない (中身のある) 誤りを投げたときと、1 標本も読めずに
+    /// 誤りを投げたとき (1 回で読んでいた頃に `unreadable` だったもの) だけ。
+    static func readAll(_ file: AVAudioFile, into buffer: AVAudioPCMBuffer) -> Bool {
+        readAll(length: file.length, into: buffer) { piece, count in
+            try file.read(into: piece, frameCount: count)
+        }
+    }
+
+    /// ``readAll(_:into:)`` の中身。ファイルを読む手 (`read`) を受け取るので、OS ごとの `read` の返し方を
+    /// 検査から差し替えられる。`length` は見出しの長さ。
+    static func readAll(
+        length fileLength: AVAudioFramePosition, into buffer: AVAudioPCMBuffer,
+        read: (AVAudioPCMBuffer, AVAudioFrameCount) throws -> Void
+    ) -> Bool {
+        let length = min(fileLength, AVAudioFramePosition(buffer.frameCapacity))
+        guard
+            let piece = AVAudioPCMBuffer(
+                pcmFormat: buffer.format, frameCapacity: min(readChunk, buffer.frameCapacity)),
+            let target = buffer.floatChannelData, let source = piece.floatChannelData
+        else { return false }
+        let channelCount = Int(buffer.format.channelCount)
+        var filled = 0
+        while AVAudioFramePosition(filled) < length {
+            let wanted = AVAudioFrameCount(min(AVAudioFramePosition(readChunk), length - AVAudioFramePosition(filled)))
+            do {
+                try read(piece, wanted)
+            } catch where filled > 0 && isEndOfFile(error) {
+                break
+            } catch {
+                return false
+            }
+            let count = Int(piece.frameLength)
+            guard count > 0 else { break }
+            for channel in 0..<channelCount {
+                (target[channel] + filled).update(from: source[channel], count: count)
+            }
+            filled += count
+        }
+        buffer.frameLength = AVAudioFrameCount(filled)
+        return true
+    }
+
+    /// `read` が投げた誤りが、ファイルの終わりの合図か。`kAudioFileEndOfFileError` (macOS 27) と、
+    /// 中身の無い誤り (macOS 26) の 2 つ。
+    ///
+    /// 中身の無い誤りは、`NSError` に直したときの domain が `Foundation._GenericObjCError` で code が 0 のもの。
+    /// 型 (`_GenericObjCError`) は下線つきの名前で Swift から名指せないので、型では見分けず、`NSError` の domain の
+    /// 文字列で見る。中身のある誤り (OSStatus を持つ I/O の誤りなど) は終わりと読まない。
+    static func isEndOfFile(_ error: any Error) -> Bool {
+        let error = error as NSError
+        if error.domain == NSOSStatusErrorDomain { return error.code == Int(kAudioFileEndOfFileError) }
+        return error.domain == emptyErrorDomain && error.code == 0
+    }
+
+    /// 中身の無い誤りの domain (``isEndOfFile(_:)``)。
+    static let emptyErrorDomain = "Foundation._GenericObjCError"
 
     /// チャンネルを平均したモノラルの標本列。
     static func mono(_ buffer: AVAudioPCMBuffer) -> [Float] {

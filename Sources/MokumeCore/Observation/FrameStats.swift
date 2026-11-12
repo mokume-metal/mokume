@@ -11,7 +11,7 @@
 /// 「見た目」とずれた数字になる。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-public struct FrameStats: Encodable, Equatable, Sendable {
+package struct FrameStats: Encodable, Equatable, Sendable {
     /// 内容のある領域の範囲。左上を原点に、幅・高さで正規化してある。
     public struct Bounds: Encodable, Equatable, Sendable {
         public let x: Double
