@@ -859,7 +859,8 @@ struct WatchAuditionRefutationTests {
         _ = try #require(await harness.save())  // s2 (試聴の子)
         switch way {
         case .productionGone:
-            harness.tell(production, "bye")
+            harness.tell(production, "bye", timeout: 30)
+            try #require(!production.isRunning, "本番の子が期限までに終わらない")
             await harness.beat()
         case .previewStuck:
             harness.canReturn = { _ in false }
@@ -891,7 +892,9 @@ struct WatchAuditionRefutationTests {
         _ = try await harness.ask("audition")
         let building = try await holdBuild(harness)  // s2 (試聴の版)
         #expect(try await harness.ask("leave")["accepted"] as? Bool == true)  // プレビューを戻せた: 捨てる側
-        harness.tell(production, "bye")  // 出た後、作り直しが済む前に本番が落ちる
+        harness.tell(production, "bye", timeout: 30)  // 出た後、作り直しが済む前に本番が落ちる
+        // 重い並走の下では子の終わりが遅れる。終わったことを確かめてから進める (終わらなければ、この検査の前提が無い)
+        try #require(!production.isRunning, "本番の子が期限までに終わらない")
         let linesBefore = harness.previewLines.count
         await release(harness, building)
         let shown = Array(harness.previewLines[linesBefore...])
@@ -937,7 +940,8 @@ struct WatchAuditionRefutationTests {
         let building = try await holdBuild(harness)  // s2 (本番の版)
         #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
         if !productionStays {
-            harness.tell(first, "bye")  // 試聴の間に本番が落ちる
+            harness.tell(first, "bye", timeout: 30)  // 試聴の間に本番が落ちる
+            try #require(!first.isRunning, "本番の子が期限までに終わらない")
             await harness.beat()
         }
         harness.placeSave()  // s3
