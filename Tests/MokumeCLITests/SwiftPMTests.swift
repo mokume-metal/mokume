@@ -254,14 +254,14 @@ struct SwiftPMTests {
     /// 名前でも説明できない包みだけを除く。
     private static let staleDump = staleDump(named: "Demo")
 
-    private static func staleDump(named name: String) -> String {
+    private static func staleDump(named name: String, library: String = "Lib") -> String {
         """
         {"name":"\(name)",
          "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
          "targets":[
            {"name":"Demo","type":"executable",
-            "dependencies":[{"byName":["Lib",null]},{"product":["Foo","extras",null,null]}]},
-           {"name":"Lib","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}]}]}
+            "dependencies":[{"byName":["\(library)",null]},{"product":["Foo","extras",null,null]}]},
+           {"name":"\(library)","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}]}]}
         """
     }
 
@@ -281,6 +281,37 @@ struct SwiftPMTests {
             dependencyPackages: ["mokume", "Demo_Extras"])
         #expect(scope.required == ["Demo_Lib.bundle"])
         #expect(scope.excluded == ["Demo_DemoTests.bundle", "Demo_Old_Name.bundle"])
+        #expect(scope.leftovers == ["Demo_DemoTests.bundle", "Demo_Old_Name.bundle"])
+    }
+
+    /// **依存の名前が包みの名前と食い違うと、依存の包みも古い包みと読む** (#4005 の反証)。名前の出どころが
+    /// 宣言の名前を返さなかった回 (name も identity も `Demo_Extras` でない) を固定する。除くが、
+    /// ``SwiftPM/Package/ResourceScope/leftovers`` に載せ、束ねた報せで名乗らせる (黙って欠けさせない)。
+    @Test("依存の名前が包みの名前と食い違えば、依存の包みも古い包みとして除き、名乗る側へ載せる")
+    func mismatchedDependencyNamesAreNamed() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump))
+        let scope = package.resourceScope(
+            forProduct: "Demo",
+            beside: ["Demo_Lib.bundle", "Demo_Extras_Foo.bundle", "mokume_MokumeCore.bundle"],
+            dependencyPackages: ["mokume", "gitdep", "extras-pkg"])
+        #expect(scope.excluded == ["Demo_Extras_Foo.bundle"])
+        #expect(scope.leftovers == ["Demo_Extras_Foo.bundle"])
+    }
+
+    /// **残す側の比べ方は大文字と小文字を区別しない** (#4005 の反証)。区別しないボリュームでは、target を
+    /// `Lib` → `LIB` と改名しても、置き場の包みは古い綴り `Demo_Lib.bundle` のまま中身だけ作り直される。
+    /// 区別して比べると古い包みと読んで除き、配る前の検査が `Demo_LIB.bundle` が無いと言って止まる
+    /// (差分の前は通っていた)。依存の名前も同じ。除く側の頭 (`Demo_`) は区別する — `demo_Gone.bundle`
+    /// (改名前のパッケージ名かもしれない) は除かない。
+    @Test("いまの宣言の target と依存の名前は、大文字と小文字を区別せずに照らす")
+    func protectingComparisonsIgnoreCase() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump(named: "Demo", library: "LIB")))
+        let scope = package.resourceScope(
+            forProduct: "Demo",
+            beside: ["Demo_Lib.bundle", "Demo_Extras_Foo.bundle", "demo_Gone.bundle", "Demo_Gone.bundle"],
+            dependencyPackages: ["demo_extras"])
+        #expect(scope.required == ["Demo_LIB.bundle"])
+        #expect(scope.excluded == ["Demo_Gone.bundle"])
     }
 
     /// **名前の形だけでは決めない。** 自分のパッケージ名が依存のパッケージ名を頭に持つ (`Demo_Extras` と
@@ -301,6 +332,7 @@ struct SwiftPMTests {
             dependencyPackages: dependencies)
         #expect(scope.required == ["Demo_Extras_Lib.bundle"])
         #expect(scope.excluded == excluded)
+        #expect(scope.leftovers == excluded)
     }
 
     /// **依存の名前が読めなければ、古い包みを除かない** (#3982 の約束)。どの包みが依存のものかを決められない
@@ -389,23 +421,42 @@ struct SwiftPMTests {
         #expect(state.resolved("mokume", under: URL(fileURLWithPath: "/sketch")) == nil)
     }
 
-    /// 依存のパッケージの名前 (#4005)。道具立ては資材の包みを宣言の名前 (`name:`) で名付けるので
-    /// (`Demo_Extras_Foo.bundle`)、置き場の名前 (identity・`extras-dir`) だけでは足りない。両方を返す
-    /// (多く返すほど除く包みが減る側へ倒れる)。形は Swift 6.4 の `swift build` が書いたものを写した。
-    @Test("依存のパッケージの名前は、宣言の名前と identity の両方を返す")
-    func dependencyPackageNamesIncludeTheDeclaredName() throws {
-        let state = try workspaceState(
-            """
-            {"object":{"artifacts":[],"dependencies":[
-              {"basedOn":null,
-               "packageRef":{"identity":"extras-dir","kind":"fileSystem",
-                             "location":"/work/extras-dir","name":"Demo_Extras"},
-               "state":{"name":"fileSystem","path":"/work/extras-dir"},"subpath":"extras-dir"},
-              {"packageRef":{"name":"mokume"},
-               "state":{"name":"sourceControlCheckout"},"subpath":"mokume"}
-            ],"prebuilts":[]},"version":7}
-            """)
-        #expect(Set(state.packageNames) == ["Demo_Extras", "extras-dir", "mokume"])
+    // MARK: - show-dependencies
+
+    /// 依存の木の宣言の名前 (#4005)。道具立ては資材の包みを依存の宣言の名前 (`name:`) で名付けるので
+    /// (`Demo_Extras_Foo.bundle`)、identity (`gitdep`) だけでは足りない。両方を、根を除いて推移的に返す。
+    /// 形は Swift 6.3.3 の `show-dependencies --format json` が URL で指した依存に書いたものを写した
+    /// (同じ依存に `workspace-state.json` は `"name":"gitdep"` を書く)。
+    @Test("依存の木から、根を除く推移的な依存の宣言の名前と identity を読む")
+    func dependencyTreeNamesAreTheDeclaredNames() throws {
+        let tree = try #require(
+            SwiftPM.read(
+                SwiftPM.DependencyTree.self,
+                from: Data(
+                    """
+                    {"identity":"urluser","name":"UrlUser","url":"/work/UrlUser","version":"unspecified",
+                     "path":"/work/UrlUser","traits":["default"],"dependencies":[
+                      {"identity":"gitdep","name":"Demo_Extras","url":"/work/gitdep","version":"1.0.0",
+                       "path":"/work/UrlUser/.build/checkouts/gitdep","traits":["default"],
+                       "dependencies":[
+                        {"identity":"inner","name":"Inner","url":"/work/inner","version":"1.0.0",
+                         "path":"/work/inner","traits":["default"],"dependencies":[]}]}]}
+                    """.utf8)))
+        #expect(Set(try #require(tree.dependencyNames)) == ["Demo_Extras", "gitdep", "Inner", "inner"])
+    }
+
+    /// 宣言の名前の無い依存が 1 つでもあれば、どの包みがその依存のものか決められない。`nil` を返し、
+    /// 束ねる側は古い包みを除かない。依存の無い木は空 (除いてよい)。
+    @Test("宣言の名前の無い依存があれば読めないとし、依存が無ければ空を返す")
+    func dependencyTreesWithoutNamesAreUnreadable() throws {
+        let nameless = try #require(
+            SwiftPM.read(
+                SwiftPM.DependencyTree.self,
+                from: Data(#"{"name":"Demo","dependencies":[{"identity":"x","dependencies":[]}]}"#.utf8)))
+        #expect(nameless.dependencyNames == nil)
+        let alone = try #require(
+            SwiftPM.read(SwiftPM.DependencyTree.self, from: Data(#"{"name":"Demo","dependencies":[]}"#.utf8)))
+        #expect(alone.dependencyNames == [])
     }
 
     // MARK: - Package.resolved

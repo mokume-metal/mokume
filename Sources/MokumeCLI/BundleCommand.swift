@@ -114,15 +114,13 @@ enum BundleCommand {
         // 持つ)。共有の置き場には同じ鍵の全スケッチの包みが並ぶので、隣にあるものを
         // 全部入れる下の作りが**他人の資材を配ってしまう**
         let context = BuildContext(
-            configuration: configuration, place: .inPackage(.packaging), product: product)
+            configuration: configuration, place: place, product: product)
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
 
         // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)。宣言から消えた
         // target の古い包みも除く — 置き場は利用者の `swift build` / `swift test` と共有なので残る (#4005)
         let scope = declared.map {
-            Self.resourceScope(
-                of: $0, product: product, executable: executable,
-                buildDirectory: context.directory(under: directory))
+            Self.resourceScope(of: $0, product: product, executable: executable, package: directory)
         }
         let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
         let published = try distribute(
@@ -135,8 +133,12 @@ enum BundleCommand {
         print(
             report(
                 for: published.app, package: directory, note: published.note,
-                signedAs: signature, identity: identity))
+                signedAs: signature, identity: identity, leftOut: scope?.leftovers ?? []))
     }
+
+    /// 束ねるときのビルドの置き場。**ビルドと、依存の木を引く ``resourceScope(of:product:executable:package:asking:)``
+    /// が同じ置き場を見る** (依存の解決の結果は置き場ごとに在る)。
+    static let place: BuildDirectory.Place = .inPackage(.packaging)
 
     /// 組み立て → 仕上げ (資材の検め・紙・署名) → 公開。**公開するまで `--out` の `<name>.app` と紙に
     /// 触れない** ([#3981](https://github.com/mokume-metal/mokume/issues/3981))。
@@ -869,20 +871,43 @@ enum BundleCommand {
             .sorted { $0.path < $1.path }
     }
 
-    /// 配る範囲。宣言の閉包 (#3982) に、実行ファイルの隣の並びとビルドの置き場の依存の名前
-    /// (`workspace-state.json`) から決めた、宣言から消えた target の古い包みの除外を足す (#4005)。
-    /// 依存の名前が読めなければ、古い包みは除かない (``SwiftPM/Package/resourceScope(forProduct:beside:dependencyPackages:)``)。
+    /// 配る範囲。宣言の閉包 (#3982) に、実行ファイルの隣の並びと依存の木 (`show-dependencies`) の
+    /// 宣言の名前から決めた、宣言から消えた target の古い包みの除外を足す (#4005)。依存の木が読めなければ
+    /// (道具立てが 0 以外で終わった・JSON が読めない・宣言の名前の無い依存がある)、古い包みは除かない
+    /// (``SwiftPM/Package/resourceScope(forProduct:beside:dependencyPackages:)``)。
     ///
-    /// - Parameter buildDirectory: ビルドの置き場そのもの (``BuildContext/directory(under:)``)。
+    /// **依存の名前は `.build/workspace-state.json` から読まない** — 下限の道具立てはそこへ宣言の名前でなく
+    /// URL の末尾を書く (``SwiftPM/DependencyTree``)。
+    ///
+    /// - Parameters:
+    ///   - package: パッケージの場所。依存の木は束ねる置き場 (``place``) で引く。
+    ///   - asking: 道具立てへの問い (引数と場所を受けて終了コードと標準出力を返す)。**検査が偽の答えを渡し、
+    ///     渡された引数と場所を見るために外から渡せる形にしてある。**
     static func resourceScope(
-        of declared: SwiftPM.Package, product: String, executable: URL, buildDirectory: URL
+        of declared: SwiftPM.Package, product: String, executable: URL, package: URL,
+        asking: (_ arguments: [String], _ directory: URL) -> (status: Int32, output: String) = {
+            (try? RunCommand.swift($0, in: $1, capturing: true, errors: .inherit)) ?? (status: -1, output: "")
+        }
     ) -> SwiftPM.Package.ResourceScope {
-        let state = SwiftPM.read(
-            SwiftPM.WorkspaceState.self, at: buildDirectory.appendingPathComponent("workspace-state.json"))
+        let answer = asking(["package"] + place.arguments + ["show-dependencies", "--format", "json"], package)
+        let tree =
+            answer.status == 0 ? SwiftPM.read(SwiftPM.DependencyTree.self, from: Data(answer.output.utf8)) : nil
         return declared.resourceScope(
             forProduct: product,
             beside: resourceBundles(besides: executable, excluding: []).map(\.lastPathComponent),
-            dependencyPackages: state?.packageNames)
+            dependencyPackages: tree?.dependencyNames)
+    }
+
+    /// 宣言から消えた target の古い包みと読んで入れなかったものの名乗り (#4005)。**黙って除かない** —
+    /// 名前の形から推した除外なので、依存の包みを取り違えて除いたら、受け取った側で絵が出ないだけになる
+    /// ([ADR-0029] 決定 4)。無ければ `nil`。1 つにつき 1 行。
+    ///
+    /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
+    static func leftOutNotice(_ leftovers: Set<String>) -> String? {
+        guard !leftovers.isEmpty else { return nil }
+        return leftovers.sorted().map {
+            "Left out: \($0) — in .build, but no target in Package.swift builds it now"
+        }.joined(separator: "\n")
     }
 
     // MARK: - 配る前の検査
@@ -1022,11 +1047,14 @@ enum BundleCommand {
     /// - Parameters:
     ///   - package: 束ねたスケッチの場所 (絶対パス)。
     ///   - identity: 束ねた名乗り。**省略できない** — 呼び元が渡し忘れると、警告だけが黙って落ちる。
+    ///   - leftOut: 宣言から消えた target の古い包みと読んで入れなかったもの (``leftOutNotice(_:)``・#4005)。
+    ///     **省略できない** (渡し忘れると、除いたことが黙って落ちる)。警告と同じく、送る前に読むこの報せの
+    ///     末尾 (警告の前) に置く。
     ///
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
     static func report(
         for app: URL, package: URL, note: URL, signedAs signature: String?,
-        identity: AppIdentity
+        identity: AppIdentity, leftOut: Set<String>
     ) -> String {
         let base = """
         Bundled: \(app.path)
@@ -1046,8 +1074,8 @@ enum BundleCommand {
 
         If it draws with .build moved aside, the bundle carries all it needs.
         """
-        guard let warning = identity.warning else { return base }
-        return base + "\n\n" + warning
+        return ([base] + [leftOutNotice(leftOut), identity.warning].compactMap { $0 })
+            .joined(separator: "\n\n")
     }
 
     /// 確かめ方の 1 行。スケッチの `.build` を退避して `.app` を開き、戻す。

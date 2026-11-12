@@ -96,8 +96,20 @@ nonisolated enum SwiftPM {
             /// 宣言が無くても道具立てが包みを作る種類があるので、宣言の有無は見ない。他のパッケージの
             /// 包みは宣言を辿らずに入れる (依存が持ち込む資材は無ければ絵が出ない) ので、ここには載らない。
             /// 隣の並びを渡した形 (``resourceScope(forProduct:beside:dependencyPackages:)``) では、宣言から
-            /// 消えた target の古い包みも載る (#4005)。
+            /// 消えた target の古い包み (``leftovers``) も載る (#4005)。
             let excluded: Set<String>
+            /// `excluded` のうち、宣言から消えた target の古い包みと読んで除いたもの (#4005)。**束ねた報せで
+            /// 名乗る** — 名前の形から推した除外なので、依存の包みを取り違えて除いたときに黙って欠けさせない
+            /// ([ADR-0029] 決定 4)。
+            ///
+            /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
+            let leftovers: Set<String>
+
+            init(required: [String], excluded: Set<String>, leftovers: Set<String> = []) {
+                self.required = required
+                self.excluded = excluded
+                self.leftovers = leftovers
+            }
         }
 
         /// `product` を配る範囲。**名前の形 (`…Tests`) では決めない** — 依存の閉包の内外で決める。
@@ -117,25 +129,38 @@ nonisolated enum SwiftPM {
         ///
         /// 束ねる置き場は利用者の `swift build` / `swift test` と共有なので、`Package.swift` から消した・
         /// 改名した target の包みが隣に残る。宣言に無いので閉包からは出てこない。除くのは、隣に並んだ包みの
-        /// うち、**このパッケージの宣言の名前**を頭に持ち (`<name>_…`)、いまの宣言のどの target の包みでもなく、
-        /// **どの依存のパッケージの名前 (`<依存>_…`) でも説明できない**もの。自分の名前が依存の名前を頭に
-        /// 持つ (`Demo_Extras` と `Demo`) と、`Demo_Extras_Gone.bundle` はどちらのものとも読めるので除かない
+        /// うち、**いまのパッケージの宣言の名前**で始まり (`<name>_…`)、いまの宣言のどの target の包みでもなく、
+        /// **どの依存のパッケージの名前 (`<依存>_…`) でも説明できない**もの。自分の名前が依存の名前で始まる
+        /// (`Demo_Extras` と `Demo`) と、`Demo_Extras_Gone.bundle` はどちらのものとも読めるので除かない
         /// (入れすぎる側へ倒す)。依存の名前が読めない (`nil`)・閉包が求められないときは、古い包みを除かない。
+        ///
+        /// **残す側の比べ方は大文字と小文字を区別しない** (いまの宣言の target・依存の名前)。区別しない
+        /// ボリュームでは、target を `Lib` → `LIB` と改名しても置き場の包みは古い綴り (`Demo_Lib.bundle`) の
+        /// ままで、区別すると古い包みと読んで除いてしまう。除く側の頭 (`<name>_`) は区別する (区別しないと
+        /// 除くものが増える)。
+        ///
+        /// 範囲の外: `Package(name:)` を改名する前の名前で始まる包みと、`Package.swift` から外した依存の
+        /// 包みは、持ち主を名前の形から決められないので除かない。
         ///
         /// - Parameters:
         ///   - built: 実行ファイルの隣に並んだ包みの名前。
-        ///   - dependencyPackages: 依存のパッケージの名前 (``WorkspaceState/packageNames``)。読めなければ `nil`。
+        ///   - dependencyPackages: 依存のパッケージの宣言の名前と identity (``DependencyTree/dependencyNames``)。
+        ///     読めなければ `nil`。
         func resourceScope(
             forProduct product: String, beside built: [String], dependencyPackages: [String]?
         ) -> ResourceScope {
             let scope = resourceScope(forProduct: product)
             guard let dependencyPackages, targetClosure(ofProduct: product) != nil else { return scope }
-            let declared = Set(targets.map { "\(name)_\($0.name).bundle" })
-            let leftovers = built.filter { bundle in
-                bundle.hasSuffix(".bundle") && bundle.hasPrefix("\(name)_") && !declared.contains(bundle)
-                    && !dependencyPackages.contains { bundle.hasPrefix("\($0)_") }
-            }
-            return ResourceScope(required: scope.required, excluded: scope.excluded.union(leftovers))
+            let declared = Set(targets.map { "\(name)_\($0.name).bundle".lowercased() })
+            let owners = dependencyPackages.map { "\($0)_".lowercased() }
+            let leftovers = Set(
+                built.filter { bundle in
+                    let folded = bundle.lowercased()
+                    return bundle.hasSuffix(".bundle") && bundle.hasPrefix("\(name)_")
+                        && !declared.contains(folded) && !owners.contains { folded.hasPrefix($0) }
+                })
+            return ResourceScope(
+                required: scope.required, excluded: scope.excluded.union(leftovers), leftovers: leftovers)
         }
 
         /// `product` を作る target と、それらがこのパッケージの中で (推移的に) 依存する target の名前。
@@ -496,6 +521,36 @@ nonisolated enum SwiftPM {
         let version: String?
     }
 
+    // MARK: - swift package show-dependencies --format json
+
+    /// `swift package show-dependencies --format json` が出す依存の木 (#4005)。根はこのパッケージ自身。
+    ///
+    /// **依存の宣言の名前を読むのはここから。** 道具立ては資材の包みを依存の宣言の名前で名付ける
+    /// (identity `extras-dir`・`name: "Demo_Extras"` の依存は `Demo_Extras_Foo.bundle`)。
+    /// `.build/workspace-state.json` の `packageRef.name` は宣言の名前とは限らない — 下限の道具立て
+    /// (Swift 6.3.3) は URL で指した依存に URL の末尾 (`gitdep`) を書く (Swift 6.4.2 は宣言の名前)。
+    struct DependencyTree: Decodable, Equatable {
+        /// 宣言の名前。
+        let name: String?
+        let identity: String?
+        let dependencies: [DependencyTree]?
+
+        /// 根を除く、推移的なすべての依存の宣言の名前と identity。**1 つでも宣言の名前が読めない依存が
+        /// あれば `nil`** (どの包みがその依存のものか決められない — 何も除かない側へ倒す)。identity も
+        /// 返すのは、多く返すほど除く包みが減る側へ倒れるため。
+        var dependencyNames: [String]? {
+            var names: [String] = []
+            var pending = dependencies ?? []
+            while let next = pending.popLast() {
+                guard let name = next.name else { return nil }
+                names.append(name)
+                if let identity = next.identity { names.append(identity) }
+                pending.append(contentsOf: next.dependencies ?? [])
+            }
+            return names
+        }
+    }
+
     // MARK: - .build/workspace-state.json
 
     /// 道具立てが作業ディレクトリへ残す、解決済みの依存の状態。
@@ -517,7 +572,6 @@ nonisolated enum SwiftPM {
 
             struct Reference: Decodable {
                 let name: String
-                let identity: String?
             }
 
             struct State: Decodable {
@@ -525,13 +579,6 @@ nonisolated enum SwiftPM {
                 /// パスで指した依存の在処。`name` が `fileSystem` のときだけ在る。
                 let path: String?
             }
-        }
-
-        /// 依存のパッケージの名前 (#4005)。**宣言の名前 (`name`) と identity の両方を返す** — 道具立ては
-        /// 資材の包みを宣言の名前で名付ける (`Demo_Extras_Foo.bundle`) が、ここに書かれる名前が宣言の名前で
-        /// あることは道具立ての版に依る。多く返すほど、束ねる側が除く包みは減る (入れすぎる側へ倒す)。
-        var packageNames: [String] {
-            object.dependencies.flatMap { [$0.packageRef.name] + ($0.packageRef.identity.map { [$0] } ?? []) }
         }
 
         /// 名前で引いた依存の実体。
