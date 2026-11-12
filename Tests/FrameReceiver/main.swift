@@ -345,7 +345,11 @@ while !passed(deadline) {
         else { continue }
         // 答えを待つ間と、前の番号の frame は、前の繋がりの面のことなので数えない (返しもしない)。送り手は答えより
         // 前に送った frame の面を、受け入れたときに手放している
-        guard answerDeadline == nil, receiver == receiverID else { continue }
+        guard answerDeadline == nil else {
+            say(["event": "frameWhileWaiting", "receiver": Int(receiver)])
+            continue
+        }
+        guard receiver == receiverID else { continue }
         let surface = surfaces[Int(slot)]
         say([
             "event": "frame", "receiver": Int(receiver), "slot": Int(slot), "frameCount": frameCount,

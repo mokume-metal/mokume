@@ -748,6 +748,12 @@ struct FrameLinkContractGPUTests {
         #expect(
             !events[clogged..<new.accepted].contains { $0["event"] as? String == "frame" },
             "答えを待つ間の frame を数えた: \(events)")
+        // 送り手は落ちた accepted の後も新しい面へ書いて frame を送る。受け手はそれを、期限の前に読んで数えずにいる
+        // (読む前に期限が来ていたら、この判定は試されていない)
+        let timedOutAt = try #require(events.firstIndex { $0["event"] as? String == "answerTimedOut" })
+        #expect(
+            events[clogged..<timedOutAt].contains { $0["event"] as? String == "frameWhileWaiting" },
+            "答えを待つ間に frame を読んでいない (検査の前提): \(events)")
         #expect(receiver.events(named: "refused").isEmpty, "\(events)")
         #expect(sender.receiverCount == FrameLink.receiverLimit, "古い枠を回収していない (\(sender.receiverCount))")
         #expect(said.filter { $0.hasPrefix("Stopped handing") }.count == 1, "送り手が古い繋がりを外していない: \(said)")
