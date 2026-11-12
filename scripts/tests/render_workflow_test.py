@@ -272,7 +272,7 @@ class RenderWorkflowTest(unittest.TestCase):
 
     def test_issues_write_を持つのは_GitHub_ホストの後続ジョブだけ(self):
         holders = [name for name, body in self.jobs.items() if re.search(r"issues:\s*write", body)]
-        self.assertEqual(sorted(holders), ["render-environment-report", "scheduled-report"])
+        self.assertEqual(sorted(holders), ["render-environment-report", "render-notice-report", "scheduled-report"])
         for name in holders:
             self.assertNotIn("self-hosted", self.jobs[name], name)
             self.assertIn("runs-on: ubuntu-latest", self.jobs[name], name)
@@ -366,6 +366,32 @@ class RenderWorkflowTest(unittest.TestCase):
         self.assertIn("needs.render.outputs.preflight-reason != ''", cond)
         self.assertIn("scripts/report-runner-environment.sh", body)
 
+    def test_注意の数えと書き込みは別の_job_で_render_を赤にしない(self):
+        # #3633: 前検査の注意 (置き場の外の重い負荷) は赤にしない。render は success で来るので、
+        # 赤の回だけの if では走らない。注意は job の出力で受ける
+        render = self.jobs["render"]
+        self.assertIn("preflight-notice: ${{ steps.preflight.outputs.notice }}", render)
+        self.assertIn("preflight-notice-detail: ${{ steps.preflight.outputs.notice-detail }}", render)
+        count = self.jobs["render-notice-count"]
+        self.assertEqual(needs(count), {"render"})
+        cond = condition(count)
+        self.assertIn("!cancelled()", cond)
+        self.assertIn("needs.render.outputs.preflight-notice != ''", cond)
+        # success でも failure でも (検査の赤の回の注意も数える)。cancelled・skipped は前検査が走っていない
+        self.assertIn("success", cond)
+        self.assertIn("failure", cond)
+        report = self.jobs["render-notice-report"]
+        self.assertEqual(needs(report), {"render", "render-notice-count"})
+        self.assertIn("needs.render-notice-count.outputs.due != ''", condition(report))
+        self.assertIn("scripts/report-runner-notice.sh report", report)
+        # 書き込みは記録を読む権限を持たない・数えは書かない
+        self.assertNotRegex(report, r"(actions|checks):\s*read")
+        self.assertNotRegex(count, r"issues:\s*write")
+        # 赤の発信の条件 (前検査が落ちた回だけ) は広げない
+        red = condition(self.jobs["render-environment-report"])
+        self.assertIn("needs.render.result == 'failure'", red)
+        self.assertNotIn("preflight-notice", red)
+
     def test_scheduled_report_は専用機のジョブが落ちたか切れたときだけ走る(self):
         body = self.jobs["scheduled-report"]
         self.assertRegex(body, r"needs: \[scheduled-debug, scheduled-release, scheduled-drift\]")
@@ -454,7 +480,12 @@ class RenderWorkflowTest(unittest.TestCase):
 
     def test_門番は_GitHub_ホストで_actions_read_だけを持つ(self):
         holders = [name for name, body in self.jobs.items() if re.search(r"actions:\s*\w+", body)]
-        self.assertEqual(sorted(holders), sorted(TURN_JOBS))
+        # 注意の数え (#3633) は前の run の記録を読むので actions: read を持つ。読むだけで、書き込みは別の job
+        self.assertEqual(sorted(holders), sorted([*TURN_JOBS, "render-notice-count"]))
+        notice = self.jobs["render-notice-count"]
+        self.assertIn("runs-on: ubuntu-latest", notice)
+        self.assertNotRegex(notice, r":\s*write")
+        self.assertIn("scripts/count-runner-notice.sh", notice)
         for name in TURN_JOBS:
             body = self.jobs[name]
             self.assertIn("runs-on: ubuntu-latest", body, name)
