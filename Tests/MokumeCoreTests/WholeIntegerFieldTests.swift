@@ -18,12 +18,15 @@ struct WholeIntegerFieldTests {
         "button", "button (input-request)", "code", "code (input-request)", "clickCount",
         "clickCount (input-request)", "serial", "serial (input-request)", "int の値",
         "目録の schemaVersion", "目録の ids", "目録の width", "目録の height", "目録の pid",
+        "目録の全画面の number", "目録の全画面の screenID",
         "一覧の schemaVersion", "一覧の pid", "一覧の startedAt", "生死の pid", "生死の startedAt",
         "時計の版", "時計の版 (Snapshot)", "時計の writer",
     ]
 
     /// `Int32`・`UInt32` で読む欄 (`4294967296` を範囲の外として断る)。
-    nonisolated static let narrowFields: Set = ["目録の ids", "目録の pid", "一覧の pid", "生死の pid", "時計の writer"]
+    nonisolated static let narrowFields: Set = [
+        "目録の ids", "目録の pid", "目録の全画面の screenID", "一覧の pid", "生死の pid", "時計の writer",
+    ]
 
     /// 1 のほかを版の照合で断る欄 (`4294967296` の読みを比べようがない)。
     nonisolated static let versionFields: Set = ["目録の schemaVersion", "時計の版"]
@@ -56,6 +59,8 @@ struct WholeIntegerFieldTests {
         case "目録の width": manifest(width: spelling)
         case "目録の height": manifest(height: spelling)
         case "目録の pid": manifest(pid: spelling)
+        case "目録の全画面の number": fullScreen(number: spelling)
+        case "目録の全画面の screenID": fullScreen(screenID: spelling)
         case "一覧の schemaVersion": listed(version: spelling)
         case "一覧の pid": listed(pid: spelling)
         case "一覧の startedAt": listed(startedAt: spelling)
@@ -69,6 +74,15 @@ struct WholeIntegerFieldTests {
             }
         case "時計の writer": handedOver(writer: spelling)
         default: "unknown field"
+        }
+    }
+
+    /// 目録の全画面の頼み (`fullScreenDisplay`)。読めない・使えない頼みは「頼まれていない」(`nil`) と読む。
+    private func fullScreen(number: String = "2", screenID: String = "9") -> String {
+        describe {
+            let json = #"{"schemaVersion":1,"ids":[1],"width":4,"height":3,"fullScreenDisplay":{"number":\#(number),"name":"d","screenID":\#(screenID)}}"#
+            let manifest = try JSONDecoder().decode(SharedFrameSurface.Manifest.self, from: Data(json.utf8))
+            return manifest.fullScreenDisplay.map { "display \($0.number) id=\($0.screenID)" } ?? "not asked"
         }
     }
 
@@ -196,5 +210,12 @@ struct WholeIntegerFieldTests {
         let written = String(decoding: try encoder.encode(snapshot), as: UTF8.self)
         #expect(written.contains(#""version":1"#) && written.contains(#""writer":42"#), "\(written)")
         #expect(try JSONDecoder().decode(ClockHandover.Snapshot.self, from: Data(written.utf8)) == snapshot)
+
+        let display = SharedFrameSurface.FullScreenDisplay(number: 2, name: "d", screenID: 9)
+        let manifest = SharedFrameSurface.Manifest(ids: [1], width: 4, height: 3, fullScreenDisplay: display, pid: 7)
+        let surfaced = String(decoding: try encoder.encode(manifest), as: UTF8.self)
+        #expect(surfaced.contains(#""fullScreenDisplay":{"name":"d","number":2,"screenID":9}"#), "\(surfaced)")
+        let readBack = try JSONDecoder().decode(SharedFrameSurface.Manifest.self, from: Data(surfaced.utf8))
+        #expect(readBack.fullScreenDisplay == display && readBack.pid == 7)
     }
 }
