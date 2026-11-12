@@ -231,29 +231,41 @@ nonisolated extension Path {
 
     /// ``clipped(to:)`` の相手。閉じた辺の並びとして持つ。
     private struct ClipRegion {
-        /// 点が 3 つ以上で、全部が有限の部分道の辺 (閉じる辺を含む)。
+        /// 点が 3 つ以上で、全部が有限の部分道。
+        var subpaths: [Subpath] = []
+        /// `subpaths` の辺 (閉じる辺を含む)。
         var edges: [(from: SIMD2<Double>, to: SIMD2<Double>)] = []
+        /// 全部の辺を囲む矩形。この外 (縁を含まない) の点は回り数が 0 で、この外にある線は辺と交わらない。
+        var low = SIMD2<Double>(repeating: .infinity)
+        var high = SIMD2<Double>(repeating: -.infinity)
 
         init(_ path: Path) {
             for subpath in path.subpaths where subpath.points.count >= 3 {
                 guard subpath.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
+                subpaths.append(subpath)
                 let points = subpath.points.map { SIMD2<Double>(Double($0.x), Double($0.y)) }
                 var previous = points[points.count - 1]
                 for current in points {
                     edges.append((previous, current))
+                    low = pointwiseMin(low, current)
+                    high = pointwiseMax(high, current)
                     previous = current
                 }
             }
         }
 
+        /// `low`…`high` の矩形が、相手を囲む矩形と離れている (縁で触れるだけなら離れていない)。
+        func isApart(low: SIMD2<Double>, high: SIMD2<Double>) -> Bool {
+            high.x < self.low.x || low.x > self.high.x || high.y < self.low.y || low.y > self.high.y
+        }
+
         private static func cross(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double { a.x * b.y - a.y * b.x }
 
-        /// 線分 `from`→`to` が辺を横切る所の、線分の上の位置 (0 < t < 1)。平行な辺は数えない。
-        func crossings(from: SIMD2<Double>, to: SIMD2<Double>) -> [Double] {
+        /// 線分 `from`→`to` が辺を横切る所の、線分の上の位置 (0 < t < 1) を `found` に足す。平行な辺は数えない。
+        func crossings(from: SIMD2<Double>, to: SIMD2<Double>, into found: inout [Double]) {
             let direction = to - from
-            let low = SIMD2(min(from.x, to.x), min(from.y, to.y))
-            let high = SIMD2(max(from.x, to.x), max(from.y, to.y))
-            var found: [Double] = []
+            let low = pointwiseMin(from, to)
+            let high = pointwiseMax(from, to)
             for edge in edges {
                 guard max(edge.from.x, edge.to.x) >= low.x, min(edge.from.x, edge.to.x) <= high.x,
                     max(edge.from.y, edge.to.y) >= low.y, min(edge.from.y, edge.to.y) <= high.y
@@ -266,21 +278,12 @@ nonisolated extension Path {
                 let u = Self.cross(offset, direction) / denominator
                 if t > 0, t < 1, u >= 0, u <= 1 { found.append(t) }
             }
-            return found
         }
 
-        /// ``Path/contains(_:)`` と同じ数え方の回り数。
+        /// ``Path/contains(_:)`` と同じ数え方の回り数 (``Path/winding(at:in:)``)。
         func winding(_ point: SIMD2<Double>) -> Int {
-            var winding = 0
-            for (previous, current) in edges {
-                let side = (current.x - previous.x) * (point.y - previous.y) - (point.x - previous.x) * (current.y - previous.y)
-                if previous.y <= point.y {
-                    if current.y > point.y, side > 0 { winding += 1 }
-                } else if current.y <= point.y, side < 0 {
-                    winding -= 1
-                }
-            }
-            return winding
+            if isApart(low: point, high: point) { return 0 }
+            return Path.winding(at: point, in: subpaths)
         }
     }
 
@@ -309,17 +312,30 @@ nonisolated extension Path {
         let points = subpath.points
         let marks = subpath.isCurveStep
         let count = points.count
+        // 相手を囲む矩形から離れた部分道は、全部が外側
+        let low = points.reduce(SIMD2<Float>(repeating: .infinity)) { pointwiseMin($0, $1) }
+        let high = points.reduce(SIMD2<Float>(repeating: -.infinity)) { pointwiseMax($0, $1) }
+        if region.isApart(low: SIMD2<Double>(low), high: SIMD2<Double>(high)) { return [] }
         var pieces: [ClipPiece] = []
         var current: ClipPiece?
         var startsInside: Bool?
         var endsInside = false
         var anyOutside = false
+        // 辺ごとの区切りの位置。辺ごとに作り直さず使い回す
+        var cuts: [Double] = []
         for index in 0..<(subpath.isClosed ? count : count - 1) {
             let next = (index + 1) % count
             let from = SIMD2<Double>(Double(points[index].x), Double(points[index].y))
             let to = SIMD2<Double>(Double(points[next].x), Double(points[next].y))
             guard from != to else { continue }
-            let cuts = [0] + region.crossings(from: from, to: to).sorted() + [1]
+            cuts.removeAll(keepingCapacity: true)
+            cuts.append(0)
+            // 相手を囲む矩形から離れた辺は、区切らずに 1 区間とする (中点も矩形の外なので、回り数を数えずに外になる)
+            if !region.isApart(low: pointwiseMin(from, to), high: pointwiseMax(from, to)) {
+                region.crossings(from: from, to: to, into: &cuts)
+                cuts[1...].sort()
+            }
+            cuts.append(1)
             for step in 0..<(cuts.count - 1) {
                 let (t0, t1) = (cuts[step], cuts[step + 1])
                 guard t1 > t0 else { continue }
