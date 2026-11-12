@@ -366,7 +366,7 @@ struct SolidShaderTests {
         }
     }
 
-    @Test("平面の図形では、表面の位置も向きも 0")
+    @Test("平面の図形では、表面の位置も世界の位置も向きも 0")
     func flatShapesCarryNoSurface() throws {
         let canvas = try makeCanvas()
         // どれかが 0 でなければ赤、全部 0 なら緑。**向きは 3 つとも見る** (#847)
@@ -374,6 +374,7 @@ struct SolidShaderTests {
             """
             float4 paint(Fragment in, Values values) {
                 float sum = dot(in.shapePosition, in.shapePosition)
+                    + dot(in.worldPosition, in.worldPosition)
                     + dot(in.shapeNormal, in.shapeNormal)
                     + dot(in.worldNormal, in.worldNormal)
                     + dot(in.viewNormal, in.viewNormal);
@@ -684,5 +685,228 @@ struct SolidShaderTests {
             let pixel = image[point.0, point.1]
             #expect(pixel.green > 200 && pixel.red < 40, "\(point) の三角形で向きが見えている側を向いていない")
         }
+    }
+
+    // MARK: - 世界の位置と光を通す前の色 (#3573)
+
+    /// 世界の位置が、**z = 0 の面の上では画素の位置そのもの**になることを見る断片。合えば緑、外れれば赤。
+    ///
+    /// 既定の視点は z = 0 の面を出す画素と 1:1 で写すので、そこに置いた平らな面の画素は、世界の位置の
+    /// xy が `in.position` (出す画素で数えた画素の中心) と一致し、z が 0 になる。形自身の座標
+    /// (`shapePosition`) や視点の座標を渡していれば、回した・ずらした面でここが外れる。
+    static let worldMatchesScreen = """
+        float4 paint(Fragment in, Values values) {
+            return length(in.worldPosition - float3(in.position, 0.0)) < 0.25
+                ? float4(0.0, 1.0, 0.0, 1.0) : float4(1.0, 0.0, 0.0, 1.0);
+        }
+        """
+
+    /// 緑の画素と赤の画素を数える (どちらでもない画素は背景)。
+    static func greenAndRed(_ image: DisplayImage) -> (green: Int, red: Int) {
+        var green = 0
+        var red = 0
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                let pixel = image[x, y]
+                if pixel.green > 200 && pixel.red < 40 { green += 1 }
+                if pixel.red > 200 && pixel.green < 40 { red += 1 }
+            }
+        }
+        return (green, red)
+    }
+
+    @Test("立体の断片には、置き場所の変換を通した世界の座標での位置が届く")
+    func theWorldPositionArrivesInWorldCoordinates() throws {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let probe = try canvas.makeShader(Self.worldMatchesScreen)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(probe)
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            // **ずらして回して拡げる** — 形自身の座標 (中心が 0) を渡していれば、ここで外れる
+            canvas.translate(60, 70, 0)
+            canvas.rotateZ(0.5)
+            canvas.scale(1.5, 1, 1)
+            canvas.plane(50, 50)
+        }
+        let image = try canvas.target.encodeForDisplay()
+        let (green, red) = Self.greenAndRed(image)
+        #expect(green > 2000, "面が世界の位置で塗られていない: 緑 \(green) 画素")
+        #expect(red == 0, "世界の位置が画素の位置と食い違う画素が \(red) ある")
+    }
+
+    @Test("視点を動かしても、世界の位置は置いた面の上に留まる")
+    func theWorldPositionStaysPutWhenTheCameraMoves() throws {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        // 面は世界の z = 0・中心 (64, 64)・一辺 80。**視点の座標を渡していれば** z も xy も外れる
+        let probe = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                float3 p = in.worldPosition;
+                return abs(p.z) < 0.25 && abs(p.x - 64.0) < 40.5 && abs(p.y - 64.0) < 40.5
+                    ? float4(0.0, 1.0, 0.0, 1.0) : float4(1.0, 0.0, 0.0, 1.0);
+            }
+            """)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(probe)
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.camera(
+                64 + Self.fittingDistance * sin(0.7), 40,
+                Self.fittingDistance * cos(0.7), 64, 64, 0, 0, 1, 0)
+            canvas.translate(64, 64, 0)
+            canvas.plane(80, 80)
+        }
+        let (green, red) = Self.greenAndRed(try canvas.target.encodeForDisplay())
+        #expect(green > 1000, "面が塗られていない: 緑 \(green) 画素")
+        #expect(red == 0, "視点を動かすと世界の位置が面から外れる画素が \(red) ある")
+    }
+
+    @Test("まとめ描き (shape(_:at:)) でも、置き場所ごとの世界の位置が届く")
+    func placedShapesCarryTheirWorldPosition() throws {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let probe = try canvas.makeShader(Self.worldMatchesScreen)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            // 形は記録した時点の断片で塗る (#1649) ので、断片を当ててから記録する
+            canvas.shader(probe)
+            let tile = canvas.createShape { canvas.plane(30, 30) }
+            // 置き場所が違えば世界の位置も違う — 1 か所目の値を使い回していれば、2 か所目が赤くなる
+            canvas.shape(tile, at: [Placement(x: 32, y: 40), Placement(x: 92, y: 88, rotation: Vector3(0, 0, 0.4))])
+        }
+        let image = try canvas.target.encodeForDisplay()
+        let (green, red) = Self.greenAndRed(image)
+        for point in [(32, 40), (92, 88)] {
+            let pixel = image[point.0, point.1]
+            #expect(pixel.green > 200 && pixel.red < 40, "\(point) の置き場所が世界の位置で塗られていない")
+        }
+        #expect(green > 1200, "まとめ描きの面が世界の位置で塗られていない: 緑 \(green) 画素")
+        #expect(red == 0, "まとめ描きで世界の位置が画素の位置と食い違う画素が \(red) ある")
+    }
+
+    /// 球 1 つと、まとめ描きの箱 2 つ (置き場所ごとに違う色) を置いた絵。
+    private func litScene(lit: Bool, paint body: String?) throws -> DisplayImage {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let painted = try body.map { try canvas.makeShader($0) }
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            if lit { canvas.lights() } else { canvas.noLights() }
+            canvas.noStroke()
+            canvas.fill(.linear(red: 0.8, green: 0.5, blue: 0.2))
+            // 形は記録した時点の断片で塗る (#1649) ので、断片を当ててから記録する
+            if let painted { canvas.shader(painted) }
+            let block = canvas.createShape { canvas.box(24) }
+            canvas.push()
+            canvas.translate(40, 44, 0)
+            canvas.rotateY(0.6)
+            canvas.sphere(30)
+            canvas.pop()
+            canvas.shape(
+                block,
+                at: [
+                    Placement(x: 32, y: 100, fill: .linear(red: 0.2, green: 0.4, blue: 0.9)),
+                    Placement(x: 96, y: 96, rotation: Vector3(0.3, 0.5, 0), fill: .linear(red: 0.3, green: 0.9, blue: 0.3)),
+                ])
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
+    @Test("光の下の立体でも、baseColor は光を通す前の色で、光を切った組み込みの塗りと 1 画素も違わない")
+    func theBaseColorIsTheColorBeforeTheLight() throws {
+        let flat = try litScene(lit: false, paint: nil)
+        let base = try litScene(
+            lit: true,
+            paint: """
+                float4 paint(Fragment in, Values values) {
+                    return in.baseColor;
+                }
+                """)
+        #expect(base.bytes == flat.bytes, "光の下の baseColor が、光を切った塗りの色と違う")
+        // **比べる相手が光で変わっていること** — 光が効かない絵どうしでは上の一致が何も言わない
+        let litColor = try litScene(
+            lit: true,
+            paint: """
+                float4 paint(Fragment in, Values values) {
+                    return in.color;
+                }
+                """)
+        #expect(litColor.bytes != flat.bytes, "光の下の color が光を切った絵と同じ (光が効いていない)")
+    }
+
+    @Test("光の効かない形 (平面・光を切った立体・立体の線) では、baseColor は color と同じ")
+    func theBaseColorMatchesTheColorWithoutLight() throws {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let probe = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                return all(in.baseColor == in.color)
+                    ? float4(0.0, 1.0, 0.0, 1.0) : float4(1.0, 0.0, 0.0, 1.0);
+            }
+            """)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shader(probe)
+            canvas.noStroke()
+            // 半透明 (乗算済み) — 4 成分そろって同じかを見る
+            canvas.fill(LinearRGBA(premultipliedRed: 0.54, green: 0.18, blue: 0.12, alpha: 0.6))
+            canvas.rect(8, 8, 40, 40)
+            canvas.push()
+            canvas.translate(92, 30, 0)
+            canvas.sphere(22)
+            canvas.pop()
+            // 立体の線は、光の下でも光を受けない
+            canvas.lights()
+            canvas.stroke(.linear(red: 0.2, green: 0.5, blue: 0.9))
+            canvas.strokeWeight(8)
+            canvas.beginShape(.lines)
+            canvas.vertex(10, 100, 0)
+            canvas.vertex(118, 100, 0)
+            canvas.endShape()
+        }
+        let image = try canvas.target.encodeForDisplay()
+        for point in [(28, 28), (92, 30), (64, 100)] {
+            let pixel = image[point.0, point.1]
+            #expect(pixel.green > 200 && pixel.red < 40, "\(point) で baseColor が color と違う")
+        }
+        #expect(Self.greenAndRed(image).red == 0, "baseColor が color と違う画素がある")
+    }
+
+    @Test("#2458 の作例のトゥーンは noLights() 無しで書け、lights() の下の球が 4 段の明暗に塗り分けられる")
+    func theToonExampleBandsTheSphereInFour() throws {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let toon = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                float n = max(dot(in.worldNormal, normalize(values.light)), 0.0);
+                float band = floor(n * values.bands) / values.bands;
+                return float4(in.baseColor.rgb * (0.3 + 0.7 * band), in.baseColor.a);
+            }
+            """,
+            values: ["light": .vector3(Vector3(0.5, -0.6, 1)), "bands": 4])
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            canvas.noStroke()
+            canvas.fill(.linear(red: 0.9, green: 0.6, blue: 0.3))
+            canvas.shader(toon)
+            canvas.translate(64, 64, 0)
+            canvas.sphere(50)
+        }
+        let image = try canvas.target.encodeForDisplay()
+        // 球の上の色ごとの画素数。縁の混ざった画素を数えないよう、多く出た色だけを段とみなす
+        var counts: [UInt32: Int] = [:]
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                let pixel = image[x, y]
+                guard pixel.red > 0 || pixel.green > 0 || pixel.blue > 0 else { continue }
+                counts[UInt32(pixel.red) << 16 | UInt32(pixel.green) << 8 | UInt32(pixel.blue), default: 0] += 1
+            }
+        }
+        let bands = counts.filter { $0.value > 60 }
+        #expect(bands.count == 4, "球の段の数が 4 でない: \(bands.count) (\(bands.values.sorted()))")
     }
 }

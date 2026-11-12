@@ -39,8 +39,8 @@ extension SketchPart {
     /// 合成を通るので、**混ぜ方が断片によって食い違わない。**
     ///
     /// `Fragment` から読めるもの: 面の中の位置 (`position` は画素の中心・`place` は 0…1)・
-    /// 読む面の位置 (`uv`)・図形の色 (`color`)・読んだ面の値 (`texel`)・秒数
-    /// (`time`)・面の大きさ (`resolution`)。
+    /// 読む面の位置 (`uv`)・図形の色 (`color`)・光を通す前の色 (`baseColor`)・読んだ面の値 (`texel`)・
+    /// 世界の座標での位置 (`worldPosition`。立体だけ)・秒数 (`time`)・面の大きさ (`resolution`)。
     ///
     /// **`uv` は形の中の位置で、`texture()` で絵を貼っていなくても届く** — 平面の図形は囲みの箱の 0…1、
     /// 立体はメッシュの位置 (箱は面ごと・球は経緯) で、白い 1×1 の絵を貼ったときと同じ値になる。
@@ -150,6 +150,19 @@ extension SketchPart {
     /// 前置きの配り方も、渡す値も、置き場も同じである。立体では `Fragment` の
     /// `color` に**光と材質を通したあとの色**が入るので、`in.color` をそのまま
     /// 返せば組み込みの塗りと同じ絵になり、そこから変えていける。
+    ///
+    /// 光の当たり方そのものを書き直す (トゥーン・点光源風の陰影) なら、光を通す**前**の色 `in.baseColor` と、
+    /// 世界の座標での位置 `in.worldPosition`・向き `in.worldNormal` を読む。`noLights()` で光を切らずに書ける:
+    ///
+    /// ```metal
+    /// float4 paint(Fragment in, Values values) {
+    ///     float n = max(dot(in.worldNormal, normalize(values.light)), 0.0);
+    ///     float band = floor(n * values.bands) / values.bands;
+    ///     return float4(in.baseColor.rgb * (0.3 + 0.7 * band), in.baseColor.a);
+    /// }
+    /// ```
+    ///
+    /// 平面の図形には光が当たらないので、`baseColor` は `color` と同じで、`worldPosition` は 0 である。
     ///
     /// 断片が書けるのは**その画素の色だけ**で、頂点の落とし方は差し替えられない。
     /// まとめ描き (``shape(_:at:)``) は頂点の側の仕組みなので、**断片を使っても

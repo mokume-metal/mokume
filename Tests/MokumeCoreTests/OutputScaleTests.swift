@@ -231,6 +231,37 @@ struct OutputScaleTests {
         #expect(one[64, 64].red > 0.5 && one[36, 64].red > 0.02 && one[36, 64].red < 0.5)
     }
 
+    /// #3573 の完了条件 5: 断片の `worldPosition` は世界の座標で測るので、倍率を掛けない。画素で数える
+    /// `position` は倍率を掛けて座標の単位で読むので、z = 0 の面の上では倍率によらず 2 つが一致する
+    /// (``SolidShaderTests/worldMatchesScreen``)。`worldPosition` に倍率が掛かっていれば、倍率 2・3 で外れる。
+    @Test("断片の worldPosition は、倍率 2・3 の下でも座標のまま (光とトゥーンの段がずれない)", arguments: [1, 2, 3])
+    func worldPositionIgnoresTheScale(_ factor: Int) throws {
+        let canvas = try Self.makeCanvas(scale: factor)
+        let probe = try canvas.makeShader(SolidShaderTests.worldMatchesScreen)
+        try Self.draw(on: canvas) {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(probe)
+            canvas.translate(60, 70, 0)
+            canvas.rotateZ(0.5)
+            canvas.plane(60, 60)
+        }
+        let pixels = try canvas.output.readPixels()
+        var green = 0
+        var red = 0
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                let pixel = pixels[x, y]
+                if pixel.green > 0.8 && pixel.red < 0.2 { green += 1 }
+                if pixel.red > 0.8 && pixel.green < 0.2 { red += 1 }
+            }
+        }
+        // 面は 60×60 の座標 = 倍率 N で (60N)² 画素。縁を除いても大半は緑
+        #expect(green > 3000 * factor * factor, "倍率 \(factor) の面が塗られていない: 緑 \(green) 画素")
+        #expect(red == 0, "倍率 \(factor) で worldPosition が座標と食い違う画素が \(red) ある")
+    }
+
     // MARK: - 字
 
     /// 完了条件 3: 字は倍率を掛けた画素で焼く。`textSize(24)` は倍率 2 で 48 の大きさ (1 オクターブ上の
