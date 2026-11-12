@@ -249,6 +249,83 @@ struct SwiftPMTests {
         #expect(package.resourceScope(forProduct: "Missing").required.count == 6)
     }
 
+    /// `Package.swift` から消した・改名した target の古い包み。**宣言に無いので閉包からは出てこず、置き場に
+    /// 残っていれば配られていた** (#4005)。このパッケージの宣言のパッケージ名を頭に持ち、どの依存のパッケージの
+    /// 名前でも説明できない包みだけを除く。
+    private static let staleDump = staleDump(named: "Demo")
+
+    private static func staleDump(named name: String) -> String {
+        """
+        {"name":"\(name)",
+         "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
+         "targets":[
+           {"name":"Demo","type":"executable",
+            "dependencies":[{"byName":["Lib",null]},{"product":["Foo","extras",null,null]}]},
+           {"name":"Lib","type":"regular","resources":[{"rule":{"copy":{}},"path":"res"}]}]}
+        """
+    }
+
+    @Test("宣言から消えた target の古い包みは除き、依存のパッケージの包みは残す")
+    func leftoverBundlesOfRemovedTargetsStayOut() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump))
+        let scope = package.resourceScope(
+            forProduct: "Demo",
+            beside: [
+                "Demo_Lib.bundle",
+                "Demo_DemoTests.bundle",  // 宣言から消した テストの target
+                "Demo_Old_Name.bundle",  // 名前に `_` を含む、消した target
+                "Demo_Extras_Foo.bundle",  // 依存 `Demo_Extras` の `Foo` (自分の名前を頭に持つ依存)
+                "mokume_MokumeCore.bundle",  // 依存 `mokume`
+                "Demonic_Foo.bundle",  // 頭が `Demo_` でない
+            ],
+            dependencyPackages: ["mokume", "Demo_Extras"])
+        #expect(scope.required == ["Demo_Lib.bundle"])
+        #expect(scope.excluded == ["Demo_DemoTests.bundle", "Demo_Old_Name.bundle"])
+    }
+
+    /// **名前の形だけでは決めない。** 自分のパッケージ名が依存のパッケージ名を頭に持つ (`Demo_Extras` と
+    /// `Demo`) と、`Demo_Extras_Gone.bundle` は消した target `Gone` とも、依存 `Demo` の target
+    /// `Extras_Gone` とも読める。どちらとも決められないものは除かない (入れすぎる側へ倒す)。パッケージ名に
+    /// `_` があっても、依存で説明できない包みは除く。
+    @Test(
+        "パッケージ名に `_` があっても、依存のパッケージの名前で説明できる包みは除かない",
+        arguments: [
+            (["Demo"], Set<String>()),
+            (["mokume"], Set(["Demo_Extras_Gone.bundle"])),
+        ])
+    func ambiguousLeftoversStayIn(dependencies: [String], excluded: Set<String>) throws {
+        let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump(named: "Demo_Extras")))
+        let scope = package.resourceScope(
+            forProduct: "Demo",
+            beside: ["Demo_Extras_Lib.bundle", "Demo_Extras_Gone.bundle", "Demo_Foo.bundle"],
+            dependencyPackages: dependencies)
+        #expect(scope.required == ["Demo_Extras_Lib.bundle"])
+        #expect(scope.excluded == excluded)
+    }
+
+    /// **依存の名前が読めなければ、古い包みを除かない** (#3982 の約束)。どの包みが依存のものかを決められない
+    /// ので、推し量らない。閉包の外の宣言された target は、これまでどおり除く。
+    @Test("依存のパッケージの名前が読めなければ、古い包みは除かない")
+    func leftoversStayWithoutDependencyNames() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump))
+        #expect(
+            package.resourceScope(
+                forProduct: "Demo", beside: ["Demo_Lib.bundle", "Demo_DemoTests.bundle"],
+                dependencyPackages: nil
+            ).excluded.isEmpty)
+    }
+
+    /// 閉包が求められない (宣言が読めない) ときも、古い包みを含めて何も除かない。
+    @Test("閉包が求められなければ、古い包みも除かない")
+    func leftoversStayWithoutAClosure() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump))
+        let scope = package.resourceScope(
+            forProduct: "Missing", beside: ["Demo_Lib.bundle", "Demo_DemoTests.bundle"],
+            dependencyPackages: ["mokume"])
+        #expect(scope.excluded.isEmpty)
+        #expect(scope.required == ["Demo_Lib.bundle"])
+    }
+
     @Test("名乗っている macOS の下限を読む")
     func theMinimumMacOSVersionIsRead() throws {
         let dump = """
@@ -310,6 +387,25 @@ struct SwiftPMTests {
             ]}}
             """)
         #expect(state.resolved("mokume", under: URL(fileURLWithPath: "/sketch")) == nil)
+    }
+
+    /// 依存のパッケージの名前 (#4005)。道具立ては資材の包みを宣言の名前 (`name:`) で名付けるので
+    /// (`Demo_Extras_Foo.bundle`)、置き場の名前 (identity・`extras-dir`) だけでは足りない。両方を返す
+    /// (多く返すほど除く包みが減る側へ倒れる)。形は Swift 6.4 の `swift build` が書いたものを写した。
+    @Test("依存のパッケージの名前は、宣言の名前と identity の両方を返す")
+    func dependencyPackageNamesIncludeTheDeclaredName() throws {
+        let state = try workspaceState(
+            """
+            {"object":{"artifacts":[],"dependencies":[
+              {"basedOn":null,
+               "packageRef":{"identity":"extras-dir","kind":"fileSystem",
+                             "location":"/work/extras-dir","name":"Demo_Extras"},
+               "state":{"name":"fileSystem","path":"/work/extras-dir"},"subpath":"extras-dir"},
+              {"packageRef":{"name":"mokume"},
+               "state":{"name":"sourceControlCheckout"},"subpath":"mokume"}
+            ],"prebuilts":[]},"version":7}
+            """)
+        #expect(Set(state.packageNames) == ["Demo_Extras", "extras-dir", "mokume"])
     }
 
     // MARK: - Package.resolved

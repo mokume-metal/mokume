@@ -117,8 +117,13 @@ enum BundleCommand {
             configuration: configuration, place: .inPackage(.packaging), product: product)
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
 
-        // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)
-        let scope = declared?.resourceScope(forProduct: product)
+        // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)。宣言から消えた
+        // target の古い包みも除く — 置き場は利用者の `swift build` / `swift test` と共有なので残る (#4005)
+        let scope = declared.map {
+            Self.resourceScope(
+                of: $0, product: product, executable: executable,
+                buildDirectory: context.directory(under: directory))
+        }
         let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
         let published = try distribute(
             executable: executable, identity: identity,
@@ -862,6 +867,22 @@ enum BundleCommand {
                 at: executable.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? []
         return listing.filter { $0.pathExtension == "bundle" && !excluding.contains($0.lastPathComponent) }
             .sorted { $0.path < $1.path }
+    }
+
+    /// 配る範囲。宣言の閉包 (#3982) に、実行ファイルの隣の並びとビルドの置き場の依存の名前
+    /// (`workspace-state.json`) から決めた、宣言から消えた target の古い包みの除外を足す (#4005)。
+    /// 依存の名前が読めなければ、古い包みは除かない (``SwiftPM/Package/resourceScope(forProduct:beside:dependencyPackages:)``)。
+    ///
+    /// - Parameter buildDirectory: ビルドの置き場そのもの (``BuildContext/directory(under:)``)。
+    static func resourceScope(
+        of declared: SwiftPM.Package, product: String, executable: URL, buildDirectory: URL
+    ) -> SwiftPM.Package.ResourceScope {
+        let state = SwiftPM.read(
+            SwiftPM.WorkspaceState.self, at: buildDirectory.appendingPathComponent("workspace-state.json"))
+        return declared.resourceScope(
+            forProduct: product,
+            beside: resourceBundles(besides: executable, excluding: []).map(\.lastPathComponent),
+            dependencyPackages: state?.packageNames)
     }
 
     // MARK: - 配る前の検査

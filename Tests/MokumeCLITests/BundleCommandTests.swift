@@ -973,6 +973,67 @@ struct BundleCommandTests {
         }
     }
 
+    /// **`Package.swift` から消した target の古い包みは入れない** (#4005)。束ねる置き場は利用者の
+    /// `swift build` / `swift test` と共有なので、消す前に組んだ `Sketch_DemoTests.bundle` が隣に残る。
+    /// 宣言の閉包からは出てこないので、隣の並びとビルドの置き場の依存の名前 (`workspace-state.json`)
+    /// から決める。自分のパッケージ名を頭に持つ依存 (`Sketch_Extras`) の包みは入れる。依存の名前が
+    /// 読めなければ (置き場に `workspace-state.json` が無い) 何も足さずに除かない。
+    @Test(
+        "宣言から消えた target の古い包みは入らず、依存の包みは入る",
+        arguments: [true, false])
+    func leftoverBundlesOfRemovedTargetsStayOut(stateReadable: Bool) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let bin = executable.deletingLastPathComponent()
+        for name in [
+            "Sketch_Demo.bundle", "Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle",
+            "mokume_MokumeCore.bundle",
+        ] {
+            let inside = bin.appendingPathComponent("\(name)/Contents/Resources", isDirectory: true)
+            try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        }
+        let build = root.appendingPathComponent(".build", isDirectory: true)
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        if stateReadable {
+            try """
+            {"object":{"dependencies":[
+              {"packageRef":{"identity":"extras","name":"Sketch_Extras"},
+               "state":{"name":"fileSystem","path":"/work/extras"}},
+              {"packageRef":{"identity":"mokume","name":"mokume"},
+               "state":{"name":"sourceControlCheckout"},"subpath":"mokume"},
+              {"packageRef":{"identity":"demo","name":"demo"},
+               "state":{"name":"sourceControlCheckout"},"subpath":"demo"}]}}
+            """.write(
+                to: build.appendingPathComponent("workspace-state.json"), atomically: true,
+                encoding: .utf8)
+        }
+        let dump = """
+            {"name":"Sketch",
+             "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
+             "targets":[
+               {"name":"Demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
+                "dependencies":[{"product":["Foo","extras",null,null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+        let scope = BundleCommand.resourceScope(
+            of: package, product: "Demo", executable: executable, buildDirectory: build)
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: identity, minimumSystemVersion: "26.0",
+            into: root.appendingPathComponent("out", isDirectory: true), excluding: scope.excluded)
+        let resources = app.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let shipped = try FileManager.default.contentsOfDirectory(atPath: resources.path).sorted()
+        #expect(
+            shipped
+                == ([
+                    "Sketch_Demo.bundle", "Sketch_Extras_Foo.bundle", "demo_demo.bundle",
+                    "mokume_MokumeCore.bundle",
+                ] + (stateReadable ? [] : ["Sketch_DemoTests.bundle"])).sorted())
+        #expect(scope.required == ["Sketch_Demo.bundle"])
+        #expect(throws: Never.self) { try BundleCommand.check(app, contains: scope.required) }
+    }
+
     /// 確かめ方まで言わないと、束ねた側の手元では成功したようにしか見えない。
     @Test("束ねた後の報せが、退避して起動する手順を含む")
     func theReportTellsHowToCheck() {

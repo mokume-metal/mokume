@@ -95,6 +95,8 @@ nonisolated enum SwiftPM {
             /// 配るものに入れない包みの名前 (このパッケージの target のうち、閉包の外のもの)。資材の
             /// 宣言が無くても道具立てが包みを作る種類があるので、宣言の有無は見ない。他のパッケージの
             /// 包みは宣言を辿らずに入れる (依存が持ち込む資材は無ければ絵が出ない) ので、ここには載らない。
+            /// 隣の並びを渡した形 (``resourceScope(forProduct:beside:dependencyPackages:)``) では、宣言から
+            /// 消えた target の古い包みも載る (#4005)。
             let excluded: Set<String>
         }
 
@@ -109,6 +111,31 @@ nonisolated enum SwiftPM {
                 excluded: used.map { used in
                     Set(targets.filter { !used.contains($0.name) }.map { "\(name)_\($0.name).bundle" })
                 } ?? [])
+        }
+
+        /// `product` を配る範囲に、**宣言から消えた target の古い包み**の除外を足したもの (#4005)。
+        ///
+        /// 束ねる置き場は利用者の `swift build` / `swift test` と共有なので、`Package.swift` から消した・
+        /// 改名した target の包みが隣に残る。宣言に無いので閉包からは出てこない。除くのは、隣に並んだ包みの
+        /// うち、**このパッケージの宣言の名前**を頭に持ち (`<name>_…`)、いまの宣言のどの target の包みでもなく、
+        /// **どの依存のパッケージの名前 (`<依存>_…`) でも説明できない**もの。自分の名前が依存の名前を頭に
+        /// 持つ (`Demo_Extras` と `Demo`) と、`Demo_Extras_Gone.bundle` はどちらのものとも読めるので除かない
+        /// (入れすぎる側へ倒す)。依存の名前が読めない (`nil`)・閉包が求められないときは、古い包みを除かない。
+        ///
+        /// - Parameters:
+        ///   - built: 実行ファイルの隣に並んだ包みの名前。
+        ///   - dependencyPackages: 依存のパッケージの名前 (``WorkspaceState/packageNames``)。読めなければ `nil`。
+        func resourceScope(
+            forProduct product: String, beside built: [String], dependencyPackages: [String]?
+        ) -> ResourceScope {
+            let scope = resourceScope(forProduct: product)
+            guard let dependencyPackages, targetClosure(ofProduct: product) != nil else { return scope }
+            let declared = Set(targets.map { "\(name)_\($0.name).bundle" })
+            let leftovers = built.filter { bundle in
+                bundle.hasSuffix(".bundle") && bundle.hasPrefix("\(name)_") && !declared.contains(bundle)
+                    && !dependencyPackages.contains { bundle.hasPrefix("\($0)_") }
+            }
+            return ResourceScope(required: scope.required, excluded: scope.excluded.union(leftovers))
         }
 
         /// `product` を作る target と、それらがこのパッケージの中で (推移的に) 依存する target の名前。
@@ -490,6 +517,7 @@ nonisolated enum SwiftPM {
 
             struct Reference: Decodable {
                 let name: String
+                let identity: String?
             }
 
             struct State: Decodable {
@@ -497,6 +525,13 @@ nonisolated enum SwiftPM {
                 /// パスで指した依存の在処。`name` が `fileSystem` のときだけ在る。
                 let path: String?
             }
+        }
+
+        /// 依存のパッケージの名前 (#4005)。**宣言の名前 (`name`) と identity の両方を返す** — 道具立ては
+        /// 資材の包みを宣言の名前で名付ける (`Demo_Extras_Foo.bundle`) が、ここに書かれる名前が宣言の名前で
+        /// あることは道具立ての版に依る。多く返すほど、束ねる側が除く包みは減る (入れすぎる側へ倒す)。
+        var packageNames: [String] {
+            object.dependencies.flatMap { [$0.packageRef.name] + ($0.packageRef.identity.map { [$0] } ?? []) }
         }
 
         /// 名前で引いた依存の実体。
