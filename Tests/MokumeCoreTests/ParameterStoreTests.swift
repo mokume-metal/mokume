@@ -979,6 +979,9 @@ struct ParameterStoreTests {
         "整数でない int・成分の 1e400 も、その 1 件だけを名指しで捨てる",
         arguments: [
             (#"{"name":"count","type":"int","value":2.5}"#, "count", "typeMismatch"),
+            // 桁の多い端数も 2.5 と同じ (#4015)。直す前は端数を捨てた 1・12345678901234567 として読んでいた
+            (#"{"name":"count","type":"int","value":1.00000000000000000000001}"#, "count", "typeMismatch"),
+            (#"{"name":"count","type":"int","value":12345678901234567.5}"#, "count", "typeMismatch"),
             (#"{"name":"pair","type":"vec2","value":[1e400,0]}"#, "pair", "notFinite"),
             (#"{"name":"triple","type":"vec3","value":[0,0,-1e400]}"#, "triple", "notFinite"),
             (#"{"name":"tint","type":"color","value":{"red":1e400,"green":0,"blue":0,"alpha":1}}"#, "tint", "notFinite"),

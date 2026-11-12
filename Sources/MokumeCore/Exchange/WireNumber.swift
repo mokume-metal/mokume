@@ -36,7 +36,8 @@ nonisolated enum WireNumber<Value> {
     }
 }
 
-/// 10 進の値を整数として読む。外から届いた数の読み手 (観測の要求と MCP サーバの引数) が共有する。
+/// 10 進の値を整数として読む。外から届いた数の読み手 (観測の要求・MCP サーバの引数・入力の線・つまみの
+/// 値・共有する画面の目録) が共有する。
 package nonisolated enum WholeDecimal {
     /// **整数でなければ `nil`。** `Int` に収まらない整数は符号の側の端 (`Int.max` / `Int.min`) に寄せる。
     ///
@@ -87,6 +88,57 @@ extension KeyedDecodingContainer {
             }
             return .overflow(negative: shape.negative)
         }
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// 整数の鍵を読む。**桁の多い端数つきの数も、`2.5` と同じく読めない値として断る**
+    /// ([#4015](https://github.com/mokume-metal/mokume/issues/4015))。
+    ///
+    /// `JSONDecoder` の整数への読みは、`2.5` を断るのに、`1.00000000000000000000001` を断らずに 1 と、
+    /// `12345678901234567.5` を 12345678901234567 と読む。読む前に `Decimal` で読んで、整数かを 10 進の値で
+    /// 決める (``WholeDecimal/integer(_:)``)。整数なら今までの読みに任せるので、整数の綴り (`3.0`・`1e3`) と
+    /// 型の範囲の外の整数の扱いは変わらない。`Decimal` に読めない値 (`1e400`・文字列) も今までの読みに任せる。
+    nonisolated func decodeWhole<Integer: FixedWidthInteger & Decodable>(
+        _ type: Integer.Type, forKey key: Key
+    ) throws -> Integer {
+        try refuseFraction(forKey: key)
+        return try decode(type, forKey: key)
+    }
+
+    /// ``decodeWhole(_:forKey:)`` の、鍵が無い・`null` を `nil` と読む形。
+    nonisolated func decodeWholeIfPresent<Integer: FixedWidthInteger & Decodable>(
+        _ type: Integer.Type, forKey key: Key
+    ) throws -> Integer? {
+        try refuseFraction(forKey: key)
+        return try decodeIfPresent(type, forKey: key)
+    }
+
+    /// ``decodeWhole(_:forKey:)`` の、整数の配列を読む形。端数つきの数が 1 つでもあれば断る。
+    nonisolated func decodeWhole<Integer: FixedWidthInteger & Decodable>(
+        _ type: [Integer].Type, forKey key: Key
+    ) throws -> [Integer] {
+        if let numbers = try? decode([Decimal].self, forKey: key),
+            let fraction = numbers.first(where: { WholeDecimal.integer($0) == nil })
+        {
+            throw Self.notWhole(fraction, forKey: key, in: self)
+        }
+        return try decode(type, forKey: key)
+    }
+
+    private nonisolated func refuseFraction(forKey key: Key) throws {
+        guard let number = try? decodeIfPresent(Decimal.self, forKey: key),
+            WholeDecimal.integer(number) == nil
+        else { return }
+        throw Self.notWhole(number, forKey: key, in: self)
+    }
+
+    /// `2.5` と同じく `DecodingError` で断る (最上位では `JSONDecoder` も `2.5` を `dataCorrupted` で断る)。
+    private nonisolated static func notWhole(
+        _ number: Decimal, forKey key: Key, in container: Self
+    ) -> DecodingError {
+        DecodingError.dataCorruptedError(
+            forKey: key, in: container, debugDescription: "Number \(number) is not a whole number")
     }
 }
 
