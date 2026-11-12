@@ -180,14 +180,6 @@ final class SharedFrameSurface {
     /// 頼んでいない** — 道具は自分が付けた元の題名に戻す。古いライブラリの子は載せない。
     static let windowTitleAttribute = "mokume.windowTitle"
 
-    /// スケッチがウィンドウの題名を変えるよう頼んでいるときの、題名を載せる属性の名前 (文字列・
-    /// [#3709](https://github.com/mokume-metal/mokume/issues/3709))。
-    ///
-    /// ``cursorHiddenAttribute`` と同じ形で、**題名を変えるのは道具の作品のウィンドウである** (子はウィンドウを持たない)。
-    /// 頼みは絵と同じ面に載せて毎フレーム渡し、作品のウィンドウは**自分が映す世代の面**の頼みに従う。**載っていなければ
-    /// 頼んでいない** — 道具は自分が付けた元の題名に戻す。古いライブラリの子は載せない。
-    static let windowTitleAttribute = "mokume.windowTitle"
-
     /// 面の番号を置くファイルの名前。
     static let manifestName = "surface.json"
 
