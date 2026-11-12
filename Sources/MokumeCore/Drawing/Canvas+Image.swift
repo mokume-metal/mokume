@@ -27,8 +27,8 @@ extension Canvas {
     }
 
     /// 種類の手がかり (拡張子) を添えて絵を読む。手がかりは中身から種類が分からないときだけ効く
-    /// (``ImageFile``)。**控えの鍵は名前だけ** — 同じ名前を手がかりを変えて読んでも、2 度目は控えを返す。
-    func loadImage(_ path: String, extension kind: String) throws(ImageFailure) -> Image {
+    /// (`ImageFile.hints(_:)`)。**控えの鍵は名前だけ** — 同じ名前を手がかりを変えて読んでも、2 度目は控えを返す。
+    public func loadImage(_ path: String, extension kind: String) throws(ImageFailure) -> Image {
         try loadImage(path, kind: Optional(kind))
     }
 
@@ -59,7 +59,7 @@ extension Canvas {
 
     /// 種類の手がかり (拡張子) を添えて絵を読む。読んでいる間、他の仕事を止めない。手がかりと控えの
     /// 扱いは ``loadImage(_:extension:)`` と同じ。
-    func requestImage(_ path: String, extension kind: String) async throws(ImageFailure) -> Image {
+    public func requestImage(_ path: String, extension kind: String) async throws(ImageFailure) -> Image {
         try await requestImage(path, kind: Optional(kind))
     }
 
