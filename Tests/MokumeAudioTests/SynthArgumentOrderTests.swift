@@ -19,8 +19,11 @@ struct SynthArgumentOrderTests {
     private static let perFrame = 800
 
     /// 持ち主のいないステージを機材に出さない流れで作り、`setUp` で音を鳴らして `frames` フレーム描かせる。
+    ///
+    /// `act` は各フレームの `supply()` の前に、フレームの番号 (0 から) で呼ぶ (鳴っている最中・止めた後の操作)。
     private func heard(
         frames: Int = 12, notices: NoticeLog = NoticeLog(),
+        act: (Int) -> Void = { _ in },
         _ setUp: (SynthStage) -> Void
     ) throws -> Stereo {
         let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
@@ -30,7 +33,8 @@ struct SynthArgumentOrderTests {
         stage.pace = .speaker(player)
         setUp(stage)
         var result = Stereo()
-        for _ in 0..<frames {
+        for frame in 0..<frames {
+            act(frame)
             stage.supply()
             let piece = try renderStereo(flow, Self.perFrame)
             result.left += piece.left
@@ -75,18 +79,8 @@ struct SynthArgumentOrderTests {
         #expect(loudest(lastFrame(short.left)) > 0.1, "\(form.label): 左 \(loudest(short.left))")
     }
 
-    @Test("Noise の 1 引数の形は定位を中央・オフセットを 0 に戻し、3 引数の形の 2 つ目はこれまでどおりオフセット")
-    func noiseKeepsTheOtherForms() throws {
-        // 1 引数: 前に決めた定位とオフセットは 0 に戻る
-        let single = try heard { stage in
-            let noise = WhiteNoise(stage: stage)
-            noise.set(0.5, 0.3, -1)
-            noise.play(0.5)
-        }
-        let center = try heard { WhiteNoise(stage: $0).play(0.5, 0, 0) }
-        #expect(mismatch(single, center) == nil)
-        #expect(mismatch(single.left, single.right) == nil, "中央なら左右は同じ")
-        // 3 引数: 2 つ目はオフセット。中央のまま、波形が上へずれる
+    @Test("Noise の 3 引数の形の 2 つ目はこれまでどおりオフセットで、中央のまま波形が上へずれる")
+    func noiseTakesTheOffsetSecondOfThree() throws {
         let shifted = try heard { WhiteNoise(stage: $0).play(0.2, 0.3, 0) }
         #expect(mismatch(shifted.left, shifted.right) == nil)
         #expect(mean(shifted.left) > 0.1, "平均 \(mean(shifted.left))")
@@ -115,17 +109,139 @@ struct SynthArgumentOrderTests {
         #expect(abs(mean(short.left)) < 0.01, "平均 \(mean(short.left))")
     }
 
-    @Test("Oscillator.set の 2 引数の形は定位を中央・オフセットを 0 に戻す")
-    func oscillatorSetWithTwoResets() throws {
-        let two = try heard { stage in
-            let osc = SinOsc(stage: stage)
-            osc.set(440, 0.5, 0.3, -1)
-            osc.set(440, 0.5)
-            osc.play()
+    // MARK: - 省いた値は保つ (#3719 の 2026-11-13 の決定 1)
+
+    /// 省いた値を保つかを見る組。`prepare` が先に決めた値を、`call` の形が省く。
+    private struct Kept {
+        var label: String
+        /// 先に決めておく値 (省かれる値)。
+        var prepare: (SynthSource) -> Void
+        /// 省いた形の呼び出し (鳴らす形・決めるだけの形)。
+        var call: (SynthSource) -> Void
+        /// 左へ寄せたままなら `true` (右が無音)。
+        var keepsLeft: Bool
+        /// オフセット 0.3 を保つなら `true` (平均が上へずれる)。
+        var keepsOffset: Bool
+    }
+
+    private static let kept: [Kept] = [
+        Kept(
+            label: "noise.pan(-1) の後の play(amp)", prepare: { $0.pan(-1) },
+            call: { ($0 as? Noise)?.play(0.5) }, keepsLeft: true, keepsOffset: false),
+        Kept(
+            label: "noise.pan(-1) の後の play(amp, at:)", prepare: { $0.pan(-1) },
+            call: { ($0 as? Noise)?.play(0.5, at: 0) }, keepsLeft: true, keepsOffset: false),
+        Kept(
+            label: "noise.pan(-1) の後の set(amp)", prepare: { $0.pan(-1) },
+            call: { ($0 as? Noise)?.set(0.5); $0.play() }, keepsLeft: true, keepsOffset: false),
+        Kept(
+            label: "noise.add(0.3) の後の play(amp, pos)", prepare: { $0.add(0.3) },
+            call: { ($0 as? Noise)?.play(0.2, -1) }, keepsLeft: true, keepsOffset: true),
+        Kept(
+            label: "noise.add(0.3) の後の play(amp, pos, at:)", prepare: { $0.add(0.3) },
+            call: { ($0 as? Noise)?.play(0.2, -1, at: 0) }, keepsLeft: true, keepsOffset: true),
+        Kept(
+            label: "noise.add(0.3) の後の set(amp, pos)", prepare: { $0.add(0.3) },
+            call: { ($0 as? Noise)?.set(0.2, -1); $0.play() }, keepsLeft: true, keepsOffset: true),
+        Kept(
+            label: "osc.pan(-1) の後の play(freq, amp)", prepare: { $0.pan(-1) },
+            call: { ($0 as? Oscillator)?.play(440, 0.5) }, keepsLeft: true, keepsOffset: false),
+        Kept(
+            label: "osc.pan(-1) の後の play(freq, amp, at:)", prepare: { $0.pan(-1) },
+            call: { ($0 as? Oscillator)?.play(440, 0.5, at: 0) }, keepsLeft: true, keepsOffset: false),
+        Kept(
+            label: "osc.pan(-1) の後の play(freq, amp, add)", prepare: { $0.pan(-1) },
+            call: { ($0 as? Oscillator)?.play(440, 0.5, 0.3) }, keepsLeft: true, keepsOffset: true),
+        Kept(
+            label: "osc.pan(-1) の後の play(freq, amp, add, at:)", prepare: { $0.pan(-1) },
+            call: { ($0 as? Oscillator)?.play(440, 0.5, 0.3, at: 0) }, keepsLeft: true, keepsOffset: true),
+        Kept(
+            label: "osc.pan(-1) の後の set(freq, amp)", prepare: { $0.pan(-1) },
+            call: { ($0 as? Oscillator)?.set(440, 0.5); $0.play() }, keepsLeft: true, keepsOffset: false),
+        Kept(
+            label: "osc.add(0.3) の後の set(freq, amp, pos)", prepare: { $0.add(0.3) },
+            call: { ($0 as? Oscillator)?.set(440, 0.5, -1); $0.play() }, keepsLeft: true, keepsOffset: true),
+    ]
+
+    /// 左へ寄せたまま・オフセットを保ったままかを、寄り切った最後のフレームで見る。
+    private func expectKept(_ sound: Stereo, _ form: Kept, _ when: String) {
+        let left = lastFrame(sound.left)
+        let right = loudest(lastFrame(sound.right))
+        if form.keepsLeft {
+            #expect(right < 1e-6, "\(form.label) (\(when)): 右 \(right)")
+            #expect(loudest(left) > 0.1, "\(form.label) (\(when)): 左 \(loudest(left))")
         }
-        let center = try heard { SinOsc(stage: $0).play(440, 0.5) }
-        #expect(mismatch(two, center) == nil)
-        #expect(mismatch(two.left, two.right) == nil)
+        if form.keepsOffset {
+            #expect(mean(left) > 0.2, "\(form.label) (\(when)): 平均 \(mean(left))")
+        } else {
+            #expect(abs(mean(left)) < 0.05, "\(form.label) (\(when)): 平均 \(mean(left))")
+        }
+    }
+
+    private func source(_ form: Kept, _ stage: SynthStage) -> SynthSource {
+        form.label.hasPrefix("noise") ? WhiteNoise(stage: stage) : SinOsc(stage: stage)
+    }
+
+    @Test("引数を省いた形は、省いた値 (定位・オフセット) を今のまま保つ。鳴らす前に決めた値", arguments: 0..<12)
+    func omittedValuesAreKept(_ index: Int) throws {
+        let form = Self.kept[index]
+        let sound = try heard { stage in
+            let made = source(form, stage)
+            form.prepare(made)
+            form.call(made)
+        }
+        expectKept(sound, form, "鳴らす前")
+    }
+
+    @Test("鳴っている最中と、止めた後に呼んでも、省いた値は今のまま保つ", arguments: 0..<12)
+    func omittedValuesAreKeptWhilePlayingAndAfterStop(_ index: Int) throws {
+        let form = Self.kept[index]
+        // 鳴っている最中: 先に決めた値で鳴らしておき、6 フレーム目に省いた形を呼ぶ
+        var playing: SynthSource?
+        let during = try heard(
+            frames: 18,
+            act: { frame in
+                if frame == 6, let playing { form.call(playing) }
+            }
+        ) { stage in
+            let made = source(form, stage)
+            form.prepare(made)
+            made.play()
+            playing = made
+        }
+        expectKept(during, form, "鳴っている最中")
+        // 止めた後: 鳴らして止め、省いた形で鳴らし直す
+        var stopped: SynthSource?
+        let after = try heard(
+            frames: 18,
+            act: { frame in
+                if frame == 4 { stopped?.stop() }
+                if frame == 8, let stopped { form.call(stopped) }
+            }
+        ) { stage in
+            let made = source(form, stage)
+            form.prepare(made)
+            made.play()
+            stopped = made
+        }
+        expectKept(after, form, "止めた後")
+    }
+
+    @Test("作った直後に省いた形で鳴らすと、省いた値は既定 (オフセット 0・定位 中央) のまま")
+    func omittedValuesStartAtTheDefaults() throws {
+        let osc = try heard { SinOsc(stage: $0).play(440, 0.5) }
+        #expect(mismatch(osc.left, osc.right) == nil, "中央なら左右は同じ")
+        #expect(abs(mean(osc.left)) < 0.01, "平均 \(mean(osc.left))")
+        let noise = try heard { WhiteNoise(stage: $0).play(0.5) }
+        #expect(mismatch(noise.left, noise.right) == nil)
+        // 引数なしの play() も、作った直後なら同じ既定で鳴る
+        let bare = try heard { stage in
+            let made = SinOsc(stage: stage)
+            made.freq(440)
+            made.amp(0.5)
+            made.play()
+        }
+        #expect(mismatch(bare, osc) == nil)
     }
 
     // MARK: - Delay
@@ -186,9 +302,60 @@ struct SynthArgumentOrderTests {
         let untouched = try heard(frames: 30) { stage in
             let osc = SinOsc(stage: stage)
             osc.play(440, 0.5)
-            Delay(stage: stage).process(osc, 2)
+            Delay(stage: stage).process(osc, 2, 0.25)
         }
         #expect(mismatch(ignored, untouched) == nil)
+        #expect(nanNotices.lines.count == 1, "\(nanNotices.lines)")
+    }
+
+    // MARK: - 2 引数の Delay.process (#3719 の 2026-11-13 の決定 2)
+
+    /// 440 Hz の正弦を鳴らして `route` でディレイへ通し、`frames` フレーム描かせる。
+    private func delayed(
+        frames: Int = 80, notices: NoticeLog = NoticeLog(),
+        _ route: @escaping (Delay, SinOsc) -> Void
+    ) throws -> Stereo {
+        try heard(frames: frames, notices: notices) { stage in
+            let osc = SinOsc(stage: stage)
+            osc.play(440, 0.5)
+            route(Delay(stage: stage), osc)
+        }
+    }
+
+    @Test("Delay.process の 2 引数の形は、遅れも上限と同じ値にし、前に決めた遅れを上書きする")
+    func twoArgumentProcessSetsTheDelayToTheMaximum() throws {
+        let two = try delayed { $0.process($1, 1) }
+        let same = try delayed { $0.process($1, 1, 1) }
+        let quarter = try delayed { $0.process($1, 1, 0.25) }
+        #expect(mismatch(two, same) == nil)
+        #expect(mismatch(two, quarter) != nil, "前の振る舞い (既定の 0.25 秒のまま) と区別できる")
+        // 先に time(_:) で決めた遅れも、2 引数の形が上書きする (手本と同じ)
+        let overwritten = try delayed { delay, osc in
+            delay.time(0.1)
+            delay.process(osc, 1)
+        }
+        #expect(mismatch(overwritten, same) == nil)
+        // 後に time(_:) を呼べば、上限より短い遅れにできる
+        let shortened = try delayed { delay, osc in
+            delay.process(osc, 1)
+            delay.time(0.25)
+        }
+        #expect(mismatch(shortened, quarter) == nil)
+    }
+
+    @Test("Delay.process の 2 引数の上限は 0〜5 秒へ丸めて遅れもその値にし、数でない値は上限も遅れも変えない")
+    func twoArgumentProcessClampsAndIgnores() throws {
+        let notices = NoticeLog()
+        let clamped = try delayed(frames: 30, notices: notices) { $0.process($1, 9) }
+        let atFive = try delayed(frames: 30) { $0.process($1, 5, 5) }
+        #expect(mismatch(clamped, atFive) == nil)
+        #expect(notices.lines.count == 1, "\(notices.lines)")
+        #expect(notices.lines.first?.hasPrefix("process() takes a maxDelayTime") == true, "\(notices.lines)")
+
+        let nanNotices = NoticeLog()
+        let ignored = try delayed(frames: 30, notices: nanNotices) { $0.process($1, .nan) }
+        let plain = try delayed(frames: 30) { $0.process($1) }
+        #expect(mismatch(ignored, plain) == nil)
         #expect(nanNotices.lines.count == 1, "\(nanNotices.lines)")
     }
 }
