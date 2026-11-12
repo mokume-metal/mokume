@@ -331,7 +331,8 @@ package final class InputState {
                 // 取り下げた後にも届きうる
                 warnings.warnOnce(
                     .unawaitedSelection,
-                    "Dropped a fileSelected input event: no selectInput() is waiting for a result "
+                    "Dropped a fileSelected input event: no selectInput(), selectOutput() or "
+                        + "selectFolder() is waiting for a result "
                         + "(later events like this are dropped without saying so again)")
                 return
             }

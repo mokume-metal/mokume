@@ -485,6 +485,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 | p5 `keyIsDown(code)` | ``Keyboard/isPressed(_:)`` | `keyboard.isPressed(.arrowLeft)` と ``SketchPart/keyboard`` に問い合わせる |
 | p5 `drop(callback)` (ドロップした `p5.File` を受ける) | ``Sketch/fileDropped(_:)`` | `func fileDropped(_ paths: [String])` と書く (ラベルを付けると呼ばれない)。渡るのは中身ではなく絶対パスで、`loadImage(paths[0])` のようにそのまま読む。ドロップした位置は ``SketchPart/mouseX``・``SketchPart/mouseY`` から読む |
 | `selectInput(prompt, callback)` | ``SketchPart/selectInput(_:)`` | コールバックの代わりに `async` で結果を返す。`Task { if let path = await selectInput("CSV を選ぶ") { … } }` と書き、取り消せば `nil`。パスは絶対パスで、`loadTable(path)` などにそのまま渡せる |
+| `selectOutput(prompt, callback)` | ``SketchPart/selectOutput(_:)`` | `Task { if let path = await selectOutput("保存先を選ぶ") { try? saveStrings(lines, path) } }` と書き、取り消せば `nil`。返るのはまだ無いファイルでもよい置き場の絶対パスで、書くのはスケッチ |
+| `selectFolder(prompt, callback)` | ``SketchPart/selectFolder(_:)`` | `Task { if let folder = await selectFolder("フォルダを選ぶ") { … } }` と書き、取り消せば `nil`。待ちは `selectInput`・`selectOutput` と 1 つを共有し、後から呼んだ方が前を `nil` で終える |
 | `keyCode == UP` | ``SketchPart/keyCode`` | `keyCode == .arrowUp` と ``Key`` で書く |
 | `mouseButton == LEFT` | ``SketchPart/mouseButton`` | `mouseButton == .left` と ``MouseButton`` で書く |
 | p5 `mouseIsPressed` | ``SketchPart/isMousePressed`` | `isMousePressed` を読む |
@@ -1165,6 +1167,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``Sketch/mouseWheel(deltaX:deltaY:)``
 - ``Sketch/fileDropped(_:)``
 - ``SketchPart/selectInput(_:)``
+- ``SketchPart/selectOutput(_:)``
+- ``SketchPart/selectFolder(_:)``
 - ``Sketch/mouseMoved()``
 - ``Sketch/mouseMoved(deltaX:deltaY:)``
 - ``Sketch/mouseDragged()``

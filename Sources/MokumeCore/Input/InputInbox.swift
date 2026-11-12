@@ -225,8 +225,9 @@ final class InputInbox {
             warnings.append(
                 "events[\(index)]: A fileSelected event was dropped because "
                     + (numbered
-                        ? "no selectInput() with its serial is waiting for a result"
-                        : "no selectInput() is waiting for a result")
+                        ? "no selectInput(), selectOutput() or selectFolder() with its serial is "
+                            + "waiting for a result"
+                        : "no selectInput(), selectOutput() or selectFolder() is waiting for a result")
                     + " (it counts in ignored)")
         }
         let report = InputReport(

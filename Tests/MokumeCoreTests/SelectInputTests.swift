@@ -29,6 +29,8 @@ func eventually(_ seconds: Double = 5, _ condition: () -> Bool) async -> Bool {
 final class FakeFilePicker: FilePicker {
     struct Shown {
         let prompt: String
+        /// 何を選ばせるダイアログだったか (#3707)。
+        var kind: SelectionBroker.Kind = .file
         let completion: @MainActor (String?) -> Void
         var dismissed = false
     }
@@ -38,10 +40,11 @@ final class FakeFilePicker: FilePicker {
     private(set) var dismissals = 0
 
     func pick(
-        prompt: String, over window: NSWindow?, completion: @escaping @MainActor (String?) -> Void
+        prompt: String, kind: SelectionBroker.Kind, over window: NSWindow?,
+        completion: @escaping @MainActor (String?) -> Void
     ) -> @MainActor () -> Void {
         let index = shown.count
-        shown.append(Shown(prompt: prompt, completion: completion))
+        shown.append(Shown(prompt: prompt, kind: kind, completion: completion))
         return { [self] in
             shown[index].dismissed = true
             dismissals += 1
@@ -140,6 +143,12 @@ struct SelectInputWireTests {
     }
 }
 
+/// 違う 2 つの種類の、両方の順 (`selectInput`・`selectOutput`・`selectFolder` の組・#3707)。
+nonisolated let selectionKindPairs: [(SelectionBroker.Kind, SelectionBroker.Kind)] =
+    SelectionBroker.Kind.allCases.flatMap { first in
+        SelectionBroker.Kind.allCases.filter { $0 != first }.map { (first, $0) }
+    }
+
 @Suite("ファイルを選ばせる: 待ち")
 @MainActor
 struct SelectionBrokerTests {
@@ -148,10 +157,30 @@ struct SelectionBrokerTests {
         var value: String??
     }
 
-    private func ask(_ broker: SelectionBroker, _ prompt: String) -> Outcome {
+    private func ask(
+        _ broker: SelectionBroker, _ prompt: String, kind: SelectionBroker.Kind = .file
+    ) -> Outcome {
         let outcome = Outcome()
-        Task { outcome.value = .some(await broker.request(prompt)) }
+        Task { outcome.value = .some(await broker.request(prompt, kind: kind)) }
         return outcome
+    }
+
+    /// **3 つの API (`selectInput`・`selectOutput`・`selectFolder`) は待ちを 1 つ共有する** (#3707)。種類ごとに
+    /// 待ちを持つと、前の待ちが終わらずに残り、後の結果がどちらへ行くかが決まらない。
+    @Test("種類が違っても待ちは 1 つ。後から頼んだ方が前を nil で終え、結果は後の頼みだけが受ける", arguments: selectionKindPairs)
+    func kindsShareOneWait(first: SelectionBroker.Kind, second: SelectionBroker.Kind) async {
+        let broker = SelectionBroker()
+        let earlier = ask(broker, "one", kind: first)
+        #expect(await eventually { broker.pending?.serial == 1 })
+        #expect(broker.pending == SelectionBroker.Request(serial: 1, prompt: "one", kind: first))
+        let later = ask(broker, "two", kind: second)
+        #expect(await eventually { broker.pending?.serial == 2 })
+        #expect(await eventually { earlier.value != nil }, "前の待ちが終わらない")
+        #expect(earlier.value == .some(nil), "前の待ちが nil で終わっていない")
+        #expect(broker.pending == SelectionBroker.Request(serial: 2, prompt: "two", kind: second))
+        #expect(broker.resolve("/tmp/chosen"))
+        #expect(await eventually { later.value != nil })
+        #expect(later.value == .some("/tmp/chosen"), "結果が後の頼みへ渡っていない")
     }
 
     @Test("頼むと待ちが立ち、結果で終わる。取り消しは nil")
@@ -371,6 +400,39 @@ struct SelectInputAttributeTests {
                 == SelectionBroker.Request(serial: 7, prompt: "CSV を選ぶ"))
     }
 
+    @Test("頼みの種類も同じ値に載って読み戻せる", arguments: SelectionBroker.Kind.allCases)
+    func theKindTravelsWithTheRequest(kind: SelectionBroker.Kind) throws {
+        let surface = try makeSurface()
+        let request = SelectionBroker.Request(serial: 3, prompt: "選ぶ", kind: kind)
+        SharedFrameSurface.publishSelection(request, to: surface)
+        #expect(SharedFrameSurface.selectionRequest(on: surface) == request)
+        let value = IOSurfaceCopyValue(surface, SharedFrameSurface.selectInputAttribute as CFString)
+        #expect(
+            (value as? [String: Any])?[SharedFrameSurface.selectInputKindKey] as? String == kind.rawValue)
+    }
+
+    /// 種類の鍵より前の子は `selectInput` しか頼めないので、鍵の無い頼みはファイルと読む。知らない種類は、
+    /// 違うダイアログを出して子が思っていないパスを返さないよう、頼みとして読まない。
+    @Test("種類の無い頼みはファイルと読み、知らない種類の頼みは読まない")
+    func aMissingKindIsAFileAndAnUnknownKindIsNotARequest() throws {
+        let surface = try makeSurface()
+        let old: [String: Any] = [
+            SharedFrameSurface.selectInputSerialKey: NSNumber(value: 2),
+            SharedFrameSurface.selectInputPromptKey: "old",
+        ]
+        IOSurfaceSetValue(surface, SharedFrameSurface.selectInputAttribute as CFString, old as CFDictionary)
+        #expect(
+            SharedFrameSurface.selectionRequest(on: surface)
+                == SelectionBroker.Request(serial: 2, prompt: "old", kind: .file))
+        for kind: Any in ["image", "", 1] {
+            var value = old
+            value[SharedFrameSurface.selectInputKindKey] = kind
+            IOSurfaceSetValue(
+                surface, SharedFrameSurface.selectInputAttribute as CFString, value as CFDictionary)
+            #expect(SharedFrameSurface.selectionRequest(on: surface) == nil, "\(kind)")
+        }
+    }
+
     @Test("頼んでいなければ属性ごと消す (面は使い回される)")
     func removesWhenNotRequested() throws {
         let surface = try makeSurface()
@@ -423,14 +485,26 @@ struct SelectInputAttributeTests {
 )
 @MainActor
 struct SelectInputSketchTests {
+    /// 押すたびに選ばせるダイアログを頼む。既定は `selectInput` で、`kinds` を置けば押すたびに順に
+    /// その種類の API を呼ぶ (#3707)。結果は呼んだ順ではなく**終わった順**に `results` へ積む。
     final class Asker: Sketch {
         var results: [String?] = []
         var stopsInSetup = false
+        var kinds: [SelectionBroker.Kind] = []
+        private var presses = 0
         var settings: SketchSettings { SketchSettings(width: 32, height: 24) }
         func setup() { if stopsInSetup { noLoop() } }
         func draw() { background(.display(red: 0, green: 0, blue: 0)) }
         func mousePressed() {
-            Task { results.append(await selectInput("pick")) }
+            let kind = kinds.isEmpty ? .file : kinds[presses % kinds.count]
+            presses += 1
+            Task {
+                switch kind {
+                case .file: results.append(await selectInput("pick"))
+                case .output: results.append(await selectOutput("pick"))
+                case .folder: results.append(await selectFolder("pick"))
+                }
+            }
         }
     }
 
@@ -478,6 +552,64 @@ struct SelectInputSketchTests {
         try runtime.advance()
         #expect(await eventually { sketch.results.count == 2 })
         #expect(sketch.results == ["/tmp/a.csv", nil])
+    }
+
+    /// `selectOutput`・`selectFolder` も同じ道を通る (#3707)。頼みには種類が載り、注入した結果の絶対パスが返る。
+    @Test(
+        "selectOutput・selectFolder は種類つきの頼みを立てて待ち、注入した絶対パスで終わる。取り消しは nil",
+        arguments: [SelectionBroker.Kind.output, .folder])
+    func outputAndFolderEndWithTheInjectedResult(kind: SelectionBroker.Kind) async throws {
+        let facet = try makeFacet()
+        let sketch = Asker()
+        sketch.kinds = [kind]
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try await press(runtime)
+        #expect(
+            runtime.input.selection.pending == SelectionBroker.Request(serial: 1, prompt: "pick", kind: kind))
+        #expect(sketch.results.isEmpty, "結果が来ないうちに戻った")
+
+        let chosen = kind == .folder ? "/tmp/選んだ フォルダ" : "/tmp/まだ無い.txt"
+        try send(#"{"type":"fileSelected","paths":["\#(chosen)"]}"#, id: "r1", to: facet)
+        try runtime.advance()
+        #expect(await eventually { sketch.results.count == 1 })
+        #expect(sketch.results == [chosen])
+        #expect(runtime.input.selection.pending == nil)
+
+        try await press(runtime)
+        try send(#"{"type":"fileSelected","paths":[]}"#, id: "r2", to: facet)
+        try runtime.advance()
+        #expect(await eventually { sketch.results.count == 2 })
+        #expect(sketch.results == [chosen, nil])
+    }
+
+    /// **3 つの API で待ちは 1 つ** (#3707): 先に呼んだ方は `nil` で終わり、注入した結果は後に呼んだ方だけが受ける。
+    @Test(
+        "種類の違う API を待ちの最中に呼ぶと、前は nil で終わり、結果は後の API が受ける",
+        arguments: selectionKindPairs)
+    func aDifferentKindEndsTheEarlierWait(
+        first: SelectionBroker.Kind, second: SelectionBroker.Kind
+    ) async throws {
+        let facet = try makeFacet()
+        let sketch = Asker()
+        sketch.kinds = [first, second]
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try await press(runtime)
+        #expect(runtime.input.selection.pending?.kind == first)
+        try await press(runtime)
+        #expect(await eventually { sketch.results.count == 1 }, "前の待ちが終わらない")
+        #expect(sketch.results == [nil], "前の待ちが nil で終わっていない")
+        #expect(runtime.input.selection.pending?.kind == second)
+        try send(#"{"type":"fileSelected","paths":["/tmp/b"]}"#, id: "r1", to: facet)
+        try runtime.advance()
+        #expect(await eventually { sketch.results.count == 2 })
+        #expect(sketch.results == [nil, "/tmp/b"], "結果が後の API へ渡っていない")
+        #expect(runtime.input.selection.pending == nil)
     }
 
     @Test("待ちの最中にもう 1 度呼ぶと、前の待ちは nil で終わる")
@@ -592,5 +724,21 @@ struct SelectInputSketchTests {
         #expect(result.0 == nil && result.1 == nil)
         #expect(log.messages.count == 1, "\(log.messages)")
         #expect(log.messages.first?.contains("selectInput()") == true)
+    }
+
+    @Test("selectOutput・selectFolder も、走っている実行の外から呼ぶと頼まずに nil を返し、API ごとに 1 度だけ警告する")
+    func outputAndFolderOutsideARunReturnNil() async {
+        struct Part: SketchPart {}
+        let log = OutsideRun()
+        let results = await OutsideRun.$current.withValue(log) {
+            [
+                await Part().selectOutput("x"), await Part().selectOutput("y"),
+                await Part().selectFolder("x"), await Part().selectFolder("y"),
+            ]
+        }
+        #expect(results == [nil, nil, nil, nil])
+        #expect(log.messages.count == 2, "\(log.messages)")
+        #expect(log.messages.contains { $0.hasPrefix("selectOutput()") }, "\(log.messages)")
+        #expect(log.messages.contains { $0.hasPrefix("selectFolder()") }, "\(log.messages)")
     }
 }

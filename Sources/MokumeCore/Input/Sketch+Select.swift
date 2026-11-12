@@ -67,8 +67,9 @@ extension SketchPart {
     ///
     /// ## 待てるのは 1 つ
     ///
-    /// 1 度に待てる `selectInput` は 1 つ。待っている間にもう 1 度呼ぶと、**前の待ちは `nil` (取り消しと同じ)
-    /// で終わり**、新しい頼みのダイアログが出る。待っていないときに結果が届いても、捨てられる。
+    /// 1 度に待てるダイアログは 1 つで、``selectOutput(_:)``・``selectFolder(_:)`` と待ちを共有する。待っている間に
+    /// どれかをもう 1 度呼ぶと、**前の待ちは `nil` (取り消しと同じ) で終わり**、新しい頼みのダイアログが出る。
+    /// 待っていないときに結果が届いても、捨てられる。
     ///
     /// ## 戻る時刻は約束しない
     ///
@@ -80,8 +81,8 @@ extension SketchPart {
     /// **macOS のウィンドウで出す。** 自前のウィンドウと道具のウィンドウに加えて、``SketchView`` ではホストのウィンドウのシートで出る
     /// (ホストのアプリが前面になる)。**ホストのウィンドウが見えていないあいだは出さず**、見えるまで頼みは残る。
     /// **`SketchView` が消える・ウィンドウから外れる・ホストのアプリが終わるときは、開いているシートは閉じて、取り消しとして
-    /// `nil` で終わる。** iOS と、セキュリティスコープ付きの URL は [#2605] で決める。選べるのはファイル 1 つで、
-    /// 保存先を選ばせる `selectOutput` やフォルダを選ばせる `selectFolder` はまだ無い。
+    /// `nil` で終わる。** iOS と、セキュリティスコープ付きの URL は [#2605] で決める。選べるのは在るファイル 1 つで、
+    /// 保存先は ``selectOutput(_:)``、フォルダは ``selectFolder(_:)`` で選ばせる。
     ///
     /// - Parameter prompt: ダイアログに添える文言。
     /// - Returns: 選んだファイルの絶対パス。取り消したら `nil`。走っている実行の外から呼んだら、あるいは実行が
@@ -97,6 +98,109 @@ extension SketchPart {
             OutsideRun.log.warn(.selectInput)
             return nil
         }
-        return await selection.request(prompt)
+        return await selection.request(prompt, kind: .file)
+    }
+
+    /// 保存先を選ばせるダイアログを出し、選んだ置き場の絶対パスを返す。**取り消すと `nil`。**
+    ///
+    /// <!-- example: 文脈 var notes: [String] = [] -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     notes.append("\(frameCount): \(mouseX), \(mouseY)")
+    /// }
+    ///
+    /// func keyPressed() {
+    ///     let lines = notes
+    ///     Task {
+    ///         if let path = await selectOutput("保存先を選ぶ") {
+    ///             try? saveStrings(lines, path)
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// func draw() {
+    ///     background(20)
+    ///     fill(200)
+    ///     text("クリックで記録、キーで保存先を選んで書く (\(notes.count) 行)", 20, 40)
+    /// }
+    /// ```
+    ///
+    /// 例は書けなくても `notes` が残り、もう 1 度キーを押せば選び直せるので、`try?` で受けている。
+    ///
+    /// Processing の `selectOutput(prompt, callback)` に当たる。返るのは**まだ無いファイルでもよい置き場**で、
+    /// ダイアログは書くことを確かめるだけでファイルを作らない。在るファイルを選べば、ダイアログが置き換えてよいかを
+    /// 尋ねる。書くのはスケッチで、渡すのは ``saveStrings(_:_:)``・``saveTable(_:_:)`` のような書く API である。
+    ///
+    /// 呼び方・ダイアログを出す側 (直に走らせたウィンドウ・`mokume watch` の道具のウィンドウ・``SketchView`` の
+    /// ホストのウィンドウのシート)・結果の届き方 (入力の出来事 `fileSelected` の `paths`。取り消しは空の配列)・
+    /// 戻る時刻は ``selectInput(_:)`` と同じである。`mokume render` のようにウィンドウの無い実行では、外から
+    /// `fileSelected` を送るまで返らない。
+    ///
+    /// **待ちは ``selectInput(_:)``・``selectFolder(_:)`` と 1 つを共有する。** 待っている間にどれかを呼ぶと、
+    /// 前の待ちは `nil` で終わる。
+    ///
+    /// **限界: 道具のウィンドウがこの API より古い版だと、保存先ではなく在るファイルを選ばせるダイアログが出る**
+    /// (古い道具は頼みの種類を読まない)。新しい `mokume` を起こし直せば保存先のダイアログになる。
+    ///
+    /// - Parameter prompt: ダイアログに添える文言。
+    /// - Returns: 選んだ置き場の絶対パス。取り消したら `nil`。走っている実行の外から呼んだら、あるいは実行が
+    ///   終わった後に呼んだら、ダイアログを頼まず待たずに `nil` (API ごとに 1 度だけ警告する)。
+    // shot: 撮れない 結果が選んだ人の手元の置き場で、ダイアログはウィンドウの外に出る
+    public func selectOutput(_ prompt: String) async -> String? {
+        guard let selection = LaunchingSketch.selection, !selection.isEnded else {
+            OutsideRun.log.warn(.selectOutput)
+            return nil
+        }
+        return await selection.request(prompt, kind: .output)
+    }
+
+    /// フォルダを選ばせるダイアログを出し、選んだフォルダの絶対パスを返す。**取り消すと `nil`。**
+    ///
+    /// <!-- example: 文脈 var folder: String? -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     Task {
+    ///         if let chosen = await selectFolder("書き出すフォルダを選ぶ") {
+    ///             folder = chosen
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// func keyPressed() {
+    ///     if let folder {
+    ///         save(folder + "/frame-\(frameCount).png")
+    ///     }
+    /// }
+    ///
+    /// func draw() {
+    ///     background(20)
+    ///     circle(mouseX, mouseY, 40)
+    ///     fill(200)
+    ///     text(folder ?? "クリックしてフォルダを選ぶ", 20, 40)
+    /// }
+    /// ```
+    ///
+    /// ``save(_:)`` は `Task` の中では頼めないので、選んだパスを持ち越して `keyPressed()` で使っている。
+    ///
+    /// Processing の `selectFolder(prompt, callback)` に当たる。返るのはフォルダ 1 つの絶対パスで、末尾に `/` は
+    /// 付かない。ダイアログの中で新しいフォルダを作って選ぶこともできる。
+    ///
+    /// 呼び方・ダイアログを出す側・結果の届き方・戻る時刻は ``selectInput(_:)`` と同じである。**待ちは
+    /// ``selectInput(_:)``・``selectOutput(_:)`` と 1 つを共有する。** 待っている間にどれかを呼ぶと、前の待ちは
+    /// `nil` で終わる。
+    ///
+    /// **限界: 道具のウィンドウがこの API より古い版だと、フォルダではなくファイルを選ばせるダイアログが出る**
+    /// (古い道具は頼みの種類を読まない)。新しい `mokume` を起こし直せばフォルダのダイアログになる。
+    ///
+    /// - Parameter prompt: ダイアログに添える文言。
+    /// - Returns: 選んだフォルダの絶対パス。取り消したら `nil`。走っている実行の外から呼んだら、あるいは実行が
+    ///   終わった後に呼んだら、ダイアログを頼まず待たずに `nil` (API ごとに 1 度だけ警告する)。
+    // shot: 撮れない 結果が選んだ人の手元のフォルダで、ダイアログはウィンドウの外に出る
+    public func selectFolder(_ prompt: String) async -> String? {
+        guard let selection = LaunchingSketch.selection, !selection.isEnded else {
+            OutsideRun.log.warn(.selectFolder)
+            return nil
+        }
+        return await selection.request(prompt, kind: .folder)
     }
 }

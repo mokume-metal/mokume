@@ -9,8 +9,8 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 39 |
-| 入れる | 2 |
+| 同等 | 41 |
+| 入れる | 0 |
 | 作例待ち | 15 |
 | 持たない | 25 |
 | 計 | 81 |
@@ -103,7 +103,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 | `loadStrings()` | `loadStrings(_:)`・`requestStrings(_:)` | 同等 | UTF-8 を 1 行ずつの `[String]` にする。名前が `http://` か `https://` で始まれば URL から読む。読めなければ `DataFailure` を投げる。無い形: `File` や `InputStream` を渡す形 | [#2470] |
 | `loadBytes()` | `loadBytes(_:)`・`requestBytes(_:)` | 同等 | ファイルか URL の中身をそのまま `[UInt8]` にする (Swift 標準の型。`Data` は面に出さない)。`loadStrings(_:)` と同じく、探す場所を `loadImage(_:)` と揃え (`assetURL(_:)`)、URL を受け、読めなければ `DataFailure` を投げる | [#3708] |
 | `selectInput()` | `selectInput(_:)` | 同等 | コールバックの代わりに `async` で `String?` を返し、取り消せば `nil`。選べるのはファイル 1 つ | [#3062] |
-| `selectFolder()` | — | 入れる | フォルダを選ばせる API が無い。仕組み (道具のウィンドウが出す・結果の入力の出来事 `fileSelected` の `paths`) は `selectInput(_:)` のものを使う。[ADR-0041](../decisions/0041-standard-scope-map.md) 決定 2 の「ファイルの受け渡し」が、同じ API の仲間として最低ラインに挙げている | [#3707]・[#3062] |
+| `selectFolder()` | `selectFolder(_:)` | 同等 | コールバックの代わりに `async` でフォルダの絶対パスの `String?` を返し、取り消せば `nil`。仕組み (ウィンドウを持つ側が出す・結果の入力の出来事 `fileSelected` の `paths`) と 1 度に 1 つの待ちを `selectInput(_:)`・`selectOutput(_:)` と共有し、後から頼んだ方が前を `nil` で終える | [#3707]・[#3062] |
 | `createInput()` | `loadBytes(_:)`・`FileHandle`・`InputStream` | 持たない | Java の `InputStream` を返す API。全体を読むなら `loadBytes`、少しずつなら Foundation の `FileHandle`・`InputStream` | — |
 | `createReader()`・`BufferedReader`・`BufferedReader.readLine()` (3 件) | `loadStrings(_:)` | 持たない | 行を 1 つずつ読む Java の `BufferedReader`。ファイルを 1 行ずつ回すなら `loadStrings(_:)` の結果を回せる。大きすぎて全体を持てないファイルは Foundation の `FileHandle` | — |
 | `launch()` | `NSWorkspace.shared.open(_:)`・`Process` | 持たない | 外のアプリやファイルを OS の標準の起動機能で開く。受け手の上に API を持たず、AppKit の `NSWorkspace.shared.open(_:)` で同じことができる (`exec()` に当たるのは Foundation の `Process`) | — |
@@ -116,7 +116,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 | --- | --- | --- | --- | --- |
 | `saveStrings()` | `saveStrings(_:_:)` | 同等 | UTF-8・行末 LF で書き、書きかけを残さない。**引数は `saveStrings(lines, path)` で、Processing の `saveStrings(filename, data)` と逆** (p5.js と同じ順。型が違うのでコンパイルで止まる) | [#2468]・[ADR-0020](../decisions/0020-api-naming-and-surface.md) |
 | `saveBytes()` | `saveBytes(_:_:)` | 同等 | `[UInt8]` をそのままファイルに書く。`saveStrings(_:_:)` と同じく、途中のディレクトリを作り、書きかけを残さず、書けなければ `DataFailure` を投げる。**引数は `saveBytes(bytes, path)` で、Processing の `saveBytes(filename, data)` と逆** (`saveStrings(_:_:)` と同じ順。型が違うのでコンパイルで止まる) | [#3708] |
-| `selectOutput()` | — | 入れる | 保存先を選ばせる API が無い。#3062 が「入れない」と決めて、この表に区分を預けた。仕組みは `selectInput(_:)` のものを使い、結果は `fileSelected` の `paths` で届く | [#3707]・[#3062] |
+| `selectOutput()` | `selectOutput(_:)` | 同等 | コールバックの代わりに `async` で保存先の絶対パスの `String?` を返し、取り消せば `nil`。まだ無いファイルの名前も選べ、書くのはスケッチ (`saveStrings(_:_:)` など)。仕組みと 1 度に 1 つの待ちを `selectInput(_:)`・`selectFolder(_:)` と共有する | [#3707]・[#3062] |
 | `createOutput()` | `saveBytes(_:_:)`・`FileHandle`・`OutputStream` | 持たない | Java の `OutputStream` を返す API。全体を書くなら `saveBytes`、少しずつなら Foundation の `FileHandle`・`OutputStream` | — |
 | `createWriter()`・`PrintWriter`・`PrintWriter.print()`・`println()`・`flush()`・`close()` (6 件) | `saveStrings(_:_:)`・`FileHandle` | 持たない | 行を 1 つずつ書き足す Java の `PrintWriter`。ためておいた `[String]` を `saveStrings(_:_:)` で書ける。追記し続けるログは Foundation の `FileHandle` | — |
 | `saveStream()` | `loadBytes(_:)` と `saveBytes(_:_:)` | 持たない | `saveBytes(loadBytes(...))` を効率よく書く API、と参照自身が書く。URL を受ける `loadBytes` と組めば、ダウンロードしてファイルにできる | — |
