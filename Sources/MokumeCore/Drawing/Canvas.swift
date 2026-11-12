@@ -5927,7 +5927,8 @@ public final class Canvas {
                     (run.paint.numbers ?? emptyNumbers).storage.gpuAddress,
                     ShapePipeline.numbersBufferIndex)
                 // 名前で宣言した数の並び (#3576)。**口は毎回すべて束ねる** — 渡していない口には 1 個の 0 を
-                // 束ねる (上の並びと同じ理由)
+                // 束ねる。空きの口は断片から読めない (宣言した名前しか書けない) ので、面の口と作りを揃えるため
+                // (``ShapePipeline/namedNumbersCapacity``)
                 for slot in 0..<ShapePipeline.namedNumbersCapacity {
                     let numbers =
                         slot < run.paint.namedNumbers.count ? run.paint.namedNumbers[slot] : emptyNumbers
