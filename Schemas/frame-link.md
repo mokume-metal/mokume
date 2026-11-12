@@ -14,7 +14,7 @@ The sketch never waits for a receiver. The receiver provides the surfaces, and t
 1. Pick an entry from the list and look its `serviceName` up with `bootstrap_look_up` (reach it through `dlsym` if your SDK does not expose `servers/bootstrap.h`). You get a send right to the sketch's port.
 2. Ask for a dead-name notification on that send right (`mach_port_request_notification` with `MACH_NOTIFY_DEAD_NAME`) on a port of your own. This is how you learn that the sketch went away.
 3. Create 2 to 8 surfaces (IOSurface) that are half-float RGBA (`'RGhA'`, 8 bytes per pixel) and exactly the entry's `width` × `height` (the sketch's drawing size). A global surface is not needed. `width` and `height` are whole numbers of 1 or more; treat any other value, or only one of the two, as if the entry listed no size. An entry without `width` and `height` comes from an older sender: see [Senders and receivers of different ages](#senders-and-receivers-of-different-ages).
-4. Read your own port until it is empty, then send `connect` to the sketch's port. Whatever is still queued belongs to an earlier connection; drop it.
+4. Read your own port until it is empty, then send `connect` to the sketch's port. Of what you read, act on a dead-name notification (the sketch went away: stop) and on `resized` (make surfaces of that size and send those instead). Drop everything else: `frame` messages about surfaces you are replacing, and answers you have already handled. A full queue loses the sketch's answer (see [When no answer comes](#when-no-answer-comes)).
 
 The sketch answers `accepted` or `refused`. The size also comes back in `accepted`. From then on, it sends `frame` each time it has written a surface. Return each surface with `release` when you have read it. A surface you have not returned is never written to again, and when every surface is held the sketch skips frames instead of waiting.
 
@@ -30,14 +30,30 @@ A size change after you are accepted comes as `resized` instead (below).
 
 ### When no answer comes
 
-The sketch sends `accepted` and `refused` with a timeout of zero, once, like every message it sends. If your port's queue is full when it answers, the answer is lost and is not sent again; the sketch still counts you as connected (or, for a refusal, does not). The sketch keeps sending with a timeout of zero: it never waits for you.
+The sketch sends `accepted` and `refused` with a timeout of zero, once, like every message it sends. An answer can be **lost**: if your port's queue is full when the sketch answers, the answer is dropped and not sent again, and the sketch still counts you as connected (or, for a refusal, as before). An answer can also be **late**: the sketch answers when its main thread reads your `connect`, so a sketch busy drawing answers later than an idle one. The sketch never waits for you, so it is up to you to stop waiting.
 
-So wait for the answer only up to a deadline you choose. The sketch answers when its main thread reads your `connect`, so a sketch that is busy drawing answers later than an idle one; mokume's own test receiver waits one second. While you wait, do not count `frame` messages: they are about the surfaces of an earlier connection. When the deadline passes without an answer:
+Send one `connect` at a time from a port: do not send another from the same port until its answer came. Then any `accepted` or `refused` on that port answers the `connect` you are waiting on. (`refused` does not say which `connect` it answers, so two outstanding ones cannot be told apart.) If `resized` comes while you wait, make surfaces of the new size and send `connect` with them once the answer came.
 
-- **You know your receiver id** (an earlier `accepted` told you, and you sent `connect` again, for example after `resized`): send `disconnect` with that id, then read your port empty and send `connect` again from the same port. The sketch drops the old connection and its slot; the new `accepted` carries a new id.
-- **You do not know your receiver id** (your first `connect` got no answer): destroy your port's receive right and make a new port. Ask again for the dead-name notification on the sketch's send right (step 2) on the new port, then send `connect` from it. If the sketch had accepted the old port, it learns that the port died through its own dead-name notification and frees that slot.
+Wait for the answer up to a deadline that you choose, counted from when you sent `connect`, on a clock that does not jump (`mach_absolute_time` or `DispatchTime`, not the wall clock). One second or more is recommended; the heavier the sketch, the later its answers. mokume's own test receiver waits one second. While you wait, do not count `frame` messages and do not return their surfaces. A `frame` that comes before the answer was sent before the sketch read your `connect`, about surfaces it lets go of when it accepts you; if the answer was lost, it is about a connection you are about to leave. Only `frame` messages that come after your latest `accepted` and carry its receiver id are for the surfaces you sent.
 
-Only frames whose receiver id is the one in your latest `accepted` belong to the new connection. Give up after a few attempts in a row. A `refused` is an answer, not a lost one: handle it by its reason (a size refusal is described above).
+What to do next:
+
+| What happened | What you do |
+| --- | --- |
+| `accepted` came | You are connected with the id it carries. Start counting lost answers from zero again |
+| `refused` came | Handle it by its reason (a size refusal is described above). Start counting lost answers from zero again. If you were already accepted on this port, the sketch keeps your id and your slot (and, unless the size changed, your earlier surfaces, which it keeps writing): send `connect` again from the same port, or let go with `disconnect` or by destroying your port |
+| The deadline passed, and you know your receiver id (an earlier `accepted` told you, and you sent `connect` again, for example after `resized`) | Send `disconnect` with that id. Then replace your port (below) and send `connect` from the new one |
+| The deadline passed, and you do not know your receiver id (your first `connect` got no answer) | Replace your port (below) and send `connect` from the new one |
+| The deadline passed for the third time in a row | Give up: destroy your port and report that the sketch does not answer |
+
+To **replace your port**: read the old port until it is empty, acting on a dead-name notification and on `resized` as in step 4. Destroy its receive right and make a new port. Ask again for the dead-name notification on the sketch's send right (step 2), on the new port, and deallocate the earlier request that the call hands back. If that request fails with `KERN_INVALID_ARGUMENT`, the sketch's name is already dead: the sketch went away.
+
+Why a new port, even when you know your id: the answer you gave up on may still come, and on the old port you could not tell it from the answer to your next `connect`. On a destroyed port it never reaches you. The sketch frees what the old port held:
+
+- `disconnect` frees your slot at once. If it could not be sent (the sketch's queue was full) or arrives after the port died, the old port's death frees the slot: the sketch asked for its dead-name notification when it accepted you.
+- A `connect` that the sketch reads only after the port died is not accepted and takes no slot (no answer is sent, since it could not arrive).
+
+Your own messages to the sketch can be dropped too: when the sketch is busy, its queue fills and `mach_msg` reports `MACH_SEND_TIMED_OUT`. A `connect` you could not send gets no answer; wait for the deadline as for a lost answer. A `disconnect` you could not send is covered by the old port's death.
 
 ## Messages
 
@@ -101,6 +117,7 @@ No timeouts are involved on either side, except the deadline a receiver keeps wh
 
 - **An older receiver and a current sender.** A receiver that skips fields it does not know reads a current entry as before and connects with the size it already knows. Nothing changes for it.
 - **A current receiver and an older sender.** An entry without `width` and `height` is still a version 1 entry. Connect with a size you know from elsewhere (one the person typed, or one you remembered for this `identity`). If you know none, tell the person that the sketch's listing has no size and that a size has to be given to connect; do not guess, since a wrong guess is only refused.
+- **A current receiver and a sender from before the answer deadline.** Earlier senders also accept a `connect` that they read only after its port died, and keep that slot until the sketch stops. A receiver that replaces its port after a late answer can then find the sketch full (reason 5) sooner. Nothing else changes.
 
 ## Versions
 
