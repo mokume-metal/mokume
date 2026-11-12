@@ -405,14 +405,18 @@ public final class Delay: SoundEffect {
         super.init(stage: stage, node: stage.rack.addDelay(), name: "Delay")
     }
 
-    /// 入力した音に、ディレイタイムの上限を指定してエフェクトをかける。
+    /// 入力した音に、ディレイタイムの上限を指定してエフェクトをかける。**ディレイタイムも上限と同じ値になる。**
+    ///
+    /// Processing Sound の `process(input, maxDelayTime)` と同じく、`process(input, maxDelayTime, maxDelayTime)` と
+    /// 同じに扱う (前に ``time(_:)`` で決めた遅れは上書きされる)。遅れを上限より短くするなら、3 つ目に遅れを渡す
+    /// (``process(_:_:_:)``) か、この後に ``time(_:)`` を呼ぶ。
     ///
     /// ディレイタイム (``time(_:)``) は 0 から `maxDelayTime` 秒まで。0 から 5 秒の外は端にクランプし、NaN・
-    /// 無限大は無視する。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
+    /// 無限大は無視する (上限も遅れも変えない)。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func process(_ input: any EffectInput, _ maxDelayTime: Float) {
-        acceptMaximum(maxDelayTime)
+        if let maximum = acceptMaximum(maxDelayTime) { time(maximum) }
         process(input)
     }
 
@@ -440,13 +444,16 @@ public final class Delay: SoundEffect {
     }
 
     /// ディレイタイムの上限を受け、範囲の外は丸め、数でない値は無視する (どちらも 1 度だけ知らせる)。
-    private func acceptMaximum(_ maxDelayTime: Float) {
-        if let value = accept(
+    ///
+    /// - Returns: 受けた上限 (丸めた後)。無視したら `nil`。
+    @discardableResult
+    private func acceptMaximum(_ maxDelayTime: Float) -> Float? {
+        guard let value = accept(
             maxDelayTime, 0...Float(EchoKernel.maximumSeconds), call: "process",
             meaning: "a maxDelayTime")
-        {
-            maximumTime = value
-        }
+        else { return nil }
+        maximumTime = value
+        return value
     }
 
     /// ディレイタイムを設定する。単位は秒で、0 から ``process(_:_:)`` で指定した上限まで (既定は 5)。既定のディレイタイムは 0.25。
