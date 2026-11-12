@@ -22,9 +22,9 @@ import Testing
 @MainActor
 struct WatchFrameListingTests {
     private func makeListing(in directory: URL) -> WatchFrameListing {
-        WatchFrameListing(identity: "/work/Bricks") { identity, share in
+        WatchFrameListing(identity: "/work/Bricks") { identity, share, width, height in
             FrameAnnouncement.announce(
-                sketch: share.sketch, identity: identity, title: share.title, in: directory,
+                sketch: share.sketch, identity: identity, title: share.title, width: width, height: height, in: directory,
                 warn: { Issue.record("名乗れなかった: \($0)") })
         }
     }
@@ -88,6 +88,30 @@ struct WatchFrameListingTests {
         #expect(FrameListing.entries(in: directory).count == 1)
     }
 
+    /// **見張りの代理の目録にも、受け付ける大きさを載せる** ([#3949])。保存で子の大きさが変わっても、項目と名前は
+    /// そのままで大きさだけ書き換わる。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("絵の大きさを添えて従うと最初の 1 件から大きさが載り、別の大きさの世代が来ると書き換わる")
+    func theProxyListsTheSize() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let listing = makeListing(in: directory)
+        defer { listing.withdraw() }
+        let share = FrameShare(sketch: "Bricks", title: "Bricks")
+        listing.follow(share, width: 173, height: 97)
+        let first = try #require(FrameListing.entries(in: directory).first)
+        #expect([first.width, first.height] == [173, 97])
+
+        listing.follow(share, width: 211, height: 103)
+        let entries = FrameListing.entries(in: directory)
+        #expect(entries.map { [$0.width, $0.height] } == [[211, 103]])
+        #expect(entries.map(\.serviceName) == [first.serviceName], "大きさの変更で名前が変わった")
+
+        // 大きさが分からない回 (絵が無い) は、載せた大きさを消さない
+        listing.follow(share)
+        #expect(FrameListing.entries(in: directory).map { [$0.width, $0.height] } == [[211, 103]])
+    }
+
     @Test("断っている世代 (名乗りの中身が無い) しか来なければ、1 度も名乗らない")
     func neverAnnouncesWithoutAShare() throws {
         let directory = try TestScratch.directory("mokume-frames")
@@ -120,9 +144,9 @@ struct WatchFrameHandOverTests {
     func toldWhoIsConnected() throws {
         let directory = try TestScratch.directory("mokume-frames")
         let gpu = try RenderDevice()
-        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share in
+        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share, width, height in
             FrameAnnouncement.announce(
-                sketch: share.sketch, identity: identity, title: share.title, in: directory, warn: { _ in })
+                sketch: share.sketch, identity: identity, title: share.title, width: width, height: height, in: directory, warn: { _ in })
         }
         var said: [String] = []
         var names: [[String]] = []
@@ -147,9 +171,9 @@ struct WatchFrameHandOverTests {
     func handsOverAcrossGenerations() throws {
         let directory = try TestScratch.directory("mokume-frames")
         let gpu = try RenderDevice()
-        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share in
+        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share, width, height in
             FrameAnnouncement.announce(
-                sketch: share.sketch, identity: identity, title: share.title, in: directory,
+                sketch: share.sketch, identity: identity, title: share.title, width: width, height: height, in: directory,
                 warn: { Issue.record("名乗れなかった: \($0)") })
         }
         defer { listing.withdraw() }
@@ -237,9 +261,9 @@ struct WatchFrameHandOverTests {
     private func watch(facet: URL, gpu: RenderDevice) throws -> Watched {
         let directory = try TestScratch.directory("mokume-frames")
         let window = try SharedFrameWindow(gpu: gpu, facet: facet, title: "Bricks")
-        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share in
+        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share, width, height in
             FrameAnnouncement.announce(
-                sketch: share.sketch, identity: identity, title: share.title, in: directory,
+                sketch: share.sketch, identity: identity, title: share.title, width: width, height: height, in: directory,
                 warn: { Issue.record("名乗れなかった: \($0)") })
         }
         listing.say = { _ in }
@@ -251,6 +275,34 @@ struct WatchFrameHandOverTests {
         let receiver = try ReceiverForWatch(width: 16, height: 8, service: service)
         return Watched(
             gpu: gpu, window: window, listing: listing, sender: sender, receiver: receiver, service: service)
+    }
+
+    /// **作品のウィンドウの台から名乗るときも、最初の 1 件から子の絵の大きさが載る** ([#3949])。名乗りの中身を読んだ
+    /// 時点で大きさの無い項目を置くと、その間に目録を読んだ受け手は旧い送り手と取り違える。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("台から名乗ると、最初の 1 件から子の絵の大きさが載る")
+    func theWindowAnnouncesWithTheChildSize() throws {
+        let facet = try TestScratch.directory("mokume-viewport")
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let child = try makeChild(in: facet, gpu: gpu)
+        try draw(child, .linear(red: 1, green: 0, blue: 0), gpu: gpu)
+        let window = try SharedFrameWindow(gpu: gpu, facet: facet, title: "Bricks")
+        defer { window.stage.close() }
+        var announced: [[Int?]] = []
+        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share, width, height in
+            announced.append([width, height])
+            return FrameAnnouncement.announce(
+                sketch: share.sketch, identity: identity, title: share.title, width: width, height: height,
+                in: directory, warn: { Issue.record("名乗れなかった: \($0)") })
+        }
+        listing.say = { _ in }
+        defer { listing.withdraw() }
+        listing.attach(to: window)
+        window.stage.displayLinkFired()
+        #expect(announced == [[16, 8]], "名乗りに子の絵の大きさを添えていない: \(announced)")
+        #expect(FrameListing.entries(in: directory).map { [$0.width, $0.height] } == [[16, 8]])
     }
 
     /// **受け手へ渡すのは、子の新しい絵が来たときだけではない** ([#3945])。止まった作品 (`noLoop()`) へ後から繋いだ
@@ -291,9 +343,9 @@ struct WatchFrameHandOverTests {
     func aCopyIsAnnouncedOnARefreshWithoutAFrame() throws {
         let directory = try TestScratch.directory("mokume-frames")
         let gpu = try RenderDevice()
-        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share in
+        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share, width, height in
             FrameAnnouncement.announce(
-                sketch: share.sketch, identity: identity, title: share.title, in: directory,
+                sketch: share.sketch, identity: identity, title: share.title, width: width, height: height, in: directory,
                 warn: { Issue.record("名乗れなかった: \($0)") })
         }
         listing.say = { _ in }
