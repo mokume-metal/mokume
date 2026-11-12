@@ -412,7 +412,12 @@ class RenderWorkflowTest(unittest.TestCase):
         named = re.search(r"^\s+(?:- )?name:\s*(.+?)\s*$", preflight[0], re.M)
         run = re.search(r"^\s+(?:- )?run:\s*(.+?)\s*$", preflight[0], re.M)
         display = named.group(1) if named else f"Run {run.group(1)}"
-        self.assertIn(m.group(1), display)
+        self.assertIn(
+            m.group(1),
+            display,
+            "数えは step の名前 `Run bash scripts/runner-preflight.sh` を読む。step に name: を足す・"
+            "コマンドを変えるなら count-runner-notice.sh の PREFLIGHT_STEP も合わせる",
+        )
 
     def test_scheduled_report_は専用機のジョブが落ちたか切れたときだけ走る(self):
         body = self.jobs["scheduled-report"]

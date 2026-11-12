@@ -208,8 +208,12 @@ if processes=$(ps -U "$job_user" -o pid=,ppid=,%cpu=,etime=,comm= 2>/dev/null); 
     if [ "$others_count" -gt 5 ]; then others_more=" ほか $((others_count - 5)) 本"; fi
     notice="orphan-load: job の置き場の外のプロセスが CPU を使い続けている (前の job の残りではないので赤にしない。検査は遅くなりうる): ${others_list}${others_more}"
     # 名前の列は run をまたいだ数えの材料 (#3633)。annotation の末尾の 〔注意の名前: …〕 を
-    # scripts/count-runner-notice.sh が前の run から読み戻す。`|` 区切りで、名前に空白があってもよい
-    notice_names=$(printf '%s' "$other_names" | sort -u | paste -sd '|' -)
+    # scripts/count-runner-notice.sh が前の run から読み戻す。`|` 区切りで、名前に空白があってもよい。
+    # **機械が読む名前は安全な字 (英数字と `._ -`) に寄せ、それ以外は 1 バイトごとに `_` にする**
+    # (#3633 の 2 回目の反証)。`〕`・`|` はタグと区切りを、`>`・`-->` は注意の Issue の印を壊す。
+    # 寄せるのはタグと $GITHUB_OUTPUT の名前だけで、人が読む文面 (上の notice) は元の名前のまま。
+    # 寄せた結果、別のプロセスが同じ名前になりうる (`a>b` と `a_b`)。照合順はロケールに依らせない
+    notice_names=$(printf '%s' "$other_names" | LC_ALL=C tr -c 'A-Za-z0-9._ \n-' '_' | LC_ALL=C sort -u | paste -sd '|' -)
     echo "::warning title=専用機の環境::${notice} 〔注意の名前: ${notice_names}〕"
     if [ -n "${GITHUB_OUTPUT:-}" ]; then
       printf 'notice=%s\n' "$notice_names" >> "$GITHUB_OUTPUT"

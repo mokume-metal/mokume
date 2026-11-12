@@ -20,7 +20,12 @@
   8. 書く先は赤の回の固定タイトル (`fix(`) と別の題で、本文は赤の回と区別できる。メンテナは名指さない
   9. 名前は環境変数で受け、`-` で始まる名前でも止まらない (指摘 4)。数え (`count`・読むだけ) と
      書き込み (`report`・issues だけ) は互いの gh を呼ばない (render.yml で job の権限が別)
- 10. 前検査が実際に出す `::warning` の文面を、数えがそのまま読める (指摘 8)
+ 10. 前検査が実際に出す `::warning` の文面を、数えがそのまま読める (指摘 8)。印や区切りを壊す字
+     (`〕`・`|`・`>`) を含む名前も、前検査が寄せた名前で数えて 1 度だけ書く (2 回目の反証 1・2)
+ 11. API の一時的な失敗は試し直し、読めない扱いにしない (2 回目の反証 6)
+
+偽 gh は run の一覧の `event`・`per_page`・`page` と、Issue の一覧の `--state`・`--search` を実際に効かせる
+(2 回目の反証 9。絞り込みを外せば検査が赤になる)。
 
 偽 gh は PATH の先頭に置いた同型のスタブで、**GitHub の API の実際の形の JSON を持ち、渡された
 `--jq` の式を実物の jq に掛けて返す** (指摘 7。式を壊せば検査が赤になる)。run の一覧は
@@ -61,33 +66,61 @@ done
 emit() {
   if [ -n "$query" ]; then jq -r "$query"; else cat; fi
 }
+# FAKE_FAIL=<種類> はその API が毎回落ち、FAKE_FAIL_ONCE=<種類> は最初の 1 回だけ落ちる
+fail() {
+  [ "$FAKE_FAIL" = "$1" ] && exit 1
+  if [ "$FAKE_FAIL_ONCE" = "$1" ] && [ ! -f "$FAKE_DIR/failed-$1" ]; then
+    : > "$FAKE_DIR/failed-$1"
+    exit 1
+  fi
+}
+# 実物と同じく、渡された問い合わせの値を効かせる。per_page・page は明示を求める (既定に頼らない)
+param() {
+  printf '%s' "$path" | sed -n "s/.*[?&]$1=\\([^&]*\\).*/\\1/p"
+}
 case "$1 $2" in
   "api repos/"*)
     path=$2
     case "$path" in
       */workflows/render.yml/runs*)
-        [ "$FAKE_FAIL" = runs ] && exit 1
-        per=$(printf '%s' "$path" | sed -n 's/.*[?&]per_page=\([0-9]*\).*/\1/p')
-        page=$(printf '%s' "$path" | sed -n 's/.*[?&]page=\([0-9]*\).*/\1/p')
-        [ -n "$per" ] || per=30
-        [ -n "$page" ] || page=1
-        jq --argjson n "$per" --argjson p "$page" \
-          '{total_count: (.workflow_runs | length), workflow_runs: .workflow_runs[(($p - 1) * $n):($p * $n)]}' \
+        fail runs
+        per=$(param per_page)
+        page=$(param page)
+        event=$(param event)
+        { [ -n "$per" ] && [ -n "$page" ]; } || { echo "fake gh: per_page と page を明示する" >&2; exit 2; }
+        jq --argjson n "$per" --argjson p "$page" --arg e "$event" \
+          '[.workflow_runs[] | select($e == "" or .event == $e)]
+           | {total_count: length, workflow_runs: .[(($p - 1) * $n):($p * $n)]}' \
           "$FAKE_DIR/runs.json" | emit ;;
       */actions/runs/*/jobs*)
-        [ "$FAKE_FAIL" = jobs ] && exit 1
+        fail jobs
         run=${path#*/actions/runs/}; run=${run%%/*}
         if [ -f "$FAKE_DIR/jobs-$run.json" ]; then emit < "$FAKE_DIR/jobs-$run.json"
         else echo '{"total_count":0,"jobs":[]}' | emit; fi ;;
       */check-runs/*/annotations*)
-        [ "$FAKE_FAIL" = ann ] && exit 1
+        fail ann
         job=${path#*/check-runs/}; job=${job%%/*}
         if [ -f "$FAKE_DIR/ann-$job.json" ]; then emit < "$FAKE_DIR/ann-$job.json"
         else echo '[]' | emit; fi ;;
       *) exit 1 ;;
     esac
     exit 0 ;;
-  "issue list") emit < "$FAKE_DIR/issues.json"; exit 0 ;;
+  "issue list")
+    state=
+    search=
+    prev=
+    for a in "$@"; do
+      [ "$prev" = "--state" ] && state=$a
+      [ "$prev" = "--search" ] && search=$a
+      prev=$a
+    done
+    # --search の "<題>" in:title は題の部分一致 (実物は語の照合)。--state は open / closed / all
+    words=$(printf '%s' "$search" | sed -n 's/^"\(.*\)" in:title$/\1/p')
+    [ -n "$state" ] || state=open
+    jq --arg s "$state" --arg w "$words" \
+      '[.[] | select(($s == "all" or .state == $s) and ($w == "" or (.title | contains($w))))]' \
+      "$FAKE_DIR/issues.json" | emit
+    exit 0 ;;
   "issue create")
     prev=
     for a in "$@"; do
@@ -97,7 +130,7 @@ case "$1 $2" in
     done
     cp "$body" "$FAKE_BODY_OUT"
     printf '%s' "$title" > "$FAKE_TITLE_OUT"
-    jq --arg t "$title" '. + [{"number": 4242, "title": $t}]' "$FAKE_DIR/issues.json" > "$FAKE_DIR/issues.tmp"
+    jq --arg t "$title" '. + [{"number": 4242, "title": $t, "state": "open"}]' "$FAKE_DIR/issues.json" > "$FAKE_DIR/issues.tmp"
     mv "$FAKE_DIR/issues.tmp" "$FAKE_DIR/issues.json"
     jq -n --rawfile b "$body" '{"body": $b, "comments": []}' > "$FAKE_DIR/issue-4242.json"
     echo "https://github.com/mokume-metal/mokume/issues/4242"
@@ -155,13 +188,13 @@ class ReportRunnerNoticeTest(unittest.TestCase):
 
     # ---- 偽の記録
 
-    def add_run(self, run, names, conclusion="success", status="completed", preflight="success", message=None):
+    def add_run(self, run, names, conclusion="success", status="completed", preflight="success", message=None, event="merge_group"):
         """merge_group の run を 1 本足す。names=None は注意なし。preflight=None は前検査の step が無い。"""
         job = run * 10
         self.runs[run] = {
             "id": run,
             "name": "Render",
-            "event": "merge_group",
+            "event": event,
             "status": status,
             "conclusion": conclusion if status == "completed" else None,
             "run_attempt": 1,
@@ -198,7 +231,7 @@ class ReportRunnerNoticeTest(unittest.TestCase):
         runs = [self.runs[r] for r in sorted(self.runs, reverse=True)]
         (self.fake / "runs.json").write_text(json.dumps({"total_count": len(runs), "workflow_runs": runs}, ensure_ascii=False))
 
-    def env(self, current, fail="", streak=None, output=None, per_page=None, max_pages=None, **extra):
+    def env(self, current, fail="", fail_once="", streak=None, output=None, per_page=None, max_pages=None, **extra):
         self.write_runs()
         env = {k: v for k, v in os.environ.items() if not k.startswith(("NOTICE", "GITHUB_", "DUE", "DETAIL", "UNREADABLE"))}
         env.update(
@@ -207,6 +240,8 @@ class ReportRunnerNoticeTest(unittest.TestCase):
                 "FAKE_GH_LOG": str(self.log),
                 "FAKE_DIR": str(self.fake),
                 "FAKE_FAIL": fail,
+                "FAKE_FAIL_ONCE": fail_once,
+                "NOTICE_RETRY_WAIT": "0",
                 "FAKE_BODY_OUT": str(self.body),
                 "FAKE_TITLE_OUT": str(self.title),
                 "GITHUB_REPOSITORY": "mokume-metal/mokume",
@@ -435,7 +470,7 @@ class ReportRunnerNoticeTest(unittest.TestCase):
 
     def test_途切れが上限の外なら同じ名前の印で重ねない(self):
         self.add_run(500, "mediaanalysisd")
-        (self.fake / "issues.json").write_text(json.dumps([{"number": 4242, "title": NOTICE_TITLE}]))
+        (self.fake / "issues.json").write_text(json.dumps([{"number": 4242, "title": NOTICE_TITLE, "state": "open"}]))
         (self.fake / "issue-4242.json").write_text(json.dumps({"body": "x\n<!-- runner-notice run=500 after=499 name=mediaanalysisd -->\n", "comments": []}))
         self.assertFalse(self.report(800, {"due": "4 0 mediaanalysisd", "unreadable": ""}))
         self.assertTrue(self.report(800, {"due": "4 0 cloudphotod", "unreadable": ""}))
@@ -454,6 +489,54 @@ class ReportRunnerNoticeTest(unittest.TestCase):
                 self.assertIn("読めなかった", body)
                 self.assertIn("<!-- runner-notice run=802 unreadable -->", body)
                 self.assertFalse(self.report(803, self.count(803, "mediaanalysisd", fail=fail)), "読めない回を重ねない")
+
+    def test_一時的な失敗は試し直して読めない扱いにしない(self):
+        # レート制限・502 の 1 回で、1 回目の続きの名前まで due に載せて Issue を立てない (2 回目の反証 6)
+        for kind in ("runs", "jobs", "ann"):
+            with self.subTest(kind=kind):
+                self.setUp()
+                self.add_run(800, None)
+                self.add_run(801, "mediaanalysisd")
+                values = self.count(802, "mediaanalysisd", fail_once=kind)
+                self.assertEqual(values, {"due": "", "unreadable": ""})
+                self.assertTrue((self.fake / f"failed-{kind}").exists(), "偽の gh が 1 回落ちていない")
+
+    def test_試し直しても落ちれば読めない扱い(self):
+        self.add_run(801, "mediaanalysisd")
+        values = self.count(802, "mediaanalysisd", fail="jobs")
+        self.assertEqual(values["unreadable"], "1")
+        jobs_calls = [ln for ln in self.log.read_text().splitlines() if "/jobs?" in ln]
+        self.assertEqual(len(jobs_calls), 3, jobs_calls)
+
+    # ---- 絞り込み (2 回目の反証 9)
+
+    def test_merge_group_の外の_run_は数えない(self):
+        # pull_request・schedule の render.yml の run は render の job が走らず前検査も無い。混ぜると
+        # 前検査が走って注意の無い run に見え、続きが途切れる
+        self.add_run(800, None)
+        self.add_run(801, "mediaanalysisd")
+        self.add_run(802, None, event="pull_request")
+        self.add_run(803, None, event="schedule")
+        self.add_run(804, "mediaanalysisd")
+        self.assertEqual(self.count(805, "mediaanalysisd")["due"], "3 800 mediaanalysisd")
+
+    def test_閉じた注意の_Issue_と別の題の_Issue_の印は読まない(self):
+        self.add_run(800, None)
+        self.add_run(801, "mediaanalysisd")
+        self.add_run(802, "mediaanalysisd")
+        mark = "<!-- runner-notice run=900 after=800 name=mediaanalysisd -->"
+        (self.fake / "issues.json").write_text(
+            json.dumps(
+                [
+                    {"number": 4100, "title": NOTICE_TITLE, "state": "closed"},
+                    {"number": 4101, "title": RED_TITLE, "state": "open"},
+                ]
+            )
+        )
+        for n in (4100, 4101):
+            (self.fake / f"issue-{n}.json").write_text(json.dumps({"body": mark, "comments": []}))
+        self.assertTrue(self.report(803, self.count(803, "mediaanalysisd")))
+        self.assertIn("issue create", self.log.read_text())
 
     def test_普通に書いた後の読めない回はまた_1_度書く(self):
         self.add_run(801, "mediaanalysisd")
@@ -488,7 +571,7 @@ class ReportRunnerNoticeTest(unittest.TestCase):
     def test_open_な注意の_Issue_があれば起票せずコメントで追記する(self):
         self.add_run(801, "mediaanalysisd")
         self.add_run(802, "mediaanalysisd")
-        (self.fake / "issues.json").write_text(json.dumps([{"number": 4300, "title": NOTICE_TITLE}]))
+        (self.fake / "issues.json").write_text(json.dumps([{"number": 4300, "title": NOTICE_TITLE, "state": "open"}]))
         (self.fake / "issue-4300.json").write_text(json.dumps({"body": "人の文", "comments": []}))
         self.report(803, self.count(803, "mediaanalysisd"))
         lines = self.log.read_text().splitlines()
@@ -553,6 +636,26 @@ class ReportRunnerNoticeTest(unittest.TestCase):
         for run in (801, 802):
             self.add_run(run, None, message=message)
         self.assertEqual(set(self.count(803, notice)["due"].split("|")), {"3 0 -zsh", "3 0 mediaanalysisd"})
+
+    def test_印や区切りを壊す字を含む名前も寄せた名前で数えて_1_度だけ書く(self):
+        # 2 回目の反証 1・2: `〕` はタグを、`|` は区切りを、`>`・`-->` は印を壊す。前検査が安全な字に寄せる
+        pre = preflight.RunnerPreflightTest("run")
+        pre.setUp()
+        self.addCleanup(pre.tmp.cleanup)
+        comm = "/Applications/A App.app/Contents/MacOS/a>b〕c d=e|f-->g"
+        r = pre.run_preflight(FAKE_PS=f"  1904     1  68.0 18-09:23:07 {comm}", FAKE_CWDS="1904=/")
+        # 人が読む文面は元の名前のまま (一覧の `|` を `, ` にするのは前からの書き方)
+        self.assertIn("a>b〕c d=e, f-->g (pid 1904", r.stdout)
+        notice = pre.output_value("notice")
+        self.assertEqual(notice, "a_b___c d_e_f--_g")
+        message = re.sub(r"^::warning [^:]*::", "", next(ln for ln in r.stdout.splitlines() if ln.startswith("::warning")))
+        for run in (801, 802):
+            self.add_run(run, None, message=message)
+        values = self.count(803, notice)
+        self.assertEqual(values["due"], f"3 0 {notice}")
+        self.assertTrue(self.report(803, values))
+        self.add_run(803, None, message=message)
+        self.assertFalse(self.report(804, self.count(804, notice)), "印を読み戻せる")
 
 
 if __name__ == "__main__":

@@ -279,7 +279,8 @@ jobs:
   # **concurrency で直列にする**: runner 2 本の並行で、同じ続きを数えた 2 本が互いの印を見落とさない
   # ように。待たせるだけで、走っている job は切らない。render の job と workflow 全体には掛けない。
   # 待ちに 2 本目が来ると先の待ちは GitHub に打ち切られるが、後の 1 本も同じ続きを数えていれば
-  # (印が無いので) 書く
+  # (印が無いので) 書く。ちょうど N 回で終わる続きの書き込みが打ち切られると、その名前は書かれない
+  # (既知の限界。書き込みは数秒で、その間に別の 2 本が終わったときだけ。render の結論は変わらない)
   render-notice-report:
     needs: [render, render-notice-count]
     if: ${{ !cancelled() && needs.render-notice-count.outputs.due != '' }}

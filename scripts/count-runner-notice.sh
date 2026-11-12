@@ -46,6 +46,8 @@
 #     途切れとも続きとも数えない (指摘 5)
 #   ・前検査が走ったのにその名前が無い run が「途切れ」。その run の ID を書く側へ渡す。履歴を
 #     読み切っても途切れが無ければ 0
+#   ・API の呼び出しは、短い待ちを挟んで 3 回まで試す。一時的な失敗 (レート制限・502) は「読めない」に
+#     しない
 #   ・**記録を読めなかったときは、名前を全部 due に載せて unreadable を立てる** (黙って止まらない)。
 #     読めない回を重ねて書かないのは書く側 (Issue の最後の印が「読めない」なら重ねない)
 #
@@ -58,6 +60,8 @@
 #
 # 検査は scripts/tests/report_runner_notice_test.py。
 set -euo pipefail
+# 照合順・バイトの扱いを GNU (CI の ubuntu) と BSD (手元の macOS) で揃える
+export LC_ALL=C
 
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
@@ -73,6 +77,35 @@ JOB_QUERY+=" | [.id, .status, (.conclusion // \"none\"),"
 JOB_QUERY+=" ([.steps[]? | select(.name | contains(\"$PREFLIGHT_STEP\")) | .conclusion // \"none\"][0] // \"none\")]"
 JOB_QUERY+=" | map(tostring) | join(\" \")"
 readonly JOB_QUERY
+
+# gh api を、短い待ちを挟んで RETRY_TRIES 回まで試す (一時的なレート制限・502 で「読めない」に
+# しない・#3633 の 2 回目の反証)。待ちは既定 5 秒・2 回で、全部落ちても 10 秒 (job の
+# timeout-minutes: 5 に収まる)。全部落ちたら非 0
+readonly RETRY_TRIES=3
+RETRY_WAIT="${NOTICE_RETRY_WAIT:-5}"
+case "$RETRY_WAIT" in '' | *[!0-9]*) echo "NOTICE_RETRY_WAIT は 0 以上の整数: $RETRY_WAIT" >&2; exit 64 ;; esac
+api() {
+  local try=1 out
+  while :; do
+    if out=$(gh api "$@" 2>/dev/null); then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    [ "$try" -lt "$RETRY_TRIES" ] || return 1
+    try=$((try + 1))
+    sleep "$RETRY_WAIT"
+  done
+}
+
+# 行の並び ($1) を $2 で区切った 1 行に (paste -sd は空の入力の扱いが GNU と BSD で違う)
+join_lines() {
+  local out="" line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    out+="${out:+$2}${line}"
+  done <<<"$1"
+  printf '%s' "$out"
+}
 
 usage() {
   echo "使い方: NOTICE=<注意の名前 (| 区切り)> count-runner-notice.sh" >&2
@@ -123,8 +156,8 @@ advance() { # $1=run の ID $2=その run の名前の一覧のファイル
 unreadable=""
 page=1
 while [ "$open_count" -gt 0 ] && [ "$page" -le "$MAX_PAGES" ]; do
-  if ! runs=$(gh api "repos/$REPO/actions/workflows/$WORKFLOW/runs?event=merge_group&per_page=$PER_PAGE&page=$page" \
-    --jq '.workflow_runs[].id' 2>/dev/null); then
+  if ! runs=$(api "repos/$REPO/actions/workflows/$WORKFLOW/runs?event=merge_group&per_page=$PER_PAGE&page=$page" \
+    --jq '.workflow_runs[].id'); then
     unreadable=1
     break
   fi
@@ -135,7 +168,7 @@ while [ "$open_count" -gt 0 ] && [ "$page" -le "$MAX_PAGES" ]; do
     # この run 自身と、この run より後に作られた run は前の run ではない (再実行でも同じ履歴を見る)
     if [ -n "$CURRENT_RUN" ] && [ "$run" -ge "$CURRENT_RUN" ]; then continue; fi
     # render の job の状態・結論・前検査の step の結論を 1 行で (job が無ければ空)
-    if ! job=$(gh api "repos/$REPO/actions/runs/$run/jobs?per_page=100" --jq "$JOB_QUERY" 2>/dev/null); then
+    if ! job=$(api "repos/$REPO/actions/runs/$run/jobs?per_page=100" --jq "$JOB_QUERY"); then
       unreadable=1
       break 2
     fi
@@ -145,7 +178,7 @@ while [ "$open_count" -gt 0 ] && [ "$page" -le "$MAX_PAGES" ]; do
     [ -n "${job_id:-}" ] && [ "$status" = completed ] || continue
     case "$conclusion" in success | failure) ;; *) continue ;; esac
     case "$preflight" in success | failure) ;; *) continue ;; esac
-    if ! messages=$(gh api "repos/$REPO/check-runs/$job_id/annotations?per_page=100" \
+    if ! messages=$(api "repos/$REPO/check-runs/$job_id/annotations?per_page=100" \
       --jq ".[] | (.message // \"\") | select(contains(\"$NOTICE_TAG\"))" 2>/dev/null); then
       unreadable=1
       break 2
@@ -177,9 +210,9 @@ if [ -n "$unreadable" ]; then
 elif [ -z "$due" ]; then
   echo "count-runner-notice: N=${STREAK_N} 回に満たない (注意の名前: ${NAMES})"
 else
-  echo "count-runner-notice: N=${STREAK_N} 回以上続いている (回数 途切れの run 名前): $(printf '%s' "$due" | paste -sd ',' -)"
+  echo "count-runner-notice: N=${STREAK_N} 回以上続いている (回数 途切れの run 名前): $(join_lines "$due" ',')"
 fi
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  printf 'due=%s\n' "$(printf '%s' "$due" | paste -sd '|' -)" >> "$GITHUB_OUTPUT"
+  printf 'due=%s\n' "$(join_lines "$due" '|')" >> "$GITHUB_OUTPUT"
   printf 'unreadable=%s\n' "$unreadable" >> "$GITHUB_OUTPUT"
 fi

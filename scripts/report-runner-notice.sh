@@ -21,6 +21,9 @@
 #   <!-- runner-notice run=<書いた run の ID> after=<途切れの run の ID> name=<名前> -->
 #   <!-- runner-notice run=<書いた run の ID> unreadable -->
 #
+# 名前は前検査 (runner-preflight.sh) が安全な字 (英数字と `._ -`) に寄せてあるので、印の `-->` や
+# `>` を含まない。
+#
 # 書く前に、open な注意の Issue の本文とコメントから印を読み、
 #
 #   ・名前ごと: **同じ名前で、書いた run が今回の途切れより後の印**が在れば、その名前は書かない。
@@ -47,6 +50,8 @@
 #
 # 検査は scripts/tests/report_runner_notice_test.py。
 set -euo pipefail
+# 照合・バイトの扱いを GNU (CI の ubuntu) と BSD (手元の macOS) で揃える
+export LC_ALL=C
 
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
@@ -83,6 +88,8 @@ if existing=$(gh issue list -R "$REPO" --state open --search "\"$TITLE\" in:titl
   --json number,title \
   --jq "[.[] | select(.title == \"$TITLE\")] | .[0].number // empty" 2>/dev/null); then
   if [ -n "$existing" ]; then
+    # gh issue view はコメントを全件返す (2026-11-13 に 86 件の #2802・67 件の #2251 で、
+    # gh api --paginate の issues/<N>/comments と同じ数を確かめた)
     if texts=$(gh issue view "$existing" -R "$REPO" --json body,comments \
       --jq '(.body // ""), ((.comments // [])[] | .body // "")' 2>/dev/null); then
       grep -o "${MARK}run=[0-9]* [^>]*-->" <<<"$texts" \
