@@ -373,4 +373,32 @@ struct SynthArgumentOrderTests {
         #expect(mismatch(ignored, plain) == nil)
         #expect(nanNotices.lines.count == 1, "\(nanNotices.lines)")
     }
+
+    @Test("上限だけを下げても、今の遅れが新しい上限より長ければ上限まで縮め、短ければそのまま")
+    func loweringTheMaximumShortensALongerDelay() throws {
+        // time(3) の後、3 引数の形で上限を 1 秒に下げ、遅れには数でない値を渡す
+        let notices = NoticeLog()
+        let lowered = try delayed(notices: notices) { delay, osc in
+            delay.time(3)
+            delay.process(osc, 1, .nan)
+        }
+        let atMaximum = try delayed { $0.process($1, 1, 1) }
+        let untouched = try delayed { delay, osc in
+            delay.time(3)
+            delay.process(osc)
+        }
+        #expect(mismatch(lowered, atMaximum) == nil, "遅れは 0〜上限 (1 秒)")
+        #expect(mismatch(lowered, untouched) != nil, "縮めずに 3 秒のまま鳴らした音と区別できる")
+        // 知らせは数でない遅れの 1 度だけ (縮めたことは知らせない)
+        #expect(notices.lines.count == 1, "\(notices.lines)")
+        #expect(notices.lines.first?.hasPrefix("time()") == true, "\(notices.lines)")
+
+        // 新しい上限より短い遅れは変えない
+        let short = try delayed { delay, osc in
+            delay.time(0.1)
+            delay.process(osc, 1, .nan)
+        }
+        let shortAtOnce = try delayed { $0.process($1, 1, 0.1) }
+        #expect(mismatch(short, shortAtOnce) == nil)
+    }
 }

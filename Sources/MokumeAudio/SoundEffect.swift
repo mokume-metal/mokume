@@ -400,6 +400,8 @@ public final class Reverb: SoundEffect {
 public final class Delay: SoundEffect {
     /// 遅れの上限 (秒)。``process(_:_:)`` で変える。
     private var maximumTime: Float = Float(EchoKernel.maximumSeconds)
+    /// 音の側へ送った遅れ (秒)。上限を下げたときに丸め直すために持つ。
+    private var delayTime: Float = EchoKernel.defaultSeconds
 
     init(stage: SynthStage) {
         super.init(stage: stage, node: stage.rack.addDelay(), name: "Delay")
@@ -436,7 +438,8 @@ public final class Delay: SoundEffect {
     /// **第 3 引数はディレイタイム (秒)** で、``time(_:)`` と同じ (Processing Sound の
     /// `process(input, maxDelayTime, delayTime)` と同じ)。フィードバックの割合は ``feedback(_:)`` か
     /// ``set(_:_:)`` で決める。範囲の外・NaN は、それぞれ ``process(_:_:)``・``time(_:)`` と同じに扱う
-    /// (ディレイタイムは、この呼び出しで決めた上限で丸める)。
+    /// (ディレイタイムは、この呼び出しで決めた上限で丸める)。ディレイタイムが数でなければ、遅れは今のまま
+    /// (新しい上限より長ければ、上限まで縮める)。
     public func process(_ input: any EffectInput, _ maxDelayTime: Float, _ delayTime: Float) {
         acceptMaximum(maxDelayTime)
         time(delayTime)
@@ -444,6 +447,8 @@ public final class Delay: SoundEffect {
     }
 
     /// ディレイタイムの上限を受け、範囲の外は丸め、数でない値は無視する (どちらも 1 度だけ知らせる)。
+    ///
+    /// 今の遅れが新しい上限より長ければ、遅れも上限まで縮める (遅れは常に 0〜上限。知らせない)。
     ///
     /// - Returns: 受けた上限 (丸めた後)。無視したら `nil`。
     @discardableResult
@@ -453,7 +458,14 @@ public final class Delay: SoundEffect {
             meaning: "a maxDelayTime")
         else { return nil }
         maximumTime = value
+        if delayTime > value { sendTime(value) }
         return value
+    }
+
+    /// 遅れを音の側へ送り、送った値を覚える。
+    private func sendTime(_ seconds: Float) {
+        delayTime = seconds
+        send(.time, seconds)
     }
 
     /// ディレイタイムを設定する。単位は秒で、0 から ``process(_:_:)`` で指定した上限まで (既定は 5)。既定のディレイタイムは 0.25。
@@ -466,7 +478,7 @@ public final class Delay: SoundEffect {
         guard let value = accept(
             seconds, 0...maximumTime, call: "time", meaning: "a delay time")
         else { return }
-        send(.time, value)
+        sendTime(value)
     }
 
     /// フィードバックの割合を設定する。0〜1 で、大きいほど反響が長く続く。既定は 0.5。
