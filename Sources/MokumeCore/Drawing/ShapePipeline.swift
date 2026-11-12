@@ -177,8 +177,10 @@ final class ShapePipeline {
     /// (`ShaderSource`)・入口 (`Common.metal`)・断る側 (`Canvas.loadShader`) がこれを見る (面の
     /// ``surfaceCapacity`` と同じ形・#3576)。
     ///
-    /// 口は使う本数によらず全部が束ねられる。**空きの口には 1 個の 0 を束ねる**ので、宣言より多く
-    /// 読もうとした断片も、絵が乱れるだけで異常終了はしない (``numbersBufferIndex`` と同じ扱い)。
+    /// 口は使う本数によらず全部が束ねられ、**空きの口には 1 個の 0 を束ねる**。断片が読めるのは宣言した
+    /// 名前 (`numbers.<名前>`) だけなので、空きの口が読まれることは無い。束ねるのは面の口と同じ作りに
+    /// 揃えるためである。macOS 27 の手元では、空きの口を束ねなくても `MTL_DEBUG_LAYER=1`・
+    /// `MTL_SHADER_VALIDATION=1` のどちらの検証層も名指さなかった (#3576 の反証)。
     static let namedNumbersCapacity = 4
     /// 読む面を渡す口の番号 (シェーダ側の `texture(0)`)。
     static let textureIndex = 0
