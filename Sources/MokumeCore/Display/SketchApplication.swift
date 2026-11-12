@@ -999,7 +999,8 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 人へ 1 行伝える口。**検査から差し替える** (言ったかどうかを数えるため)。
     var announce: @MainActor (String) -> Void = { Diagnostics.warn($0) }
 
-    /// 自分のウィンドウを開いたときに名乗る口 ([ADR-0049] 決定 2・[#3919])。引数は一覧に見せる名前 (題)。
+    /// 自分のウィンドウを開いたときに名乗る口 ([ADR-0049] 決定 2・[#3919])。引数は一覧に見せる名前 (題) と、受け付ける面の
+    /// 幅・高さ (描く解像度。最初の 1 件から目録に載せる・#3949)。
     ///
     /// **名乗るのは自分のウィンドウを持つ実行だけ** — 直に走らせる・`run`・束ねた `.app`・見張りの子が自分の
     /// ウィンドウへ倒れた回。共有面へ差し出す子は道具が代わりに名乗り、書き出しと埋め込みは名乗らない。
@@ -1007,10 +1008,11 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
     /// [#3919]: https://github.com/mokume-metal/mokume/issues/3919
-    var listFrames: @MainActor (String) -> FrameAnnouncement? = { title in
+    var listFrames: @MainActor (_ title: String, _ width: Int, _ height: Int) -> FrameAnnouncement? = {
+        title, width, height in
         FrameAnnouncement.announce(
             sketch: FrameAnnouncement.ownSketchName, identity: FrameAnnouncement.ownIdentity,
-            title: title)
+            title: title, width: width, height: height)
     }
 
     /// 名乗っている項目。自分のウィンドウを開くまでと、名乗れなかった実行では `nil`。
@@ -1155,7 +1157,7 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // **ウィンドウを持ったので名乗る** ([ADR-0049] 決定 2)。名乗れなくても走り続ける。名乗れたら受け手の頼みを
         // 受け始める (繋がっていない間はフレームの仕事は増えない・#3920)
         // **断った作品は名乗らない** (``SketchSettings/sharesFrames``・#3921)
-        if sharesFrames { frameAnnouncement = listFrames(title) }
+        if sharesFrames { frameAnnouncement = listFrames(title, runtime.target.width, runtime.target.height) }
         if let sender = frameAnnouncement?.startSending(
             gpu: gpu, width: runtime.target.width, height: runtime.target.height,
             startsListening: listensForReceivers)

@@ -13,10 +13,20 @@ The sketch never waits for a receiver. The receiver provides the surfaces, and t
 
 1. Pick an entry from the list and look its `serviceName` up with `bootstrap_look_up` (reach it through `dlsym` if your SDK does not expose `servers/bootstrap.h`). You get a send right to the sketch's port.
 2. Ask for a dead-name notification on that send right (`mach_port_request_notification` with `MACH_NOTIFY_DEAD_NAME`) on a port of your own. This is how you learn that the sketch went away.
-3. Create 2 to 8 surfaces (IOSurface) that are half-float RGBA (`'RGhA'`, 8 bytes per pixel) and exactly the entry's drawing size (the size comes back in `accepted`; if you guessed wrong, the sketch refuses with `surfaceSize`). A global surface is not needed.
+3. Create 2 to 8 surfaces (IOSurface) that are half-float RGBA (`'RGhA'`, 8 bytes per pixel) and exactly the entry's `width` × `height` (the sketch's drawing size). A global surface is not needed. An entry without `width` and `height` comes from an older sender: see [Senders and receivers of different ages](#senders-and-receivers-of-different-ages).
 4. Send `connect` to the sketch's port.
 
-The sketch answers `accepted` or `refused`. From then on, it sends `frame` each time it has written a surface. Return each surface with `release` when you have read it. A surface you have not returned is never written to again, and when every surface is held the sketch skips frames instead of waiting.
+The sketch answers `accepted` or `refused`. The size also comes back in `accepted`. From then on, it sends `frame` each time it has written a surface. Return each surface with `release` when you have read it. A surface you have not returned is never written to again, and when every surface is held the sketch skips frames instead of waiting.
+
+### When the size changed before you connected
+
+The drawing size can change between reading the entry and sending `connect` (`mokume watch` restarts the sketch on every save, and the new code may draw at another size). The sketch then refuses with reason 4 (`surfaceSize`). It rewrites `width` and `height` in its entry before it refuses with the new size, so:
+
+1. On `refused` with reason 4, read the same entry again (the file named after the same `serviceName`).
+2. If its `width` × `height` differs from the surfaces you sent, make new surfaces of that size and send `connect` again from the same port.
+3. If the entry still shows the size you sent, or the entry is gone, stop and report the refusal. Retry only a few times: the size may keep changing while someone works on the sketch.
+
+A size change after you are accepted comes as `resized` instead (below).
 
 ## Messages
 
@@ -73,6 +83,13 @@ No timeouts are involved on either side.
 ## Under `mokume watch`
 
 `mokume watch` restarts the sketch every time its source is saved. The tool, not the sketch, owns the window and lists itself, so a receiver stays connected across saves: frame numbers come from the tool and keep counting up, and the colour attributes are copied from the sketch's own surfaces. If the new sketch sets `sharesFrames = false`, the tool takes its entry down and the receiver gets the dead-name notification.
+
+## Senders and receivers of different ages
+
+`width` and `height` in the list were added without raising the version: the list and `connect` are both still version 1.
+
+- **An older receiver and a current sender.** A receiver that skips fields it does not know reads a current entry as before and connects with the size it already knows. Nothing changes for it.
+- **A current receiver and an older sender.** An entry without `width` and `height` is still a version 1 entry. Connect with a size you know from elsewhere (one the person typed, or one you remembered for this `identity`). If you know none, tell the person that the sketch's listing has no size and that a size has to be given to connect; do not guess, since a wrong guess is only refused.
 
 ## Versions
 

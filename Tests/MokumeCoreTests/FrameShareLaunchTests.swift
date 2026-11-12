@@ -92,7 +92,7 @@ struct FrameShareLaunchTests {
         let application = try SketchApplication(sketch: Titled(), gpu: RenderDevice(), render: render)
         application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
         application.announce = { _ in }
-        application.listFrames = { title in
+        application.listFrames = { title, width, height in
             listed(title)
             return nil
         }
@@ -104,12 +104,14 @@ struct FrameShareLaunchTests {
         let directory = try TestScratch.directory("mokume-frames")
         let missing = TestScratch.path("mokume-viewport", isDirectory: true)
         var titles: [String] = []
+        var sizes: [[Int]] = []
         let application = try makeApplication(listed: { titles.append($0) })
         // 本物の名乗りを検査の置き場へ (bootstrap には実際に登録する)
-        application.listFrames = { title in
+        application.listFrames = { title, width, height in
             titles.append(title)
+            sizes.append([width, height])
             return FrameAnnouncement.announce(
-                sketch: "Titled", identity: "/work/Titled", title: title, in: directory,
+                sketch: "Titled", identity: "/work/Titled", title: title, width: width, height: height, in: directory,
                 warn: { Issue.record("名乗れなかった: \($0)") })
         }
         application.resolveOutlet(at: missing, owner: nil)
@@ -117,6 +119,12 @@ struct FrameShareLaunchTests {
         defer { application.window?.close() }
         #expect(titles == ["Titled work"])
         #expect(FrameListing.entries(in: directory).map(\.title) == ["Titled work"])
+        // **最初の 1 件から、送り手が受け付ける大きさ (描く解像度) が載る** (#3949)
+        // 送り手は描く解像度で起こす (受け付ける大きさ)
+        let sender = try #require(application.frameAnnouncement?.sender, "送り手を起こしていない")
+        #expect(sender.width >= 32 && sender.height >= 16, "検査の前提: 描く解像度でない: \(sender.width)×\(sender.height)")
+        #expect(sizes == [[sender.width, sender.height]], "名乗りに受け付ける大きさを添えていない: \(sizes)")
+        #expect(FrameListing.entries(in: directory).map { [$0.width, $0.height] } == [[sender.width, sender.height]])
 
         application.willTerminate()
         #expect(FrameListing.entries(in: directory).isEmpty, "終わったのに目録に残っている")
@@ -136,9 +144,9 @@ struct FrameShareLaunchTests {
         application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
         application.announce = { _ in }
         application.listensForReceivers = false
-        application.listFrames = { title in
+        application.listFrames = { title, width, height in
             FrameAnnouncement.announce(
-                sketch: "Titled", identity: "/work/Titled", title: title, in: directory,
+                sketch: "Titled", identity: "/work/Titled", title: title, width: width, height: height, in: directory,
                 warn: { Issue.record("名乗れなかった: \($0)") })
         }
         application.resolveOutlet(at: missing, owner: nil)
@@ -241,7 +249,7 @@ struct FrameShareLaunchTests {
         let application = try SketchApplication(sketch: Private(), gpu: RenderDevice())
         application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
         application.announce = { _ in }
-        application.listFrames = { title in
+        application.listFrames = { title, width, height in
             titles.append(title)
             return nil
         }

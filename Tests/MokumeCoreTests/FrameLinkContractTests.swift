@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import IOSurface
 import MokumeTestSupport
 import Testing
 
@@ -189,15 +190,76 @@ struct FrameLinkContractTests {
             try JSONSerialization.jsonObject(with: Data(contentsOf: schemaURL)) as? [String: Any])
         let properties = Set((schema["properties"] as? [String: Any] ?? [:]).keys)
         let required = Set(schema["required"] as? [String] ?? [])
-        let entry = FrameListing.Entry(
+        var entry = FrameListing.Entry(
             sketch: "S", identity: "/s", title: "S", pid: 1, startedAt: 1, serviceName: "org.mokume.frames.1.ab.main")
+        // 大きさの無い項目 (旧い送り手と同じ形) は、必須の鍵だけを書く
+        let unsized = try #require(
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as? [String: Any])
+        #expect(Set(unsized.keys) == required)
+        // 大きさは任意の欄で、揃って書く (#3949)
+        entry.width = 173
+        entry.height = 97
         let written = try #require(
             try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as? [String: Any])
         #expect(Set(written.keys) == properties)
-        #expect(Set(written.keys) == required)
+        #expect(properties.subtracting(required) == ["width", "height"])
+        let together = schema["dependentRequired"] as? [String: [String]]
+        #expect(together?["width"] == ["height"] && together?["height"] == ["width"], "幅と高さを揃える定めが無い")
         let version = (schema["properties"] as? [String: Any])?["schemaVersion"] as? [String: Any]
         #expect(version?["const"] as? Int == FrameListing.schemaVersion)
         #expect(Int(FrameLink.version) == FrameListing.schemaVersion, "目録と手順の版がずれた")
+    }
+
+    // MARK: - 目録の大きさ (#3949)
+
+    /// 旧い送り手の項目を置く (大きさの鍵を持たない)。名前は本物の名乗りのもの。
+    private func placeOlderEntry(of announcement: FrameAnnouncement, in directory: URL) throws -> URL {
+        var older = announcement.entry
+        older.width = nil
+        older.height = nil
+        try FrameListing.place(older, in: directory)
+        let file = FrameListing.url(for: older.serviceName, in: directory)
+        let written = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        try #require(written["width"] == nil, "検査の前提: 旧い形の項目になっていない")
+        return file
+    }
+
+    /// **新しい受け手 × 旧い送り手** ([#3949])。大きさの無い項目も v1 として読み、知っている大きさが無ければ、推し量らずに
+    /// 利用者へ大きさの指定を頼む。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("大きさの無い旧い項目を読んだ受け手は、知っている大きさが無ければ繋がずに大きさの指定を頼む")
+    func aReceiverAsksForTheSizeAnOlderSenderDidNotList() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let announcement = try announce(in: directory)
+        defer { announcement.withdraw() }
+        let file = try placeOlderEntry(of: announcement, in: directory)
+        let receiver = try FrameReceiverProcess(arguments: ["--listing", file.path, "--timeout", "5"])
+        let ended = receiver.wait(upTo: 20) { !receiver.process.isRunning }
+        #expect(ended, "受け手が終わらない: \(receiver.events)")
+        let unknown = try #require(receiver.events(named: "sizeUnknown").first, "\(receiver.events)")
+        let message = unknown["message"] as? String ?? ""
+        #expect(message.contains("no width and height") && message.contains("--width"), "\(message)")
+        #expect(receiver.process.terminationStatus == 6)
+        #expect(receiver.events(named: "listingUnreadable").isEmpty, "旧い項目を v1 として読めない")
+        // 推し量って繋ぎに来ない
+        #expect(FrameLink.receive(on: announcement.receivePort, timeout: 100) == nil, "大きさが分からないのに繋いだ")
+    }
+
+    @Test("大きさの無い旧い項目でも、知っている大きさを渡せばその大きさの面で繋ぐ")
+    func aReceiverUsesAKnownSizeForAnOlderSender() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let announcement = try announce(in: directory)
+        defer { announcement.withdraw() }
+        let file = try placeOlderEntry(of: announcement, in: directory)
+        let receiver = try FrameReceiverProcess(arguments: ["--listing", file.path, "--width", "16", "--height", "8"])
+        defer { receiver.stop() }
+        let connect = try #require(receiveConnect(on: announcement.receivePort), "繋ぐ 1 通が届かない")
+        defer { for name in connect.ports { FrameLink.releaseName(name) } }
+        let sizes = connect.ports.dropFirst().compactMap(IOSurfaceLookupFromMachPort).map {
+            [IOSurfaceGetWidth($0), IOSurfaceGetHeight($0)]
+        }
+        #expect(sizes == Array(repeating: [16, 8], count: 3), "\(sizes)")
     }
 }
 
@@ -327,6 +389,157 @@ struct FrameLinkContractGPUTests {
         #expect(receiver.events(named: "refused").isEmpty, "新しい大きさの面を断った: \(receiver.events)")
         #expect(receiver.events(named: "accepted").first?["width"] as? Int == 32, "\(receiver.events)")
         #expect(received, "絵が届かない: \(receiver.events)")
+        _ = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
+    }
+
+    // MARK: - 目録の大きさで繋ぐ (#3949)
+
+    /// 名乗り、受け付ける大きさで送り手を起こす (受け手の頼みは検査が ``FrameSender/drain()`` で捌く)。
+    private func startSender(
+        in directory: URL, gpu: RenderDevice, width: Int, height: Int
+    ) throws -> (FrameAnnouncement, FrameSender) {
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "Contract", identity: "/work/Contract", title: "Contract", in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        let sender = try #require(
+            announcement.startSending(gpu: gpu, width: width, height: height, startsListening: false))
+        sender.warn = { _ in }
+        return (announcement, sender)
+    }
+
+    /// 頼みを捌きながら、送り手のいまの大きさで絵を書き続け、受け手が `frames` 枚受けるか終わるまで待つ (期限つき)。
+    private func feed(
+        _ receiver: FrameReceiverProcess, sender: FrameSender, gpu: RenderDevice, frames: Int
+    ) throws -> Bool {
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        var source = try RenderTarget(gpu: gpu, width: sender.width, height: sender.height)
+        var frame: Int64 = 0
+        return receiver.wait(
+            upTo: 20,
+            doing: {
+                sender.drain()
+                frame += 1
+                if source.width != sender.width || source.height != sender.height,
+                    let resized = try? RenderTarget(gpu: gpu, width: sender.width, height: sender.height)
+                {
+                    source = resized
+                }
+                try? sender.deliver(
+                    width: source.width, height: source.height, frameCount: frame, hostTime: UInt64(frame)
+                ) { texture throws(RenderFailure) in try presenter.draw(source, into: texture) }
+                _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+            }
+        ) { receiver.events(named: "frame").count >= frames || !receiver.process.isRunning }
+    }
+
+    private func size(_ event: [String: Any]?) -> [Int?]? {
+        event.map { [$0["width"] as? Int, $0["height"] as? Int] }
+    }
+
+    /// **初めて繋ぐ受け手は、目録だけで正しい大きさの面を用意できる** ([#3949])。作品を知らない受け手に、大きさを
+    /// 渡さない。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("173×97 の作品を知らない受け手が、目録だけで 173×97 の面を用意して 1 度で繋がり、絵を受ける")
+    func aFirstReceiverSizesItsSurfacesFromTheListing() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 173, height: 97)
+        defer { announcement.withdraw() }
+        let file = FrameListing.url(for: announcement.entry.serviceName, in: directory)
+        let receiver = try FrameReceiverProcess(arguments: ["--listing", file.path, "--exit-after", "2"])
+        let received = try feed(receiver, sender: sender, gpu: gpu, frames: 2)
+        #expect(received && receiver.events(named: "frame").count >= 2, "絵が届かない: \(receiver.events)")
+        #expect(size(receiver.events(named: "size").first) == [173, 97], "\(receiver.events)")
+        #expect(receiver.events(named: "refused").isEmpty, "1 度で繋がらなかった: \(receiver.events)")
+        #expect(size(receiver.events(named: "accepted").first) == [173, 97], "\(receiver.events)")
+        _ = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
+    }
+
+    /// **目録を読んでから繋ぐまでに大きさが変わったら、断られた受け手は目録を読み直して繋ぎ直す** ([#3949])。送り手は
+    /// 断るより前に目録の大きさを書き換える。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("173×97 を読んだ後、繋ぐ前に 211×103 へ変わると、断られた受け手は目録を読み直して 211×103 で繋ぎ直し、絵を受ける")
+    func aReceiverRereadsTheListingAfterASizeRefusal() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 173, height: 97)
+        defer { announcement.withdraw() }
+        let file = FrameListing.url(for: announcement.entry.serviceName, in: directory)
+        let receiver = try FrameReceiverProcess(arguments: ["--listing", file.path, "--exit-after", "2"])
+        // 受け手が 173×97 で connect を送るまで、頼みは捌かない
+        let sent = receiver.wait(upTo: 20) { !receiver.events(named: "connected").isEmpty }
+        try #require(sent, "受け手が繋ぎに来ない: \(receiver.events)")
+        #expect(size(receiver.events(named: "size").first) == [173, 97], "\(receiver.events)")
+        // 繋ぐ頼みを捌く前に、作品が 211×103 になる (受け手 0 なので、覚えて目録を書き換えるだけ)
+        sender.resize(width: 211, height: 103)
+        #expect(FrameListing.entries(in: directory).map { [$0.width, $0.height] } == [[211, 103]])
+
+        let received = try feed(receiver, sender: sender, gpu: gpu, frames: 2)
+        #expect(received && receiver.events(named: "frame").count >= 2, "絵が届かない: \(receiver.events)")
+        #expect(receiver.events(named: "refused").map { $0["reason"] as? Int } == [4], "\(receiver.events)")
+        #expect(size(receiver.events(named: "reread").first) == [211, 103], "\(receiver.events)")
+        #expect(size(receiver.events(named: "accepted").first) == [211, 103], "\(receiver.events)")
+        _ = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
+    }
+
+    /// **旧い受け手 × 新しい送り手** ([#3949])。目録の版も connect の版も 1 のまま。知らない欄を読み飛ばす従来の受け手が、
+    /// 知っている大きさで繋いで絵を受ける。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("知らない欄を読み飛ばす従来の受け手は、大きさの載った項目を v1 として読み、知っている大きさで繋いで絵を受ける")
+    func anOlderReceiverIgnoresTheSize() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 173, height: 97)
+        defer { announcement.withdraw() }
+        // 従来の受け手の読み方: 大きさの欄を知らない型で読む (知らない鍵は読み飛ばす)
+        struct OlderEntry: Decodable {
+            let schemaVersion: Int
+            let sketch, window, identity, title: String
+            let pid: Int32
+            let startedAt: Int64
+            let serviceName: String
+        }
+        let data = try Data(contentsOf: FrameListing.url(for: announcement.entry.serviceName, in: directory))
+        let written = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        try #require(written["width"] as? Int == 173, "検査の前提: 大きさが載っていない")
+        let older = try JSONDecoder().decode(OlderEntry.self, from: data)
+        #expect(older.schemaVersion == 1)
+        #expect(FrameLink.version == 1)
+
+        // 従来の形 (`--service`) の受け手は、目録の大きさを読まない
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", older.serviceName, "--width", "173", "--height", "97", "--exit-after", "2",
+        ])
+        let received = try feed(receiver, sender: sender, gpu: gpu, frames: 2)
+        #expect(received && receiver.events(named: "frame").count >= 2, "絵が届かない: \(receiver.events)")
+        #expect(receiver.events(named: "refused").isEmpty, "\(receiver.events)")
+        _ = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
+    }
+
+    /// **新しい受け手 × 旧い送り手** ([#3949])。大きさの無い項目でも、知っている大きさで繋いで絵を受ける。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("大きさの無い旧い送り手の項目でも、新しい受け手は知っている大きさで繋いで絵を受ける")
+    func aCurrentReceiverReachesAnOlderSender() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        var older = announcement.entry
+        older.width = nil
+        older.height = nil
+        try FrameListing.place(older, in: directory)
+        let file = FrameListing.url(for: older.serviceName, in: directory)
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--listing", file.path, "--width", "16", "--height", "8", "--exit-after", "2",
+        ])
+        let received = try feed(receiver, sender: sender, gpu: gpu, frames: 2)
+        #expect(received && receiver.events(named: "frame").count >= 2, "絵が届かない: \(receiver.events)")
+        #expect(receiver.events(named: "sizeUnknown").isEmpty, "\(receiver.events)")
         _ = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
     }
 }

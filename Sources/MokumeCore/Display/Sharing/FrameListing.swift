@@ -58,6 +58,13 @@ package nonisolated enum FrameListing {
         @WholeNumber package var startedAt: Int64
         /// `bootstrap_look_up` で引く名前。
         package var serviceName: String
+        /// 受け付ける面の幅と高さ (ピクセル。描く解像度)。**任意の欄で、版は上げない** ([#3949])。受け手は一覧を選んだ
+        /// 時点でこの大きさの面を用意できる。描く解像度が変わったら送り手が書き換える (``FrameAnnouncement/recordSize(width:height:)``)。
+        /// 寸法を載せない旧い送り手の項目では `nil` で、そのような項目も同じ版として読む。
+        ///
+        /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+        @WholeNumberIfPresent package var width: Int? = nil
+        @WholeNumberIfPresent package var height: Int? = nil
     }
 
     /// 置き場。
@@ -171,5 +178,47 @@ package nonisolated enum FrameListing {
         return names.sorted()
             .filter { $0.hasSuffix(".json") && !$0.hasPrefix(".") }
             .map { directory.appendingPathComponent($0) }
+    }
+}
+
+/// 任意の整数の欄 (``WholeNumber`` の、鍵が無くてよい形)。**鍵が無い・`null` なら `nil` と読み、`nil` は鍵ごと書かない**
+/// — 目録の任意の欄 (``FrameListing/Entry/width``) を足しても、寸法を持たない項目の書き出す形は変わらない (#3949)。
+/// 整数かの判定は ``WholeNumber`` と同じ (`2.5` は断る)。
+///
+/// 合成の `Codable` は、包んだ欄を下の `KeyedDecodingContainer` / `KeyedEncodingContainer` の形で読み書きする。
+@propertyWrapper
+package nonisolated struct WholeNumberIfPresent<Value: FixedWidthInteger & Codable & Sendable>: Codable, Hashable,
+    Sendable
+{
+    package var wrappedValue: Value?
+
+    package init(wrappedValue: Value?) {
+        self.wrappedValue = wrappedValue
+    }
+
+    package init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        wrappedValue = container.decodeNil() ? nil : try WholeNumber<Value>(from: decoder).wrappedValue
+    }
+
+    package func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(wrappedValue)
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// 包んだ任意の欄を読む。鍵が無ければ `nil`。
+    package nonisolated func decode<Value>(
+        _ type: WholeNumberIfPresent<Value>.Type, forKey key: Key
+    ) throws -> WholeNumberIfPresent<Value> {
+        WholeNumberIfPresent(wrappedValue: try decodeWholeIfPresent(Value.self, forKey: key))
+    }
+}
+
+extension KeyedEncodingContainer {
+    /// 包んだ任意の欄を書く。`nil` なら鍵ごと書かない。
+    package nonisolated mutating func encode<Value>(_ value: WholeNumberIfPresent<Value>, forKey key: Key) throws {
+        try encodeIfPresent(value.wrappedValue, forKey: key)
     }
 }
