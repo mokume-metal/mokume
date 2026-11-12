@@ -877,6 +877,21 @@ struct WatchAuditionRefutationTests {
         #expect(!shown.contains { droppedLines.contains($0) }, "本番の版にした版を、捨てたと名乗った: \(Array(shown))")
     }
 
+    @Test("捨てるときに本番が走っていなければ、「作品のウィンドウは今の版のまま」と言わない (#3796 の 2 回目の反証 1)")
+    func aDropWithoutProductionDoesNotSayTheWindowKeepsItsVersion() async throws {
+        let harness = try Harness()
+        let production = try #require(await harness.save())  // s1
+        _ = try await harness.ask("audition")
+        let building = try await holdBuild(harness)  // s2 (試聴の版)
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)  // プレビューを戻せた: 捨てる側
+        harness.tell(production, "bye")  // 出た後、作り直しが済む前に本番が落ちる
+        let linesBefore = harness.previewLines.count
+        await release(harness, building)
+        let shown = Array(harness.previewLines[linesBefore...])
+        #expect(shown.last == WatchCommand.auditionDiscardedLine(productionRunning: false), "\(shown)")
+        #expect(!shown.contains(WatchCommand.auditionDiscardedLine(productionRunning: true)), "\(shown)")
+    }
+
     @Test(
         "本番の版の作り直しの最中に出た試聴で読んだ版は、作り直しの後に捨て、捨てたことを端末とプレビューに名乗る (#3796 の 2 回目の反証 2)")
     func aVersionReadInAnEndedAuditionIsDroppedWithANotice() async throws {
