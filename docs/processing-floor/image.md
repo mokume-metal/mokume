@@ -34,7 +34,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | [#3713] マスク (入れた) | `Image.mask(_:)` | `PImage.mask()` |
 | [#3714] 画面の写し (入れた) | `Sketch.get()`・`get(_:_:_:_:)`・`get(in:)` と、`Canvas` の同じもの | 関数 `get()` の領域と全体の形 |
 | [#3715] URL からの読み込み (入れた) | `loadImage`・`requestImage` の URL と、種類を渡す `loadImage(_:extension:)`・`requestImage(_:extension:)` | `loadImage()`・`requestImage()` の URL の形 |
-| [#3716] `filter` の残りの効果 | `Effect` の `.posterize`・`.erode`・`.dilate` と、不透明にする効果 | `PImage.filter()`・関数 `filter()` の残りの 4 つ |
+| [#3716] `filter` の残りの効果 (入れた) | `Effect` の `.posterize(levels:)`・`.erode`・`.dilate`・`.opaque` | `PImage.filter()`・関数 `filter()` の残りの 4 つ |
 | [#3717] テクスチャの読み方 | `textureMode`・`textureWrap` | `textureMode()`・`textureWrap()` |
 
 ## 外した 4 つ
@@ -63,7 +63,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | `PImage.set()` | `Image.set(_:_:_:)` | 同等 | 1 画素を書く。範囲の外は何もしない。無い形: 画像を書き込む `set(x, y, img)` (画面へは `image(img, x, y)` で置ける。画像へは `pixels.update { }` の中で `img.get` を読む) | — |
 | `PImage.copy()` | `Image.copy()` | 同等 | 元と画素もテクスチャも共有しない新しい画像を返す。作業空間の値のまま写し、8 ビットを経由しない。無い形: 領域の `copy(sx, …)` (持たない。上の「外した 4 つ」) | [#2449]・PR [#2893] |
 | `PImage.save()` | `Image.save(_:)` | 同等 | 呼んだその場で書き終えて返る。書けなければ `ImageFailure.unwritable(path:reason:)` を投げる (Processing は `boolean`)。形式は PNG だけで、拡張子では選ばない。**名前が `.png` (大文字小文字を区別しない) で終わらなければ書かずに投げる** (`.svg`・`.jpg`・拡張子を省いた名前も。理由に PNG だけを書くことが載る・[#3723])。行き先の探し方はスケッチの `save(_:)` と同じ。無い形: TIFF・TARGA・JPEG (入力・出力・環境の領域の表 ([#3688]) と同じ。スケッチの `save()` は `.png` 以外の名前でも PNG で書き、1 度だけ知らせる) | [#2449]・PR [#2893]・[#3723] |
-| `PImage.filter()` | `Image.filtered(_:)` | 同等 | Processing は自分を変えるが、`filtered` は新しい画像を返し、元を変えない (規則 3・2a)。`THRESHOLD`・`GRAY`・`INVERT`・`BLUR` は `.threshold(level:)`・`.monochrome`・`.invert`・`.blur(radius:)` に当たる。無い形: `OPAQUE`・`POSTERIZE`・`ERODE`・`DILATE` ([#3716] で入れる) | [#2455]・PR [#3175]・[#3716] |
+| `PImage.filter()` | `Image.filtered(_:)` | 同等 | Processing は自分を変えるが、`filtered` は新しい画像を返し、元を変えない (規則 3・2a)。`THRESHOLD`・`GRAY`・`INVERT`・`BLUR` は `.threshold(level:)`・`.monochrome`・`.invert`・`.blur(radius:)`、`OPAQUE`・`POSTERIZE`・`ERODE`・`DILATE` は `.opaque`・`.posterize(levels:)`・`.erode`・`.dilate` に当たる ([#3716])。`POSTERIZE` は表示の 8 ビットの値を Processing と同じ式で段に切り、2 未満の段数は投げずに効かない (Processing は 2〜255 の外で投げる)。`ERODE`・`DILATE` は Processing と同じ輝度の加重で近傍の画素を丸ごと選ぶが、乗算済みのまま比べるので透明な画素は暗い側 (Processing は不透明度を見ない)。`OPAQUE` は不透明度 0 の画素を黒にする (乗算済みで色が残らない) | [#2455]・PR [#3175]・[#3716] |
 | `PImage.resize()` | `Image.resized(width:height:)` | 同等 | 新しい画像を返し、元を変えない (「外した 4 つ」)。縮める向きは光の量で平均し、広げる向きは `image()` と同じ直線の補い。無い形: 0 で縦横比を保つ `resize(150, 0)` (1 を割る指定を 1×1 へ丸めない規則と衝突するので、`ImageFailure.unplaceable` を投げる) | [#2449]・[#3711] |
 | `PImage.mask()` | `Image.mask(_:)` | 同等 | マスクの明るさ (`brightness(_:)` の物差し) を不透明度に掛ける (「外した 4 つ」)。Processing は灰色を前提に青のチャンネルを読み、不透明度を置き換える。灰色の不透明なマスクと画像では同じ結果になる。無い形: 整数の配列を渡す `mask(maskArray)` (必要になってから足す) | [#2449]・[#3713] |
 | `PImage.blend()` | — (描き場所へ `blendMode(_:)` と `image(src, dx, dy, dw, dh, sx, sy, sw, sh)`) | 持たない | 混ぜ方は描画 API の `blendMode` が持ち、画像を直に混ぜる API は足さない (`copy(sx, …)` と同じ理由)。Processing の 14 のモードのうち 9 つ (BLEND・ADD・SUBTRACT・DARKEST・LIGHTEST・DIFFERENCE・EXCLUSION・MULTIPLY・SCREEN) は `BlendMode` にある。OVERLAY・HARD_LIGHT・SOFT_LIGHT・DODGE・BURN の 5 つは無く、`blendMode()` の行 (色・変換・描画の領域の表) で扱う | [#2449]・[#2580] |

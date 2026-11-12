@@ -89,6 +89,18 @@ public enum Effect {
     /// **`levels` が 2 未満 (0・1・負) なら効かない** — 絵は 1 ビットも変わらない (Processing は 2〜255 の外で
     /// 投げる)。上限は締めない。256 以上でも段は 8 ビットの値で出す。不透明度 0 の画素はそのまま通す
     /// (ほかの効果と同じく、入りに無い明るさを作らない・ADR-0011 決定 1)。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     for i in 0..<16 {
+    ///         fill(i * 16, 120, 255 - i * 16)
+    ///         rect(i * 25, 0, 25, height)
+    ///     }
+    ///     filter([.posterize(levels: 3)])   // 各チャンネルが 0・127・255 の 3 段になる
+    /// }
+    /// ```
     case posterize(levels: Int)
     /// 暗いところを広げる (明るいところを縮める)。Processing の `filter(ERODE)` に当たる。
     ///
@@ -101,15 +113,50 @@ public enum Effect {
     /// 物差し (3 成分の最大・``brightness(_:)``) とは別である — 赤 (1, 0, 0) と緑 (0, 1, 0) は、こちらでは緑が
     /// 明るい。乗算済みのまま比べるので、**透明な画素は暗い側**になる (Processing は不透明度を見ず、透明な
     /// 白も明るい)。同じ明るさなら、自分・左・右・上・下の順で先のものを残す (Processing と同じ)。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     background(255)
+    ///     fill(0)
+    ///     textSize(64)
+    ///     text("mokume", 40, 170)
+    ///     filter([.erode, .erode])   // 黒い字が 2 画素ずつ太る
+    /// }
+    /// ```
     case erode
     /// 明るいところを広げる。Processing の `filter(DILATE)` に当たる。各画素を、自分と上下左右の 4 画素のうち
     /// **最も明るい画素で丸ごと置き換える**。明るさの物差し・縁・同じ明るさのときの順は ``erode`` と同じ。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     background(0)
+    ///     fill(255)
+    ///     textSize(64)
+    ///     text("mokume", 40, 170)
+    ///     filter([.dilate, .dilate])   // 白い字が 2 画素ずつ太る
+    /// }
+    /// ```
     case dilate
     /// 不透明にする。**色を保ったまま、不透明度を 1 にする。** Processing の `filter(OPAQUE)` に当たる。
     ///
     /// 乗算を戻した色を不透明度 1 で置き直すので、半透明の赤は不透明の同じ赤になる。不透明度 0 の画素は
     /// 色が残っていないので、黒の不透明になる (Processing は乗算していないので、透明な画素が持っていた色が
     /// 出る)。
+    ///
+    /// <!-- example: 文脈 var glow: Image! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     glow = try createImage(2, 1)
+    ///     glow.set(0, 0, .display(red: 1, green: 0.45, blue: 0.25, alpha: 0.3))   // 薄い橙
+    ///     glow.set(1, 0, .display(red: 0.3, green: 0.6, blue: 1, alpha: 0.3))     // 薄い青
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     image(glow, 0, 0, width / 2, height)                          // 地が透けて暗い
+    ///     image(glow.filtered([.opaque]), width / 2, 0, width / 2, height)  // 同じ色の不透明
+    /// }
+    /// ```
     case opaque
     /// 利用者が書いた効果。
     case custom(EffectShader)
