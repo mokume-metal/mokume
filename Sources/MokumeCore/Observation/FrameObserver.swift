@@ -285,48 +285,53 @@ final class FrameObserver {
     /// 検査が立てる、持ち出しを転ばせる段。走らせる側は立てない。
     var keepFault: KeepStep?
 
+    /// 検査が立てる、完成の名前へ移す直前に呼ぶ手 (確かめてから移すまでの間に名前を置かれる形を作る)。
+    /// 走らせる側は立てない。
+    var keepWillPlace: (() -> Void)?
+
+    /// 持ち出せなかったことを名乗る警告の頭。持ち出しを頼んだのに持ち出さなかった道は、どれもこの頭で 1 つ名乗る。
+    static let notKeptPrefix = "The shot was not kept: "
+
     /// 区画に置き終えた絵 (`image`) を、目録 (`manifest`) と組にして `.mokume/kept/<id>/` へ持ち出す。
     ///
-    /// **手順は記録 (``ReplayRecorder``) と同じ作法**である。`<id>.partial/` に絵と目録を置いて同期し、置き終えて
-    /// から `<id>/` へ改名する。途中で転んだら `.partial` を残して名乗る — 完成の印 (改名と目録の `complete`) が
-    /// 無いので、別の絵と目録の組を完成として渡さない。
+    /// **置き場の扱いは記録 (``ReplayRecorder``・``ReplayClaim``) の守りに揃える**:
     ///
-    /// - 前の回が残した同じ名前の `.partial` は消してから書く。区画に応えるのは錠 (``FacetClaim``) を持つ
-    ///   プロセスだけなので、残っているのは死んだ回の書き途中である (記録の ``ReplayClaim/discardPrevious()`` と同じ)
-    /// - **完成した `<id>/` が既に在れば、上書きも削除もしない。** 持ち出しの目的は消えないことなので、記録のように
-    ///   前の回の完成品を消す作法は採らない。持ち出さずに理由を返す
+    /// - **書き途中の名前にプロセス番号を入れる** (`<id>.<pid>.partial/`・記録の `<行き先>.<pid>.partial` と同じ形)。
+    ///   絵と目録を置いて同期し、置き終えてから `<id>/` へ移す。途中で転んだら書き途中を残して名乗る
+    /// - **完成の印は置き場の名前 (`<id>/`) である。** 目録の `complete` は「置き終えた組のものとして書いた」ことしか
+    ///   言わない — 書き途中の置き場の中にも `complete: true` の目録が残りうるので、書き途中の中の目録を読まない
+    /// - **片付けてよいのは、名前の形が合い (``ReplayClaim/isPartial(_:of:)``)、持ち主のプロセスがもう居ない
+    ///   (``AtomicFile/isRunning(_:)``) か自分の、中身もこの手が置く形 (絵と目録のファイルだけ) の書き途中だけ**。
+    ///   中身は `unlink(2)` で 1 つずつ外し、最後に空のフォルダを `rmdir(2)` する — 名前の形だけで選ぶと、たまたま
+    ///   同じ形の名前のフォルダが中身ごと消える (記録の [#3943] と同じ理由)。生きている他の実行の書き途中には触れない
+    /// - **完成の名前への移しは、既に在れば失敗する改名** (`renamex_np` の `RENAME_EXCL`)。既に在る `<id>` は、空の
+    ///   フォルダでも、大文字小文字だけが違う名前 (大文字小文字を区別しないボリューム) でも、上書きも削除もしない
+    /// - **置き場 (`.mokume/kept`) がシンボリックリンク・ファイルなら、たどらず消さず、持ち出さない**
+    ///
+    /// どれも「消さない・上書きしない・理由を名乗る」の側に倒す。
     ///
     /// **呼ぶのは区画の書き込みが決着した後、次の要求を拾う前** (``SketchRuntime`` が ``settleWrites(_:)`` の
     /// `.written` の後に呼ぶ)。次の撮影の掃除 (``clearProducts()``) が区画の絵を消すのはその後なので、持ち出す
     /// 絵は必ずこの要求の絵である。
     ///
+    /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
+    ///
     /// - Returns: 置けたなら、応答からの相対の置き場 (`../kept/<id>`)。置けなければ `nil` と理由。
     func keep(_ manifest: KeptFrame, image name: String) -> (kept: String?, warning: String?) {
         func refused(_ reason: String) -> (kept: String?, warning: String?) {
-            (nil, "The shot was not kept: \(reason)")
+            (nil, Self.notKeptPrefix + reason)
         }
         if let reason = KeptFrame.refusal(forDirectoryNamed: manifest.id) { return refused(reason) }
+        if let reason = Self.prepareKeptDirectory(keptDirectory) { return refused(reason) }
         let destination = keptDirectory.appendingPathComponent(manifest.id, isDirectory: true)
-        let partial = keptDirectory.appendingPathComponent(
-            manifest.id + Self.keptPartialSuffix, isDirectory: true)
-        let files = FileManager.default
-        do {
-            try files.createDirectory(at: keptDirectory, withIntermediateDirectories: true)
-        } catch {
-            return refused("could not make \(keptDirectory.path): \(Diagnostics.reason(error))")
-        }
-        // 完成品を指す名前は、壊れた symlink も含めて「在る」と読む (行き先を辿らない)
-        if (try? files.attributesOfItem(atPath: destination.path)) != nil {
+        // 完成品を指す名前は、壊れた symlink も含めて「在る」と読む (行き先を辿らない)。書く前に断る早道で、
+        // 守りそのものは下の `RENAME_EXCL`
+        if Self.lexists(destination) {
             return refused("\(destination.path) already exists, and it is not overwritten")
         }
-        if (try? files.attributesOfItem(atPath: partial.path)) != nil {
-            do {
-                try files.removeItem(at: partial)
-            } catch {
-                return refused(
-                    "could not clear \(partial.path) left by an earlier run: \(Diagnostics.reason(error))")
-            }
-        }
+        Self.sweepAbandonedPartials(of: manifest.id, in: keptDirectory)
+        let partial = Self.partialURL(of: manifest.id, in: keptDirectory, writer: getpid())
+        let files = FileManager.default
         do {
             try files.createDirectory(at: partial, withIntermediateDirectories: false)
             let image = partial.appendingPathComponent(Self.keptImageName)
@@ -339,14 +344,87 @@ final class FrameObserver {
             try AtomicFile.writeJSON(manifest, to: catalogue)
             try Self.synchronize(catalogue)
             if keepFault == .rename { throw POSIXError(.EIO) }
-            guard rename(partial.path, destination.path) == 0 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
+            keepWillPlace?()
+            try Self.placeExclusively(partial, at: destination)
         } catch {
             return refused(
                 "writing \(partial.path) failed, so it is left unfinished: \(Diagnostics.reason(error))")
         }
         return ("../\(Self.keptFacetName)/\(manifest.id)", nil)
+    }
+
+    /// 書き途中の置き場 (`<id>.<pid>.partial`)。記録の書き途中 (``ReplayRecorder``) と同じ形。
+    static func partialURL(of id: String, in kept: URL, writer: pid_t) -> URL {
+        kept.appendingPathComponent("\(id).\(writer)\(keptPartialSuffix)", isDirectory: true)
+    }
+
+    /// 置き場 (`.mokume/kept`) を用意する。**シンボリックリンク・ファイルなら、たどらず消さず、理由を返す。**
+    ///
+    /// 作るのはこの 1 段だけ (親の `.mokume` は区画が在るので在る)。作った直後にも確かめ直す。
+    ///
+    /// - Returns: 用意できなかった理由。用意できたら `nil`。
+    private static func prepareKeptDirectory(_ kept: URL) -> String? {
+        if mkdir(kept.path, 0o755) != 0 {
+            let code = errno
+            if code != EEXIST { return "could not make \(kept.path): \(String(cString: strerror(code)))" }
+        }
+        guard AtomicFile.isDirectory(kept, following: false) else {
+            return "\(kept.path) is not a folder (a symbolic link or a file there is left as it is)"
+        }
+        return nil
+    }
+
+    /// その名前に何か在るか。**リンクはたどらない** (壊れたリンクも「在る」)。
+    private static func lexists(_ url: URL) -> Bool {
+        var status = stat()
+        return lstat(url.path, &status) == 0
+    }
+
+    /// 同じ識別子の書き途中のうち、**持ち主がもう居ないか自分の**ものを片付ける。
+    ///
+    /// 選ぶのは名前の形が合うもの (``ReplayClaim/isPartial(_:of:)``・大文字小文字も区別する) だけで、中身が
+    /// この手の置く形でなければ (``discardPartial(_:)``) 残す。生きている他の実行の書き途中には触れない — 観測の
+    /// 区画の錠 (``FacetClaim``) は確かめられないとき「持っていることにする」ので、2 つの実行が同時に応えうる。
+    private static func sweepAbandonedPartials(of id: String, in kept: URL) {
+        let me = getpid()
+        let prefix = id + "."
+        for entry in (try? FileManager.default.contentsOfDirectory(atPath: kept.path)) ?? []
+        where ReplayClaim.isPartial(entry, of: id) {
+            let digits = entry.dropFirst(prefix.count).dropLast(keptPartialSuffix.count)
+            guard let writer = pid_t(digits), writer == me || !AtomicFile.isRunning(writer) else { continue }
+            discardPartial(kept.appendingPathComponent(entry, isDirectory: true))
+        }
+    }
+
+    /// 書き途中の置き場を 1 つ片付ける。**この手が置く形 (絵と目録の、ふつうのファイルだけ) のときだけ。**
+    ///
+    /// フォルダ (リンクでないもの) の中身が絵・目録の名前だけなら 1 つずつ `unlink(2)` し、空のフォルダを
+    /// `rmdir(2)` する。他の名前が在れば何も消さない。`unlink` はフォルダを消さず、`rmdir` は空でないフォルダを
+    /// 消さないので、見てから消すまでの間に中身が増えても、中身ごと消す窓が無い。
+    private static func discardPartial(_ partial: URL) {
+        guard AtomicFile.isDirectory(partial, following: false),
+            let entries = try? FileManager.default.contentsOfDirectory(atPath: partial.path),
+            entries.allSatisfy({ [keptImageName, keptManifestName].contains($0) })
+        else { return }
+        for entry in entries {
+            guard AtomicFile.remove(partial.appendingPathComponent(entry)) else { return }
+        }
+        rmdir(partial.path)
+    }
+
+    /// `from` を `to` へ移す。**行き先に在れば断る** (`renamex_np` の `RENAME_EXCL`)。ボリュームが `RENAME_EXCL` を
+    /// 持たなければ、在るかを確かめてからの素の `rename(2)` に倒す (`mokume bundle` の置き方と同じ。確かめてから
+    /// 移すまでの間は守らない)。
+    private static func placeExclusively(_ from: URL, at to: URL) throws {
+        if renamex_np(from.path, to.path, UInt32(RENAME_EXCL)) == 0 { return }
+        let code = errno
+        guard [ENOTSUP, EINVAL, EOPNOTSUPP].contains(code) else {
+            throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+        }
+        guard !lexists(to) else { throw POSIXError(.EEXIST) }
+        guard rename(from.path, to.path) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
     }
 
     /// 置いたファイルを同期する (`fsync`)。改名の後に電源が落ちても、完成の名前の下が空のまま残らない。

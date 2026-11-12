@@ -19,8 +19,10 @@ import Foundation
 ///
 /// ## 完成の印
 ///
-/// 記録 (``ReplayRecorder``) と同じ作法で、`<id>.partial/` に絵と目録を置き終えてから `<id>/` へ改名する。
-/// 改名の前に落ちた・書けなかった組は `.partial` のまま残り、完成として読まれない。目録は `complete: true` を持つ。
+/// 記録 (``ReplayRecorder``) と同じ作法で、`<id>.<pid>.partial/` に絵と目録を置き終えてから `<id>/` へ改名する
+/// (``FrameObserver/keep(_:image:)``)。**完成の印は置き場の名前 (`<id>/`) である。** 改名の前に落ちた・書けなかった組は
+/// 書き途中の名前のまま残り、完成として読まれない。目録の ``complete`` は改名の前に書くので、書き途中の置き場の中にも
+/// `complete: true` の目録が残りうる — **書き途中の置き場の中の目録を読んではならない。**
 ///
 /// [#2603]: https://github.com/mokume-metal/mokume/issues/2603
 /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
@@ -49,7 +51,8 @@ struct KeptFrame: Encodable {
     let paramsUnknownReason: String?
     /// 記録している実行なら、その記録の識別子と、この絵のフレーム番号。記録していなければ `nil`。
     let record: Record?
-    /// 完成の印。置き終えたものだけが改名されるので、読めた目録は常に `true` を持つ。
+    /// 「この目録は、置き終える組のものとして書いた」ことだけを言う (常に `true`)。**完成の印ではない** — 完成の印は
+    /// 置き場の名前 (`<id>/`) で、改名で転んだ書き途中の置き場の中にも `true` の目録が残る。
     let complete = true
 
     /// 時計。
@@ -116,18 +119,27 @@ struct KeptFrame: Encodable {
     /// 置き場の名前に使えない識別子なら、その理由。使えるなら `nil`。
     ///
     /// **要求の識別子はそのまま置き場の名前になる** ので、区切り (`/`)・NUL を含むものと、点で始まるもの (`.`・`..`・
-    /// 隠しファイル) は断る — 断らないと `.mokume/kept` の外へ書ける。`.partial` で終わる名前 (書き途中と取り違える)・
-    /// 長すぎる名前 (`.partial` を足すと名前の上限を越える) も断る。
+    /// 隠しファイル) は断る — 断らないと `.mokume/kept` の外へ書ける。長すぎる名前 (書き途中の名前の上限を越える) も断る。
+    ///
+    /// **`.partial` で終わる名前は、大文字小文字を区別せずに断る** ([#2618] の反証 1)。書き途中の名前は
+    /// `<id>.<pid>.partial` なので、それと同じ形の識別子 (`x.12.partial`) を通すと、別の識別子 (`x`) の書き途中と
+    /// ボリュームの上で同じ名前になりうる。macOS の既定の APFS は大文字小文字を区別しない (`x.12.PARTIAL` も
+    /// 同じ名前) ので、比べ方も区別しない。Unicode の正規化の違い (APFS は正規化の違いも同じ名前に読む) は、
+    /// `String` の比較が正規の等価で比べるので同じ扱いになる。
+    ///
+    /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
     static func refusal(forDirectoryNamed id: String) -> String? {
         if id.isEmpty { return "the id is empty" }
         if id.contains("/") || id.contains("\u{0}") {
             return "the id contains a character a folder name cannot hold (/ or NUL)"
         }
         if id.hasPrefix(".") { return "the id starts with a dot" }
-        if id.hasSuffix(FrameObserver.keptPartialSuffix) {
-            return "the id ends with \(FrameObserver.keptPartialSuffix)"
+        let suffix = FrameObserver.keptPartialSuffix
+        if id.range(of: suffix, options: [.caseInsensitive, .anchored, .backwards]) != nil {
+            return "the id ends with \(suffix) (in any case), which is the shape of a folder being written"
         }
-        if id.utf8.count + FrameObserver.keptPartialSuffix.utf8.count > 255 {
+        // 書き途中の名前 (`<id>.<pid>.partial`) が名前の上限 (255 バイト) に収まること。pid は最大 10 桁
+        if id.utf8.count + 1 + 10 + suffix.utf8.count > 255 {
             return "the id is too long for a folder name"
         }
         return nil
