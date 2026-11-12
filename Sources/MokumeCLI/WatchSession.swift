@@ -379,7 +379,8 @@ final class WatchSession {
     /// (作り直しの最中に出た回だけ本番になる)。試聴の中で読んだ版は、読みの最中・作り直しの最中・作り直しの後のどこで
     /// 出ても試聴の版として捨て、本番は動かさない。本番のまま読んだ版は、その最中に試聴へ入っても本番の版になる。
     /// **読みの所要時間ぶんの幅は残る** — 見張りが読む前の保存は、読んだ時点の役になる (保存の直後、見張りが見る前に
-    /// 出れば、その保存は本番の版)。
+    /// 出れば、その保存は本番の版。2026-11-13 の決定)。作り直しの最中に読んだ保存も、その読みの役を控えて
+    /// (``firstRead``)、作り直しが済んだ後に控えた役のまま取りかかる。
     private var readingRole: Int? { isAuditioning ? auditionCount : nil }
 
     /// 進行中の作り直しの役 (``readingRole``)。作り直していなければ、または本番の版なら `nil`。
@@ -449,7 +450,9 @@ final class WatchSession {
     ///
     /// **控えるのは、見張りが試聴の中で読んだ版である** ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
     /// 見張りがまだ読んでいない保存は控えに入らない — 出た後に読むので本番の版になる (保存の役は読んだ時点で決まる・
-    /// ``readingRole``)。読みや作り直しの最中に出た回は、その読んだ版を控える。
+    /// ``readingRole``)。読みや作り直しの最中に出た回は、その読んだ版を控える。作り直しの最中に試聴の中で読んだ別の版を、
+    /// その試聴が終わった後で捨てるときも、その版へ寄せる (``tick()``)。控えを下ろすのは、作り直しに取りかかるときと、
+    /// ソースが本番の版へ戻ったときである。
     ///
     /// **入り直しても下ろさない** — 下ろすと、入った拍の ``tick()`` が出た時点の版を試聴の子として起こす (入る要求は
     /// 何も起こさない約束・[#3794](https://github.com/mokume-metal/mokume/issues/3794))。中身を変えて保存すれば下りて、
@@ -593,33 +596,62 @@ final class WatchSession {
     /// (``WatchCommand/step(_:viewer:stopped:)``) で、待っている間に来た合図はこの巡回を
     /// 止められない — 見直さないと、終われと言われた後に作り直しを始める (#834 の順序)。
     ///
-    /// **保存の役 (本番の版か試聴の版か) は、世代を読みに行った時点で決める** ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
-    /// 読みの最中・作り直しの最中に試聴を出入りしても、役は変わらない (``readingRole``)。
+    /// **保存の役 (本番の版か試聴の版か) は、その世代を最初に読んだ時点で決める** ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
+    /// 読みの最中・作り直しの最中に試聴を出入りしても、役は変わらない (``readingRole``)。作り直しの最中に読んだ世代は、
+    /// 取りかかれないので役を控え (``firstRead``)、作り直しが済んだ後の拍が控えた役のまま取りかかる。控えた役の試聴が
+    /// もう終わっていれば、その版は捨てる (本番にしない)。
     @discardableResult
     func tick() async -> BuildReport? {
         guard !isStamping else { return nil }
         let role = readingRole
         let stamp = await takeStamp()
         guard !stopRequested else { return nil }
-        // **試聴の中で読み始めた版は、読みの最中に試聴を出たら捨てる** (#3796)。本番にはしない。出る要求が控えた
-        // 世代 (``unadoptedStamp``) を読んだ版へ寄せて、次の拍がその版を本番へ作り直さないようにする。控えが無い
-        // (出た後の本番を作り直すと決めた) 回は、次の拍が普段どおり作り直す
-        if let role, role != readingRole {
-            if unadoptedStamp != nil { unadoptedStamp = stamp }
+        // **試聴を出た時点のソースは、本番の版へ作り直さない** (``restoreProductionRecord()``)。出た後のソースの
+        // 世代は、本番の版と違う (試聴の版のまま) が、出る要求は本番を動かさない。ソースが変わっても、印を下ろすのは
+        // 作り直しに取りかかるとき (下) か、本番の版へ戻したときである — 作り直しの最中に読んだ試聴の版を、取りかかる
+        // 前に捨てると決めたら、その版へ印を寄せる (#3796)
+        // **控えた版・作り直している版 (または本番の版) へ戻ったら、控えた読みは捨てる** — 戻った先は取りかかる必要が無く、
+        // 後でまた変えた中身は、その時の読みが役を決める
+        if let held = unadoptedStamp {
+            if stamp == held {
+                firstRead = nil
+                return nil
+            }
+            if stamp == lastStamp { unadoptedStamp = nil }
+        }
+        guard stamp != lastStamp else {
+            firstRead = nil
             return nil
         }
-        // **試聴を出た時点のソースは、本番の版へ作り直さない** (``restoreProductionRecord()``)。出た後のソースの
-        // 世代は、本番の版と違う (試聴の版のまま) が、出る要求は本番を動かさない。ソースが変わったら (元に戻した
-        // 回を含む) 印を下ろして、普段どおり本番の世代と比べる
-        if let held = unadoptedStamp {
-            if stamp == held { return nil }
-            unadoptedStamp = nil
-        }
-        guard stamp != lastStamp else { return nil }
         if noticedAt == nil { noticedAt = hooks.now() }
+        // **同じ世代が続く間は、最初の読みの役を保つ。** 世代がさらに変わったら、その新しい世代を最初に見た読みの役に替える
+        if firstRead?.stamp != stamp { firstRead = FirstRead(stamp: stamp, role: role) }
         guard !isRebuilding else { return nil }
-        return await rebuildAndReplace(stamp: stamp, audition: role)
+        let read = firstRead ?? FirstRead(stamp: stamp, role: role)
+        firstRead = nil
+        var buildRole = read.role
+        if let readRole = read.role, readRole != readingRole {
+            // **試聴の中で読んだ版の試聴が、取りかかる前に終わった。** 出る要求が本番を動かさないと決めた (控えを立てた)
+            // 回は、その版を捨てて控えを寄せる — 次の拍が本番へ作り直さない。控えの無い回 (本番が居ない・プレビューを
+            // 戻せない) は、出る要求が「出た時点のソースを本番に作り直す」と決めているので、本番の版として取りかかる
+            if unadoptedStamp != nil {
+                unadoptedStamp = stamp
+                noticedAt = nil
+                return nil
+            }
+            buildRole = nil
+        }
+        unadoptedStamp = nil
+        return await rebuildAndReplace(stamp: stamp, audition: buildRole)
     }
+
+    /// 変化を最初に見た読み — 世代と、その読みの役 (``readingRole``)。作り直しの最中に読んだ世代の役を、取りかかるまで
+    /// 控える ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
+    private struct FirstRead {
+        let stamp: String?
+        let role: Int?
+    }
+    private var firstRead: FirstRead?
 
     /// 最初の 1 回。変化を待たずに作って走らせる。
     ///
@@ -1199,7 +1231,7 @@ final class WatchSession {
         // ことを見て起こさずに抜ける (#2576)
         guard isRebuilding, isBuilding, stoppedReport == nil, rebuildStop == nil else { return nil }
         let running = hooks.stopRebuild()
-        let forAudition = rebuildingAudition != nil
+        let role = rebuildingAudition
         // **止めている間に、作り直しが戻ってくる。** 止めた子は終了コードを持って戻るので、
         // 記録を書き終える前に作り直しの続きが走ると、止めた記録を失敗で書き直してしまう
         // (#1147)。待つあいだ main actor を手放すので、続きの側が ``rebuildStop`` を待てる形に
@@ -1220,7 +1252,13 @@ final class WatchSession {
                     buildMs: self.rebuildStartedAt.map { (self.hooks.now() - $0) * 1000 } ?? 0,
                     relaunchMs: nil))
             // 役は、止めた作り直しの版の役 (読んだ時点で決まる・#3796)
-            self.stoppedReport = self.finish(report, audition: forAudition)
+            // **その試聴をもう出ていれば、記録は書かない** (#3796) — 出る要求が本番の版の記録へ戻している。書くと、
+            // 試聴の版の止めた記録 (世代は戻した本番のもの) が最後の記録に残る
+            if let role, role != self.readingRole {
+                self.stoppedReport = report
+            } else {
+                self.stoppedReport = self.finish(report, audition: role != nil)
+            }
             return outcome
         }
         rebuildStop = stopping
@@ -1553,7 +1591,7 @@ final class WatchSession {
         // **試聴の版で、その試聴を作り直しの最中に出た回は、結果で何も決めない** (#3796)。通っても起こさず、通らなくても
         // 記録を書かない — 区画 `build` の記録とソースの世代の控えは、出る要求が本番の版へ戻している
         // (``leaveAudition(_:into:)``)。本番は動かさない
-        if discarded { return nil }
+        if discarded { return discardAudition() }
 
         // **在るのに起こせない成果物を「建っていない」と言わない** (#2521)。作り直しは実行
         // できるものだけを「建った」と返すので、実行ビットの無い成果物は下の「建っていない」へ
@@ -1618,7 +1656,7 @@ final class WatchSession {
             if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
                 return early
             }
-            if discarded { return nil }
+            if discarded { return discardAudition() }
             // **本番が乗り換えを待っている間は、試聴の子を起こさない** (保留する)。前の本番 (``outgoing``) を
             // 畳んで試聴の子を起こすと、乗り換えを待つ新しい本番が 1 枚目の前に落ちたとき、戻る先 (前の本番) が
             // 無く、作品のウィンドウが凍る (``restorePreviousGeneration(afterLosing:)``)。乗り換えが決着してから
@@ -1754,6 +1792,22 @@ final class WatchSession {
             report, firstFrameSince: measuresFirstFrame && launchedNew ? relaunchStarted : nil,
             audition: false)
     }
+
+    /// 試聴の版の作り直しを捨てる (``rebuildAndReplace(stamp:audition:initial:)``・[#3796](https://github.com/mokume-metal/mokume/issues/3796))。
+    ///
+    /// **始まりを名乗った作り直しなので、捨てたことも名乗らせる** (``takeDiscardedAudition()``)。名乗らないと、端末は
+    /// 「作り直している」で止まり、プレビューは回る印のまま残る。
+    private func discardAudition() -> BuildReport? {
+        hasDiscardedAudition = true
+        return nil
+    }
+
+    /// 試聴の版の作り直しを捨てたか。**読むと下りる** — 口の側 (``WatchCommand/step(_:viewer:stopped:preview:)``) が 1 度だけ名乗る。
+    func takeDiscardedAudition() -> Bool {
+        defer { hasDiscardedAudition = false }
+        return hasDiscardedAudition
+    }
+    private var hasDiscardedAudition = false
 
     // MARK: - 試聴 (#3565)
 

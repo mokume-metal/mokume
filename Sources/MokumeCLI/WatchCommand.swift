@@ -884,9 +884,8 @@ enum WatchCommand {
             guard !session.stopRequested else { return true }
             report(outcome, holdingPrevious: session.keepsPreviousRunning, on: viewer)
             // **試聴の版を起こした回は、作品のウィンドウがまだ前の版であることを添える** (#3565)。「Rebuilt」だけだと、
-            // 両方のウィンドウが入れ替わったと読める。**試聴の版の記録で見る** — 試聴に入る前に読んだ版は、入った後に
-            // 起きても本番の版である (#3796)
-            if outcome.audition == true, outcome.ok, outcome.launched { say(auditionStartedLine) }
+            // 両方のウィンドウが入れ替わったと読める
+            for line in auditionLines(for: outcome) { say(line) }
             // **差し替えで期限に掛かったことも名乗る。** 止め方は終わるときと同じ経路を
             // 通るので、保存のたびにも起こりうる (#732)
             switch session.lastStop {
@@ -894,6 +893,12 @@ enum WatchCommand {
             case .abandoned(let pid): say(abandonedLine(pid: pid))
             default: break
             }
+        } else if session.takeDiscardedAudition() {
+            // **始まりを名乗った作り直しを捨てた回は、捨てたことを名乗り、プレビューの回る印を止める** (#3796)
+            guard !session.stopRequested else { return true }
+            say(auditionDiscardedLine)
+            viewer?.firstFrame.settle()
+            showInPreview(auditionDiscardedLine, false)
         }
         return true
     }
@@ -1203,6 +1208,20 @@ enum WatchCommand {
         return "The sketch in the work's window \(how) — the window keeps its last picture, and the "
             + "audition goes on in the preview"
     }
+
+    /// 作り直しの結果の要約の次に出す、試聴の行 (#3565)。
+    ///
+    /// **試聴の版の記録で見る** — 見張りが試聴に入っているかでは見ない。試聴に入る前に読んだ版は、入った後に起きても
+    /// 本番の版である ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
+    static func auditionLines(for outcome: BuildReport) -> [String] {
+        outcome.audition == true && outcome.ok && outcome.launched ? [auditionStartedLine] : []
+    }
+
+    /// 試聴の中で読んだ版の作り直しを、その試聴を出た後に捨てたことを名乗る行 ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
+    /// 始まりの行 (``rebuildingLine``) の後に出る。
+    static let auditionDiscardedLine =
+        "Dropped the version being built — it was saved during an audition that has ended, so the work's "
+        + "window keeps the version it has. Change the source and save to show it there"
 
     /// 試聴の版を起こしたことを名乗る行 (#3565)。端末の要約 (`Rebuilt: …`) の次に出す。
     static let auditionStartedLine =
