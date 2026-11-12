@@ -111,71 +111,77 @@ struct SynthArgumentOrderTests {
 
     // MARK: - 省いた値は保つ (#3719 の 2026-11-13 の決定 1)
 
-    /// 省いた値を保つかを見る組。`prepare` が先に決めた値を、`call` の形が省く。
+    /// 省いた値を保つかを見る組。`prepare` が先に決めた値 (定位 -1・オフセット 0.3 の、省かれるほう) を、`call` の
+    /// 形が省く。渡すほうの値も定位 -1・オフセット 0.3 なので、どの形も「左へ寄せ、平均が 0.3 上へずれた音」になる。
     private struct Kept {
         var label: String
         /// 先に決めておく値 (省かれる値)。
         var prepare: (SynthSource) -> Void
         /// 省いた形の呼び出し (鳴らす形・決めるだけの形)。
         var call: (SynthSource) -> Void
-        /// 左へ寄せたままなら `true` (右が無音)。
-        var keepsLeft: Bool
-        /// オフセット 0.3 を保つなら `true` (平均が上へずれる)。
-        var keepsOffset: Bool
     }
+
+    /// 定位とオフセットの両方を先に決める (両方を省く形のため)。
+    private static let both: (SynthSource) -> Void = { $0.pan(-1); $0.add(0.3) }
 
     private static let kept: [Kept] = [
         Kept(
-            label: "noise.pan(-1) の後の play(amp)", prepare: { $0.pan(-1) },
-            call: { ($0 as? Noise)?.play(0.5) }, keepsLeft: true, keepsOffset: false),
+            label: "noise.pan(-1)・add(0.3) の後の play(amp)", prepare: both,
+            call: { ($0 as? Noise)?.play(0.5) }),
         Kept(
-            label: "noise.pan(-1) の後の play(amp, at:)", prepare: { $0.pan(-1) },
-            call: { ($0 as? Noise)?.play(0.5, at: 0) }, keepsLeft: true, keepsOffset: false),
+            label: "noise.pan(-1)・add(0.3) の後の play(amp, at:)", prepare: both,
+            call: { ($0 as? Noise)?.play(0.5, at: 0) }),
         Kept(
-            label: "noise.pan(-1) の後の set(amp)", prepare: { $0.pan(-1) },
-            call: { ($0 as? Noise)?.set(0.5); $0.play() }, keepsLeft: true, keepsOffset: false),
+            label: "noise.pan(-1)・add(0.3) の後の set(amp)", prepare: both,
+            call: { ($0 as? Noise)?.set(0.5); $0.play() }),
         Kept(
             label: "noise.add(0.3) の後の play(amp, pos)", prepare: { $0.add(0.3) },
-            call: { ($0 as? Noise)?.play(0.2, -1) }, keepsLeft: true, keepsOffset: true),
+            call: { ($0 as? Noise)?.play(0.2, -1) }),
         Kept(
             label: "noise.add(0.3) の後の play(amp, pos, at:)", prepare: { $0.add(0.3) },
-            call: { ($0 as? Noise)?.play(0.2, -1, at: 0) }, keepsLeft: true, keepsOffset: true),
+            call: { ($0 as? Noise)?.play(0.2, -1, at: 0) }),
         Kept(
             label: "noise.add(0.3) の後の set(amp, pos)", prepare: { $0.add(0.3) },
-            call: { ($0 as? Noise)?.set(0.2, -1); $0.play() }, keepsLeft: true, keepsOffset: true),
+            call: { ($0 as? Noise)?.set(0.2, -1); $0.play() }),
         Kept(
-            label: "osc.pan(-1) の後の play(freq, amp)", prepare: { $0.pan(-1) },
-            call: { ($0 as? Oscillator)?.play(440, 0.5) }, keepsLeft: true, keepsOffset: false),
+            label: "osc.pan(-1)・add(0.3) の後の play(freq, amp)", prepare: both,
+            call: { ($0 as? Oscillator)?.play(440, 0.5) }),
         Kept(
-            label: "osc.pan(-1) の後の play(freq, amp, at:)", prepare: { $0.pan(-1) },
-            call: { ($0 as? Oscillator)?.play(440, 0.5, at: 0) }, keepsLeft: true, keepsOffset: false),
+            label: "osc.pan(-1)・add(0.3) の後の play(freq, amp, at:)", prepare: both,
+            call: { ($0 as? Oscillator)?.play(440, 0.5, at: 0) }),
         Kept(
             label: "osc.pan(-1) の後の play(freq, amp, add)", prepare: { $0.pan(-1) },
-            call: { ($0 as? Oscillator)?.play(440, 0.5, 0.3) }, keepsLeft: true, keepsOffset: true),
+            call: { ($0 as? Oscillator)?.play(440, 0.5, 0.3) }),
         Kept(
             label: "osc.pan(-1) の後の play(freq, amp, add, at:)", prepare: { $0.pan(-1) },
-            call: { ($0 as? Oscillator)?.play(440, 0.5, 0.3, at: 0) }, keepsLeft: true, keepsOffset: true),
+            call: { ($0 as? Oscillator)?.play(440, 0.5, 0.3, at: 0) }),
         Kept(
-            label: "osc.pan(-1) の後の set(freq, amp)", prepare: { $0.pan(-1) },
-            call: { ($0 as? Oscillator)?.set(440, 0.5); $0.play() }, keepsLeft: true, keepsOffset: false),
+            label: "osc.pan(-1)・add(0.3) の後の set(freq, amp)", prepare: both,
+            call: { ($0 as? Oscillator)?.set(440, 0.5); $0.play() }),
         Kept(
             label: "osc.add(0.3) の後の set(freq, amp, pos)", prepare: { $0.add(0.3) },
-            call: { ($0 as? Oscillator)?.set(440, 0.5, -1); $0.play() }, keepsLeft: true, keepsOffset: true),
+            call: { ($0 as? Oscillator)?.set(440, 0.5, -1); $0.play() }),
     ]
 
-    /// 左へ寄せたまま・オフセットを保ったままかを、寄り切った最後のフレームで見る。
+    /// `samples` の `frame` フレーム目 (0 から) の標本。
+    private func frame(_ samples: [Float], _ frame: Int) -> [Float] {
+        Array(samples[frame * Self.perFrame..<(frame + 1) * Self.perFrame])
+    }
+
+    /// 左へ寄せたまま (右が無音)・オフセット 0.3 を保ったまま (平均が上へずれる) かを、1 フレームぶんの標本で見る。
+    private func expectKept(
+        left: [Float], right: [Float], _ form: Kept, _ when: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        let rightLoudest = loudest(right)
+        #expect(rightLoudest < 1e-6, "\(form.label) (\(when)): 右 \(rightLoudest)", sourceLocation: sourceLocation)
+        #expect(loudest(left) > 0.1, "\(form.label) (\(when)): 左 \(loudest(left))", sourceLocation: sourceLocation)
+        #expect(mean(left) > 0.2, "\(form.label) (\(when)): 平均 \(mean(left))", sourceLocation: sourceLocation)
+    }
+
+    /// 寄り切った最後のフレームで見る。
     private func expectKept(_ sound: Stereo, _ form: Kept, _ when: String) {
-        let left = lastFrame(sound.left)
-        let right = loudest(lastFrame(sound.right))
-        if form.keepsLeft {
-            #expect(right < 1e-6, "\(form.label) (\(when)): 右 \(right)")
-            #expect(loudest(left) > 0.1, "\(form.label) (\(when)): 左 \(loudest(left))")
-        }
-        if form.keepsOffset {
-            #expect(mean(left) > 0.2, "\(form.label) (\(when)): 平均 \(mean(left))")
-        } else {
-            #expect(abs(mean(left)) < 0.05, "\(form.label) (\(when)): 平均 \(mean(left))")
-        }
+        expectKept(left: lastFrame(sound.left), right: lastFrame(sound.right), form, when)
     }
 
     private func source(_ form: Kept, _ stage: SynthStage) -> SynthSource {
@@ -196,20 +202,29 @@ struct SynthArgumentOrderTests {
     @Test("鳴っている最中と、止めた後に呼んでも、省いた値は今のまま保つ", arguments: 0..<12)
     func omittedValuesAreKeptWhilePlayingAndAfterStop(_ index: Int) throws {
         let form = Self.kept[index]
-        // 鳴っている最中: 先に決めた値で鳴らしておき、6 フレーム目に省いた形を呼ぶ
+        // 鳴っている最中: 定位 -1・オフセット 0.3 で鳴らしておき、6 フレーム目に省いた形を呼ぶ。渡すほうの値も
+        // 今と同じなので、呼んだ前後でどの値も動かないはず
+        let calledAt = 6
         var playing: SynthSource?
         let during = try heard(
             frames: 18,
             act: { frame in
-                if frame == 6, let playing { form.call(playing) }
+                if frame == calledAt, let playing { form.call(playing) }
             }
         ) { stage in
             let made = source(form, stage)
-            form.prepare(made)
+            Self.both(made)
             made.play()
             playing = made
         }
         expectKept(during, form, "鳴っている最中")
+        // 呼んだフレームとその次も、定位・オフセットは中央・0 へ寄り始めない (一度 0 を送ってから今の値を
+        // 送り直す作りなら、ここで右が鳴り、平均が沈む。寄り戻った最後のフレームだけでは見分けられない)
+        for index in calledAt...(calledAt + 1) {
+            expectKept(
+                left: frame(during.left, index), right: frame(during.right, index), form,
+                "鳴っている最中・\(index) フレーム目")
+        }
         // 止めた後: 鳴らして止め、省いた形で鳴らし直す
         var stopped: SynthSource?
         let after = try heard(
