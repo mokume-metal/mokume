@@ -205,8 +205,8 @@ nonisolated struct SVGNestedViewportTests {
         #expect(drawing.approximated.isEmpty)
     }
 
-    @Test("名乗りは opacity の近似と並んで数え、片方だけでもう片方を隠さない")
-    func sitsBesideTheOpacityNotes() throws {
+    @Test("重なる半透明の群があっても、名乗りは表示枠の分だけ (opacity は合成の単位で描くので名乗らない・#3564)")
+    func sitsBesideTheOpacityUnits() throws {
         let drawing = try document(
             """
             <g opacity='0.5'>
@@ -215,12 +215,13 @@ nonisolated struct SVGNestedViewportTests {
             </g>
             \(overflowing)
             """)
-        #expect(names(drawing).sorted() == [Self.note, "opacity on a group whose shapes overlap"].sorted())
+        #expect(names(drawing) == [Self.note])
+        #expect(drawing.units.count == 1)
     }
 
     // MARK: - 文面
 
-    @Test("文面に、切り抜かないことと、入れ子の svg の最初の行が載る。opacity の近似だけなら、これまでの文面のまま")
+    @Test("文面に、切り抜かないことと、入れ子の svg の最初の行が載る。重なる半透明の群だけなら文面は無い")
     @MainActor
     func noticeSaysItDidNotClip() throws {
         let drawing = try document("<rect width='10' height='10'/>\n\(overflowing)")
@@ -238,9 +239,7 @@ nonisolated struct SVGNestedViewportTests {
             <circle cx="60" cy="50" r="25" fill="#00f"/>
             </g>
             """)
-        let only = try #require(Canvas.svgApproximatedNotice(opacity, path: "panel.svg"))
-        #expect(only.contains("drew opacity as an approximation"))
-        #expect(!only.contains("clipping"))
+        #expect(Canvas.svgApproximatedNotice(opacity, path: "panel.svg") == nil)
 
         let both = try document(
             """
@@ -251,7 +250,7 @@ nonisolated struct SVGNestedViewportTests {
             \(overflowing)
             """)
         let mixed = try #require(Canvas.svgApproximatedNotice(both, path: "panel.svg"))
-        #expect(mixed.contains("drew opacity as an approximation") && mixed.contains("without clipping"))
+        #expect(!mixed.contains("opacity") && mixed.contains("without clipping"))
     }
 
     // MARK: - 補助

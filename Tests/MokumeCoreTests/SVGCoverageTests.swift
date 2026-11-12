@@ -40,11 +40,10 @@ import simd
 /// 誤り (#2348・#2334・#2410 の型)、比べると mokume の誤りと見分けられない。表が対象外として名乗る
 /// (``CoverageTable/svgOutOfScope``)。
 ///
-/// ## 既知の食い違い
+/// ## 重なる子の群
 ///
-/// 群の `opacity` が、重なった子へ**子ごとに掛かる**近似は ([#2878]、open)、SVG と違う絵になる (重心が 0.6 画素
-/// ずれる)。重なる見本は `withKnownIssue` で包み、#2878 が直ったら「記録されるはずの赤が無い」で赤になって、
-/// 包みごと外させる。
+/// 群の `opacity` が重なった子へ**子ごとに掛かる**と ([#2878])、SVG と違う絵になる (重心が 0.6 画素ずれる)。
+/// 重なる群は合成の単位にまとめて描き、不透明度を 1 度だけ掛ける ([#3564]) ので、重なる見本も参照と一致する。
 ///
 /// ## 赤の読み方
 ///
@@ -53,6 +52,7 @@ import simd
 ///
 /// [#3494]: https://github.com/mokume-metal/mokume/issues/3494
 /// [#2878]: https://github.com/mokume-metal/mokume/issues/2878
+/// [#3564]: https://github.com/mokume-metal/mokume/issues/3564
 @Suite(
     "SVG の描画は CoreSVG の参照と 50% の白黒と重心で一致する",
     .enabled(
@@ -284,15 +284,14 @@ struct SVGCoverageTests {
         #expect(report.ran == 1, "seed の 1 件だけが走るはず: \(report.ran) 件")
     }
 
-    @Test("重なる子の群の opacity は、子ごとに掛かる近似 (#2878) のあいだ、参照と重心が外れる (既知)")
-    func overlappingGroupOpacityIsAKnownMismatch() throws {
+    /// 見本は ``primitiveTemplates`` へ移さずに別に走らせる — 見本の数が変わると、seed から作る置き方 (#3725 の
+    /// seed を固定した検査) が変わる。
+    @Test("重なる子の群の opacity は、群をまとめて描いてから 1 度だけ掛かり (#3564)、参照と 50% の白黒と重心で一致する")
+    func overlappingGroupOpacityMatchesTheReference() throws {
         let row = try CoverageTable.row(.svgPrimitives, on: .distanceField, comparing: .halfToneAndCentroid)
         let report = try Self.run("svg-group-overlap", templates: [Self.overlappingGroup], row: row)
-        // #2878 が直ったら、ここは赤が記録されず「既知の問題が起きなかった」で赤になる。包みを外して、
-        // 重なる群を primitivesMatchTheReference の見本へ移す
-        withKnownIssue("#2878: 群の opacity を子ごとに掛けるので、重なった所が参照より濃く、重心がずれる") {
-            #expect(report.failure == nil, "\(report.failure ?? "")")
-        }
+        #expect(report.failure == nil, "\(report.failure ?? "")")
+        #expect(report.skipped == 0, "約束の外は無いはず: \(report.skipped) 件")
     }
 
     @Test("見本の opacity は、SVG の文の opacity と同じ値を名乗り (無ければ 1)、白黒の閾値 0.5 を越える")

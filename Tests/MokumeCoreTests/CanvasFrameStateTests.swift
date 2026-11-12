@@ -409,6 +409,10 @@ extension CanvasTests {
                             source: .ring(points: [.zero], shapePoints: [.zero], isClosed: false, curveSteps: []),
                             weight: 1, join: .miter, cap: .round, vertexStart: 0, vertexCount: 0))
                 }),
+                ("recordedCompositeGroups", end, all, { c, _ in
+                    c.recordedCompositeGroups.append(
+                        Shape.CompositeRange(runs: 0..<0, opacity: 0.5, bounds: PlaneBox(.zero)))
+                }),
                 ("recordedGPUStrokes", end, all, { c, _ in
                     c.recordedGPUStrokes.append(
                         RetainedGPUStroke(

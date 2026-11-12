@@ -51,11 +51,13 @@ extension Canvas {
     ///     含める。** 箱の外へ描いたものは出ない。中間面はこれを描く先の座標へ移した外接を、縁の余白
     ///     (``compositeGroupMargin``) の分だけ広げて整数へ丸め、この面の内側に絞った大きさになる。
     ///     絞った箱が空 (全部が面の外) なら `body` を呼ばない。
+    ///   - settings: 中間面を置く四角の混ぜ方と塗り。`nil` なら置く側のもの。
     ///   - body: 中に描く。**平面の図形・字・絵だけを入れる** — 立体や視点は中間面の大きさで組まれるので、
     ///     置く側の視点を引き継がない。
     ///
     /// **置くときの設定 (断片・切り抜き・置く側の混ぜ方) は、置く側のものが単位の全体に 1 度効く。** 中の図形に
-    /// 効かせたい設定は `body` の中で書く (中は既定の設定から始まる)。
+    /// 効かせたい設定は `body` の中で書く (中は既定の設定から始まる)。`settings` を渡すと、混ぜ方と断片は置く側の
+    /// ものでなく `settings` で置く (保持した形の範囲は、記録したときの設定で置く・#3564 の反証 1)。
     ///
     /// - Returns: **単位にして描いたら (見えないので描くものが無い場合を含めて) `true`。単位にできなかった
     ///   ときは `body` を呼ばずに `false`。** 偽のとき何を描くか (子ごとに掛けるなど) は呼ぶ側が決める。
@@ -65,7 +67,8 @@ extension Canvas {
     ///     視点を通る下では、中間面の画素と置く側の画素が重ならず、外接も移せない。
     ///   - 描く格子が座標の格子と違う (細かさを 1 未満にしている)。中間面は細かさ 1 の描き場所なので、
     ///     置く側の描く画素と重ならない。
-    ///   - 置く側の混ぜ方が、透明な画素でも下地を変える (``BlendMode/replace``)。単位の箱は四角で置かれ、
+    ///   - 四角を置く混ぜ方 (`settings` があればその混ぜ方、無ければ置く側の混ぜ方) が、透明な画素でも下地を
+    ///     変える (``BlendMode/replace``)。単位の箱は四角で置かれ、
     ///     中の透明な画素もその混ぜ方で下地に載るので、`replace` では箱いっぱいの下地が消える。他のどの
     ///     混ぜ方もアルファ 0 の画素は下地を変えない (`CompositeGroupTests` が全部の混ぜ方で確かめる)。
     ///   - 形の組み立て (``createShape(_:)``) の中、またはフレームの外 (どちらも 1 度知らせる)。2 段目は、
@@ -78,9 +81,14 @@ extension Canvas {
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     @discardableResult
     func withCompositeGroup(
-        opacity: Float, covering bounds: PlaneBox, _ body: (Canvas) -> Void
+        opacity: Float, covering bounds: PlaneBox, placedWith settings: (mode: BlendMode, paint: Shape.Paint)? = nil,
+        _ body: (Canvas) -> Void
     ) -> Bool {
-        guard currentFlatView.clip == nil, target === output, style.blendMode.leavesBaseUnderTransparent else {
+        // `replace` の判定は、四角を置く混ぜ方で見る (`settings` があればそちら)。保持した形の範囲は記録した
+        // `blend` で置くので、置く側が `replace` でも単位にできる (#3564 の 2026-11-12 の決定)
+        guard currentFlatView.clip == nil, target === output,
+            (settings?.mode ?? style.blendMode).leavesBaseUnderTransparent
+        else {
             return false
         }
         guard !recordingShape else {
@@ -104,6 +112,9 @@ extension Canvas {
         do {
             group = try createGraphics(box.width, box.height)
         } catch {
+            // 保持した形の範囲 (`settings` を渡す) は、置く口が子ごとに掛けて描くことを 1 度知らせるので、ここでは
+            // 重ねて知らせない (#3564 の反証 2 回目の 5)
+            guard settings == nil else { return false }
             warnOnce(
                 .compositeGroupSurface,
                 "A composite group could not make its intermediate surface (\(error.headline)), so "
@@ -121,8 +132,46 @@ extension Canvas {
         body(group)
         group.endDraw()
 
-        placeCompositeGroup(group, in: box, opacity: min(opacity, 1))
+        placeCompositeGroup(group, in: box, opacity: min(opacity, 1), placedWith: settings)
         return true
+    }
+
+    /// **形の組み立ての中で**、`body` が記録するものを合成の単位の範囲として形に残す ([#3564])。
+    ///
+    /// 単位は形を置く時点で開く (``withCompositeGroup(opacity:covering:_:)`` は組み立ての中では開けない) ので、
+    /// 記録の中では範囲の印だけを残す (``Shape/compositeGroups``)。範囲の前後で列を閉じ、範囲が他の区間と
+    /// 1 つの区間に畳まれないようにする。何も記録しなければ範囲を残さない。
+    ///
+    /// - Parameters:
+    ///   - bounds: 中に記録するものの外接 (**形自身の座標**。いまの変換は掛けない)。線の太さなど縁の分を含める。
+    ///   - settings: 置くときに中間面を置く四角の混ぜ方と塗り (``Shape/CompositeRange/mode``)。`nil` なら、
+    ///     いまの記録の混ぜ方と塗り。入れ子の記録へ範囲を引き継ぐときは、元の範囲のものを渡す (外側の記録の
+    ///     混ぜ方を読まない — 中の区間も元の区間の設定で記録される)。
+    ///
+    /// [#3564]: https://github.com/mokume-metal/mokume/issues/3564
+    func recordCompositeGroup(
+        opacity: Float, covering bounds: PlaneBox, placedWith settings: (mode: BlendMode, paint: Shape.Paint)? = nil,
+        _ body: () -> Void
+    ) {
+        guard recordingShape else { return body() }
+        closeBatch()
+        // 範囲は開いた時点で並びに置く (外側が先に並ぶ)。記録の途中で置いた側を描き切る逃げ道
+        // (``flushBeforeBuild()``) が列を引き戻すと、置いた範囲も同じだけずれる
+        let slot = recordedCompositeGroups.count
+        recordedCompositeGroups.append(
+            Shape.CompositeRange(
+                runs: batches.count..<batches.count, opacity: opacity, bounds: bounds,
+                mode: settings?.mode ?? style.blendMode, paint: settings?.paint ?? effectivePaint))
+        body()
+        closeBatch()
+        guard slot < recordedCompositeGroups.count else { return }
+        let start = recordedCompositeGroups[slot].runs.lowerBound
+        if batches.count > start {
+            recordedCompositeGroups[slot].runs = start..<batches.count
+        } else {
+            // 何も記録しなかった。中で開いた範囲も空なので、もう除かれている
+            recordedCompositeGroups.remove(at: slot)
+        }
     }
 
     /// 中間面が覆う、描く先の整数の箱。外接を変換で移し、縁の余白を足し、この面の内側に絞る。
@@ -150,13 +199,26 @@ extension Canvas {
 
     /// 閉じた中間面を、不透明度を掛けて、この面へ画像として置く。置き先は箱の位置で、変換は掛けない
     /// (中の変換が既に箱の左上を原点にしている)。
-    private func placeCompositeGroup(_ group: Canvas, in box: CompositeGroupBox, opacity: Float) {
+    ///
+    /// `settings` があれば、四角はその混ぜ方と塗りで置き、置く側の設定へ戻す (``replaying(_:_:)`` と同じ出入り。
+    /// 同じなら列を閉じない)。
+    private func placeCompositeGroup(
+        _ group: Canvas, in box: CompositeGroupBox, opacity: Float,
+        placedWith settings: (mode: BlendMode, paint: Shape.Paint)?
+    ) {
         note(placing: group)
-        // 絵はベクターへ埋め込まない (#3139)。単位をベクターへどう書くかは 2 段目が決める
-        noteVectorDrop(.image)
+        // 絵はベクターへ埋め込まない (#3139)。**保持した形の範囲 (`settings` を渡す) は数えない** — 置く口が
+        // `.retainedShape` として既に数えていて、利用者は画像を描いていない (#3564 の反証 2 回目の 6)
+        if settings == nil { noteVectorDrop(.image) }
         let kept = transform
         transform = .identity
         defer { transform = kept }
+        let savedMode = style.blendMode
+        let savedPaint = replayedPaint
+        if let settings {
+            blendMode(settings.mode)
+            usePaint(settings.paint)
+        }
         // 乗算済みの白に不透明度を掛けたものを色に渡す。絵の被覆も色も同じ割合で薄まる
         appendImageQuad(
             group.drawnPicture, x: Float(box.left), y: Float(box.top),
@@ -164,6 +226,10 @@ extension Canvas {
             uvMin: .zero, uvMax: SIMD2(1, 1),
             color: LinearRGBA(
                 premultipliedRed: opacity, green: opacity, blue: opacity, alpha: opacity))
+        guard settings != nil else { return }
+        // 戻す操作が列を閉じるので、いま置いた四角は記録した設定で描かれる
+        blendMode(savedMode)
+        if let savedPaint { usePaint(savedPaint) } else { stopReplayingPaint() }
     }
 }
 

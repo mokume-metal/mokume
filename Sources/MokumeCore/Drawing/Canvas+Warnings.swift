@@ -77,11 +77,11 @@ extension Canvas {
         /// 読んだ SVG に描けないものがあって捨てた、または描くものが 1 つも無かった。**ファイルの
         /// 名前ごとに 1 度** — 名前はスケッチの文字に書かれたものなので、鍵の数はフレームで増えない。
         case svgSkipped(path: String)
-        /// 読んだ SVG の `opacity` を、子ごとに掛ける近似で描いていて、重なった所が SVG より濃く出る
-        /// (#2884)。**ファイルの名前ごとに 1 度**。捨てたもの (``svgSkipped(path:)``) とは別の知らせ —
-        /// 描いてはいる。層の `opacity` を本体が持てば ([#2878]) 消える。
+        /// 読んだ SVG の入れ子の `<svg>` を、表示枠で切り抜かずに描いた (#3563)。**ファイルの名前ごとに 1 度**。
+        /// 捨てたもの (``svgSkipped(path:)``) とは別の知らせ — 描いてはいる。表示枠で切り抜くようになれば
+        /// ([#2879]) 消える。
         ///
-        /// [#2878]: https://github.com/mokume-metal/mokume/issues/2878
+        /// [#2879]: https://github.com/mokume-metal/mokume/issues/2879
         case svgApproximated(path: String)
         /// 道の記録 (``Canvas/createPath(_:)``) の中で、道に入れられないものを断った。**断った種類ごとに 1 度**。
         case insidePath(PathRefusal)
@@ -579,6 +579,11 @@ extension Canvas {
         ///
         /// [#3560]: https://github.com/mokume-metal/mokume/issues/3560
         case compositeGroupSurface
+        /// 合成の単位の範囲を持つ形 (``Shape/compositeGroups``) を、単位にできない所に置き、範囲の中の色ごとに
+        /// 不透明度を掛けた ([#3564])。**1 度だけ** — 置くたびに言わない。
+        ///
+        /// [#3564]: https://github.com/mokume-metal/mokume/issues/3564
+        case compositeGroupPerShape
     }
 
     /// 範囲の外の値を範囲へ丸めたことを、初回だけ知らせる ([#1698])。
