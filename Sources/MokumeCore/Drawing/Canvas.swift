@@ -229,6 +229,10 @@ public final class Canvas {
     /// (``RetainedGPUStroke``・#1756)。記録を終えると `createShape` が抜く。
     var recordedGPUStrokes: [RetainedGPUStroke] = []
 
+    /// 保持する形を記録している間に開いた**合成の単位**の範囲 (``Shape/compositeGroups``・#3564)。区間の番号は
+    /// 溜め場の列 (``batches``) の番号で、開いた順 (外側が先) に並ぶ。記録を終えると `createShape` が抜く。
+    var recordedCompositeGroups: [Shape.CompositeRange] = []
+
     /// 保持した形の線を、組めるものは GPU で組むか。**検査が偽にして、CPU で組む物差しを作る。**
     var placesRetainedStrokesOnGPU = true
 
@@ -3669,6 +3673,8 @@ public final class Canvas {
         list(&recordedGeometryForms, counted: false)
         list(&recordedSolidStrokes)
         list(&recordedGPUStrokes)
+        // 合成の単位の範囲は列の番号を指す。列ごと捨てたので、範囲も要らない (描くものではないので数えない)
+        list(&recordedCompositeGroups, counted: false)
         list(&solidVertices)
         list(&solidIndices)
         list(&solidInstances)

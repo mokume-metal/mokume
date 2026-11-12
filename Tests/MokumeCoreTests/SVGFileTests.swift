@@ -248,7 +248,11 @@ struct SVGFileTests {
             """)
         #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
         #expect(drawing.items.map(\.strokeWidth) == [2, 1])
-        #expect(drawing.items[0].fill == SVGFile.Color(red: 0, green: 0, blue: 0, alpha: 0.5))
+        // 塗りと線を両方持つ要素の `opacity` は合成の単位に載り、色には掛けない (#3564)。`.5` は単位の側で読む
+        #expect(drawing.items[0].fill == SVGFile.Color(red: 0, green: 0, blue: 0, alpha: 1))
+        #expect(drawing.items[0].stroke == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1))
+        #expect(drawing.units.map(\.items) == [0..<1], "\(drawing.units)")
+        #expect(drawing.units.map(\.opacity) == [0.5], "\(drawing.units)")
         #expect(drawing.items[1].outline == .rect(x: 0, y: 0, width: 10, height: 10))
         #expect(drawing.items[1].fill == SVGFile.Color(red: 16 / 255, green: 0, blue: 0, alpha: 0.5))
     }
@@ -1351,8 +1355,12 @@ struct SVGFileTests {
               <rect width="1" height="1" fill="inherit" color="lime"/>
             </g>
             """)
-        #expect(drawing.items[0].fill?.alpha == 0.25)
-        #expect(drawing.items[0].stroke == SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 0.5))
+        // 重なる子を持つ半透明の群は合成の単位になり、群の `opacity` は単位に載る (#3564)。子の色には掛けず、
+        // `fill-opacity` は色に残る。掛かる結果は 0.5 (色) × 0.5 (単位) = 0.25
+        #expect(drawing.units.map(\.items) == [0..<2], "\(drawing.units)")
+        #expect(drawing.units.map(\.opacity) == [0.5], "\(drawing.units)")
+        #expect(drawing.items[0].fill?.alpha == 0.5)
+        #expect(drawing.items[0].stroke == SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 1))
         #expect(drawing.items[0].cap == .round)
         #expect(drawing.items[1].stroke?.green == 1, "currentColor は要素自身の color を引く")
         #expect(drawing.items[1].fill?.red == 1)
@@ -2014,7 +2022,7 @@ struct SVGFileTests {
         let drawing = try SVGFile.parse(
             """
             <svg xmlns="http://www.w3.org/2000/svg">
-            <defs><linearGradient id="g"/><clipPath id="c"><rect width="1" height="1"/></clipPath></defs>
+            <defs><linearGradient id="h"/><pattern id="g"/><clipPath id="c"><rect width="1" height="1"/></clipPath></defs>
             <title>never drawn and never counted</title>
             <text x="0" y="0">A</text>
             <text x="0" y="9">B</text>
@@ -2153,11 +2161,11 @@ struct SVGFileTests {
         }
     }
 
-    /// 捨てるものの行が、改行のどれでも同じになる SVG。字 (3 行目)・グラデーションの塗り (4 行目)・
+    /// 捨てるものの行が、改行のどれでも同じになる SVG。字 (3 行目)・パターンの塗り (4 行目)・
     /// 読めない CSS の規則 (5 行目)。
     private static let skippingLines = """
         <svg xmlns="http://www.w3.org/2000/svg">
-        <defs><linearGradient id="g"/></defs>
+        <defs><pattern id="g"/></defs>
         <text x="0" y="0">A</text>
         <rect width="4" height="4" fill="url(#g)"/>
         <style>g .deep { fill: red }</style>

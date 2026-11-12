@@ -25,7 +25,37 @@ extension Canvas {
         return createShape {
             currentStyle = Style().keepingFrameFields(of: currentStyle)
             resetShader()
-            for item in drawing.items { record(item) }
+            var nextUnit = 0
+            record(drawing, 0..<drawing.items.count, nextUnit: &nextUnit)
+        }
+    }
+
+    /// 描くもののうち `range` を記録する。合成の単位 (``SVGFile/Drawing/units``) は、範囲の印を付けて記録する
+    /// (``recordCompositeGroup(opacity:covering:_:)``・#3564)。単位は置くときに 1 枚にまとめて描かれ、不透明度が
+    /// 1 度だけ掛かる。
+    ///
+    /// - Parameter nextUnit: まだ記録していない単位のうち最初のもの (単位は始まりの小さい順・外側が先)。
+    private func record(_ drawing: SVGFile.Drawing, _ range: Range<Int>, nextUnit: inout Int) {
+        var index = range.lowerBound
+        while index < range.upperBound {
+            guard nextUnit < drawing.units.count, drawing.units[nextUnit].items.lowerBound == index else {
+                let end =
+                    nextUnit < drawing.units.count
+                    ? min(max(drawing.units[nextUnit].items.lowerBound, index + 1), range.upperBound)
+                    : range.upperBound
+                for item in drawing.items[index..<end] { record(item) }
+                index = end
+                continue
+            }
+            let unit = drawing.units[nextUnit]
+            nextUnit += 1
+            let inside = unit.items.clamped(to: range)
+            var bounds = PlaneBox(unit.bounds.low)
+            bounds.add(unit.bounds.high)
+            recordCompositeGroup(opacity: unit.opacity, covering: bounds) {
+                record(drawing, inside, nextUnit: &nextUnit)
+            }
+            index = max(inside.upperBound, index + 1)
         }
     }
 
@@ -33,7 +63,13 @@ extension Canvas {
     private func record(_ item: SVGFile.Item) {
         // 要素ごとに変換を置き直す。祖先の変換と viewBox は読み解く側で畳んである
         transform = Self.transform(item.transform)
-        if let color = item.fill { fill(Self.linear(color)) } else { noFill() }
+        if let gradient = item.gradient, let paint = item.fill {
+            recordGradientFill(gradient, opacity: paint.alpha, item)
+        } else if let color = item.fill {
+            fill(Self.linear(color))
+        } else {
+            noFill()
+        }
         if let color = item.stroke {
             stroke(Self.linear(color))
             strokeWeight(item.strokeWidth)
@@ -54,12 +90,43 @@ extension Canvas {
         }
     }
 
+    /// 塗りを、SVG に書いた勾配にする (#3031)。**利用者と同じ ``fill(_:)-(Gradient)`` を、勾配の座標の変換の下で
+    /// 呼ぶ** — 勾配は呼んだときの変換で読まれ、形に焼き付いて置き場所と一緒に動く (#3009)。呼んだ後に変換を
+    /// 要素の座標へ戻す。`opacity` (要素の `fill-opacity` と `opacity`) は区切りの不透明度に掛ける。
+    ///
+    /// 先に最後の区切りの色を塗りに置く。勾配を受けられないとき (読み解く側が弾くので、値があふれたときだけ) に、
+    /// 前の要素の塗りが残らないように。
+    private func recordGradientFill(_ gradient: SVGFile.GradientFill, opacity: Float, _ item: SVGFile.Item) {
+        func ink(_ stop: SVGFile.GradientFill.Stop) -> LinearRGBA {
+            var color = stop.color
+            color.alpha *= opacity
+            return Self.linear(color)
+        }
+        if let last = gradient.stops.last { fill(ink(last)) }
+        let stops = gradient.stops.map { (ink($0), $0.offset) }
+        transform = Self.transform(item.transform * gradient.space)
+        switch gradient.geometry {
+        case .linear(let from, let to):
+            fill(.linearGradient(stops, from: Vector2(from), to: Vector2(to)))
+        case .radial(let center, let radius):
+            fill(.radialGradient(stops, center: Vector2(center), radius: radius))
+        }
+        transform = Self.transform(item.transform)
+    }
+
     /// 線の集まりを記録する。
     ///
     /// 線が 1 本なら 1 つの形にする。**2 本以上なら塗りと線を分ける** — 塗りは全部の線を
     /// 1 つの形の外周と穴 (`beginContour`) として塗り、線は 1 本ずつ引く。穴は必ず閉じた
     /// 周として引かれるので、閉じていない 2 本目以降の線を穴にすると、SVG に無い閉じる辺が
     /// 引かれてしまう。
+    ///
+    /// **記録した線の色が半透明なら、1 本ずつ引いても全部の線で 1 つの図形** (``strokingOneFigure(_:)``・#3564)。
+    /// 部分パスどうしが重なっても、重なりは 1 回だけ混ざる (この場合に限って SVG の 1 つの `<path>` の線と同じ。
+    /// ``Path`` の道 (`shape(_:)`) と同じ作り)。不透明な線は、これまでどおり 1 本ずつの図形にする — 置くときに
+    /// 不透明度が掛かる道 (置き場所の色を半透明にする・単位にできない所で子ごとに掛ける) では、交わる所が 2 回
+    /// 混ざる。1 つの図形の中では先に引いた片の被覆が残るので、一部の線だけが 1 画素より細くなる置き方では
+    /// 交わる所が薄く出うる (積む順の選択・#4034)。
     private func recordPath(_ subpaths: [SVGFile.Subpath], _ item: SVGFile.Item) {
         let scale = item.transform.largestScale
         // `evenodd` は、回り数が奇数の所だけを塗る規則で塗る。自分と交わる 1 本の周 (一筆書きの
@@ -86,11 +153,17 @@ extension Canvas {
         if let color = item.stroke {
             noFill()
             stroke(Self.linear(color))
-            for subpath in subpaths {
-                beginShape()
-                trace(subpath, scale: scale)
-                endShape(subpath.isClosed ? .close : .open)
+            func strokes() {
+                for subpath in subpaths {
+                    beginShape()
+                    trace(subpath, scale: scale)
+                    endShape(subpath.isClosed ? .close : .open)
+                }
             }
+            // 1 つの図形にするのは半透明の線だけ。不透明な線は重なっても絵が変わらないので前と同じ引き方のまま
+            // (一部の線だけが細くなる置き方で、型板が先に引いた細い線の被覆だけを残し、交わる所の太い線を
+            // 薄くしない・反証 4)
+            if color.alpha < 1 { strokingOneFigure(strokes) } else { strokes() }
         }
     }
 
@@ -146,7 +219,7 @@ extension Canvas {
         warnOnce(.svgSkipped(path: path), Self.svgSkippedNotice(drawing, path: path))
     }
 
-    /// 近似で描いたものがあれば、そのファイルにつき 1 度知らせる (#2884)。
+    /// 近似で描いたものがあれば、そのファイルにつき 1 度知らせる (#3563)。
     private func noteApproximated(_ drawing: SVGFile.Drawing, path: String) {
         guard let notice = Self.svgApproximatedNotice(drawing, path: path) else { return }
         warnOnce(.svgApproximated(path: path), notice)
@@ -154,36 +227,18 @@ extension Canvas {
 
     /// 近似で描いたものの知らせ。**何を・何回・最初はどの行か**を並べる。近似が無ければ `nil`。
     ///
-    /// 描く絵は変えない。2 種類ある。
-    ///
-    /// - `opacity`: SVG は群や要素の `opacity` を、中身をひとまとめに描いてから 1 度だけ掛けるが、mokume は
-    ///   子の色ごとに掛けるので、重なった所が濃く出る
-    /// - 入れ子の `<svg>` の表示枠: SVG は枠の外を切り抜くが、mokume は切り抜かず枠の外まで描く (#3563)
+    /// 描く絵は変えない。入れ子の `<svg>` の表示枠: SVG は枠の外を切り抜くが、mokume は切り抜かず枠の外まで
+    /// 描く (#3563)。
     static func svgApproximatedNotice(_ drawing: SVGFile.Drawing, path: String) -> String? {
         guard !drawing.approximated.isEmpty else { return nil }
-        func listing(_ notes: [SVGFile.Skip]) -> String {
-            notes.prefix(20).map { note in
-                note.count == 1
-                    ? "\(note.what) (line \(note.line))"
-                    : "\(note.what) (\(note.count) times, first at line \(note.line))"
-            }.joined(separator: ", ")
-        }
-        let viewport = drawing.approximated.filter { $0.what == SVGFile.nestedViewportNote }
-        let opacity = drawing.approximated.filter { $0.what != SVGFile.nestedViewportNote }
-        var parts: [String] = []
-        if !opacity.isEmpty {
-            parts.append(
-                "drew opacity as an approximation. SVG draws a group or element once and "
-                    + "then applies its opacity to the whole, but mokume applies it to each colour, so where "
-                    + "shapes overlap the result is more opaque than in SVG. Affected: \(listing(opacity))")
-        }
-        if !viewport.isEmpty {
-            parts.append(
-                "drew a nested <svg> without clipping it to its viewport. SVG clips what lies outside "
-                    + "the viewport (overflow is hidden by default), but mokume draws all of it, so the "
-                    + "shapes that cross the viewport show beyond it. Affected: \(listing(viewport))")
-        }
-        return "\"\(path)\": " + parts.joined(separator: " ")
+        let listing = drawing.approximated.prefix(20).map { note in
+            note.count == 1
+                ? "\(note.what) (line \(note.line))"
+                : "\(note.what) (\(note.count) times, first at line \(note.line))"
+        }.joined(separator: ", ")
+        return "\"\(path)\": drew a nested <svg> without clipping it to its viewport. SVG clips what lies "
+            + "outside the viewport (overflow is hidden by default), but mokume draws all of it, so the "
+            + "shapes that cross the viewport show beyond it. Affected: \(listing)"
     }
 
     /// 捨てたものの知らせ。**何を・何回・最初はどの行か**を並べる (20 種類まで)。
