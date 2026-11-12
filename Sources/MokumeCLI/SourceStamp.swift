@@ -105,7 +105,7 @@ nonisolated enum SourceStamp {
     ///
     /// 巡回は 0.25 秒ごとに来るので、毎回すべての中身を読むと、資材の置き場に置かれた動画や
     /// モデルのような大きなファイルを読み続けることになる (#2312)。ファイルごとに中身の要約と
-    /// 属性 (大きさ・更新時刻・ファイル番号) を控え、属性が前回と同じなら控えの要約を使う。
+    /// 属性 (大きさ・更新時刻・ボリュームとファイル番号) を控え、属性が前回と同じなら控えの要約を使う。
     /// **世代は中身から導いたまま** — 要約は中身から作り、属性は読み直すかを決めるだけに使う。
     /// 編集して元に戻せば、同じ世代を名乗る。
     ///
@@ -143,6 +143,9 @@ nonisolated enum SourceStamp {
             let size: Int
             let modified: Date
             let number: Int
+            /// ファイル番号はボリュームの中でしか一意でない。リンクの先を見るので、別のボリュームの
+            /// 同じ番号のファイルへ付け替えられうる。
+            let volume: Int
         }
 
         init(summarize: @escaping @Sendable (URL) -> Data? = Reader.digest(of:)) {
@@ -210,13 +213,26 @@ nonisolated enum SourceStamp {
             return summary
         }
 
+        /// 属性。**中身を読む先と同じものから取る** — シンボリックリンクは辿った先の属性を取る
+        /// ([#3983](https://github.com/mokume-metal/mokume/issues/3983))。中身は ``digest(of:)`` が
+        /// リンクを辿って読むのに、`attributesOfItem` はリンク自体の属性を返すので、先だけを
+        /// 書き換えた保存では属性が揃ったままになり、持ち回る読み手は古い控えを返し続けていた。
+        ///
+        /// 辿るのは `realpath(3)` — `resolvingSymlinksInPath()` は先頭の `/private` を落とし、
+        /// 辿れないリンクをそのまま返す (``NewCommand/onDisk(_:)`` と同じ理由)。**辿れなければ
+        /// `nil`** で、控えを使わず読み直す側へ倒れる (切れたリンクは中身も読めないので数えない)。
         private static func attributes(of file: URL) -> Attributes? {
-            guard let found = try? FileManager.default.attributesOfItem(atPath: file.path),
+            guard let resolved = realpath(file.path, nil) else { return nil }
+            defer { free(resolved) }
+            guard
+                let found = try? FileManager.default.attributesOfItem(
+                    atPath: String(cString: resolved)),
                 let size = (found[.size] as? NSNumber)?.intValue,
                 let modified = found[.modificationDate] as? Date,
-                let number = (found[.systemFileNumber] as? NSNumber)?.intValue
+                let number = (found[.systemFileNumber] as? NSNumber)?.intValue,
+                let volume = (found[.systemNumber] as? NSNumber)?.intValue
             else { return nil }
-            return Attributes(size: size, modified: modified, number: number)
+            return Attributes(size: size, modified: modified, number: number, volume: volume)
         }
     }
 }

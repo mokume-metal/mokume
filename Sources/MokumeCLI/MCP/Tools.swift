@@ -237,9 +237,11 @@ struct Tools {
                 value.doubleValue <= Double(Float.greatestFiniteMagnitude) else {
                 return ("time must be finite, non-negative seconds within the Float range", true)
             }
+            // 1 かも枚数・間隔と同じ読みで見る。`doubleValue == 1` は `1.00000000000000000000001` を
+            // 1 と読む (#3959)
             for key in ["count", "every"] {
                 if let raw = arguments[key] {
-                    guard let value = JSONRPC.number(raw), value.doubleValue == 1 else {
+                    guard Self.seriesArgument(raw, key: key) == .value(1) else {
                         return ("A specified time requires count=1 and every=1", true)
                     }
                 }
@@ -449,11 +451,11 @@ struct Tools {
     static func seriesArgument(_ raw: Any?, key: String) -> SeriesArgument {
         guard let raw else { return .omitted }
         let refusal = SeriesArgument.refused("\(key) must be a whole number")
-        guard let number = JSONRPC.number(raw) else { return refusal }
-        if let exact = raw as? Int { return .value(exact) }
-        let double = number.doubleValue
-        guard double.isFinite, double == double.rounded() else { return refusal }
-        return .value(double > 0 ? Int.max : Int.min)
+        // 整数かは読み手が渡した値そのもので見る (``JSONRPC/wholeNumber(_:)``・#3959)
+        guard let number = JSONRPC.number(raw), let whole = JSONRPC.wholeNumber(number) else {
+            return refusal
+        }
+        return .value(whole)
     }
 
     private func buildStatus() -> (String, Bool) {

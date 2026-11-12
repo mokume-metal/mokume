@@ -31,9 +31,14 @@ public enum ImageFailure: Error, Equatable, Sendable {
     /// 同じ理由・[#1642](https://github.com/mokume-metal/mokume/issues/1642))。
     case unplaceable(width: Int, height: Int)
     /// 書き出せなかった。`path` は頼んだ行き先、`reason` は書けなかった事情 (置き場が無い・書く権利が
-    /// 無いなど)。``Image/save(_:)`` が投げる
+    /// 無いなど)。``Image/save(_:)`` と、`.png` で終わらない URL を渡された `SketchRuntime.renderFrame(to:)` が投げる
     /// (``DataFailure/unwritable(path:reason:)`` と同じ形)。
     case unwritable(path: String, reason: String)
+    /// URL から画像を受け取れなかった。`url` は渡された名前、`reason` は受け取れなかった事情 (繋がらない・
+    /// 時間切れ・サーバが 2xx 以外の状態で答えた、など)。受け取った本文が画像として読めないときは、
+    /// この case でなく ``undecodable(path:)`` で投げる (``DataFailure/unreachable(url:reason:)`` と
+    /// 同じ形・[#3715](https://github.com/mokume-metal/mokume/issues/3715))。
+    case unreachable(url: String, reason: String)
     /// 走っている面を取れない所で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
     /// (`"loadImage(_:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
@@ -74,6 +79,8 @@ extension ImageFailure: CustomStringConvertible {
                 """
         case .unwritable(let path, let reason):
             return "Cannot write \"\(path)\": \(reason)"
+        case .unreachable(let url, let reason):
+            return "Cannot read \"\(url)\": \(reason)"
         case .notRunning(let call):
             return OutsideRun.notRunningNotice(call)
         }

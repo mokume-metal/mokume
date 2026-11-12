@@ -90,10 +90,6 @@ enum RunCommand {
             throw .packageNotFound(path: directory.path)
         }
 
-        // **走らせる前に見る。** 宣言の抜けはビルドを通ってしまうので、ビルドの
-        // 後では「通ったのに絵が出ない」形になる
-        try ResourceDeclaration.check(in: directory)
-
         // どの道具で走らせているかを名乗る。**手元ビルドと配布版の取り違えは、解消済みの
         // 不具合を新しい不具合として起票させる** (#633 が実際にそうなった)。名乗りが help と
         // 切り分けの口にしか無いと、いちばん長く見ている画面に出ない (#684)
@@ -102,7 +98,12 @@ enum RunCommand {
 
         // **置き場は 1 度だけ決めて持ち回る。** 作り直しと実行ファイルの解決へ別々に
         // 判断を渡すと、片方が共有・片方がパッケージ直下という組み合わせになる
-        let context = try context(in: directory, invocation: invocation)
+        //
+        // **資材の宣言は、宣言を読んだ直後・ビルドの前に見る** (``ResourceDeclaration``)。宣言の
+        // 抜けはビルドを通ってしまうので、ビルドの後では「通ったのに絵が出ない」形になる
+        let context = try context(
+            in: directory, invocation: invocation,
+            afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
 
         let executable = try buildAndResolve(in: directory, context: context)
@@ -154,6 +155,8 @@ enum RunCommand {
     ///     **見張りは自分の書き方 (`WatchCommand.say`) を渡す** — 速さの行が書き換え続けている
     ///     最中に素の `print` で書くと、行の途中から続いて読めなくなる (#685)。
     ///   - resolver: 解決の `swift` を起こす手。**検査から偽の手を渡せる形にしてある。**
+    ///   - afterReading: 宣言を読んだ直後に、読んだ宣言 (読めなければ `nil`) を渡す先。投げれば
+    ///     そこで止まる。`run`・`render`・`watch` は資材の宣言の検査を渡す (#3984)。
     ///
     /// ## main actor の外で走る
     ///
@@ -167,9 +170,13 @@ enum RunCommand {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
         announce: (String) -> Void = { print($0) },
-        resolver: (_ arguments: [String], _ directory: URL) -> Void = launchResolve
+        resolver: (_ arguments: [String], _ directory: URL) -> Void = launchResolve,
+        afterReading: (SwiftPM.Package?) throws(CommandFailure) -> Void
     ) throws(CommandFailure) -> BuildContext {
         let declared = try dumpPackage(in: directory)
+        // **読んだ宣言を、他の段より先に渡す** — 資材の宣言の検査 (``ResourceDeclaration``) は
+        // ここで読んだものを見る。`dump-package` を検査のために重ねて起こさない (#3984)
+        try afterReading(declared)
         let product = declared?.executableProductName
         // **束に写される置き場は宣言から決める** (#2517)。読めなければ決められない
         let assets =
@@ -836,7 +843,8 @@ enum RunCommand {
     nonisolated enum ErrorStream {
         /// 端末へそのまま流す。**既定** — 人が見ている経路。
         case inherit
-        /// 捨てる。出力そのものを人へ見せる呼び出し (切り分けの口) だけで使う。
+        /// 捨てる。出力そのものを人へ見せる呼び出し (切り分けの口) と、失敗を呼び手が名乗り直す問い
+        /// (束ねるときの依存の木 — `Kept:` と名乗る・#4005) だけで使う。
         case discard
         /// 掴んだ出力へ混ぜる。**作り直しの経路だけが使う。**
         ///

@@ -41,14 +41,30 @@ nonisolated enum FrameSamples {
         // 整数の標本へ寄せる。割り切れないときの小数部は 1/fps の倍数で、1e-6 より十分に大きい
         let position = frames * sampleRate / Double(perSecond)
         let snapped = position.rounded()
-        return Int((abs(position - snapped) < 1e-6 ? snapped : position).rounded(.down))
+        return sampleIndex(abs(position - snapped) < 1e-6 ? snapped : position)
     }
 
     /// 位置 `origin` の頭から、位置 `frames` の頭までの標本の数 (どちらも作者の時計の位置・フレーム数)。
+    ///
+    /// 差が `Int` に収まらない (寄せた端どうしの差) ときは、`Int.max`・`Int.min` に寄せる。
     static func count(
         fromPosition origin: Double, toPosition frames: Double, perSecond: Int, sampleRate: Double
     ) -> Int {
-        start(ofPosition: frames, perSecond: perSecond, sampleRate: sampleRate)
-            - start(ofPosition: origin, perSecond: perSecond, sampleRate: sampleRate)
+        let end = start(ofPosition: frames, perSecond: perSecond, sampleRate: sampleRate)
+        let begin = start(ofPosition: origin, perSecond: perSecond, sampleRate: sampleRate)
+        let (difference, overflow) = end.subtractingReportingOverflow(begin)
+        guard overflow else { return difference }
+        return end > begin ? .max : .min
+    }
+
+    /// 寄せる先の標本の位置 (±9 × 10¹⁸)。`Int` (≈ 9.22 × 10¹⁸) の手前に置き、後の足し算 (ウィンドウの長さ
+    /// など) にも余地を残す。48 kHz で 1e14 秒 (4.8 × 10¹⁸ 標本) までは寄せない。
+    static let reach = 9e18
+
+    /// 標本の位置 `position` (標本の単位の倍精度) を切り捨てて整数にする。**作者の時計は有限なら何秒でも
+    /// 指せる** (`jumpTime(1e15)`) ので、`Int` に直す前に ±``reach`` へ寄せる (#3997。``SynthStage`` が
+    /// 予約の秒を寄せるのと同じ考え方)。
+    static func sampleIndex(_ position: Double) -> Int {
+        Int(min(max(position, -reach), reach).rounded(.down))
     }
 }

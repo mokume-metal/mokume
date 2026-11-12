@@ -100,13 +100,15 @@ enum WatchCommand {
         }
 
         // **見張り始める前に見る。** 宣言の抜けはビルドを通ってしまうので、後では
-        // 「作り直しは通ったのに絵が出ない」形になる。`run` と同じ関数を同じ位置で呼ぶ
+        // 「作り直しは通ったのに絵が出ない」形になる。`run` と同じ検査を、同じく宣言を読んだ
+        // 直後に見る (下の初回の導き)
         //
-        // **見るのはここ 1 度きりで、作り直しのたびには見ない** (#682)。毎回見る形は
+        // **見るのは宣言が読めた最初の 1 度きりで、作り直しのたびには見ない** (#682)。毎回見る形は
         // 「走っているものは落とさない」という作り直しの失敗の扱いへ合流させることになり、
         // 作り直しの記録が運ぶ終了コードにビルド以外のものが混じる。踏まれてから足す
-        // (ADR-0008) — 見張ったまま資材を足して絵にならない理由へ辿れなかった実例が出た日に
-        try ResourceDeclaration.check(in: directory)
+        // (ADR-0008) — 見張ったまま資材を足して絵にならない理由へ辿れなかった実例が出た日に。
+        // **始めに宣言が読めなかった回だけは、作り直しで初めて読めた回に見る** (#3984・``ResourceDeclaration/Once``)
+        let resources = ResourceDeclaration.Once(in: directory)
 
         // **置き場は見張り始める前に 1 度だけ決める。** 作り直しのたびに決め直すと、
         // 途中で先客が現れたときに作り直しと解決が別の置き場を指しうる (#1055)
@@ -117,7 +119,7 @@ enum WatchCommand {
         let running = RunningBuild()
         let resolver = BuildResolver.live(
             in: directory, invocation: invocation, running: running,
-            announce: { say($0) })
+            announce: { say($0) }, afterReading: resources.check)
         let context = try resolver.current().context
 
         // **場所を 1 本のものとして取る。区画に触れる前に** ([#2093](https://github.com/mokume-metal/mokume/issues/2093))。
@@ -155,7 +157,8 @@ enum WatchCommand {
             say(
                 "Recording: each build gets its own file, "
                     + "\(ReplayRequest.generation(of: recording, number: 1)), "
-                    + "\(ReplayRequest.generation(of: recording, number: 2)), …")
+                    + "\(ReplayRequest.generation(of: recording, number: 2)), … "
+                    + "(a number whose name holds something other than a record is skipped)")
         }
         if let notice = context.place.notice { say(notice) }
         // **決められなかったときは黙らない** (#2517)。置き場の断片を元から読めないので、保存しても

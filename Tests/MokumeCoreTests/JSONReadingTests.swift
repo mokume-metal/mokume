@@ -293,8 +293,9 @@ struct JSONReadingTests {
         ("1.00000000000000000000001", nil),
         ("100000000000000000000.0", nil),
         // 数の値: いまの振る舞いを固定する行。`JSONSerialization` が読み解く時点で丸める (17 桁以下の綴りは
-        // `Double` で、39 桁以上は Decimal の 38 桁で)。`JSONFile` の「その読み方に従う」の内とするか、数の
-        // 綴りを本体が読むかは #3958 で決める。決まったらここを書き換える
+        // `Double` で、39 桁以上は Decimal の 38 桁で)。**判定の基準 (#3958 の決定): JSON の数の値は
+        // `JSONSerialization` が返した値で整数かを決め、整数かの判定のために綴りを読み直さない。** 下位の桁が失われた後の値が
+        // 整数なら整数と読む (公開 API の説明と対応表に同じ限界を書いた)。正確な整数は文字で渡す (下の「数の文字」の行)
         ("1.0000000000000001", 1),
         ("9007199254740993.0", 9_007_199_254_740_992),
         ("1.000000000000000000000000000000000000000000001", 1),
@@ -517,6 +518,286 @@ struct JSONReadingTests {
         #expect(reason.contains("does not fit in a Double"), "\(reason)")
     }
 
+    // MARK: - オブジェクトを作って書く (#3643)
+
+    @Test("空から作って書いたオブジェクトを saveJSONObject で書き、loadJSONObject で読み直すと同じ")
+    func writtenObjectRoundTrips() throws {
+        defer { cleanUp() }
+        var o = JSONObject()
+        o.setString("name", "Sapporo")
+        o.setFloat("temp", -3.5)
+        o.setInt("count", 2)
+        o.setBoolean("rain", false)
+        let path = folder.appendingPathComponent("out/a.json").path
+        try Bare().saveJSONObject(o, path)
+        let read = try Bare().loadJSONObject(path)
+        #expect(read == o)
+        #expect(read.getString("name") == "Sapporo")
+        #expect(read.getFloat("temp") == -3.5)
+        #expect(read.getInt("count") == 2)
+        #expect(read.getBoolean("rain") == false)
+    }
+
+    @Test("書く順は決まっている: キーは文字の順、UTF-8 (BOM なし)・LF・字下げ 2。同じ値は同じバイト列")
+    func writtenBytesAreDeterministic() throws {
+        defer { cleanUp() }
+        var first = JSONObject()
+        first.setInt("b", 1)
+        first.setString("a", "é\"\\\n\t\u{01}/")
+        var inner = JSONObject()
+        inner.setFloat("z", 0.1)
+        inner.setFloat("y", 2)
+        first.setJSONObject("c", inner)
+        first.setJSONObject("d", JSONObject())
+        first.setJSONArray("e", try array("[]"))
+        first.setJSONArray("f", try array(#"[1, "x", true, null]"#))
+        var second = JSONObject()
+        second.setJSONArray("f", try array(#"[1, "x", true, null]"#))
+        second.setJSONArray("e", try array("[]"))
+        second.setJSONObject("d", JSONObject())
+        second.setJSONObject("c", inner)
+        second.setString("a", "é\"\\\n\t\u{01}/")
+        second.setInt("b", 1)
+        let one = folder.appendingPathComponent("one.json").path
+        let two = folder.appendingPathComponent("two.json").path
+        try Bare().saveJSONObject(first, one)
+        try Bare().saveJSONObject(second, two)
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: one))
+        let other = try Data(contentsOf: URL(fileURLWithPath: two))
+        #expect(bytes == other)
+        let expected = """
+            {
+              "a": "é\\"\\\\\\n\\t\\u0001/",
+              "b": 1,
+              "c": {
+                "y": 2.0,
+                "z": 0.1
+              },
+              "d": {},
+              "e": [],
+              "f": [
+                1,
+                "x",
+                true,
+                null
+              ]
+            }
+
+            """
+        #expect(String(decoding: bytes, as: UTF8.self) == expected)
+        #expect(bytes.first == UInt8(ascii: "{"), "BOM を付けない")
+        #expect(!bytes.contains(0x0D), "行の終わりは LF だけ")
+        #expect(try Bare().loadJSONObject(one) == first)
+    }
+
+    @Test("入れ子は写しを書き換えて setJSONObject で戻す。既にあるキーは種類が変わっても置き換える")
+    func nestedAndReplacedValues() {
+        var o = JSONObject()
+        var main = JSONObject()
+        main.setFloat("temp", 1)
+        o.setJSONObject("main", main)
+        #expect(o.getJSONObject("main").getFloat("temp") == 1)
+        // 渡した時点の写し: 後で main を書き換えても o の中は変わらない
+        main.setFloat("temp", 9)
+        #expect(o.getJSONObject("main").getFloat("temp") == 1)
+        o.setString("main", "gone")
+        #expect(o.getString("main") == "gone")
+        o.setInt("main", 2)
+        #expect(o.getInt("main") == 2)
+        #expect(o.keys == ["main"])
+    }
+
+    @Test("NaN と無限はキーに書かず、キーごとに 1 度だけ知らせる。既にある値も置き換えない")
+    func nonFiniteIsNotWritten() {
+        let key = unique("nan")
+        var o = JSONObject()
+        o.setFloat(key, .nan)
+        #expect(o.hasKey(key) == false)
+        #expect(said(.notFinite(key: key))?.contains("JSON has no spelling for nan") == true)
+        let infinite = unique("inf")
+        o.setFloat(infinite, 4)
+        o.setFloat(infinite, -.infinity)
+        #expect(o.getFloat(infinite) == 4)
+        #expect(said(.notFinite(key: infinite))?.contains("-inf") == true)
+    }
+
+    @Test("読んだ桁の多い数は綴りのまま書き出し、読み直すと同じ値と同じ知らせになる")
+    func longNumbersKeepTheirSpelling() throws {
+        defer { cleanUp() }
+        let read = try object(
+            #"{"below": -9223372036854775809, "tiny": 1.00000000000000000000001, "min": -9223372036854775808.0, "two": 2.0}"#)
+        let path = folder.appendingPathComponent("long.json").path
+        try Bare().saveJSONObject(read, path)
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        #expect(text.contains(#""below": -9223372036854775809,"#))
+        #expect(text.contains(#""tiny": 1.00000000000000000000001"#))
+        #expect(text.contains(#""min": -9223372036854775808,"#), "Int に収まる整数の値は整数の綴り")
+        #expect(text.contains(#""two": 2.0"#))
+        let again = try Bare().loadJSONObject(path)
+        #expect(again == read)
+        #expect(again.getInt("below") == 0)
+        #expect(again.getInt("min") == Int.min)
+    }
+
+    @Test("書けない置き場では unwritable を投げ、前の中身を残す (saveTable と同じ道)")
+    func unwritablePlaceThrows() throws {
+        defer { cleanUp() }
+        let blocker = try file("blocker", "x")
+        var o = JSONObject()
+        o.setInt("a", 1)
+        let failure = #expect(throws: DataFailure.self) {
+            try Bare().saveJSONObject(o, blocker + "/inside.json")
+        }
+        guard case .unwritable(let path, _) = failure else {
+            Issue.record("unwritable で投げなかった: \(String(describing: failure))")
+            return
+        }
+        #expect(path == blocker + "/inside.json")
+        let existing = try file("keep.json", "{\"old\": true}\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path) }
+        #expect(throws: DataFailure.self) { try Bare().saveJSONObject(o, existing) }
+        #expect(try String(contentsOfFile: existing, encoding: .utf8) == "{\"old\": true}\n")
+    }
+
+    // MARK: - 配列を作って書く (#3644)
+
+    @Test("空から作った配列に足して書き、saveJSONArray → loadJSONArray で読み直すと同じ")
+    func writtenArrayRoundTrips() throws {
+        defer { cleanUp() }
+        var a = JSONArray()
+        a.append(1)
+        a.append("two")
+        a.append(true)
+        #expect(a.count == 3)
+        #expect(a.getInt(0) == 1)
+        #expect(a.getString(1) == "two")
+        #expect(a.getBoolean(2) == true)
+        a.append(-3.5 as Float)
+        var o = JSONObject()
+        o.setInt("n", 7)
+        a.append(o)
+        let path = folder.appendingPathComponent("out/a.json").path
+        try Bare().saveJSONArray(a, path)
+        let read = try Bare().loadJSONArray(path)
+        #expect(read == a)
+        #expect(read.getFloat(3) == -3.5)
+        #expect(read.getJSONObject(4).getInt("n") == 7)
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        #expect(text == "[\n  1,\n  \"two\",\n  true,\n  -3.5,\n  {\n    \"n\": 7\n  }\n]\n", "要素は並んだ順のまま、字下げ 2・LF")
+    }
+
+    @Test("remove は 1 つ除いて後ろを詰め、範囲の外は何もせず 1 度だけ知らせる")
+    func removeShiftsAndIgnoresOutside() throws {
+        var a = try array(#"[10, 20, 30]"#)
+        a.remove(1)
+        #expect(a.count == 2)
+        #expect(a.getInt(0) == 10)
+        #expect(a.getInt(1) == 30)
+        let before = a
+        a.remove(2)
+        a.remove(-1)
+        #expect(a == before)
+        let message = said(.arrayElement(call: "remove", problem: .outOfRange))
+        #expect(message?.hasPrefix("remove(2): the JSON array has 2 elements, so there is no element 2. Nothing was removed") == true)
+    }
+
+    @Test("set は範囲の中なら種類が変わっても置き換え、範囲の外には書かず口ごとに 1 度知らせる")
+    func setReplacesInsideAndIgnoresOutside() throws {
+        var a = try array(#"[1, "x", true]"#)
+        let before = a
+        a.setFloat(5, 1)
+        #expect(a == before, "伸ばさない (Processing は null で埋める)")
+        #expect(
+            said(.arrayElement(call: "setFloat", problem: .outOfRange))?
+                .hasPrefix("setFloat(5): the JSON array has 3 elements, so there is no element 5. Nothing was written") == true)
+        a.setInt(3, 1)
+        a.setString(-1, "y")
+        a.setBoolean(9, false)
+        a.setJSONObject(3, JSONObject())
+        a.setJSONArray(3, JSONArray())
+        #expect(a == before)
+        for call in ["setInt", "setString", "setBoolean", "setJSONObject", "setJSONArray"] {
+            #expect(said(.arrayElement(call: call, problem: .outOfRange))?.contains("Nothing was written") == true, "\(call)")
+        }
+
+        a.setFloat(0, 2.5)
+        a.setInt(1, 4)
+        a.setString(2, "z")
+        #expect(a.getFloat(0) == 2.5)
+        #expect(a.getInt(1) == 4)
+        #expect(a.getString(2) == "z")
+        a.setBoolean(0, true)
+        var inner = JSONObject()
+        inner.setString("k", "v")
+        a.setJSONObject(1, inner)
+        a.setJSONArray(2, try array("[9]"))
+        #expect(a.getBoolean(0) == true)
+        #expect(a.getJSONObject(1).getString("k") == "v")
+        #expect(a.getJSONArray(2).getInt(0) == 9)
+    }
+
+    @Test("配列の配列を append(JSONArray) で組み、読み直すと getJSONArray(0).getFloat(1) で戻る")
+    func nestedArraysRoundTrip() throws {
+        defer { cleanUp() }
+        var ring = JSONArray()
+        for (x, y) in [(142.4, 38.3), (141.0, 43.1)] as [(Float, Float)] {
+            var corner = JSONArray()
+            corner.append(x)
+            corner.append(y)
+            ring.append(corner)
+        }
+        let path = folder.appendingPathComponent("ring.json").path
+        try Bare().saveJSONArray(ring, path)
+        let read = try Bare().loadJSONArray(path)
+        #expect(read.getJSONArray(0).getFloat(1) == 38.3)
+        #expect(read.getJSONArray(1).getFloat(0) == 141)
+        #expect(read == ring)
+        let empty = folder.appendingPathComponent("empty.json").path
+        try Bare().saveJSONArray(JSONArray(), empty)
+        #expect(try String(contentsOfFile: empty, encoding: .utf8) == "[]\n")
+    }
+
+    @Test("NaN と無限は append でも setFloat でも書かず、口ごとに 1 度知らせる")
+    func arrayNonFiniteIsNotWritten() {
+        var a = JSONArray()
+        a.append(.nan)
+        a.append(Float.infinity)
+        #expect(a.isEmpty)
+        #expect(said(.arrayElement(call: "append", problem: .notFinite))?.contains("JSON has no spelling for nan") == true)
+        a.append(1 as Float)
+        a.setFloat(0, -.infinity)
+        #expect(a.getFloat(0) == 1)
+        #expect(said(.arrayElement(call: "setFloat", problem: .notFinite))?.hasPrefix("setFloat(0, -inf)") == true)
+    }
+
+    @Test("書き方と書けない置き場は saveJSONObject と同じ: 同じ値は同じバイト列、unwritable を投げて前の中身を残す")
+    func arrayWritingMatchesObjectWriting() throws {
+        defer { cleanUp() }
+        var o = JSONObject()
+        o.setInt("b", 1)
+        o.setInt("a", 2)
+        var a = JSONArray()
+        a.append(o)
+        let path = folder.appendingPathComponent("same.json").path
+        try Bare().saveJSONArray(a, path)
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        #expect(text == "[\n  {\n    \"a\": 2,\n    \"b\": 1\n  }\n]\n", "入れ子のオブジェクトのキーは文字の順")
+        let long = try array("[-9223372036854775809]")
+        try Bare().saveJSONArray(long, path)
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "[\n  -9223372036854775809\n]\n")
+
+        let blocker = try file("blocker", "x")
+        let failure = #expect(throws: DataFailure.self) {
+            try Bare().saveJSONArray(a, blocker + "/inside.json")
+        }
+        guard case .unwritable(let failedPath, _) = failure else {
+            Issue.record("unwritable で投げなかった: \(String(describing: failure))")
+            return
+        }
+        #expect(failedPath == blocker + "/inside.json")
+    }
+
     // MARK: - 完了条件 8: XML
 
     private static let feed = """
@@ -598,5 +879,188 @@ struct JSONReadingTests {
         #expect(xml.getChild("b").getContent() == "bold")
         let empty = try Bare().loadXML(try file("e.xml", "<p/>"))
         #expect(empty.getContent() == "")
+    }
+
+    // MARK: - null を確かめる・XML の読み口の残り・parseXML (#3645)
+
+    @Test("isNull: null の値と無いキーは true、他の値は false で、知らせない")
+    func jsonObjectIsNull() throws {
+        let value = try object(#"{"a": null, "b": 1, "s": "null", "z": 0, "o": {}, "f": false}"#)
+        #expect(value.isNull("a"))
+        #expect(!value.isNull("b"))
+        #expect(!value.isNull("s"), "文字の \"null\" は null ではない")
+        #expect(!value.isNull("z"))
+        #expect(!value.isNull("o"))
+        #expect(!value.isNull("f"))
+        let gone = unique("gone")
+        #expect(value.isNull(gone), "無いキーは true (2026-10-31 の決定)")
+        #expect(said(.noKey(gone)) == nil, "isNull は知らせない")
+        // 無いキーと null の値は hasKey で分かれる
+        #expect(value.hasKey("a") && !value.hasKey(gone))
+        #expect(JSONObject().isNull("a"))
+    }
+
+    @Test("isNull(i): null の要素と範囲の外の番号は true、他は false で、知らせない")
+    func jsonArrayIsNull() throws {
+        let value = try array(#"[null, 1, "null", [], {"a": null}]"#)
+        #expect(value.isNull(0))
+        #expect(!value.isNull(1))
+        #expect(!value.isNull(2), "文字の \"null\" は null ではない")
+        #expect(!value.isNull(3))
+        #expect(!value.isNull(4))
+        #expect(value.getJSONObject(4).isNull("a"))
+        #expect(value.isNull(-1), "範囲の外は true")
+        #expect(value.isNull(5), "範囲の外は true")
+        #expect(value.isNull(Int.max))
+        #expect(JSONArray().isNull(0))
+        #expect(said(.arrayElement(call: "isNull", problem: .outOfRange)) == nil, "isNull は知らせない")
+    }
+
+    @Test("parseXML: 名前・すべての子・整数・文字の数・属性の有無と一覧を読む (完了条件の例)")
+    func parseXMLReadsTheExample() throws {
+        let sky = try Bare().parseXML(#"<sky><star x="3" n="2">4.5</star><moon/></sky>"#)
+        #expect(sky.getName() == "sky")
+        #expect(sky.getChildren().map { $0.getName() } == ["star", "moon"])
+        let star = sky.getChildren()[0]
+        #expect(star.getInt("n") == 2)
+        #expect(star.getFloatContent() == 4.5)
+        #expect(star.hasAttribute("x"))
+        #expect(!star.hasAttribute("y"))
+        #expect(said(.noAttribute(element: "star", name: "y")) == nil, "hasAttribute は知らせない")
+        #expect(star.listAttributes() == ["n", "x"])
+        #expect(sky.getChildren()[1].listAttributes().isEmpty)
+    }
+
+    @Test("getChildren() は名前を選ばず書かれた順に並べ、孫は入れず、子が無ければ黙って空")
+    func xmlAllChildren() throws {
+        let tag = unique("root").replacingOccurrences(of: "-", with: "_")
+        let root = try Bare().parseXML("<\(tag)>text<b/><a><deep/></a>more<b n=\"1\"/><s:c/></\(tag)>")
+        #expect(root.getChildren().map { $0.getName() } == ["b", "a", "b", "s:c"])
+        #expect(root.getChildren()[2].getInt("n") == 1)
+        #expect(root.getChildren()[1].getChildren().map { $0.getName() } == ["deep"])
+        #expect(root.getChildren()[0].getChildren().isEmpty)
+        // getChild が返した空の要素は名前も空で、子も属性も無い
+        let missing = root.getChild(unique("none"))
+        #expect(missing.getName() == "")
+        #expect(missing.getChildren().isEmpty)
+        #expect(missing.listAttributes().isEmpty)
+    }
+
+    @Test("listAttributes は書かれた順でも辞書の順でもなく文字の順で、何度読んでも同じ")
+    func xmlAttributesAreSorted() throws {
+        // 辞書の順にたまたま合わないよう、属性を多く並べる
+        let names = ["zeta", "alpha", "m", "B", "a10", "a9", "y", "c", "x", "d", "w", "e", "v", "f"]
+        let attributes = names.map { "\($0)=\"1\"" }.joined(separator: " ")
+        let xml = try Bare().parseXML("<e \(attributes)/>")
+        #expect(xml.listAttributes() == names.sorted())
+        #expect(xml.listAttributes() == ["B", "a10", "a9", "alpha", "c", "d", "e", "f", "m", "v", "w", "x", "y", "zeta"])
+        #expect(try Bare().parseXML("<e \(attributes)/>").listAttributes() == xml.listAttributes())
+    }
+
+    @Test("XML の getInt は丸めない: 2 と 2.0 は 2、端数・収まらない数・数でない文字・無い属性は 0 と 1 度の知らせ")
+    func xmlAttributeInt() throws {
+        let tag = unique("el").replacingOccurrences(of: "-", with: "_")
+        let xml = try Bare().parseXML(
+            #"<\#(tag) a="2" b="2.0" c=" 1e3&#10;" d="2.5" e="9223372036854775808" f="-9223372036854775808" "#
+                + #"g="9007199254740993" h="0x10" i="" j="-0"/>"#)
+        #expect(xml.getInt("a") == 2)
+        #expect(xml.getInt("b") == 2)
+        #expect(xml.getInt("c") == 1000, "前後の空白 (改行も) は落とす")
+        #expect(xml.getInt("f") == Int.min)
+        #expect(xml.getInt("g") == 9_007_199_254_740_993, "Double を通さず、2⁵³ を越える桁も落とさない")
+        #expect(xml.getInt("j") == 0)
+        for name in ["a", "b", "c", "f", "g", "j"] {
+            #expect(said(.attributeNotAnInteger(element: tag, name: name)) == nil, "読めた \(name) は知らせない")
+        }
+
+        #expect(xml.getInt("d") == 0, "端数は丸めずに 0")
+        let message = try #require(said(.attributeNotAnInteger(element: tag, name: "d")))
+        #expect(message.contains(#"getInt("d")"#), "\(message)")
+        #expect(message.contains(#"d="2.5""#), "\(message)")
+        _ = xml.getInt("d")
+        #expect(said(.attributeNotAnInteger(element: tag, name: "d")) == message, "2 度目は言い直さない")
+
+        #expect(xml.getInt("e") == 0, "Int に収まらない")
+        #expect(said(.attributeNotAnInteger(element: tag, name: "e")) != nil)
+        #expect(xml.getInt("h") == 0, "16 進は数でない")
+        #expect(xml.getInt("i") == 0)
+        #expect(said(.attributeNotAnInteger(element: tag, name: "i")) != nil)
+
+        let missing = unique("attr")
+        #expect(xml.getInt(missing) == 0)
+        let absent = try #require(said(.noAttribute(element: tag, name: missing)))
+        #expect(absent.contains("getInt("), "\(absent)")
+    }
+
+    @Test("getIntContent・getFloatContent は要素の文字を 10 進で読み、整数は丸めない")
+    func xmlContentNumbers() throws {
+        func element(_ content: String) throws -> (XML, String) {
+            let tag = unique("v").replacingOccurrences(of: "-", with: "_")
+            return (try Bare().parseXML("<\(tag)>\(content)</\(tag)>"), tag)
+        }
+        let (padded, paddedTag) = try element("\n  12\n")
+        #expect(padded.getIntContent() == 12, "前後の空白と字下げの改行は落とす")
+        #expect(padded.getFloatContent() == 12)
+        #expect(said(.contentNotAnInteger(element: paddedTag)) == nil)
+        #expect(said(.contentNotANumber(element: paddedTag)) == nil)
+        #expect(try element("2.0").0.getIntContent() == 2)
+        #expect(try element("1e3").0.getIntContent() == 1000)
+        #expect(try element("9007199254740993").0.getIntContent() == 9_007_199_254_740_993)
+        #expect(try element(" -3.5 ").0.getFloatContent() == -3.5)
+        #expect(try element("<![CDATA[7]]>").0.getIntContent() == 7, "CDATA の中の文字も読む")
+
+        // 完了条件 3: "4.5" の整数は 0 と 1 度の知らせ
+        let (half, halfTag) = try element("4.5")
+        #expect(half.getIntContent() == 0)
+        #expect(half.getFloatContent() == 4.5)
+        let message = try #require(said(.contentNotAnInteger(element: halfTag)))
+        #expect(message.contains("getIntContent()"), "\(message)")
+        #expect(message.contains(#""4.5""#), "\(message)")
+        _ = half.getIntContent()
+        #expect(said(.contentNotAnInteger(element: halfTag)) == message)
+
+        let (word, wordTag) = try element("nan")
+        #expect(word.getFloatContent().isNaN, "文字の nan は数でない")
+        #expect(word.getIntContent() == 0)
+        let notNumber = try #require(said(.contentNotANumber(element: wordTag)))
+        #expect(notNumber.contains("getFloatContent()"), "\(notNumber)")
+
+        let (empty, emptyTag) = try element("")
+        #expect(empty.getFloatContent().isNaN)
+        #expect(empty.getIntContent() == 0)
+        #expect(said(.contentNotANumber(element: emptyTag))?.contains("no text") == true)
+        #expect(said(.contentNotAnInteger(element: emptyTag)) != nil)
+
+        // 子の要素の中の文字は含まない (getContent と同じ)
+        let (nested, _) = try element("<n>5</n>")
+        #expect(nested.getChild("n").getIntContent() == 5)
+        #expect(nested.getIntContent() == 0)
+    }
+
+    @Test("parseXML は壊れた文字を壊れた行と口の名前を添えて malformed で投げる (parseJSONObject と同じ)")
+    func parseXMLThrowsMalformed() throws {
+        let sketch = Bare()
+        let broken = #expect(throws: DataFailure.self) { try sketch.parseXML("<sky>\n<star>\n</sky>\n") }
+        guard case .malformed(let named, let line, _) = broken else {
+            Issue.record("malformed で投げていない: \(String(describing: broken))")
+            return
+        }
+        #expect(named == "parseXML(_:)", "文字には名前が無いので口の名前を名乗る")
+        #expect(line == 3, "\(String(describing: broken))")
+        #expect(
+            broken?.description.contains(#""parseXML(_:)" is broken at line"#) == true,
+            "\(String(describing: broken))")
+
+        for text in ["", "   ", "<a>", "<a/><b/>", "text", "<a></b>"] {
+            let failure = #expect(throws: DataFailure.self, "\(text)") { try sketch.parseXML(text) }
+            guard case .malformed(let path, _, _) = failure else {
+                Issue.record("malformed で投げていない (\(text)): \(String(describing: failure))")
+                continue
+            }
+            #expect(path == "parseXML(_:)")
+        }
+        // 読み方は loadXML と同じ: 宣言の encoding は読まず、外の実体は読まない
+        let declared = try sketch.parseXML(#"<?xml version="1.0" encoding="Shift_JIS"?><t>冬</t>"#)
+        #expect(declared.getContent() == "冬")
     }
 }

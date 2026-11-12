@@ -411,6 +411,22 @@ public nonisolated func lerpColor(
         alpha: interpolate(start.alpha, stop.alpha, amount))
 }
 
+/// 2 つの色の間を取る。その間のどこかを、ラベルを付けて渡す。
+///
+/// ``lerpColor(_:_:_:)`` に同じ値を同じ順で渡すのと同じ色を返す。線形の光の量と乗算済みの値で混ぜること・
+/// `amount` を 0…1 に締めること・数でない `amount` で `start` を返すことも同じで、違うのは**どの値が割合かを
+/// 呼び出しの行で読める**ことだけである。
+///
+/// ```swift
+/// // lerpColor(color(255, 170, 60), color(40, 50, 120), 0.5) と同じ色
+/// let dusk = lerpColor(color(255, 170, 60), color(40, 50, 120), amount: 0.5)
+/// ```
+public nonisolated func lerpColor(
+    _ start: LinearRGBA, _ stop: LinearRGBA, amount: some ScalarConvertible
+) -> LinearRGBA {
+    lerpColor(start, stop, amount)
+}
+
 // MARK: - 色を読む
 
 /// 赤の成分を **0–255 の目盛り**で読む ([ADR-0033] 決定 6)。

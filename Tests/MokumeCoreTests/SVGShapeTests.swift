@@ -264,8 +264,8 @@ struct SVGShapeTests {
         }
     }
 
-    @Test("重なりのある群の opacity は、近似で描くことをファイルにつき 1 度知らせる。絵は変えない (#2884)")
-    func overlappingGroupOpacityIsNamedOnceAndDrawnAsBefore() throws {
+    @Test("重なりのある群の opacity は、まとめて描いてから 1 度だけ掛け、近似とは知らせない (#3564)")
+    func overlappingGroupOpacityIsFadedOnce() throws {
         let path = try Self.written(
             """
             <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
@@ -281,16 +281,14 @@ struct SVGShapeTests {
         let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
         try runtime.advance()
         try runtime.advance()
-        let message = try #require(
-            runtime.canvas.warnings.message(for: .svgApproximated(path: path)), "近似を知らせていない")
-        #expect(message.contains("opacity"))
-        #expect(message.contains("line 2"), "群の行")
+        #expect(runtime.canvas.warnings.message(for: .svgApproximated(path: path)) == nil, "近似ではない")
         #expect(runtime.canvas.warnings.message(for: .svgSkipped(path: path)) == nil, "捨ててはいない")
+        #expect(runtime.canvas.warnings.message(for: .compositeGroupPerShape) == nil, "単位にできた")
 
-        // 絵は変わらない: 1 つの円だけの所は alpha 0.5、重なる所は子ごとに掛けた 1 - 0.5 * 0.5 = 0.75
+        // 1 つの円だけの所も、重なる所も alpha 0.5 (子ごとに掛けると、重なる所は 1 - 0.5 * 0.5 = 0.75)
         let image = try runtime.target.encodeForDisplay()
         #expect(abs(Int(image[30, 50].alpha) - 128) <= 1, "\(image[30, 50])")
-        #expect(abs(Int(image[50, 50].alpha) - 191) <= 1, "\(image[50, 50])")
+        #expect(abs(Int(image[50, 50].alpha) - 128) <= 1, "\(image[50, 50])")
     }
 
     @Test("重ならない群の opacity は、知らせない (#2884)")

@@ -306,8 +306,19 @@ extension Canvas {
     public func text(_ string: String, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible)
         -> TextFlow
     {
-        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
-        let box = resolveRect(a, b, c, d)
+        placeText(string, in: resolveRect(a.asFloat, b.asFloat, c.asFloat, d.asFloat))
+    }
+
+    /// 枠を `Rect` で渡して、幅で折り返し、高さに収まる行だけを置く。``rectMode(_:)`` が既定
+    /// (`.corner`) のときの ``text(_:_:_:_:_:)`` に `frame` の左上と幅・高さを渡すのと同じ。
+    /// **``rectMode(_:)`` に従わない** — `Rect` は左上で置く値なので、値のとおり左上から読む (#3784)。
+    @discardableResult
+    public func text(_ string: String, in frame: Rect) -> TextFlow {
+        placeText(string, in: Self.resolveBox(frame.left, frame.top, frame.width, frame.height, mode: .corner))
+    }
+
+    /// 解いた枠に文字を流す。
+    private func placeText(_ string: String, in box: (x: Float, y: Float, width: Float, height: Float)) -> TextFlow {
         guard box.width > 0, box.height > 0, style.textSize > 0, !string.isEmpty else {
             return TextFlow(lineCount: 0, height: 0, remainder: string)
         }

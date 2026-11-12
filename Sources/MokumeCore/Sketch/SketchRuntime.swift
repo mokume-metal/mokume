@@ -25,7 +25,7 @@ import QuartzCore
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
 @MainActor
-public final class SketchRuntime {
+package final class SketchRuntime {
     /// 走らせているスケッチ。
     public let sketch: any Sketch
     /// 描いている面。
@@ -2219,7 +2219,11 @@ public final class SketchRuntime {
 
     // MARK: - 使いやすい入口
 
-    /// 1 枚だけ描いて、画像に書き出す。
+    /// 1 枚だけ描いて、PNG に書き出す。
+    ///
+    /// **`url` の名前は `.png` (大文字小文字を区別しない) で終わる** ([#3961])。書けるのは PNG だけなので、`.jpg`・
+    /// 拡張子の無い名前などは、描かずに (フレームを進めずに) ``ImageFailure/unwritable(path:reason:)`` を投げ、
+    /// ファイルを作らない。理由は受ける名前 (`frame.jpg` なら `frame.png`) を名指す。``Image/save(_:)`` と同じ扱い。
     ///
     /// 既定の時計はフレーム番号から導くので、**同じスケッチを 2 回走らせれば
     /// 同じ絵が出る**。
@@ -2236,8 +2240,13 @@ public final class SketchRuntime {
     ///
     /// [#440]: https://github.com/mokume-metal/mokume/issues/440
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func renderFrame(to url: URL) throws {
+        // `.jpg` などの名前で PNG の中身を書かない。描く前に断る (#3961)
+        guard FrameRecorder.isPNG(url.path) else {
+            throw ImageFailure.unwritable(path: url.path, reason: FrameRecorder.renderFrameNotPNGReason(url.path))
+        }
         // 書き出す絵は残る。拡大した字の焼きを次へ送らない (#2446)
         exportsOneFrame = true
         defer { exportsOneFrame = false }

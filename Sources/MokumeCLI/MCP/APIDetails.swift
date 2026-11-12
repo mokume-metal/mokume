@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 /// 公開 API の口ごとの説明と例 (Release の資産 `mokume-api-details-v<版>.json`)。
 ///
@@ -35,7 +36,7 @@ struct APIDetails: Equatable {
     /// **形を読む前に `schemaVersion` だけを見る。** 新しい版は形そのものが変わっていることがあり、
     /// 全体を先に読むと「詳細ファイルではない」と言ってしまい、道具を上げれば読めることが伝わらない。
     static func parse(_ data: Data) -> Result<APIDetails, Failure> {
-        struct Header: Decodable { let schemaVersion: Int }
+        struct Header: Decodable { @WholeNumber var schemaVersion: Int }
         struct Wire: Decodable {
             let version: String
             let symbols: [String: [Entry]]

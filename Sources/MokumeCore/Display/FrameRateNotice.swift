@@ -40,7 +40,7 @@ import Foundation
 /// 変わらないことが、この既定で保たれる ([ADR-0029] 決定 5 の 2 番目)。
 ///
 /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
-public enum FrameRateNotice {
+package enum FrameRateNotice {
     /// 一緒に出す構成の名前。**無ければ報告しない。**
     ///
     /// 環境変数名は一覧が持つ ([StartupReads])。空白だけの値は書かれていないものとして扱う。

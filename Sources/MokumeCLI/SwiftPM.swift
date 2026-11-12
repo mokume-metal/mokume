@@ -85,20 +85,177 @@ nonisolated enum SwiftPM {
             platforms.first { $0.platformName == "macos" }?.version
         }
 
-        /// 入っているべき資材の包みの名前。
+        /// 配る範囲の資材の包み。**コピーで除く名前と、入っているべき名前を、同じ閉包から 1 度に求める**
+        /// (#3982)。別々に求めると、片方だけ古い求め方に戻っても気付けない — 除いた包みを「欠けている」と
+        /// 読む、あるいは要る包みを除いたまま検査が通る。
+        struct ResourceScope: Equatable {
+            /// 入っているべき包みの名前 (資材を宣言した target のうち、閉包の中のもの)。道具立ては資材を
+            /// `<パッケージ>_<ターゲット>.bundle` の名前で作る。
+            let required: [String]
+            /// 配るものに入れない包みの名前 (このパッケージの target のうち、閉包の外のもの)。資材の
+            /// 宣言が無くても道具立てが包みを作る種類があるので、宣言の有無は見ない。他のパッケージの
+            /// 包みは宣言を辿らずに入れる (依存が持ち込む資材は無ければ絵が出ない) ので、ここには載らない。
+            /// 隣の並びを渡した形 (``resourceScope(forProduct:beside:dependencyPackages:)``) では、宣言から
+            /// 消えた target の古い包み (``leftovers``) も載る (#4005)。
+            let excluded: Set<String>
+            /// `excluded` のうち、宣言から消えた target の古い包みと読んで除いたもの (#4005)。**束ねた報せで
+            /// 名乗る** — 名前の形から推した除外なので、依存の包みを取り違えて除いたときに黙って欠けさせない
+            /// ([ADR-0029] 決定 4)。
+            ///
+            /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
+            let leftovers: Set<String>
+            /// 古い包みの候補 (``leftoverCandidates(forProduct:beside:)``) のうち、依存の名前を読めなかった
+            /// ので除かずに入れたもの (#4005)。**束ねた報せで名乗る** — 古い包みが入ったかもしれないことを
+            /// 黙らない。
+            let kept: Set<String>
+
+            init(
+                required: [String], excluded: Set<String>, leftovers: Set<String> = [],
+                kept: Set<String> = []
+            ) {
+                self.required = required
+                self.excluded = excluded
+                self.leftovers = leftovers
+                self.kept = kept
+            }
+        }
+
+        /// `product` を配る範囲。**名前の形 (`…Tests`) では決めない** — 依存の閉包の内外で決める。
+        /// 閉包が求められない (product の宣言が無い・読めない依存に出会った) ときは、推し量らずに従来の
+        /// 判定 (資材を宣言した target を全部数え、何も除かない) へ倒す。
         ///
-        /// 道具立ては資材を `<パッケージ>_<ターゲット>.bundle` の名前で作る。
-        var declaredResourceBundles: [String] {
-            targets.filter { !$0.resources.isEmpty }.map { "\(name)_\($0.name).bundle" }
+        /// 隣の並びを知らない形。宣言のどの target の包みも、宣言どおりの綴りで並んでいるとして求める
+        /// (``resourceScope(forProduct:beside:dependencyPackages:)`` と同じ規則)。
+        func resourceScope(forProduct product: String) -> ResourceScope {
+            resourceScope(
+                forProduct: product, beside: targets.map { bundleName(of: $0) }, dependencyPackages: [])
+        }
+
+        /// `target` の包みの名前 (道具立てが付ける綴り)。
+        func bundleName(of target: Target) -> String { "\(name)_\(target.name).bundle" }
+
+        /// 置き場の包み `bundle` を作った、いまの宣言の target。**除く側 (#3982 の閉包の外) と残す側
+        /// (#4005 の古い包み) の両方が、この 1 つの規則で結び付ける** (#4005 の 2 回目の反証)。
+        ///
+        /// - 綴りが完全に一致すれば、その target の包み
+        /// - 一致しないが大文字と小文字を除いて一致し、しかも**完全に一致する綴りの包みが隣に無ければ**、
+        ///   その target の包み。区別しないボリュームで target を `Lib` → `LIB` と改名すると、置き場の包みは
+        ///   古い綴り (`Demo_Lib.bundle`) のまま作り直される
+        /// - 完全に一致する綴りの包みが隣に在れば (区別するボリュームで `Demo_Lib.bundle` と
+        ///   `Demo_LIB.bundle` が並ぶ)、どの target のものでもない (古い包み)
+        ///
+        /// - Parameter built: 隣に並んだ包みの名前。
+        func declaredTarget(ofBundle bundle: String, among built: [String]) -> Target? {
+            if let exact = targets.first(where: { bundleName(of: $0) == bundle }) { return exact }
+            let folded = bundle.lowercased()
+            return targets.first { target in
+                let spelled = bundleName(of: target)
+                return spelled.lowercased() == folded && !built.contains(spelled)
+            }
+        }
+
+        /// 宣言から消えた target の古い包みの候補 (#4005): 隣に並んだ包みのうち、いまのパッケージの宣言の
+        /// 名前で始まり (`<name>_…`。大文字と小文字を区別する — 区別しないと除くものが増える)、いまの宣言の
+        /// どの target の包みでもない (``declaredTarget(ofBundle:among:)``) もの。閉包が求められなければ空
+        /// (何も除かない)。**候補が無ければ、依存の名前を道具立てに問わない。**
+        func leftoverCandidates(forProduct product: String, beside built: [String]) -> [String] {
+            guard targetClosure(ofProduct: product) != nil else { return [] }
+            return built.filter {
+                $0.hasSuffix(".bundle") && $0.hasPrefix("\(name)_")
+                    && declaredTarget(ofBundle: $0, among: built) == nil
+            }
+        }
+
+        /// `product` を配る範囲に、**宣言から消えた target の古い包み**の除外を足したもの (#4005)。
+        ///
+        /// 束ねる置き場は利用者の `swift build` / `swift test` と共有なので、`Package.swift` から消した・
+        /// 改名した target の包みが隣に残る。宣言に無いので閉包からは出てこない。除くのは、隣に並んだ包みの
+        /// うち、**いまのパッケージの宣言の名前**で始まり (`<name>_…`)、いまの宣言のどの target の包みでもなく、
+        /// **どの依存のパッケージの名前 (`<依存>_…`) でも説明できない**もの。自分の名前が依存の名前で始まる
+        /// (`Demo_Extras` と `Demo`) と、`Demo_Extras_Gone.bundle` はどちらのものとも読めるので除かない
+        /// (入れすぎる側へ倒す)。閉包が求められないときは、何も除かない。依存の名前が読めない (`nil`) ときは
+        /// 古い包みの候補を除かず、``ResourceScope/kept`` に載せる。
+        ///
+        /// 隣の包みを宣言の target に結び付けるのは ``declaredTarget(ofBundle:among:)`` の 1 つの規則で、
+        /// 閉包の外の target の包みを除く判定 (#3982) も同じ規則を使う。依存の名前との比べ方は大文字と
+        /// 小文字を区別しない (残す側へ倒れる)。依存の identity も根拠に数えるので、identity が自分の
+        /// パッケージ名と大文字と小文字を除いて一致する依存があると、古い包みは 1 つも除かれない (決められない
+        /// ときは入れる側へ倒す。包みの名前に identity を使う版の道具立てに備えて残す)。
+        ///
+        /// 範囲の外: `Package(name:)` を改名する前の名前で始まる包みと、`Package.swift` から外した依存の
+        /// 包みは、持ち主を名前の形から決められないので除かない。
+        ///
+        /// - Parameters:
+        ///   - built: 実行ファイルの隣に並んだ包みの名前。
+        ///   - dependencyPackages: 依存のパッケージの宣言の名前と identity (``DependencyTree/dependencyNames``)。
+        ///     読めなければ `nil`。候補 (``leftoverCandidates(forProduct:beside:)``) が無いときは見ない。
+        func resourceScope(
+            forProduct product: String, beside built: [String], dependencyPackages: [String]?
+        ) -> ResourceScope {
+            guard let used = targetClosure(ofProduct: product) else {
+                // 推し量らない: 資材を宣言した target を全部数え、何も除かない
+                return ResourceScope(
+                    required: targets.filter { !$0.resources.isEmpty }.map { bundleName(of: $0) },
+                    excluded: [])
+            }
+            let outside = Set(
+                built.filter { bundle in
+                    declaredTarget(ofBundle: bundle, among: built).map { !used.contains($0.name) } ?? false
+                })
+            let candidates = Set(leftoverCandidates(forProduct: product, beside: built))
+            let leftovers: Set<String>
+            let kept: Set<String>
+            if let dependencyPackages {
+                let owners = dependencyPackages.map { "\($0)_".lowercased() }
+                leftovers = candidates.filter { bundle in
+                    !owners.contains { bundle.lowercased().hasPrefix($0) }
+                }
+                kept = []
+            } else {
+                leftovers = []
+                kept = candidates
+            }
+            return ResourceScope(
+                required: targets.filter { !$0.resources.isEmpty && used.contains($0.name) }
+                    .map { bundleName(of: $0) },
+                excluded: outside.union(leftovers), leftovers: leftovers, kept: kept)
+        }
+
+        /// `product` を作る target と、それらがこのパッケージの中で (推移的に) 依存する target の名前。
+        /// product の宣言が無い・product の target が空か宣言に無い名前を含む・辿る途中で依存を読めない
+        /// target に出会った、のどれかなら `nil`。
+        ///
+        /// `byName` は同じ名前の target があれば target、無ければ他のパッケージの product と読む
+        /// (道具立てと同じ解き方)。
+        func targetClosure(ofProduct product: String) -> Set<String>? {
+            guard let declared = products.first(where: { $0.name == product }) else { return nil }
+            let byName = Dictionary(targets.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+            // **起点が読めなければ求めない。** product の target が無い (鍵が無い・空)、または宣言に無い
+            // 名前を挙げていると、閉包が空になり、作品自身の包みまで除いてしまう
+            guard !declared.targets.isEmpty, declared.targets.allSatisfy({ byName[$0] != nil })
+            else { return nil }
+            var used = Set<String>()
+            var pending = declared.targets
+            while let next = pending.popLast() {
+                guard let target = byName[next], used.insert(next).inserted else { continue }
+                guard let dependencies = target.dependencies else { return nil }
+                pending.append(contentsOf: dependencies)
+            }
+            return used
         }
 
         /// 走らせる実行ファイルの束に**そのまま写される**資材の置き場 (`Sources/<target>/assets`)
         /// ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。
         ///
         /// 見張りが子へ渡し、置き場の断片を束の写しではなく元から読ませる (``ShaderOrigin``)。決めるのは
-        /// 宣言である — product を作る target のうち、`.copy("assets")` を宣言したもの。**どの target の置き場が
+        /// 宣言である — product を作る target のうち、置き場を `.copy` で宣言したもの。**どの target の置き場が
         /// 束に入るかを、ディレクトリの並びから推し量らない** (束に入っていない別の target の断片を黙って
         /// 読まない)。
+        ///
+        /// **宣言が置き場を指すかは、走らせる前の検査と同じ 1 つで見る** (``declaration(of:by:placedAt:)``・
+        /// #3984)。検査が通す宣言 (`.copy("Assets")`・`path: "Sources"` の `.copy("demo/assets")`) を、ここで
+        /// 綴りで比べて「写されない」と読むと、見張りは黙って束の写しを読ませる。見る置き場は、target の
+        /// 置き場の直下の置き場と、検査が見る `Sources/<名前>/<置き場>` のうちその target が含むもの。
         ///
         /// - Parameters:
         ///   - product: 走らせる実行ファイルの名前。宣言が読めなければ `nil`。
@@ -111,19 +268,22 @@ nonisolated enum SwiftPM {
             else { return .undecided }
             var found: [URL] = []
             for name in declared.targets {
-                guard let target = targets.first(where: { $0.name == name }),
-                    target.resources.contains(where: {
-                        $0.isCopy && Self.normalized($0.path) == directoryName
-                    })
-                else { continue }
-                // 置き場の場所が決まらない target があれば、決められない (推し量らない)
-                guard let place = sourceDirectory(of: target, in: root) else { return .undecided }
-                let assets = place.appendingPathComponent(directoryName, isDirectory: true)
-                var isDirectory: ObjCBool = false
-                if FileManager.default.fileExists(atPath: assets.path, isDirectory: &isDirectory),
-                    isDirectory.boolValue
-                {
-                    found.append(assets)
+                guard let target = targets.first(where: { $0.name == name }) else { continue }
+                // 置き場の場所が決まらない target が写す宣言を持てば、決められない (推し量らない)
+                guard let directory = sourceDirectory(of: target, in: root) else {
+                    if target.resources.contains(where: \.isCopy) { return .undecided }
+                    continue
+                }
+                let places =
+                    [directory.appendingPathComponent(directoryName, isDirectory: true)]
+                    + Self.places(in: root, directoryName: directoryName).filter {
+                        self.target(containing: $0, in: root)?.target.name == name
+                    }
+                for place in places where Self.isDirectory(place) {
+                    guard declaration(of: place, by: target, placedAt: directory)?.isCopy == true,
+                        !found.contains(where: { Self.sameItem($0, place) })
+                    else { continue }
+                    found.append(place)
                 }
             }
             switch found.count {
@@ -133,30 +293,106 @@ nonisolated enum SwiftPM {
             }
         }
 
-        /// 資材の相対パスの綴りを揃える (`./assets/`・`assets/` → `assets`)。
-        private static func normalized(_ path: String?) -> String? {
-            guard let path else { return nil }
-            var parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-            while parts.first == "." { parts.removeFirst() }
-            return parts.joined(separator: "/")
+        /// 走らせる前の検査が見る置き場の候補 (`Sources/<名前>/<置き場の名前>`)。在るかは見ない。
+        static func places(in root: URL, directoryName: String) -> [URL] {
+            let sources = root.appendingPathComponent("Sources", isDirectory: true)
+            guard
+                let entries = try? FileManager.default.contentsOfDirectory(
+                    at: sources, includingPropertiesForKeys: [.isDirectoryKey])
+            else { return [] }
+            return entries.sorted { $0.path < $1.path }.map {
+                $0.appendingPathComponent(directoryName, isDirectory: true)
+            }
+        }
+
+        /// `target` が置き場 `place` を資材として挙げている宣言。無ければ `nil`。
+        ///
+        /// **宣言のパスは target の置き場 (`directory`) から解き、置き場そのものとファイルとして同じかで
+        /// 見る** (``sameItem(_:_:)``)。綴り (`./assets`・`assets/`・区別しないボリュームの `Assets`) では
+        /// 比べない。**置き場そのものを指す宣言だけ**が置き場の宣言である — 祖先 (`.copy("demo")`・
+        /// `.copy(".")`) を写すと束の中は `demo/assets/…` になり、読み込み側 (束の直下の `assets/<名前>`
+        /// を探す) は見つけられない。置き場の中の 1 ファイル (`assets/img.png`) だけでは他の資材が入らない。
+        func declaration(of place: URL, by target: Target, placedAt directory: URL) -> Target.Resource? {
+            target.resources.first { resource in
+                guard let path = resource.path else { return false }
+                return Self.sameItem(Self.resolve(path, from: directory), place)
+            }
+        }
+
+        /// `item` を含む target と、その置き場 (``sourceDirectory(of:in:)`` で決める)。`item` の祖先の
+        /// うち、**最も近い**ものを置き場にする target を選ぶ (`path: "Sources"` のように親を置き場に
+        /// した target も、`item` を含む)。無ければ `nil`。
+        ///
+        /// **同じディレクトリかは、ファイルとして同じかで見る** (``sameItem(_:_:)``)。
+        func target(containing item: URL, in root: URL) -> (target: Target, directory: URL)? {
+            let places = targets.compactMap { target in
+                sourceDirectory(of: target, in: root).map { (target: target, directory: $0) }
+            }
+            var ancestor = item.deletingLastPathComponent()
+            let top = root.standardizedFileURL.path
+            while true {
+                if let found = places.first(where: { Self.sameItem($0.directory, ancestor) }) {
+                    return found
+                }
+                if ancestor.standardizedFileURL.path == top || ancestor.path == "/" { return nil }
+                ancestor = ancestor.deletingLastPathComponent()
+            }
+        }
+
+        /// 2 つの場所が、**ファイルとして**同じものか。綴り (大文字と小文字を区別しないボリュームでの
+        /// 大小・`..`) の違いで、同じ置き場を別のものと読まない。
+        ///
+        /// ファイルの識別子で比べ、取れなければ実体のパス (`realpath(3)`) で比べる。識別子が取れない
+        /// だけで「同じでない」に倒すと、検査は置き場の持ち主を見失って通す側へ倒れる。どちらも
+        /// 取れなければ (在らない場所) `false`。
+        static func sameItem(_ a: URL, _ b: URL) -> Bool {
+            if let one = identity(of: a), let other = identity(of: b) { return one.isEqual(other) }
+            guard let one = realPath(of: a), let other = realPath(of: b) else { return false }
+            return one == other
+        }
+
+        private static func identity(of url: URL) -> NSObject? {
+            (try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]))?
+                .fileResourceIdentifier as? NSObject
+        }
+
+        private static func realPath(of url: URL) -> String? {
+            guard let resolved = realpath(url.path, nil) else { return nil }
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+
+        /// 宣言に書かれたパスを、基準の場所から解く。**絶対パスはそのまま使う** — 基準に足すと
+        /// 在らない場所になり、検査が黙って素通りする (#3984)。
+        private static func resolve(_ path: String, from base: URL) -> URL {
+            path.hasPrefix("/")
+                ? URL(fileURLWithPath: path, isDirectory: true)
+                : base.appendingPathComponent(path, isDirectory: true)
         }
 
         /// target のソースの置き場。**`path:` があればそれ、無ければ道具立ての既定の置き場。**
-        /// 在るものが無ければ `nil`。
+        /// 在るものが無ければ `nil`。`path:` が絶対パスならそのまま使う。
+        ///
+        /// 既定の置き場は道具立てと同じ規則で決める: target の種類ごとの候補 (``Target/defaultRoots``)
+        /// のうち**パッケージに在る最初のもの**の下の `<名前>` (#3984)。候補ごとに `<名前>` を探す形に
+        /// すると、テストやプラグインの target が `Sources/<名前>` に当たりうる。
         private func sourceDirectory(of target: Target, in root: URL) -> URL? {
-            let candidates =
-                target.path.map { [$0] }
-                ?? ["Sources", "Source", "src", "srcs"].map { "\($0)/\(target.name)" }
-            for relative in candidates {
-                let url = root.appendingPathComponent(relative, isDirectory: true)
-                var isDirectory: ObjCBool = false
-                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-                    isDirectory.boolValue
-                {
-                    return url
-                }
+            let relative: String
+            if let path = target.path {
+                relative = path
+            } else {
+                guard let base = target.defaultRoots.first(where: { Self.isDirectory(root.appendingPathComponent($0)) })
+                else { return nil }
+                relative = "\(base)/\(target.name)"
             }
-            return nil
+            let url = Self.resolve(relative, from: root)
+            return Self.isDirectory(url) ? url : nil
+        }
+
+        private static func isDirectory(_ url: URL) -> Bool {
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
         }
 
         /// パスで指した依存を 1 つでも持つか。
@@ -257,13 +493,83 @@ nonisolated enum SwiftPM {
             }
         }
 
-        private enum CodingKeys: String, CodingKey { case name, path, resources }
+        /// 同じパッケージの target を指しうる依存の名前 (`byName`・`target`)。**他のパッケージの
+        /// product (`product`) は載せない** — 閉包はこのパッケージの中だけで求める。
+        ///
+        /// **1 件でも形を読めない依存があれば `nil`** (読めた分だけを返さない)。個別に捨てると、
+        /// 使っている target が閉包から黙って落ち、その資材が配る `.app` から抜ける。`nil` を見た
+        /// 閉包は求めるのを諦め、何も除かない側へ倒れる (``Package/targetClosure(ofProduct:)``)。
+        let dependencies: [String]?
+
+        /// target の依存 1 件。種別は鍵で書き分けられ、値は配列で先頭が名前。**2 番目以降 (条件など) は
+        /// 形を問わず読み飛ばす** — 条件は `null` のほか、オブジェクトでも書かれる
+        /// (`{"target": ["A", {"platformNames": ["macos"]}]}`・`{"target": ["C", {"platformNames": [],
+        /// "traits": ["Extra"]}]}`)。条件つきの依存は、条件にかかわらず閉包に入れる (入れすぎる側へ倒す)。
+        private enum Dependency: Decodable {
+            /// 同じパッケージの target を指しうるもの (`byName`・`target`)。
+            case local(String)
+            /// 他のパッケージの product (`product`)。
+            case external
+            /// 知らない鍵・名前の読めない形。
+            case unreadable
+
+            private enum CodingKeys: String, CodingKey { case byName, target, product }
+
+            init(from decoder: any Decoder) throws {
+                guard let container = try? decoder.container(keyedBy: CodingKeys.self),
+                    container.allKeys.count == 1, let key = container.allKeys.first
+                else {
+                    self = .unreadable
+                    return
+                }
+                guard var values = try? container.nestedUnkeyedContainer(forKey: key),
+                    let name = try? values.decode(String.self)
+                else {
+                    self = .unreadable
+                    return
+                }
+                self = key == .product ? .external : .local(name)
+            }
+        }
+
+        /// 種類 (`executable`・`regular`・`test`・`plugin` など)。**鍵が無ければ `nil`。**
+        let kind: String?
+
+        /// `path:` が無いときに置き場を探す、パッケージ直下の候補 (道具立てと同じ並び)。
+        var defaultRoots: [String] {
+            switch kind {
+            case "test": ["Tests", "Sources", "Source", "src", "srcs"]
+            case "plugin": ["Plugins"]
+            default: ["Sources", "Source", "src", "srcs"]
+            }
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case name, path, resources, dependencies
+            case kind = "type"
+        }
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             name = try container.decode(String.self, forKey: .name)
             path = try container.decodeIfPresent(String.self, forKey: .path)
             resources = try container.decodeIfPresent([Resource].self, forKey: .resources) ?? []
+            // 鍵が無ければ依存が無い。在るのに配列として読めなければ、読めない
+            if container.contains(.dependencies) {
+                let read = try? container.decode([Dependency].self, forKey: .dependencies)
+                var names: [String]? = []
+                for dependency in read ?? [.unreadable] {
+                    switch dependency {
+                    case .local(let name): names?.append(name)
+                    case .external: break
+                    case .unreadable: names = nil
+                    }
+                }
+                dependencies = names
+            } else {
+                dependencies = []
+            }
+            kind = try? container.decodeIfPresent(String.self, forKey: .kind)
         }
     }
 
@@ -271,6 +577,36 @@ nonisolated enum SwiftPM {
     struct Platform: Decodable, Equatable {
         let platformName: String
         let version: String?
+    }
+
+    // MARK: - swift package show-dependencies --format json
+
+    /// `swift package show-dependencies --format json` が出す依存の木 (#4005)。根はこのパッケージ自身。
+    ///
+    /// **依存の宣言の名前を読むのはここから。** 道具立ては資材の包みを依存の宣言の名前で名付ける
+    /// (identity `extras-dir`・`name: "Demo_Extras"` の依存は `Demo_Extras_Foo.bundle`)。
+    /// `.build/workspace-state.json` の `packageRef.name` は宣言の名前とは限らない — 下限の道具立て
+    /// (Swift 6.3.3) は URL で指した依存に URL の末尾 (`gitdep`) を書く (Swift 6.4.2 は宣言の名前)。
+    struct DependencyTree: Decodable, Equatable {
+        /// 宣言の名前。
+        let name: String?
+        let identity: String?
+        let dependencies: [DependencyTree]?
+
+        /// 根を除く、推移的なすべての依存の宣言の名前と identity。**1 つでも宣言の名前が読めない依存が
+        /// あれば `nil`** (どの包みがその依存のものか決められない — 何も除かない側へ倒す)。identity も
+        /// 返すのは、多く返すほど除く包みが減る側へ倒れるため。
+        var dependencyNames: [String]? {
+            var names: [String] = []
+            var pending = dependencies ?? []
+            while let next = pending.popLast() {
+                guard let name = next.name else { return nil }
+                names.append(name)
+                if let identity = next.identity { names.append(identity) }
+                pending.append(contentsOf: next.dependencies ?? [])
+            }
+            return names
+        }
     }
 
     // MARK: - .build/workspace-state.json

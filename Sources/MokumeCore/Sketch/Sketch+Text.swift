@@ -706,6 +706,25 @@ extension SketchPart {
         return canvas.text(string, a, b, c, d)
     }
 
+    /// 枠を ``Rect`` で渡して、幅で折り返し、高さに収まる行だけを置く。
+    ///
+    /// ``rectMode(_:)`` が既定 (`.corner`) のときの ``text(_:_:_:_:_:)`` に、`frame` の左上と幅・高さを渡すのと
+    /// 同じ字の並びになり、返す ``TextFlow`` も同じである。違いは、**どの数が枠の何かを呼び出しの行で読める**
+    /// ことと、**``rectMode(_:)`` に従わない**ことである — ``Rect`` は左上で置く値なので、モードが `.center`
+    /// でも値のとおり左上から読む (``Rect/draw()`` が ``rectMode(_:)`` に従わないのと同じ)。
+    ///
+    /// ```swift
+    /// // text("今日は晴れ。明日も晴れ。", 40, 40, 160, 120) (既定のモード) と同じ字の並び
+    /// text("今日は晴れ。明日も晴れ。", in: Rect(left: 40, top: 40, width: 160, height: 120))
+    /// ```
+    // shot: 参照 text(_:_:_:_:_:)
+    @discardableResult
+    public func text(_ string: String, in frame: Rect) -> TextFlow {
+        // 外から呼ばれたら何も置かない。置けなかった文字は全部が残りになる
+        guard let canvas = liveCanvas() else { return TextFlow(lineCount: 0, height: 0, remainder: string) }
+        return canvas.text(string, in: frame)
+    }
+
     /// 幅に収まらなくなったとき、どこで行を折るか。既定は語の切れ目。
     ///
     /// 下の 2 枚は同じ文を同じ枠へ流している。**語で折ると行末が不揃いになり、

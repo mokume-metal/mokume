@@ -180,6 +180,28 @@ public struct Pixels {
         mirror?.noteCPUWrite()
     }
 
+    /// (`x`, `y`) を左上とする `columns` × `rows` の画素を、行を上から並べて写す。**範囲の外は透明** (添字で
+    /// 読むのと同じ)。値は面の半精度のまま写し、``LinearRGBA`` を経由しない。描き場所の領域を絵にする
+    /// ``Canvas/get(_:_:_:_:)`` が読む ([#3714])。
+    ///
+    /// [#3714]: https://github.com/mokume-metal/mokume/issues/3714
+    func texels(x: Int, y: Int, columns: Int, rows: Int) -> [SIMD4<Float16>] {
+        var result = [SIMD4<Float16>](repeating: .zero, count: columns * rows)
+        for row in 0..<rows {
+            // 足して桁が溢れる位置は、面の外 (透明) である
+            let (sourceY, rowOverflow) = y.addingReportingOverflow(row)
+            guard !rowOverflow, sourceY >= 0, sourceY < height else { continue }
+            for column in 0..<columns {
+                let (sourceX, overflow) = x.addingReportingOverflow(column)
+                guard !overflow, sourceX >= 0, sourceX < width else { continue }
+                result[row * columns + column] =
+                    image.map { HalfSurface.texel($0.get(sourceX, sourceY)) }
+                    ?? address(sourceX, sourceY).pointee
+            }
+        }
+        return result
+    }
+
     private func contains(_ x: Int, _ y: Int) -> Bool {
         x >= 0 && y >= 0 && x < width && y < height
     }

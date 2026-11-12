@@ -430,9 +430,9 @@ struct BuildPlacementTests {
         let second = try Self.sketch(pinning: "0.7.1")
 
         let a = try RunCommand.context(
-            in: first, invocation: Invocation(place: first.path), environment: environment)
+            in: first, invocation: Invocation(place: first.path), environment: environment, afterReading: { _ in })
         let b = try RunCommand.context(
-            in: second, invocation: Invocation(place: second.path), environment: environment)
+            in: second, invocation: Invocation(place: second.path), environment: environment, afterReading: { _ in })
 
         // 先に来たほうが共有の置き場を取り、名乗ることは無い (常道なので黙る)
         #expect(a.place.notice == nil)
@@ -470,9 +470,9 @@ struct BuildPlacementTests {
         let newer = try Self.sketch(pinning: "0.7.1")
 
         let a = try RunCommand.context(
-            in: older, invocation: Invocation(place: older.path), environment: environment)
+            in: older, invocation: Invocation(place: older.path), environment: environment, afterReading: { _ in })
         let b = try RunCommand.context(
-            in: newer, invocation: Invocation(place: newer.path), environment: environment)
+            in: newer, invocation: Invocation(place: newer.path), environment: environment, afterReading: { _ in })
         // 名前は取り合うが (どちらも product `hello`)、鍵が違うので部屋も違う
         #expect(a.place != b.place)
         let binA = try RunCommand.binPath(in: older, context: a)
@@ -496,7 +496,7 @@ struct BuildPlacementTests {
         let outside = try RunCommand.context(
             in: sketch,
             invocation: Invocation(place: sketch.path, scratchPath: "sp", currentDirectory: work),
-            environment: environment)
+            environment: environment, afterReading: { _ in })
         guard case .outside(let url, given: true) = outside.place else {
             Issue.record("明示した置き場を使っていない: \(outside.place)")
             return
@@ -510,7 +510,7 @@ struct BuildPlacementTests {
         let inside = try RunCommand.context(
             in: sketch,
             invocation: Invocation(scratchPath: ".build", currentDirectory: sketch),
-            environment: environment)
+            environment: environment, afterReading: { _ in })
         #expect(
             inside.place == .outside(
                 sketch.appendingPathComponent(".build", isDirectory: true).standardizedFileURL,
@@ -559,7 +559,8 @@ struct BuildPlacementTests {
             in: sketch, invocation: Invocation(place: sketch.path),
             environment: [BuildDirectory.environmentKey: store.path],
             announce: { recorder.record("say: \($0)") },
-            resolver: { arguments, _ in recorder.record("swift \(arguments.prefix(2).joined(separator: " "))") })
+            resolver: { arguments, _ in recorder.record("swift \(arguments.prefix(2).joined(separator: " "))") },
+            afterReading: { _ in })
 
         // 名乗りが 1 度、解決より先。綴りはこのとおり (#3427)
         #expect(
@@ -589,7 +590,8 @@ struct BuildPlacementTests {
             in: sketch, invocation: Invocation(place: sketch.path),
             environment: [BuildDirectory.environmentKey: store.path],
             announce: { recorder.record("say: \($0)") },
-            resolver: { arguments, _ in recorder.record("swift \(arguments.prefix(2).joined(separator: " "))") })
+            resolver: { arguments, _ in recorder.record("swift \(arguments.prefix(2).joined(separator: " "))") },
+            afterReading: { _ in })
 
         #expect(context.place == .inPackage(.malformedPin), "共有の置き場へ落とした: \(context.place)")
         #expect(context.place.arguments.isEmpty)
@@ -614,7 +616,7 @@ struct BuildPlacementTests {
             in: sketch, invocation: Invocation(place: sketch.path),
             environment: [BuildDirectory.environmentKey: store.path],
             announce: { recorder.record("say: \($0)") },
-            resolver: { _, _ in recorder.record("swift") })
+            resolver: { _, _ in recorder.record("swift") }, afterReading: { _ in })
 
         #expect(recorder.events.isEmpty)
     }
@@ -629,7 +631,7 @@ struct BuildPlacementTests {
             in: sketch,
             invocation: Invocation(place: sketch.path, scratchPath: "sp", currentDirectory: work),
             announce: { recorder.record("say: \($0)") },
-            resolver: { _, _ in recorder.record("swift") })
+            resolver: { _, _ in recorder.record("swift") }, afterReading: { _ in })
 
         #expect(recorder.events.isEmpty)
     }

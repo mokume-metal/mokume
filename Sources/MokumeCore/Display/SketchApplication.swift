@@ -54,7 +54,7 @@ import MokumeDiagnostics
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 @MainActor
-public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
+package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     let gpu: RenderDevice
     private let runtime: SketchRuntime
     private let presenter: FramePresenter

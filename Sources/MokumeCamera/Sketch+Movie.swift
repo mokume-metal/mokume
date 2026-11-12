@@ -89,7 +89,7 @@ extension Sketch {
                 // 置ける大きさを探しに行く (#2683 の反証 1)
                 switch error {
                 case .notRunning(let named): throw MovieFailure.notRunning(call: named)
-                case .notFound, .unopenable, .undecodable, .unplaceable, .unwritable:
+                case .notFound, .unopenable, .undecodable, .unplaceable, .unwritable, .unreachable:
                     throw MovieFailure.unplaceable(width: reader.width, height: reader.height)
                 }
             }

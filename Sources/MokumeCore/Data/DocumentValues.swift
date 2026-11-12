@@ -25,6 +25,8 @@ enum DocumentValues {
         case notABoolean(key: String)
         /// JSON のキーの値が、配列でない。
         case notAnArray(key: String)
+        /// JSON のキーへ NaN か無限を書こうとした (書かない)。**キーごとに数える。**
+        case notFinite(key: String)
         /// JSON の配列から、範囲の外の番号か種類の違う要素を取り出した。**番号ごとではなく、口の
         /// 名前と事情の組ごと**に 1 度だけ言う (番号で数えると、配列の大きさだけ控えが増える)。
         case arrayElement(call: String, problem: ArrayProblem)
@@ -32,6 +34,12 @@ enum DocumentValues {
         case noAttribute(element: String, name: String)
         /// XML の属性の値が、数として読めない。
         case attributeNotANumber(element: String, name: String)
+        /// XML の属性の値が、整数の値として読めない (端数のある数・`Int` に収まらない数・数でない文字)。
+        case attributeNotAnInteger(element: String, name: String)
+        /// XML の要素の文字が、数として読めない。**要素の名前ごとに数える。**
+        case contentNotANumber(element: String)
+        /// XML の要素の文字が、整数の値として読めない。**要素の名前ごとに数える。**
+        case contentNotAnInteger(element: String)
         /// XML の要素に子があるのに、その名前の子が 1 つも無い。
         case noChild(element: String, name: String)
     }
@@ -42,6 +50,8 @@ enum DocumentValues {
         case outOfRange
         /// 要素の種類が、読もうとした種類と違う。
         case wrongKind
+        /// 書こうとした数が NaN か無限 (書かない)。
+        case notFinite
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。

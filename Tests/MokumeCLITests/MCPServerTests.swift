@@ -1036,6 +1036,78 @@ struct MCPServerTests {
         #expect(Tools.seriesArgument(nil, key: "count") == .omitted)
     }
 
+    /// **桁の多い数は `NSDecimalNumber` で届く** ([#3959](https://github.com/mokume-metal/mokume/issues/3959))。
+    /// `as? Int` は端数を捨て、`doubleValue` は端数を丸めて消すので、どちらで整数かを決めても
+    /// `1.00000000000000000000001` を整数と読む。整数かは 10 進の値で見る。数は JSON の文字から読む —
+    /// Swift の数の書き方では、JSON の読み手がどの型で渡すかを再現できない。
+    @Test(
+        "桁の多い数も、端数があれば断り、整数なら値か符号の側の端で読む",
+        arguments: [
+            ("1.00000000000000000000001", nil), ("12345678901234567.5", nil),
+            ("-0.00000000000000000000001", nil), ("2.5", nil),
+            // `Int` に収まらない端数つきの数も、端へ寄せずに断る
+            ("9223372036854775807.5", nil), ("100000000000000000000000000000.5", nil),
+            ("1e19", Int.max), ("-1e19", Int.min), ("9223372036854775808", Int.max),
+            ("-9223372036854775809", Int.min), ("18446744073709551616", Int.max),
+            ("100000000000000000000000000000.0", Int.max), ("9223372036854775807", Int.max),
+            ("-9223372036854775808", Int.min), ("3", 3), ("3.0", 3), ("1e3", 1000),
+            ("12345678901234567.0", 12_345_678_901_234_567),
+            ("-0", 0), ("-0.0", 0), ("1E+2", 100), ("10e-1", 1),
+            // 仮数が 38 桁を越える綴りは、`JSONSerialization` が `NSDecimalNumber` にする段で丸めて
+            // 届く (既知の限界・``JSONRPC/wholeNumber(_:)``)。45 桁の `1.000…0001` は 1 と読む
+            ("1.000000000000000000000000000000000000000000001", 1),
+            // Foundation の読みに依る綴り (#3959 の 2 回目の反証で実測。直す前と同じ読み)。Foundation の版が
+            // 変わって読みが変わったら赤くなる行。`1e-400` は整数でないが `JSONSerialization` が 0 で渡すので
+            // 見分けられない。仮数が 38 桁を越える綴りは丸まって届く (`9` が 40 個は範囲の外、`1.0…01` は 1)
+            ("5e-324", nil), ("1e-130", nil), ("1e-400", 0),
+            ("1e100", Int.max), ("1e127", Int.max), ("1e128", Int.max),
+            ("1" + String(repeating: "0", count: 40), Int.max), (String(repeating: "9", count: 40), Int.max),
+            ("-1" + String(repeating: "0", count: 40), Int.min),
+            ("1." + String(repeating: "0", count: 39) + "1", 1),
+        ] as [(String, Int?)])
+    func readsLongNumbersExactly(text: String, whole: Int?) throws {
+        let values = try decode(#"{"count": \#(text)}"#)
+        let answer = Tools.seriesArgument(values["count"], key: "count")
+        #expect(answer == (whole.map { .value($0) } ?? .refused("count must be a whole number")), "\(text)")
+    }
+
+    /// 上を JSON-RPC の 1 行から通す。端数のある数は区画に要求を置く前に断り、時刻つきの観測の
+    /// 「count=1 と every=1」も 10 進の値で見る (`doubleValue == 1` は `1.00000000000000000000001` を
+    /// 1 と読む)。
+    @Test(
+        "JSON-RPC の行で届いた端数つきの枚数・間隔は、要求を置かずに断る",
+        arguments: [
+            (#"{"count":1.00000000000000000000001}"#, "count must be a whole number"),
+            (#"{"every":12345678901234567.5}"#, "every must be a whole number"),
+            (#"{"time":3,"count":1.00000000000000000000001}"#,
+             "A specified time requires count=1 and every=1"),
+            (#"{"time":3,"every":0.99999999999999999999999}"#,
+             "A specified time requires count=1 and every=1"),
+        ])
+    func refusesFractionalSeriesSentOverJSONRPC(arguments: String, reason: String) throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let line =
+            #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"observe","arguments":"#
+            + arguments + "}}"
+        let (server, recorder) = makeServer(directory: directory, input: [line])
+        server.serve()
+        let answer = try decode(try #require(recorder.written.first))
+        let result = try #require(answer["result"] as? [String: Any], "\(arguments)")
+        #expect(result["isError"] as? Bool == true, "\(arguments)")
+        let text = (result["content"] as? [[String: Any]])?.first?["text"] as? String
+        #expect(text == reason, "\(arguments)")
+        #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path), "\(arguments)")
+    }
+
+    /// 時刻つきの観測は、`1` と綴りの違う整数の 1 (`1.0`・`1e0`) なら受ける。
+    @Test("時刻つきの観測は、綴りの違う整数の 1 を受ける", arguments: ["1.0", "1e0", "1.00000000000000000000000"])
+    func acceptsOneSpelledDifferentlyWithATime(one: String) throws {
+        let request = try #require(
+            try placedObservation(#"{"time":3,"count":\#(one),"every":\#(one)}"#), "\(one)")
+        #expect(request["time"] != nil)
+    }
+
     @Test("範囲の外の枚数・間隔は切らずに要求へ置き、撮る側が切ったことを名乗れるようにする")
     func passesOutOfRangeSeriesThrough() throws {
         let directory = try makeDirectory()
@@ -2798,6 +2870,29 @@ struct MCPServerTests {
             "\(outcome.text)")
         // 案内は、組む版の名乗りを渡す手を示す
         #expect(outcome.text.contains("VERSION='rev-aaaaaaaaaaaa'"), "\(outcome.text)")
+    }
+
+    /// 版を桁の多い端数つきの数で書いた詳細は、`2.5` と同じ理由で読めないと言う (#4015)。直す前は
+    /// `JSONDecoder` が端数を捨てて版 1 と読み、読める詳細として通していた。整数の綴りは今までどおり読む。
+    @Test("詳細の版の、桁の多い端数は 2.5 と同じく読めない")
+    func refusesALongFractionalDetailsVersion() {
+        func parse(_ version: String) -> String {
+            let data = Data(#"{"schemaVersion":\#(version),"version":"v0.2.0","symbols":{}}"#.utf8)
+            switch APIDetails.parse(data) {
+            case .success(let details): return "read \(details.version)"
+            case .failure(let failure): return failure.reason
+            }
+        }
+        let fraction = parse("2.5")
+        #expect(fraction.contains("not a details file"), "\(fraction)")
+        for spelling in ["1.00000000000000000000001", "0.99999999999999999999999", "12345678901234567.5"] {
+            #expect(parse(spelling) == fraction, "\(spelling): \(parse(spelling))")
+        }
+        for spelling in ["1", "1.0", "1e0", "1.00000000000000000000000"] {
+            #expect(parse(spelling) == "read v0.2.0", "\(spelling): \(parse(spelling))")
+        }
+        #expect(parse("1e19") == fraction, "範囲の外の整数は前から 2.5 と同じに断る")
+        #expect(parse("2").contains("update the tool"))
     }
 
     /// 道具が読む形は、`Schemas/` の代表例と同じ (形の正典と読む側が離れない)。
