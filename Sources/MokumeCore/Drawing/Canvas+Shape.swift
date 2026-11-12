@@ -709,7 +709,9 @@ extension Canvas {
         let placing = placement.transform.matrix
         if recordingShape {
             if let bounds = Self.placedBox(group.bounds, by: transform.matrix * placing) {
-                recordCompositeGroup(opacity: group.opacity, covering: bounds) {
+                recordCompositeGroup(
+                    opacity: group.opacity, covering: bounds, placedWith: (group.mode, group.paint)
+                ) {
                     placeComposed(shape, in: group.runs, groups: inner, at: placement)
                 }
                 return
@@ -718,8 +720,11 @@ extension Canvas {
             let bounds = Self.placedBox(group.bounds, by: placing)
         {
             // 置き場所が奥行きを持つ (視点を通る) なら、中間面の画素と置く側の画素が重ならないので開かない。
-            // 面の側の理由 (視点・細かさ・混ぜ方) は単位が見る
-            let drawn = withCompositeGroup(opacity: group.opacity, covering: bounds) { surface in
+            // 面の側の理由 (視点・細かさ・混ぜ方) は単位が見る。**中間面は記録した混ぜ方と塗りで置く** — 範囲の外の
+            // 区間と同じく、置く側の `blendMode()`・`shader()` を読まない (1 つの形の中で描き方を割らない・反証 1)
+            let drawn = withCompositeGroup(
+                opacity: group.opacity, covering: bounds, placedWith: (group.mode, group.paint)
+            ) { surface in
                 surface.placeComposed(shape, in: group.runs, groups: inner, at: placement)
             }
             if drawn { return }

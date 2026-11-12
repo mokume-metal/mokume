@@ -170,6 +170,62 @@ struct SVGCompositeGroupTests {
         #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil)
     }
 
+    @Test("組にした形を置くと、移した範囲がそれぞれ単位になる: 同じ所に 2 つ重ねて、単独も重なりも 0.75 (191)")
+    func groupedShapeIsPlacedAsTwoUnits() throws {
+        let (image, canvas) = try rendered(Self.group) { canvas, shape in
+            canvas.shape(Shape.group([shape, shape]))
+        }
+        // 単位ごとに 0.5 を 1 度だけ掛けて 2 枚重ねる: 1 - 0.5 × 0.5。範囲を失って子ごとに掛けると重なりがもっと濃い
+        #expect(abs(alpha(image, 30, 30) - 191) <= 1, "\(image[30, 30])")
+        #expect(abs(alpha(image, 80, 80) - 191) <= 1, "\(image[80, 80])")
+        #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil)
+    }
+
+    // MARK: - 置く側の混ぜ方と断片 (反証 #1・#5)
+
+    /// 単位にする群と、単位にしない半透明の矩形 (`fill-opacity`・x 180…220) を 1 つの形に持つ。
+    static let groupBesideAPlainRect =
+        group + "<rect x='180' y='20' width='40' height='40' fill='white' fill-opacity='0.5'/>"
+
+    private func sameColor(
+        _ image: DisplayImage, _ a: (Int, Int), _ b: (Int, Int)
+    ) -> Bool {
+        let p = image[a.0, a.1]
+        let q = image[b.0, b.1]
+        return abs(Int(p.red) - Int(q.red)) <= 1 && abs(Int(p.green) - Int(q.green)) <= 1
+            && abs(Int(p.blue) - Int(q.blue)) <= 1 && abs(Int(p.alpha) - Int(q.alpha)) <= 1
+    }
+
+    @Test(
+        "置く側の混ぜ方 (add) は、単位の部分にも単位にしない部分にも効かない (記録した blend で描き、1 つの形の中で割れない)")
+    func placingBlendModeDoesNotSplitTheShape() throws {
+        let (image, canvas) = try rendered(Self.groupBesideAPlainRect) { canvas, shape in
+            canvas.background(LinearRGBA.linear(red: 0.2, green: 0.2, blue: 0.2))
+            canvas.blendMode(.add)
+            canvas.shape(shape)
+        }
+        #expect(sameColor(image, (30, 30), (200, 40)), "単位: \(image[30, 30]) / 単位にしない矩形: \(image[200, 40])")
+        #expect(sameColor(image, (80, 80), (30, 30)), "重なり: \(image[80, 80]) / 単独: \(image[30, 30])")
+        #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil, "単位にできた")
+    }
+
+    /// 赤を返す断片。置く側に当てても、記録した塗りで描く形には効かない。
+    private static let red = "float4 paint(Fragment in, Values values) { return float4(1, 0, 0, 1); }"
+
+    @Test("置く側の shader() は、単位の部分にも単位にしない部分にも効かない (記録した塗りで描き、1 つの形の中で割れない)")
+    func placingShaderDoesNotSplitTheShape() throws {
+        let canvas = try makeCanvas()
+        let shader = try canvas.makeShader(Self.red)
+        let (image, _) = try rendered(Self.groupBesideAPlainRect, on: canvas) { canvas, shape in
+            canvas.shader(shader)
+            canvas.shape(shape)
+        }
+        #expect(sameColor(image, (30, 30), (200, 40)), "単位: \(image[30, 30]) / 単位にしない矩形: \(image[200, 40])")
+        #expect(abs(alpha(image, 30, 30) - 128) <= 1, "\(image[30, 30])")
+        #expect(abs(alpha(image, 80, 80) - 128) <= 1, "\(image[80, 80])")
+        #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil, "単位にできた")
+    }
+
     // MARK: - 完了条件 9・10: 単位にできない所
 
     @Test("視点を決めた下では、子ごとに掛けて描き (重なりは濃い)、1 度だけ知らせる")

@@ -144,6 +144,15 @@ public struct Shape {
         var opacity: Float
         /// 中に描くものの外接 (形自身の座標)。線の太さなど縁の分を含む。
         var bounds: PlaneBox
+        /// まとめた中間面を置く四角の混ぜ方。範囲を記録したときのもの (SVG なら既定の `blend`)。
+        ///
+        /// **置く側の混ぜ方は読まない** — 範囲の外の区間も、記録した区間の設定で描く (``Canvas/replaying(_:_:)``・
+        /// #788・#1649)。置く側の `blendMode()` で置くと、1 つの形の中で単位の部分だけが違う混ぜ方になる
+        /// (#3564 の反証 1)。
+        var mode: BlendMode = .blend
+        /// まとめた中間面を置く四角の塗り。範囲を記録したときのもの (SVG なら利用者の断片なし)。置く側の
+        /// `shader()` は読まない (``mode`` と同じ理由)。
+        var paint: Paint = .builtIn
 
         /// 区間の番号を `offset` ずらした写し。
         func shifted(by offset: Int) -> CompositeRange {
