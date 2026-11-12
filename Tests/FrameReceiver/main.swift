@@ -14,7 +14,13 @@
 // それも無ければ `sizeUnknown` を言って終わる。`surfaceSize` (4) で断られたら目録を読み直し、大きさが変わっていれば
 // その大きさの面で繋ぎ直す。`--service` の形は、目録の大きさを読まない従来の受け手として振る舞う。
 //
-// 標準入力が 1 行届くか閉じると終わる (検査が、受け手の側から切る形を作れるように)。
+// 答え (`accepted`・`refused`) は待ち行列が満杯なら落ちる (#3968)。繋ぐ前に自分の待ち行列を読み切り、答えを
+// `--answer-timeout` 秒 (既定 1) 待つ。届かなければ、番号を知っていれば `disconnect` してから、知らなければ受信の port を
+// 作り直してから繋ぎ直す (続けて 3 回で諦める)。答えを待つ間の frame は数えない。答えを落とす状況は検査用の
+// `--clog-attempt <n>` (n 回目の connect の前に自分の待ち行列を詰め、標準入力の `resume` まで読まない) で作る。
+// 大きさで断られたとき (#3949) は答えが届いているので、こちらではなく目録の読み直しに進む。
+//
+// 標準入力が `resume` 以外の 1 行を届けるか閉じると終わる (検査が、受け手の側から切る形を作れるように)。
 //
 // [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
 
@@ -82,6 +88,25 @@ let exitAfter = argument("--exit-after").flatMap(Int.init) ?? 0
 let deadline = Date().addingTimeInterval(argument("--timeout").flatMap(Double.init) ?? 30)
 let name = argument("--name")
 
+/// 検査用: この回数目の connect (1 から数える。`,` で区切って複数) の直前に、自分の受信の待ち行列を詰め物で満杯にして、
+/// 送り手の答えを落とさせる (#3968)。詰めた後は、標準入力に `resume` が届くまで読まない (検査が送り手に答えさせてから)。
+let clogAttempts = Set((argument("--clog-attempt") ?? "").split(separator: ",").compactMap { Int($0) })
+/// 検査用: この枚数を受けたら、同じ大きさの面を作り直して同じ port から繋ぎ直す。
+let reconnectAfter = argument("--reconnect-after").flatMap(Int.init) ?? 0
+
+// 標準入力が `resume` 以外の 1 行を届けるか閉じたら終わる。受信の権利ごと消えるので、送り手は dead-name で知る
+let resumed = DispatchSemaphore(value: 0)
+Thread.detachNewThread {
+    while let line = readLine() {
+        if line == "resume" {
+            resumed.signal()
+            continue
+        }
+        exit(0)
+    }
+    exit(0)
+}
+
 // 1. 名前を引く
 guard let sketch = Bootstrap.lookUp(service) else {
     say(["event": "lookupFailed"])
@@ -105,14 +130,76 @@ func makeSurfaces(width: Int, height: Int) -> [IOSurfaceRef] {
             ] as [CFString: Any] as CFDictionary)
     }
 }
-var surfaces = makeSurfaces(width: width, height: height)
-let sent = FrameLink.connect(to: sketch, reply: port, surfaces: surfaces, name: name)
-say(["event": "connected", "result": Int(sent)])
+/// 自分の待ち行列を詰め物 (受け手には届かない種類の 1 通) で満杯にする。詰めた数を返す。
+func clogQueue() -> Int {
+    mach_port_insert_right(mach_task_self_, port, port, mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND))
+    defer { mach_port_mod_refs(mach_task_self_, port, MACH_PORT_RIGHT_SEND, -1) }
+    var count = 0
+    while count < 256, FrameLink.send(.disconnect, to: port) == KERN_SUCCESS { count += 1 }
+    return count
+}
 
-// 標準入力が 1 行届くか閉じたら終わる。受信の権利ごと消えるので、送り手は dead-name で知る
-Thread.detachNewThread {
-    _ = readLine()
-    exit(0)
+var surfaces = makeSurfaces(width: width, height: height)
+/// 送った connect の数。
+var attempts = 0
+/// `accepted` で知った自分の番号。まだ知らない (または `disconnect` した) なら 0。
+var receiverID: UInt32 = 0
+/// 答え (`accepted`・`refused`) を待っている connect を送った時刻。答えが届けば `nil`。
+var awaitingSince: Date?
+/// 答えを待つ期限 (秒)。答えは待ち行列が満杯なら落ちる (#3968)。
+let answerTimeout = argument("--answer-timeout").flatMap(Double.init) ?? 1
+/// 答えが届かずに繋ぎ直した回数 (答えが届けば 0 に戻す)。3 回続けば諦める。
+var lostAnswers = 0
+
+/// いまの面で繋ぐ。
+func connect() {
+    // **繋ぐ前に自分の待ち行列を読み切る** (#3968)。残っているのは前の繋がりの知らせで、捨てる。読み切らないと、
+    // 送り手の答えが満杯の待ち行列で落ちる
+    while let stale = FrameLink.receive(on: port) {
+        if stale.kind == Int32(MACH_NOTIFY_DEAD_NAME) {
+            say(["event": "senderGone"])
+            exit(0)
+        }
+    }
+    attempts += 1
+    awaitingSince = Date()
+    let clogged = clogAttempts.contains(attempts) ? clogQueue() : 0
+    let sent = FrameLink.connect(to: sketch, reply: port, surfaces: surfaces, name: name)
+    say(["event": "connected", "result": Int(sent), "attempt": attempts, "clogged": clogged])
+    if clogged > 0, resumed.wait(timeout: .now() + deadline.timeIntervalSinceNow) == .timedOut {
+        say(["event": "timeout"])
+        exit(5)
+    }
+}
+connect()
+
+/// 答えが期限までに届かなかった (#3968)。番号を知っていれば `disconnect` してから、知らなければ受信の port を作り直して
+/// から繋ぎ直す。送り手は、`disconnect` か古い port の dead-name で、古い繋がりの枠を回収する。
+func recoverFromALostAnswer() {
+    lostAnswers += 1
+    guard lostAnswers <= 3 else {
+        say(["event": "gaveUp"])
+        exit(7)
+    }
+    if receiverID != 0 {
+        say(["event": "answerTimedOut", "known": true, "receiver": Int(receiverID)])
+        var payload = FrameLink.Payload()
+        payload.append(receiverID)
+        FrameLink.send(.disconnect, to: sketch, payload: payload)
+        receiverID = 0
+    } else {
+        say(["event": "answerTimedOut", "known": false])
+        mach_port_mod_refs(mach_task_self_, port, MACH_PORT_RIGHT_RECEIVE, -1)
+        mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &port)
+        // 送り手が消えた知らせは古い port に頼んでいたので、新しい port に頼み直す
+        var previous: mach_port_t = 0
+        mach_port_request_notification(
+            mach_task_self_, sketch, MACH_NOTIFY_DEAD_NAME, 0, port,
+            mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND_ONCE), &previous)
+        if previous != mach_port_t(MACH_PORT_NULL) { mach_port_deallocate(mach_task_self_, previous) }
+    }
+    surfaces = makeSurfaces(width: IOSurfaceGetWidth(surfaces[0]), height: IOSurfaceGetHeight(surfaces[0]))
+    connect()
 }
 
 func centre(of surface: IOSurfaceRef) -> [Double] {
@@ -128,20 +215,26 @@ func attribute(_ name: String, of surface: IOSurfaceRef) -> Any {
     IOSurfaceCopyValue(surface, name as CFString) ?? NSNull()
 }
 
-var receiverID: UInt32 = 0
 var frames = 0
 /// 大きさで断られて目録を読み直した回数。送り手の大きさが変わり続けても、3 回で諦める。
 var retries = 0
 while Date() < deadline {
+    if let since = awaitingSince, Date().timeIntervalSince(since) > answerTimeout {
+        recoverFromALostAnswer()
+        continue
+    }
     guard let message = FrameLink.receive(on: port, timeout: 100) else { continue }
     var reader = message.payload.reader
     switch message.kind {
     case FrameLink.Kind.accepted.rawValue:
         receiverID = reader.uint32() ?? 0
+        awaitingSince = nil
+        lostAnswers = 0
         say(["event": "accepted", "receiver": Int(receiverID), "width": Int(reader.uint32() ?? 0),
              "height": Int(reader.uint32() ?? 0)])
     case FrameLink.Kind.refused.rawValue:
         let reason = reader.uint32() ?? 0
+        awaitingSince = nil
         say(["event": "refused", "reason": Int(reason)])
         // 大きさで断られたら、目録を読み直して送り手がいま受け付ける大きさで繋ぎ直す (#3949)。送り手は断る前に目録を
         // 書き換えるので、読み直した大きさが試した大きさと同じなら、それ以上待っても変わらない
@@ -153,7 +246,7 @@ while Date() < deadline {
             retries += 1
             say(["event": "reread", "width": newWidth, "height": newHeight])
             surfaces = makeSurfaces(width: newWidth, height: newHeight)
-            FrameLink.connect(to: sketch, reply: port, surfaces: surfaces, name: name)
+            connect()
             continue
         }
         exit(4)
@@ -161,6 +254,8 @@ while Date() < deadline {
         guard let receiver = reader.uint32(), let slot = reader.uint32(), let frameCount = reader.int64(),
             let writes = reader.int64(), let hostTime = reader.uint64(), Int(slot) < surfaces.count
         else { continue }
+        // 答えを待つ間と、前の番号の frame は、前の繋がりの面のことなので数えない (返しもしない)
+        guard awaitingSince == nil, receiver == receiverID else { continue }
         let surface = surfaces[Int(slot)]
         say([
             "event": "frame", "receiver": Int(receiver), "slot": Int(slot), "frameCount": frameCount,
@@ -182,12 +277,19 @@ while Date() < deadline {
             say(["event": "done"])
             exit(0)
         }
+        if reconnectAfter > 0, frames == reconnectAfter {
+            surfaces = makeSurfaces(width: IOSurfaceGetWidth(surfaces[0]), height: IOSurfaceGetHeight(surfaces[0]))
+            connect()
+        }
     case FrameLink.Kind.resized.rawValue:
         let newWidth = Int(reader.uint32() ?? 0)
         let newHeight = Int(reader.uint32() ?? 0)
         say(["event": "resized", "width": newWidth, "height": newHeight])
         surfaces = makeSurfaces(width: newWidth, height: newHeight)
-        FrameLink.connect(to: sketch, reply: port, surfaces: surfaces, name: name)
+        connect()
+    case FrameLink.Kind.disconnect.rawValue:
+        // 詰め物 (`--clog-attempt`)。送り手からは届かない種類
+        continue
     case Int32(MACH_NOTIFY_DEAD_NAME):
         // 6. 送り手が消えた
         say(["event": "senderGone"])
