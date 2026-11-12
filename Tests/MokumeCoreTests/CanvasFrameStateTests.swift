@@ -53,6 +53,8 @@ extension CanvasTests {
             style.imageMode = .center
             style.tint = .linear(red: 0.7, green: 0.8, blue: 0.9)
             style.picture = canvas.drawnPicture
+            style.textureMode = .normal
+            style.textureWrap = .repeat
         style.gradient = ResolvedGradient.resolve(
             .linearGradient([(.linear(red: 1, green: 0, blue: 0), 0), (.linear(red: 0, green: 0, blue: 1), 1)], from: [0, 0], to: [10, 0]),
             under: .identity
@@ -722,7 +724,7 @@ extension CanvasTests {
             "fill", "stroke", "strokeWeight", "strokeCap", "strokeJoin", "strokeDash", "hasFill", "hasStroke",
             "rectMode", "ellipseMode", "blendMode", "fontSelection", "textSize", "textFace",
             "horizontalTextAlign", "verticalTextAlign", "textLeading", "textWrap", "imageMode",
-            "tint", "picture", "gradient",
+            "tint", "picture", "textureMode", "textureWrap", "gradient",
         ]
 
         /// 影の焼き付けの持ち越す格納 (``Canvas``の `shadowBake`・#2257) の、中の分け方と理由。

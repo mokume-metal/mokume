@@ -360,6 +360,8 @@ struct ShaderInterfaceTests {
             .buffer("numbers", ShapePipeline.numbersBufferIndex, .scalar(Float.self)),
             .texture("source_texture", ShapePipeline.textureIndex),
             .texture("shadow_texture", ShapePipeline.shadowTextureIndex),
+            // 面の読み方の印 (字の焼き場・端の外を繰り返す・#1557・#3717)。3 本とも `texel` を読むので共通
+            .buffer("textureReading", ShapePipeline.glyphPageBufferIndex, .scalar(UInt32.self)),
         ]
         if surfaces {
             // 口の数は宣言した枚数によらず上限ぶん。**数が食い違えば名前の集合が食い違う**
@@ -372,19 +374,10 @@ struct ShaderInterfaceTests {
                 ShapePipeline.flatFragmentFunctionName,
                 common + [
                     .buffer("mode", ShapePipeline.blendModeBufferIndex, .scalar(UInt32.self)),
-                    // 細い線を広げた置き換える列も、この入口で字形の外の余白を捨てる (#1637)
-                    .buffer(
-                        "readsGlyphPage", ShapePipeline.glyphPageBufferIndex,
-                        .scalar(UInt32.self)),
                 ]),
             Entry(ShapePipeline.flatDirectFragmentFunctionName, common),
-            Entry(
-                ShapePipeline.flatReplaceFragmentFunctionName,
-                common + [
-                    .buffer(
-                        "readsGlyphPage", ShapePipeline.glyphPageBufferIndex,
-                        .scalar(UInt32.self))
-                ]),
+            // 置き換える列は、字の焼き場を読むときに字形の外の余白を捨てる (#1557・#1637)。印は `common` の口
+            Entry(ShapePipeline.flatReplaceFragmentFunctionName, common),
         ]
     }
 

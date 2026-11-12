@@ -870,6 +870,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "noTint": DRAWING_STYLE,
     "texture": DRAWING_STYLE,
     "noTexture": DRAWING_STYLE,
+    "textureMode": DRAWING_STYLE,
+    "textureWrap": DRAWING_STYLE,
     "shader": DRAWING_STYLE,
     "resetShader": DRAWING_STYLE,
     "numbers": DRAWING_STYLE,

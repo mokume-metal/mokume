@@ -90,13 +90,19 @@ extension Canvas {
     ///   (鼻から尾・左から右、など) を `in.uv` で読める。塗りは 1×1 の白い絵を読むので
     ///   (``Canvas/useWrittenUVTexture()``)、組み込みの断片の絵は変わらない
     ///
+    /// - **``textureMode(_:)`` が `.normal` なら、束ねた絵の位置は 0…1 で書かれている**ので割らない
+    ///   ([#3717])。単位は**この頂点を置いた時点の**設定で決まり、`endShape()` の前に戻しても変わらない
+    ///   (Processing と同じ)。束ねていなければ、どちらの単位でも書いた値のまま
+    ///
     /// 数でない値と、幅か高さが 0 の絵は、書かれていないことにする。
     ///
     /// [#1140]: https://github.com/mokume-metal/mokume/issues/1140
+    /// [#3717]: https://github.com/mokume-metal/mokume/issues/3717
     private func textureUV(_ u: Float, _ v: Float) -> SIMD2<Float>? {
         guard u.isFinite, v.isFinite else { return nil }
         guard let picture = style.picture else { return SIMD2(u, v) }
         guard picture.width > 0, picture.height > 0 else { return nil }
+        if style.textureMode == .normal { return SIMD2(u, v) }
         return SIMD2(u / Float(picture.width), v / Float(picture.height))
     }
 

@@ -610,6 +610,12 @@ struct HeldTexture: Equatable {
 
     private let source: Source
 
+    /// 端の外を繰り返して読むか (``Canvas/textureWrap(_:)`` の `.repeat`・[#3717])。**塗りが貼る絵だけが立てる**
+    /// (``Canvas/useFillTexture()``)。同じ面でも読み方が違えば別の列になる (``==``)。
+    ///
+    /// [#3717]: https://github.com/mokume-metal/mokume/issues/3717
+    var repeats = false
+
     /// 面と、その面を常駐させている持ち主の組を作る。持ち主が描き場所 (``RenderTarget``) なら、
     /// 渡した面は使わず、描き場所のいまの面を読む組になる (``texture``)。
     init(texture: any MTLTexture, owner: AnyObject) {
@@ -650,6 +656,10 @@ struct HeldTexture: Equatable {
     /// (``ShapePipeline/glyphPageBufferIndex``)。
     var isGlyphPage: Bool { owner is GlyphPage }
 
+    /// 断片へ渡す面の読み方の印 (``ShapePipeline/glyphPageBufferIndex``)。0 は端を延ばして読む面、1 は字の
+    /// 焼き場の頁、2 は端の外を繰り返して読む面。
+    var readingFlag: Int { isGlyphPage ? 1 : repeats ? 2 : 0 }
+
     /// 読む直前に整える。持ち主が画像なら、書き換えた画素の送りをここで頼む。
     ///
     /// **送りは ``Picture/prepare()`` に任せる** — 送りの入口を 1 つに保つためで、
@@ -659,5 +669,5 @@ struct HeldTexture: Equatable {
         if let image = owner as? Image { Picture.loaded(image).prepare() }
     }
 
-    static func == (lhs: Self, rhs: Self) -> Bool { lhs.texture === rhs.texture }
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.texture === rhs.texture && lhs.repeats == rhs.repeats }
 }

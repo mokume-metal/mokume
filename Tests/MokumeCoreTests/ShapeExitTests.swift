@@ -89,6 +89,8 @@ enum ShapeExit {
             ("style.imageMode", { c, _ in c.imageMode(.center) }),
             ("style.tint", { c, _ in c.tint(red) }),
             ("style.picture", { c, f in c.texture(f.sheet) }),
+            ("style.textureMode", { c, _ in c.textureMode(.normal) }),
+            ("style.textureWrap", { c, _ in c.textureWrap(.repeat) }),
             // 勾配は塗りと同じ描き方。形に焼き付く (`currentShader` の戻しと、`currentStyle` の戻しが揃える)
             ("style.gradient", { c, _ in c.fill(.linearGradient([(red, Float(0)), (.linear(red: 0, green: 0, blue: 1), Float(1))], from: [0, 0], to: [10, 0])) }),
             // 貼る絵で輪郭なしの 1 つを置くと、読む面が替わる (輪郭は焼き場の面へ戻す)
