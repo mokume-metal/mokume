@@ -305,7 +305,7 @@ final class ShaderLibraries {
     /// 同じ式から出る (ADR-0001 原則 9・[#3569])。
     ///
     /// 区切りは名前を持ち、組み立てた原稿の中で本体の名前 (``bundledName(_:)``) を名乗る
-    /// (``ShaderSource/assemble(prelude:values:surfaces:body:)``)。
+    /// (``ShaderSource/assemble(prelude:values:surfaces:numbers:body:)``)。
     ///
     /// [#802]: https://github.com/mokume-metal/mokume/issues/802
     /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
