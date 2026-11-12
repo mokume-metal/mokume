@@ -2022,7 +2022,7 @@ struct SVGFileTests {
         let drawing = try SVGFile.parse(
             """
             <svg xmlns="http://www.w3.org/2000/svg">
-            <defs><linearGradient id="g"/><clipPath id="c"><rect width="1" height="1"/></clipPath></defs>
+            <defs><linearGradient id="h"/><pattern id="g"/><clipPath id="c"><rect width="1" height="1"/></clipPath></defs>
             <title>never drawn and never counted</title>
             <text x="0" y="0">A</text>
             <text x="0" y="9">B</text>
@@ -2161,11 +2161,11 @@ struct SVGFileTests {
         }
     }
 
-    /// 捨てるものの行が、改行のどれでも同じになる SVG。字 (3 行目)・グラデーションの塗り (4 行目)・
+    /// 捨てるものの行が、改行のどれでも同じになる SVG。字 (3 行目)・パターンの塗り (4 行目)・
     /// 読めない CSS の規則 (5 行目)。
     private static let skippingLines = """
         <svg xmlns="http://www.w3.org/2000/svg">
-        <defs><linearGradient id="g"/></defs>
+        <defs><pattern id="g"/></defs>
         <text x="0" y="0">A</text>
         <rect width="4" height="4" fill="url(#g)"/>
         <style>g .deep { fill: red }</style>

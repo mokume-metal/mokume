@@ -30,7 +30,7 @@ Processing の本体の参照のうち、category が `shape`・`pshape` か、�
 | --- | --- | --- |
 | [#3710] 通過点を結ぶ曲線の単発の API (入れた) | `curve()`・`curvePoint()`・`curveTangent()` | 3 |
 | [#3712] 3 次元の曲線 (欠けた形) | `bezierVertex()`・`quadraticVertex()`・`curveVertex()` の `z` を持つ形と、12 の数の `bezier()` | 0 |
-| [#3031] SVG の勾配 (子の行) | `loadShape()` が読む `<linearGradient>`・`<radialGradient>` | 0 |
+| [#3031] SVG の勾配 (子の行・入れた) | `loadShape()` が読む `<linearGradient>`・`<radialGradient>` | 0 |
 
 ## 2D の図形
 
@@ -103,7 +103,7 @@ Processing の本体の参照のうち、category が `shape`・`pshape` か、�
 
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
-| └ `loadShape()` が読む SVG の `<linearGradient>`・`<radialGradient>` | — (読まず、捨てたものとして報告する) | 入れる | Processing 4.5.7 は読む。`PShapeSVG.java` が `stop` の色と不透明度・`x1`〜`y2`・`cx`・`cy`・`r`・`gradientTransform` を読み、塗るのは JAVA2D の描き手だけ (`PShapeJava2D.java` の `calcGradientPaint`・`styles()`。`PShapeOpenGL.java` に勾配を扱うコードは無い)。`spreadMethod`・`gradientUnits`・`fx`・`fy`・`href` による継承は読まない。mokume には勾配の型 (`Gradient`) と描く状態の勾配 (`fill(_: Gradient)`) があり、読めない書き方は捨てて報告する道が既にある。割れる点が無く、Processing の範囲を目安にできる。置く前の勾配が読んだ SVG に効かないこと ([#3008] の仕様) は変わらない。[#3031] は `Feature` として開いているので、作例を待たずにラベルを付けられる | [#3031]・[#3008]・PR [#3009] |
+| └ `loadShape()` が読む SVG の `<linearGradient>`・`<radialGradient>` | `loadShape(_:)` (`fill="url(#…)"` の勾配で塗る。`stop` の色と不透明度・`x1`〜`y2`・`cx`・`cy`・`r`・`gradientTransform`・`gradientUnits` (既定の `objectBoundingBox` と `userSpaceOnUse`)・`href` (`xlink:href`) による区切りの継承を読む。`spreadMethod` の `reflect`・`repeat`・中心と違う焦点 (`fx`・`fy`・`fr`)・`href` で指した勾配の属性・11 個目からの区切りは読まずに報告し、`pad` と中心の焦点で描く。線の勾配 (`stroke="url(#…)"`) は読まずに報告する) | 入れる | Processing 4.5.7 は読む。`PShapeSVG.java` が `stop` の色と不透明度・`x1`〜`y2`・`cx`・`cy`・`r`・`gradientTransform` を読み、塗るのは JAVA2D の描き手だけ (`PShapeJava2D.java` の `calcGradientPaint`・`styles()`。`PShapeOpenGL.java` に勾配を扱うコードは無い)。`spreadMethod`・`gradientUnits`・`fx`・`fy`・`href` による継承は読まない。mokume は Processing より広く、`gradientUnits` の既定 (`objectBoundingBox`。Illustrator・Figma・Inkscape の書き出しが座標を外接矩形の割合で書く) と `href` による区切りの継承 (Inkscape の書き方) まで読む (2026-11-10 の決定・[#3933])。塗るのは描く状態の勾配と同じ `Gradient` と `fill(_: Gradient)` の経路で、混ぜる空間は線形 (SVG の既定 `color-interpolation: sRGB` より中間の色が明るい)。読めない書き方は捨てて報告する。置く前の勾配が読んだ SVG に効かないこと ([#3008] の仕様) は変わらない | [#3031]・[#3008]・PR [#3009] |
 | └ `loadShape()` が読む OBJ の材質 (`mtllib`・`usemtl`・MTL の `Kd`・`Ka`・`Ks`・`Ns`・`d`)・拡散テクスチャ (`map_Kd`)・グループ名 (`g`) | — (`loadModel` は形・法線・UV だけを読み、材質・テクスチャ・物体の区切りは読み飛ばす) | 作例待ち | Processing 4.5.7 は読む (`PShapeOBJ.java`)。`Kd`・`Ka`・`Ks`・`Ns`・`d` を面ごとの色と光沢に、`map_Kd` を拡散テクスチャに使う。**面ごとに子の形を 1 つ作るが、`g` の名前は子に渡さず、読み返す所も無い** (`OBJFace.name` に控えるだけ)。グループ名から `getChild(名前)` では引けず、番号の `getChild(index)` だけ引ける。割れる点は、**材質の表現を 1 つにする** こと。OBJ 専用の材質の型を先に公開せず、[#2607] の glb と同じ表現に載せる。読んだ材質と作品が呼んだ `fill`・`texture` のどちらが勝つか、欠けた MTL・テクスチャの扱いも決まっていない。OBJ を `Shape` でなく `Model` として読む形 (上の `loadShape()` の行) も、そこで決める | [#3476]・[#2607] |
 
 ## PShape
@@ -150,3 +150,4 @@ Processing の本体の参照のうち、category が `shape`・`pshape` か、�
 [#3476]: https://github.com/mokume-metal/mokume/issues/3476
 [#3710]: https://github.com/mokume-metal/mokume/issues/3710
 [#3712]: https://github.com/mokume-metal/mokume/issues/3712
+[#3933]: https://github.com/mokume-metal/mokume/issues/3933

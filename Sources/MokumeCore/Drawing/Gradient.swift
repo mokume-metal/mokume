@@ -345,7 +345,7 @@ final class ResolvedGradient: Sendable, Equatable {
 /// 組み込みの塗りと同じ式 (`texel * color`) で塗る。値は断片の宣言を通さず、列の値の並びへ直に
 /// 書く (``ResolvedGradient/packedValues``)。
 enum GradientShader {
-    static let stopCapacity = 10
+    nonisolated static let stopCapacity = 10
 
     /// 宣言した値。**名前は並びを決める材料でしかない** — 中身は列の値の並びへ直に書く。
     static var declarations: [String: ShaderValue] {
