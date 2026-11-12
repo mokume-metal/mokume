@@ -34,6 +34,12 @@ enum DocumentValues {
         case noAttribute(element: String, name: String)
         /// XML の属性の値が、数として読めない。
         case attributeNotANumber(element: String, name: String)
+        /// XML の属性の値が、整数の値として読めない (端数のある数・`Int` に収まらない数・数でない文字)。
+        case attributeNotAnInteger(element: String, name: String)
+        /// XML の要素の文字が、数として読めない。**要素の名前ごとに数える。**
+        case contentNotANumber(element: String)
+        /// XML の要素の文字が、整数の値として読めない。**要素の名前ごとに数える。**
+        case contentNotAnInteger(element: String)
         /// XML の要素に子があるのに、その名前の子が 1 つも無い。
         case noChild(element: String, name: String)
     }

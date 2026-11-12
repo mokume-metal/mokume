@@ -381,6 +381,26 @@ public struct JSONObject: Equatable, Sendable {
         members[key] != nil
     }
 
+    /// キーの値が `null` か。**キーが無いときも `true`** (Processing の `isNull()` と同じ)。
+    ///
+    /// <!-- example: 文脈 var weather: JSONObject! -->
+    /// ```swift
+    /// if !weather.isNull("rain") {
+    ///     fill(80, 120, 220)
+    ///     circle(width / 2, height / 2, weather.getFloat("rain") * 10)
+    /// }
+    /// ```
+    ///
+    /// 値が `null` なのか、キーが無いのかを分けるなら ``hasKey(_:)`` と組む
+    /// (`hasKey("rain") && isNull("rain")` は「キーはあり、値が `null`」)。
+    ///
+    /// **知らせない** — 値が欠けているかもしれないことを分かって尋ねる口である。`null` の値を
+    /// ``getFloat(_:)`` などで読むと空の値と知らせになるので、読む前にこれで確かめる。
+    public func isNull(_ key: String) -> Bool {
+        guard let value = members[key] else { return true }
+        return value == .null
+    }
+
     /// キーの一覧。**文字の順に並べる。**
     ///
     /// <!-- example: 文脈 var weather: JSONObject! -->
