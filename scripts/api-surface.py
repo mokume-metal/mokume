@@ -346,11 +346,11 @@ def details(symbols: list[dict], version: str) -> dict:
     正典は `///` だけである。
 
     形は基底名ごとの配列で、同名の多重定義は同じ配列に並ぶ。型そのもの (トップレベル) は
-    持ち主が空の項になる。並びは (持ち主・引数の型・宣言) で決め、入力の順に依らない
+    持ち主が空の項になる。並びは (持ち主・持ち主の経路・引数の型・宣言) で決め、入力の順に依らない
     (`order` が一覧に対して担うのと同じ理由 — 版の間で diff したときのノイズを避ける)。
     """
     grouped: dict[str, list[dict]] = {}
-    for symbol in sorted(symbols, key=lambda s: (owner(s), *order(s), declaration(s))):
+    for symbol in sorted(symbols, key=lambda s: (owner(s), owner_path(s), *order(s), declaration(s))):
         grouped.setdefault(base_name(symbol), []).append(
             {"owner": owner(symbol), "ownerPath": owner_path(symbol),
              "declaration": declaration(symbol), "doc": doc(symbol)})

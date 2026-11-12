@@ -2478,6 +2478,107 @@ struct MCPServerTests {
         #expect(wrong.isError, "\(wrong.text)")
     }
 
+    /// 見出しは経路全体で出す。`owner` のままだと、入れ子の型の口が最外の型の口に見える。
+    @Test("入れ子の型の口の見出しは、最外の型でなく経路全体を名乗る")
+    func headsANestedEntryWithItsWholePath() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        try putDetails(Self.nestedDetailsAsset, at: "mokume-api-details-v0.2.0.json", in: directory)
+        let tools = makeTools(directory: directory, fetches: Fetches())
+
+        let nested = reference(tools, "PixelSurface.ColorTable.init")
+        #expect(nested.text.contains("## PixelSurface.ColorTable"), "\(nested.text)")
+        let outer = reference(tools, "PixelSurface.init")
+        #expect(outer.text.contains("## PixelSurface\n"), "\(outer.text)")
+        #expect(!outer.text.contains("## PixelSurface.ColorTable"), "\(outer.text)")
+    }
+
+    /// 入れ子の `init` だけを持つ型に、`init` の辿り先を案内しない。`hasInit` が `owner` を見ると偽陽性になる。
+    @Test("入れ子の型の init だけを持つ型は、init を持つとは数えず、入れ子の型の側が持つ")
+    func countsInitsByTheWholeOwnerPath() throws {
+        let asset = """
+            {"schemaVersion":1,"version":"v0.2.0","symbols":{
+            "PixelSurface":[{"owner":"","ownerPath":"","declaration":"struct PixelSurface","doc":"画素の面。"}],
+            "init":[{"owner":"PixelSurface","ownerPath":"PixelSurface.ColorTable","declaration":"init(converting surface: PixelSurface)","doc":"色の表を作る。"}]}}
+            """
+        let details = try APIDetails.parse(Data(asset.utf8)).get()
+        #expect(details.members(of: "PixelSurface").hasInit == false)
+        #expect(details.members(of: "PixelSurface.ColorTable").hasInit == true)
+
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        try putDetails(asset, at: "mokume-api-details-v0.2.0.json", in: directory)
+        let type = reference(makeTools(directory: directory, fetches: Fetches()), "PixelSurface")
+        #expect(!type.text.contains("PixelSurface.init"), "入れ子の型の init を、型自身の init として案内する: \(type.text)")
+    }
+
+    /// 型の綴りがいちばん長い分けで、持ち主を案内する。先に当たった分け (`Foo` + `Nested.x`) は見当違いになりうる。
+    @Test("持ち主の無い綴りは、型の綴りがいちばん長い分けの持ち主を案内する")
+    func guidesByTheLongestTypeSpelling() throws {
+        let asset = """
+            {"schemaVersion":1,"version":"v0.2.0","symbols":{
+            "x":[{"owner":"Foo","ownerPath":"Foo.Other","declaration":"var x: Int","doc":"x。"}],
+            "Nested.x":[{"owner":"Unrelated","ownerPath":"Unrelated","declaration":"case x","doc":"別。"}]}}
+            """
+        let details = try APIDetails.parse(Data(asset.utf8)).get()
+        guard case .notOnOwner(let type, let base, let owners, _) = details.lookup("Foo.Nested.x") else {
+            Issue.record("notOnOwner ではない")
+            return
+        }
+        #expect(type == "Foo.Nested" && base == "x" && owners == ["Foo.Other"], "\(type) \(base) \(owners)")
+    }
+
+    @Test("モジュール名つきの綴りは引けず、持ち主を案内する")
+    func guidesAModuleQualifiedSpelling() throws {
+        let asset = """
+            {"schemaVersion":1,"version":"v0.2.0","symbols":{
+            "rect":[{"owner":"Canvas","ownerPath":"Canvas","declaration":"func rect()","doc":"四角。"}]}}
+            """
+        let details = try APIDetails.parse(Data(asset.utf8)).get()
+        guard case .notOnOwner(_, _, let owners, _) = details.lookup("MokumeCore.Canvas.rect") else {
+            Issue.record("notOnOwner ではない")
+            return
+        }
+        #expect(owners == ["Canvas"])
+    }
+
+    @Test("3 段の入れ子・列挙の case・ownerPath が空の項も引ける")
+    func readsDeepNestingCasesAndEmptyOwnerPaths() throws {
+        let asset = """
+            {"schemaVersion":1,"version":"v0.2.0","symbols":{
+            "ArcMode":[{"owner":"","ownerPath":"","declaration":"enum ArcMode","doc":"弧。"}],
+            "ArcMode.pie":[{"owner":"ArcMode","ownerPath":"ArcMode","declaration":"case pie","doc":"扇形。"}],
+            "init":[
+            {"owner":"A","ownerPath":"A.B.C","declaration":"init(deep: Int)","doc":"深い。"},
+            {"owner":"A","ownerPath":"A","declaration":"init(shallow: Int)","doc":"浅い。"}]}}
+            """
+        let details = try APIDetails.parse(Data(asset.utf8)).get()
+        guard case .found(let deep) = details.lookup("A.B.C.init") else {
+            Issue.record("A.B.C.init が引けない")
+            return
+        }
+        #expect(deep.map(\.doc) == ["深い。"])
+        guard case .found(let shallow) = details.lookup("A.init") else {
+            Issue.record("A.init が引けない")
+            return
+        }
+        #expect(shallow.map(\.doc) == ["浅い。"])
+        guard case .notOnOwner = details.lookup("A.B.init") else {
+            Issue.record("A.B.init は持ち主が無い")
+            return
+        }
+        guard case .found(let pie) = details.lookup("ArcMode.pie") else {
+            Issue.record("ArcMode.pie が引けない")
+            return
+        }
+        #expect(pie.first?.ownerPath == "ArcMode")
+        guard case .found(let type) = details.lookup("ArcMode") else {
+            Issue.record("ArcMode が引けない")
+            return
+        }
+        #expect(type.first?.ownerPath == "")
+    }
+
     @Test("ownerPath の無い古い資産は、今までどおり最外の型で引ける")
     func keepsTheOutermostOwnerForAssetsWithoutAnOwnerPath() throws {
         let directory = try makeDirectory()
@@ -2962,6 +3063,19 @@ struct MCPServerTests {
         }
         #expect(lights.count == 2)
         #expect(lights.first?.doc.contains("目盛りは 0…1") == true)
+        // 代表例の入れ子の型の項を、`owner` でなく `ownerPath` で引ける (作る側 `api-surface.py` が出す形と同じ・
+        // 代表例は `make schemas` がスキーマと照合している)
+        guard case .found(let nested) = details.lookup("PixelSurface.ColorTable.init") else {
+            Issue.record("PixelSurface.ColorTable.init が引けない")
+            return
+        }
+        #expect(nested.count == 1 && nested[0].declaration.contains("converting"))
+        #expect(nested[0].owner == "PixelSurface" && nested[0].ownerPath == "PixelSurface.ColorTable")
+        guard case .found(let outer) = details.lookup("PixelSurface.init") else {
+            Issue.record("PixelSurface.init が引けない")
+            return
+        }
+        #expect(outer.count == 1 && outer[0].declaration.contains("width"))
     }
 
     /// 文字列でない名前を「引数なし」に倒すと、頼んだ文書の代わりに一覧が成功として返り、

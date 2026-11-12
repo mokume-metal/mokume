@@ -104,13 +104,12 @@ struct APIDetails: Equatable {
             if !type.isEmpty, let entries = symbols[base], !entries.isEmpty {
                 let narrowed = entries.filter { $0.effectiveOwnerPath == type }
                 if !narrowed.isEmpty { return .found(narrowed) }
-                if notOnOwner == nil {
-                    var owners: [String] = []
-                    for entry in entries where !owners.contains(entry.effectiveOwnerPath) {
-                        owners.append(entry.effectiveOwnerPath)
-                    }
-                    notOnOwner = .notOnOwner(type: type, base: base, owners: owners, candidates: candidates)
+                // 後ろの分け (型の綴りが長い) ほど正確な案内なので、先勝ちにせず上書きして最後のものを返す
+                var owners: [String] = []
+                for entry in entries where !owners.contains(entry.effectiveOwnerPath) {
+                    owners.append(entry.effectiveOwnerPath)
                 }
+                notOnOwner = .notOnOwner(type: type, base: base, owners: owners, candidates: candidates)
             }
             dot = trimmed[trimmed.index(after: current)...].firstIndex(of: ".")
         }

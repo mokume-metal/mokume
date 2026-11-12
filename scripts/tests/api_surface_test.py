@@ -538,6 +538,17 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(data["symbols"]["PixelSurface"][0]["ownerPath"], "")
         self.assertEqual(data["symbols"]["ColorTable"][0]["ownerPath"], "PixelSurface")
 
+    def test_ownerPath_だけが違う項の並びが入力の順に依らない(self):
+        # 外側と入れ子の型の同じ形の init は owner も引数の型も宣言も同じ。鍵に ownerPath が無いと同点で、入力の順が出る
+        symbols = [
+            symbol("init(width:)", owner="PixelSurface", precise="a", parameters=["Int"]),
+            symbol("init(width:)", owner="PixelSurface.ColorTable", precise="b", parameters=["Int"]),
+        ]
+        forward = api.details(symbols, "v1.2.3")
+        backward = api.details(list(reversed(symbols)), "v1.2.3")
+        self.assertEqual(api.render_details(forward), api.render_details(backward))
+        self.assertEqual([e["ownerPath"] for e in forward["symbols"]["init"]], ["PixelSurface", "PixelSurface.ColorTable"])
+
     def test_詳細の件数は一覧の三つの出口の件数と一致する(self):
         # 出口は top (型)・by_owner (一覧に型がある持ち主のメンバー)・その他 (型が一覧に無い持ち主)
         with tempfile.TemporaryDirectory() as directory:
