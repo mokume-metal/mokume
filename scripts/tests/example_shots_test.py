@@ -642,8 +642,8 @@ class DriftTest(unittest.TestCase):
     def test_同じ絵は名指ししない(self):
         for shot in self.shots:
             self.put(shot, grey_rows(), grey_rows())
-        compared, drifts = shots.compare_trees(self.shots, self.shots, self.base_out, self.head_out)
-        self.assertEqual((compared, drifts), (2, []))
+        compared, drifts, skipped = shots.compare_trees(self.shots, self.shots, self.base_out, self.head_out)
+        self.assertEqual((compared, drifts, skipped), (2, [], []))
 
     def test_バイトが同じ_PNG_は復号せずに同じと言う(self):
         shot = self.shots[0]
@@ -655,7 +655,7 @@ class DriftTest(unittest.TestCase):
         first, second = self.shots
         self.put(first, grey_rows(), grey_rows(changed={(1, 1): (128, 130, 128, 255)}))
         self.put(second, grey_rows(), grey_rows())
-        compared, drifts = shots.compare_trees(self.shots, self.shots, self.base_out, self.head_out)
+        compared, drifts, _ = shots.compare_trees(self.shots, self.shots, self.base_out, self.head_out)
         self.assertEqual(compared, 2)
         self.assertEqual([d.shot.name for d in drifts], [first.name])
         self.assertEqual((drifts[0].pixels, drifts[0].total, drifts[0].largest), (1, 12, 2))
@@ -691,7 +691,7 @@ class DriftTest(unittest.TestCase):
             asked.append(shot.name)
             return None
 
-        compared, _ = shots.compare_trees(self.shots, head, self.base_out, self.head_out, measure)
+        compared, *_ = shots.compare_trees(self.shots, head, self.base_out, self.head_out, measure)
         # 1 本目 (円 160) は両方に在り、2 本目 (円 80 → 90) は head にしか無い
         self.assertEqual(compared, 1)
         self.assertEqual(asked, [self.shots[0].name])
@@ -727,6 +727,88 @@ class DriftTest(unittest.TestCase):
         digest = shots.image_hash(self.head_out, shot)
         with mock.patch.object(shots, "image_hash", return_value=None):
             self.assertEqual(self.named(dataclasses.replace(shot, record_image=digest)), [shot.name])
+
+    def test_外した絵は_3_つ目の戻り値に入る(self):
+        shot = self.changed_shot(None)
+        digest = shots.image_hash(self.head_out, shot)
+        redrawn = dataclasses.replace(shot, record_image=digest)
+        _, drifts, skipped = shots.compare_trees([redrawn], [redrawn], self.base_out, self.head_out)
+        self.assertEqual(([d.shot.name for d in drifts], [d.shot.name for d in skipped]), ([], [shot.name]))
+
+    # ---- 動き (#3445)
+
+    def motion_shot(self, record_image):
+        source = SOURCE.replace("<!-- shot: 中央の橙色の円 -->", "<!-- shot: 中央の橙色の円 | frames=3 -->")
+        (self.root / "Sources" / "Sketch.swift").write_text(source, encoding="utf-8")
+        motion = next(s for s in shots.collect(self.root) if s.is_motion)
+        for index in range(3):
+            name = f"f.{index:04d}.png"
+            for out in (self.base_out, self.head_out):
+                (out / motion.name).mkdir(exist_ok=True)
+            write_png(self.base_out / motion.name / name, grey_rows())
+            moved = {(0, 0): (0, 0, 0, 255)} if index == 1 else None
+            write_png(self.head_out / motion.name / name, grey_rows(changed=moved))
+        return dataclasses.replace(motion, record_image=record_image)
+
+    def test_動きは_head_の全フレームのハッシュが記録と一致したとき外す(self):
+        motion = self.motion_shot(None)
+        digest = shots.image_hash(self.head_out, motion)
+        self.assertIsNotNone(digest)
+        self.assertEqual(self.named(dataclasses.replace(motion, record_image=digest)), [])
+
+    def test_動きは_1_フレームだけ違えば名指しに残る(self):
+        motion = self.motion_shot(None)
+        digest = shots.image_hash(self.head_out, motion)
+        # 記録の撮影後に head の 1 フレームだけが変わった形
+        write_png(
+            self.head_out / motion.name / "f.0002.png",
+            grey_rows(changed={(2, 2): (9, 9, 9, 255)}),
+        )
+        self.assertEqual(self.named(dataclasses.replace(motion, record_image=digest)), [motion.name])
+
+    def test_動きは_image_が無ければ名指しに残る(self):
+        motion = self.motion_shot(None)
+        self.assertEqual(self.named(motion), [motion.name])
+
+    # ---- 要約 (#3445)
+
+    def test_外した絵があれば要約は画素が変わった絵は無いと言わず本数と場所を出す(self):
+        skipped = self.drift_for()
+        text = shots.drift_summary(5, [], {"比較": 1.0}, "HEAD^1", [skipped])
+        self.assertNotIn("画素が変わった絵は無い", text)
+        self.assertIn("名指しする絵は無い", text)
+        self.assertIn("1 本は画素が変わった", text)
+        self.assertIn(skipped.shot.where, text)
+        self.assertIn(f"snippet={skipped.shot.fingerprint}", text)
+        self.assertNotIn("| 説明文 |", text)
+
+    def test_外した絵も名指しもあれば両方が要約に出る(self):
+        named = self.drift_for()
+        skipped = self.drift_for(shot=self.shots[1])
+        text = shots.drift_summary(5, [named], {"比較": 1.0}, "HEAD^1", [skipped])
+        self.assertIn("| 説明文 |", text)
+        self.assertIn(f"`{named.shot.fingerprint}`", text)
+        self.assertIn("1 本は画素が変わった", text)
+        self.assertIn(f"snippet={skipped.shot.fingerprint}", text)
+
+    def test_外した絵が無ければ要約は今のまま(self):
+        text = shots.drift_summary(5, [], {"比較": 1.0}, "HEAD^1", [])
+        self.assertIn("5 本を HEAD^1 と比べて、画素が変わった絵は無い", text)
+        self.assertNotIn("撮り直し済み", text)
+
+    def test_外した絵は_drifts_tsv_にも_annotation_にも入らない(self):
+        skipped = self.drift_for()
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / "rec"
+            summary = shots.drift_summary(5, [], {"比較": 1.0}, "B", [skipped])
+            shots.write_drift_record(record, summary, [])
+            self.assertEqual((record / "drifts.tsv").read_text(encoding="utf-8"), "")
+            self.assertIn(skipped.shot.fingerprint, (record / "summary.md").read_text(encoding="utf-8"))
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "GITHUB_STEP_SUMMARY": ""}), \
+                contextlib.redirect_stdout(out):
+            shots.report_drift(3, [], {"比較": 1.0}, "HEAD^1", [skipped])
+        self.assertNotIn("::warning", out.getvalue())
 
     # ---- 言い方
 

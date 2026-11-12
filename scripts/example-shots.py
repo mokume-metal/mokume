@@ -142,6 +142,8 @@ Issue にする)。render-pr が見送られた PR の分も区間の差に入�
   変わらない。**比べる 2 枚は同じ機械・同じ OS で、いま描く** (名指しの根拠は今までどおりこの
   比べ)。head で描いた画素のハッシュが head の記録の `image=` と同じ絵は、区間のどこかで撮り
   直し済み (#3869) として外す。`image=` の無い古い記録・読めない絵・一致しない絵は外さない。
+  外した絵は名指し (警告・起票の鍵・表) には出さず、**run の要約にだけ本数と場所を出す**
+  (要約が「画素が変わった絵は無い」と言い切らない)。
   記録の `image=` (下の「撮り直しで URL を動かさない」) の主な読み手は撮り直しの側
 - **比べるのは画素で、PNG のバイトではない。** バイトだけが違う絵 (#1454 の
   `shadows(_:)`) は、画素が同じなら言わない。画素が違うなら、違う数と最大の差を添える。
@@ -1587,8 +1589,12 @@ def compare_trees(
     base_out: pathlib.Path,
     head_out: pathlib.Path,
     measure: Callable[[pathlib.Path, pathlib.Path, Shot], Drift | None] = measure_drift,
-) -> tuple[int, list[Drift]]:
-    """両方の木に在る絵だけを比べる → (比べた本数, 変わっていた絵)。
+) -> tuple[int, list[Drift], list[Drift]]:
+    """両方の木に在る絵だけを比べる → (比べた本数, 名指しする絵, 撮り直し済みとして外した絵)。
+
+    外した絵 (画素は変わったが、head の記録の `image=` と一致した) は名指しの警告・起票の鍵・
+    表には入れず、run の要約にだけ出す (#3445)。要約が「画素が変わった絵は無い」と言い切って、
+    レビューの「意図した変化か」の材料を黙って減らさないため。
 
     **鍵は指紋 (`shot.name`)。** 例そのものが書き換わった絵は指紋が変わり、片側にしか
     無い — それは `check` が「撮り直していない」と言う領分で、**実装だけの変化**を
@@ -1596,12 +1602,12 @@ def compare_trees(
     """
     in_base = {shot.name for shot in base_shots}
     both = [shot for shot in head_shots if shot.name in in_base]
-    drifts = [
-        drift
-        for shot in both
-        if (drift := measure(base_out, head_out, shot)) and not redrawn(head_out, shot)
-    ]
-    return len(both), drifts
+    drifts: list[Drift] = []
+    skipped: list[Drift] = []
+    for shot in both:
+        if drift := measure(base_out, head_out, shot):
+            (skipped if redrawn(head_out, shot) else drifts).append(drift)
+    return len(both), drifts, skipped
 
 
 def redrawn(head_out: pathlib.Path, shot: Shot) -> bool:
@@ -1645,12 +1651,23 @@ def drift_annotation(drift: Drift) -> str:
 
 
 def drift_summary(
-    compared: int, drifts: list[Drift], timings: dict[str, float], base_rev: str
+    compared: int,
+    drifts: list[Drift],
+    timings: dict[str, float],
+    base_rev: str,
+    skipped: list[Drift] | None = None,
 ) -> str:
-    """run の要約 (Markdown)。変わった絵が無ければ 1 行だけ。"""
+    """run の要約 (Markdown)。変わった絵も外した絵も無ければ 1 行だけ。
+
+    `skipped` は画素は変わったが記録の `image=` と一致して名指しから外した絵 (#3445)。
+    名指しの表・警告・起票の鍵には入らず、ここに本数と場所だけを出す。
+    """
+    skipped = skipped or []
     lines = ["## 例の絵の前後の比較", ""]
-    if not drifts:
+    if not drifts and not skipped:
         lines.append(f"{compared} 本を {base_rev} と比べて、画素が変わった絵は無い。")
+    elif not drifts:
+        lines.append(f"{compared} 本を {base_rev} と比べて、名指しする絵は無い。")
     else:
         lines += [
             f"{compared} 本を {base_rev} と比べて、**{len(drifts)} 本の画素が変わっている。** "
@@ -1668,16 +1685,29 @@ def drift_summary(
                 f"| `{shot.where}` | `{shot.fingerprint}` | {drift.pixels} / {drift.total}"
                 f"{motion} | {drift.largest} | {alt} |"
             )
+    if skipped:
+        lines += [
+            "",
+            f"{len(skipped)} 本は画素が変わったが、記録の `image=` と同じ (撮り直し済み) なので"
+            "名指ししない (警告・起票の鍵にも入れない):",
+            "",
+        ]
+        for drift in skipped:
+            lines.append(f"- `{drift.shot.where}` (`snippet={drift.shot.fingerprint}`)")
     lines += ["", "所要 (秒): " + " / ".join(f"{name} {seconds:.0f}" for name, seconds in timings.items())]
     return "\n".join(lines) + "\n"
 
 
 def report_drift(
-    compared: int, drifts: list[Drift], timings: dict[str, float], base_rev: str
+    compared: int,
+    drifts: list[Drift],
+    timings: dict[str, float],
+    base_rev: str,
+    skipped: list[Drift] | None = None,
 ) -> None:
     """annotation は Actions の上でだけ出す (手元に `::warning` の生の行を出さない)。"""
     on_actions = bool(os.environ.get("GITHUB_ACTIONS"))
-    summary = drift_summary(compared, drifts, timings, base_rev)
+    summary = drift_summary(compared, drifts, timings, base_rev, skipped)
     if on_actions:
         for drift in drifts:
             print(drift_annotation(drift))
@@ -1689,7 +1719,8 @@ def report_drift(
             handle.write(summary)
     else:
         print(summary)
-    print(f"例の絵: {compared} 本を比べて、画素が変わったのは {len(drifts)} 本")
+    extra = f" (撮り直し済みで外した {len(skipped)} 本を除く)" if skipped else ""
+    print(f"例の絵: {compared} 本を比べて、画素が変わったのは {len(drifts)} 本{extra}")
 
 
 def write_drift_record(record: pathlib.Path, summary: str, drifts: list[Drift]) -> None:
@@ -1764,13 +1795,14 @@ def drift(
         render(root, head_shots, head_out, bundle=False)
         timings["head の build+render"] = time.monotonic() - started
         started = time.monotonic()
-        compared, drifts = compare_trees(base_shots, head_shots, base_out, head_out)
+        compared, drifts, skipped = compare_trees(base_shots, head_shots, base_out, head_out)
         timings["比較"] = time.monotonic() - started
     finally:
         _remove_worktree(root, base_root)
-    report_drift(compared, drifts, timings, base_rev)
+    report_drift(compared, drifts, timings, base_rev, skipped)
     if record:
-        write_drift_record(record, drift_summary(compared, drifts, timings, base_rev), drifts)
+        summary = drift_summary(compared, drifts, timings, base_rev, skipped)
+        write_drift_record(record, summary, drifts)
     return 0
 
 
