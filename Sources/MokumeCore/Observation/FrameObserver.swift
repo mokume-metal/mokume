@@ -44,6 +44,9 @@ final class FrameObserver {
     }
 
     let directory: URL
+    /// 持ち出した組の置き場 (`.mokume/kept`・[#2618](https://github.com/mokume-metal/mokume/issues/2618))。
+    /// 持ち出しを頼まれるまで作らない。
+    let keptDirectory: URL
     private let requests: RequestFile<ObservationRequest>
     private let reportURL: URL
 
@@ -60,6 +63,14 @@ final class FrameObserver {
         return FrameObserver(directory: directory, writesInBackground: true)
     }
 
+    /// 区画の隣の `kept`。区画を外から渡したときも、持ち出しは同じ `.mokume` の下に置く。
+    static func keptDirectory(beside facet: URL) -> URL {
+        facet.deletingLastPathComponent().appendingPathComponent(keptFacetName, isDirectory: true)
+    }
+
+    /// 持ち出しの置き場の名前 (`.mokume/kept`)。
+    static let keptFacetName = "kept"
+
     /// 絵の書き込みを、撮り終えた後もフレームの外で続けるか ([#2381])。
     ///
     /// `true` なら、撮り終えても書き込みの決着を待たずにフレームを進め、目録は決着した後のフレームで
@@ -71,8 +82,9 @@ final class FrameObserver {
     /// [#2381]: https://github.com/mokume-metal/mokume/issues/2381
     let writesInBackground: Bool
 
-    init(directory: URL, writesInBackground: Bool = false) {
+    init(directory: URL, writesInBackground: Bool = false, keptDirectory: URL? = nil) {
         self.directory = directory
+        self.keptDirectory = keptDirectory ?? Self.keptDirectory(beside: directory)
         self.writesInBackground = writesInBackground
         self.requests = RequestFile(facet: directory, handover: .rereadsReport)
         self.reportURL = requests.reportURL
@@ -254,5 +266,93 @@ final class FrameObserver {
     func finish(_ report: ObservationReport) {
         defer { requests.markHandled(report.id) }
         AtomicFile.publishJSON(report, to: reportURL, "the observation catalogue")
+    }
+
+    // MARK: - 持ち出す ([#2618])
+
+    /// 書き途中の置き場の名前の尾。記録の書き途中 (``ReplayClaim/partialSuffix``) と同じ綴り。
+    static let keptPartialSuffix = ReplayClaim.partialSuffix
+    /// 持ち出した絵の名前。
+    static let keptImageName = "frame.png"
+    /// 持ち出した目録の名前。
+    static let keptManifestName = "kept.json"
+
+    /// 持ち出しのどの段で転ばせるか。**検査だけが立てる** (書き込みの失敗を、置き場を壊さずに起こすため)。
+    enum KeepStep: Equatable {
+        case image, manifest, rename
+    }
+
+    /// 検査が立てる、持ち出しを転ばせる段。走らせる側は立てない。
+    var keepFault: KeepStep?
+
+    /// 区画に置き終えた絵 (`image`) を、目録 (`manifest`) と組にして `.mokume/kept/<id>/` へ持ち出す。
+    ///
+    /// **手順は記録 (``ReplayRecorder``) と同じ作法**である。`<id>.partial/` に絵と目録を置いて同期し、置き終えて
+    /// から `<id>/` へ改名する。途中で転んだら `.partial` を残して名乗る — 完成の印 (改名と目録の `complete`) が
+    /// 無いので、別の絵と目録の組を完成として渡さない。
+    ///
+    /// - 前の回が残した同じ名前の `.partial` は消してから書く。区画に応えるのは錠 (``FacetClaim``) を持つ
+    ///   プロセスだけなので、残っているのは死んだ回の書き途中である (記録の ``ReplayClaim/discardPrevious()`` と同じ)
+    /// - **完成した `<id>/` が既に在れば、上書きも削除もしない。** 持ち出しの目的は消えないことなので、記録のように
+    ///   前の回の完成品を消す作法は採らない。持ち出さずに理由を返す
+    ///
+    /// **呼ぶのは区画の書き込みが決着した後、次の要求を拾う前** (``SketchRuntime`` が ``settleWrites(_:)`` の
+    /// `.written` の後に呼ぶ)。次の撮影の掃除 (``clearProducts()``) が区画の絵を消すのはその後なので、持ち出す
+    /// 絵は必ずこの要求の絵である。
+    ///
+    /// - Returns: 置けたなら、応答からの相対の置き場 (`../kept/<id>`)。置けなければ `nil` と理由。
+    func keep(_ manifest: KeptFrame, image name: String) -> (kept: String?, warning: String?) {
+        func refused(_ reason: String) -> (kept: String?, warning: String?) {
+            (nil, "The shot was not kept: \(reason)")
+        }
+        if let reason = KeptFrame.refusal(forDirectoryNamed: manifest.id) { return refused(reason) }
+        let destination = keptDirectory.appendingPathComponent(manifest.id, isDirectory: true)
+        let partial = keptDirectory.appendingPathComponent(
+            manifest.id + Self.keptPartialSuffix, isDirectory: true)
+        let files = FileManager.default
+        do {
+            try files.createDirectory(at: keptDirectory, withIntermediateDirectories: true)
+        } catch {
+            return refused("could not make \(keptDirectory.path): \(Diagnostics.reason(error))")
+        }
+        // 完成品を指す名前は、壊れた symlink も含めて「在る」と読む (行き先を辿らない)
+        if (try? files.attributesOfItem(atPath: destination.path)) != nil {
+            return refused("\(destination.path) already exists, and it is not overwritten")
+        }
+        if (try? files.attributesOfItem(atPath: partial.path)) != nil {
+            do {
+                try files.removeItem(at: partial)
+            } catch {
+                return refused(
+                    "could not clear \(partial.path) left by an earlier run: \(Diagnostics.reason(error))")
+            }
+        }
+        do {
+            try files.createDirectory(at: partial, withIntermediateDirectories: false)
+            let image = partial.appendingPathComponent(Self.keptImageName)
+            if keepFault == .image { throw CocoaError(.fileWriteUnknown) }
+            // 同じバイト列を写す (APFS では複製の印だけで済む)。符号化し直さない — 区画の絵と画素も属性も揃う
+            try files.copyItem(at: directory.appendingPathComponent(name), to: image)
+            try Self.synchronize(image)
+            let catalogue = partial.appendingPathComponent(Self.keptManifestName)
+            if keepFault == .manifest { throw CocoaError(.fileWriteUnknown) }
+            try AtomicFile.writeJSON(manifest, to: catalogue)
+            try Self.synchronize(catalogue)
+            if keepFault == .rename { throw POSIXError(.EIO) }
+            guard rename(partial.path, destination.path) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        } catch {
+            return refused(
+                "writing \(partial.path) failed, so it is left unfinished: \(Diagnostics.reason(error))")
+        }
+        return ("../\(Self.keptFacetName)/\(manifest.id)", nil)
+    }
+
+    /// 置いたファイルを同期する (`fsync`)。改名の後に電源が落ちても、完成の名前の下が空のまま残らない。
+    private static func synchronize(_ url: URL) throws {
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        try handle.synchronize()
     }
 }

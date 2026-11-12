@@ -34,6 +34,10 @@
       "default": 1,
       "description": "Take a shot every this many frames. Every frame when omitted, and null reads as omitted. Asking outside the range is never clamped in silence, as with count, however large the number is. **Counted in frames rather than seconds**, so the shots follow the frames the sketch actually draws. The sketch being observed runs on the wall clock unless it chose `clock: .frames`, and writing the images makes frames heavier, so **the shots are not evenly spaced in time** — lay the series out by each entry's `time` in the catalogue (frames), rather than assuming an even gap. For motion with evenly spaced times, write it with `mokume render` instead: it runs the sketch at a fixed frame rate and writes every frame, so nothing needs laying out again."
     },
+    "keep": {
+      "type": ["boolean", "null"],
+      "description": "Keep the one image taken, together with the conditions known for its frame, outside this facet, in `.mokume/kept/<id>/` (`kept-frame.schema.json`), where the next request does not clear it. false when omitted, and null reads as omitted; **a request without it is answered exactly as before**, byte for byte. A value that is not a boolean (\"yes\", 1) makes the request unreadable. Only a single shot is kept: with a count above 1 the shots are taken but not kept, and the reply's warnings say so. The id becomes the folder's name, so an id holding a slash or NUL, starting with a dot, ending in `.partial`, or too long for a folder name is not kept (warnings say why). A folder of that name that already exists is never overwritten or removed. The folder is written as `<id>.partial` and renamed to `<id>` only once the image and the catalogue are in place and synced, so a `.partial` folder is unfinished. The reply's `kept` names the folder when it was kept; without it, warnings say why. Older sketches ignore this key and name it in warnings."
+    },
     "time": {
       "type": ["number", "null"],
       "minimum": 0,

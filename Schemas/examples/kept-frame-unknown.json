@@ -1,0 +1,20 @@
+{
+  "clock": {
+    "kind": "wallClock"
+  },
+  "complete": true,
+  "frame": 340,
+  "id": "b7",
+  "image": "frame.png",
+  "params": null,
+  "paramsUnknownReason": "The knob values changed after frame 340 was drawn, so the values this picture was drawn with are not known",
+  "record": null,
+  "schemaVersion": 1,
+  "size": {
+    "height": 600,
+    "width": 800
+  },
+  "stamp": null,
+  "time": 5.671,
+  "values": {}
+}
