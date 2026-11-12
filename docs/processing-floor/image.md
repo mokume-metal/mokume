@@ -9,8 +9,8 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 24 |
-| 入れる | 2 |
+| 同等 | 26 |
+| 入れる | 0 |
 | 作例待ち | 1 |
 | 持たない | 7 |
 | 計 | 34 |
@@ -26,7 +26,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 ## 入れるの束
 
-「入れる」の API は、近いものごとに 6 本の `Feature` で入れる。表の「入れる」の行は当初 4 つ (いまは 2 つ。[#3711] で入れた `PImage.resize()` と [#3713] で入れた `PImage.mask()` は「同等」に移した) で、欠けた形 (行は「同等」のまま、理由の欄に「無い形」と書いたもの) も束に入れた。
+「入れる」の API は、近いものごとに 6 本の `Feature` で入れる。表の「入れる」の行は当初 4 つ (いまは 0。[#3711] で入れた `PImage.resize()`、[#3713] で入れた `PImage.mask()`、[#3717] で入れた `textureMode()`・`textureWrap()` は「同等」に移した) で、欠けた形 (行は「同等」のまま、理由の欄に「無い形」と書いたもの) も束に入れた。
 
 | 束 | API | 表の行 |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | [#3714] 画面の写し (入れた) | `Sketch.get()`・`get(_:_:_:_:)`・`get(in:)` と、`Canvas` の同じもの | 関数 `get()` の領域と全体の形 |
 | [#3715] URL からの読み込み (入れた) | `loadImage`・`requestImage` の URL と、種類を渡す `loadImage(_:extension:)`・`requestImage(_:extension:)` | `loadImage()`・`requestImage()` の URL の形 |
 | [#3716] `filter` の残りの効果 (入れた) | `Effect` の `.posterize(levels:)`・`.erode`・`.dilate`・`.opaque` | `PImage.filter()`・関数 `filter()` の残りの 4 つ |
-| [#3717] テクスチャの読み方 | `textureMode`・`textureWrap` | `textureMode()`・`textureWrap()` |
+| [#3717] テクスチャの読み方 (入れた) | `textureMode(_:)`・`textureWrap(_:)` | `textureMode()`・`textureWrap()` |
 
 ## 外した 4 つ
 
@@ -106,8 +106,8 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `texture()` | `texture(_:)` (`Image` と `Canvas` の 2 つ) | 同等 | これから置く塗りに画像を貼る。`noTexture()` を呼ぶまで続き、`push()` / `pop()` で積める (Processing は `beginShape()` と `endShape()` の間に呼ぶ)。読み取り位置は `vertex(x, y, u, v)` で貼る画像の画素で書き、書かなければ形の囲みの箱から決まる | — |
-| `textureMode()` | — | 入れる | 読み取り位置は画素の単位 (Processing の `IMAGE`) だけで、0〜1 の `NORMAL` が無い。いまは `u * image.width` と掛けて書くしかない。描き場所を貼ったときは座標の大きさで読む。単位を選ぶ状態を足す | [#3717] |
-| `textureWrap()` | — | 入れる | 画像を読むサンプラーは端の外を端の色で延ばす (`CLAMP`) 固定で、繰り返す `REPEAT` が無い。`u` を画像の幅より大きく書いても、端の色で延びるだけで、繰り返しは `shader()` の断片でしか書けない。断片から画像を読む `mokume_sample` と読み方をそろえるかは [#3717] で決める | [#3717] |
+| `textureMode()` | `textureMode(_:)` | 同等 | `IMAGE`・`NORMAL` は `.image` (既定)・`.normal`。Processing と同じく `vertex()` を呼んだ時点の単位で読み、置いた後に戻しても変わらない。描き場所を貼ったときの `.image` は座標の大きさで読む。画像を貼っていない形では、どちらの単位でも書いた値がそのまま断片の `in.uv` へ届く。描き方なのでフレームを越え、`push()` / `pop()` で積める | [#3717] |
+| `textureWrap()` | `textureWrap(_:)` | 同等 | `CLAMP`・`REPEAT` は `.clamp` (既定)・`.repeat`。塗りを置いた時点の設定で読む (Processing も切り替えで描き切る)。内側の読み方 (線形) は変えない。**効くのは組み込みの塗りが貼る画像を読むときだけ**で、断片の `mokume_sample` は端の色で延ばしたまま ([#3717] の決定。断片にも要る作例が来たら決め直す)。描き方なのでフレームを越え、`push()` / `pop()` で積める | [#3717] |
 
 [#2449]: https://github.com/mokume-metal/mokume/issues/2449
 [#2450]: https://github.com/mokume-metal/mokume/issues/2450
