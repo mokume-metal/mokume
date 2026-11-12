@@ -35,7 +35,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 | `JSONObject` (クラス) | `JSONObject` | 同等 | 値の型で、キーで値を取り出す。空から作る `new JSONObject()` は `JSONObject()` ([#3643]) | [#2466]・PR [#3056] |
 | `JSONObject.getBoolean()` | `JSONObject.getBoolean(_:)` | 同等 | `true` / `false` だけを読む。数の `1` や文字の `"true"` は真偽にしない | [#2466]・PR [#3056] |
 | `JSONObject.getFloat()` | `JSONObject.getFloat(_:)` | 同等 | 数の文字 (10 進の綴りの `"18.5"`) も数として読む。数にならなければ NaN | [#2466]・PR [#3056] |
-| `JSONObject.getInt()` | `JSONObject.getInt(_:)` | 同等 | **丸めない。** `2.5` は 0 を返して知らせる (Processing は切り捨てる)。整数の値だけを読み、黙って別の値を返さない | [#2466]・PR [#3056] |
+| `JSONObject.getInt()` | `JSONObject.getInt(_:)` | 同等 | **丸めない。** `2.5` は 0 を返して知らせる (Processing は切り捨てる)。整数の値だけを読み、黙って別の値を返さない。**JSON の数の値は `JSONSerialization` が返した値で整数かを決める**ので、読み込みの時点で端数や下位の桁が失われる場合がある (`{"id": 9007199254740993.0}` は 9007199254740992、`{"id": "9007199254740993.0"}` は桁のまま 9007199254740993。正確な整数は文字で渡す) | [#2466]・PR [#3056] |
 | `JSONObject.getJSONArray()` | `JSONObject.getJSONArray(_:)` | 同等 | 返る配列は `for-in` で回せる。配列でなければ空の配列 | [#2466]・PR [#3056] |
 | `JSONObject.getJSONObject()` | `JSONObject.getJSONObject(_:)` | 同等 | オブジェクトでなければ空のオブジェクトで、繋いだまま書ける | PR [#2180]・[#2466] |
 | `JSONObject.getString()` | `JSONObject.getString(_:)` | 同等 | 文字の値だけを読み、数や真偽を綴りにしない | [#2466]・PR [#3056] |
@@ -50,7 +50,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 | --- | --- | --- | --- | --- |
 | `JSONArray` (クラス) | `JSONArray` | 同等 | `RandomAccessCollection` で、要素は `JSONObject` として回る。空から作る `new JSONArray()` は `JSONArray()` ([#3644]) | [#2466]・PR [#3056] |
 | `JSONArray.append()`・`remove()`・`setBoolean()`・`setFloat()`・`setInt()`・`setJSONArray()`・`setJSONObject()`・`setString()` (8 件) | `JSONArray.append(_:)`・`remove(_:)`・`setBoolean(_:_:)`・`setFloat(_:_:)`・`setInt(_:_:)`・`setJSONArray(_:_:)`・`setJSONObject(_:_:)`・`setString(_:_:)` | 同等 | 番号に値を書く・末尾に足す・番号の値を除く。`JSONObject` の書き換えと同じく `mutating` の API。`append` は `Int`・`Float`・`String`・`Bool`・`JSONObject`・`JSONArray` を受ける。`remove` は除いた値を返さない (`Any` を面に出さない)。NaN と無限は書かず、口ごとに 1 度知らせる。範囲の外の番号には書かず、1 度だけ知らせる (Processing は `null` で埋めて伸ばす。2026-10-31 の決定) | [#3644] |
-| `JSONArray.getBoolean()`・`getFloat()`・`getInt()`・`getJSONArray()`・`getJSONObject()`・`getString()` (6 件) | `JSONArray.getBoolean(_:)`・`getFloat(_:)`・`getInt(_:)`・`getJSONArray(_:)`・`getJSONObject(_:)`・`getString(_:)` | 同等 | 番号で読む。読み方は `JSONObject` の同じ名前の口と同じ (`getInt` は丸めない)。範囲の外の番号も落ちず、空の値と口ごとに 1 度の知らせ | [#2466]・PR [#3056] |
+| `JSONArray.getBoolean()`・`getFloat()`・`getInt()`・`getJSONArray()`・`getJSONObject()`・`getString()` (6 件) | `JSONArray.getBoolean(_:)`・`getFloat(_:)`・`getInt(_:)`・`getJSONArray(_:)`・`getJSONObject(_:)`・`getString(_:)` | 同等 | 番号で読む。読み方は `JSONObject` の同じ名前の口と同じ (`getInt` は丸めない。数の値は `JSONSerialization` が返した値で整数かを決めるので下位の桁が失われる場合がある: `[9007199254740993.0]` は 9007199254740992、`["9007199254740993.0"]` は 9007199254740993)。範囲の外の番号も落ちず、空の値と口ごとに 1 度の知らせ | [#2466]・PR [#3056] |
 | `JSONArray.getIntArray()`・`getStringArray()`・`toIntArray()`・`toStringArray()` (4 件) | `(0..<array.count).map { array.getInt($0) }` (文字は `getString`) | 持たない | 番号で読む口を Swift の `map` で回せば同じ並びになる。`getIntArray` と `toIntArray` は参照の上でも同じ働きの 2 つの名前である。整数でない要素は 0 と知らせになる (Processing は投げる) | — |
 | `JSONArray.isNull()` | `JSONArray.isNull(_:)` | 同等 | 番号の値が `null` かを知らせずに確かめる。範囲の外の番号は `true` を返し、知らせない (`JSONObject.isNull(_:)` と同じ。2026-10-31 の決定) | [#3645] |
 | `JSONArray.size()` | `JSONArray.count` | 同等 | 数え方は collection の `count` だけで、`size()` は持たない (書き方を 2 通りにしない) | [#2466]・PR [#3056] |
