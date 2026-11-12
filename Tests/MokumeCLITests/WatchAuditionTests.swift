@@ -26,6 +26,8 @@ struct WatchAuditionTests {
         private var requestCount = 0
         /// プレビューへ出した行。
         var previewLines: [String] = []
+        /// プレビューへ出した行ごとの、回る印を出したか (``previewLines`` と同じ並び)。
+        var previewSpinning: [Bool] = []
         /// 台へ伝えた内容。
         var held: [[Int32]] = []
         var returned: [Int32] = []
@@ -151,8 +153,11 @@ struct WatchAuditionTests {
         /// 1 拍。
         func beat() async {
             await WatchCommand.step(
-                session, stopped: { false }, preview: { [self] line, _ in
-                    if let line { previewLines.append(line) }
+                session, stopped: { false }, preview: { [self] line, spinning in
+                    if let line {
+                        previewLines.append(line)
+                        previewSpinning.append(spinning)
+                    }
                 })
         }
 

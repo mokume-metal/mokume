@@ -520,6 +520,269 @@ struct WatchAuditionRefutationTests {
         #expect(session.child === next && next.isRunning && !audition.isRunning)
     }
 
+    // MARK: - 作り直しの最中に読んだ保存の役 (#3796 の反証)
+
+    /// 保存を置いて、その作り直しを門で止める。止めた拍の `Task` を返す。
+    private func holdBuild(_ harness: Harness) async throws -> Task<Void, Never> {
+        harness.holdRebuild = true
+        harness.placeSave()
+        let building = Task { await harness.beat() }
+        for _ in 0..<50 where !harness.isRebuildHeld { await Task.yield() }
+        try #require(harness.isRebuildHeld, "作り直しが進行中にならない")
+        return building
+    }
+
+    /// 止めていた作り直しを進め、その拍を済ませる。
+    private func release(_ harness: Harness, _ building: Task<Void, Never>) async {
+        harness.releaseRebuild()
+        await building.value
+    }
+
+    /// 試聴の中で、作り直しの最中に読んだ保存を、いつ出るか。
+    enum LeaveAfterSecondRead: String, CaseIterable, CustomTestStringConvertible {
+        /// 前の版 (s3) の作り直しの最中。
+        case whileFirstBuilds
+        /// 前の版の作り直しが済んで、後の版 (s4) に取りかかる前。
+        case beforeSecondStarts
+        /// 後の版の試聴の子が起きた後。
+        case afterSecondStarts
+
+        var testDescription: String {
+            switch self {
+            case .whileFirstBuilds: "前の版の作り直しの最中"
+            case .beforeSecondStarts: "後の版に取りかかる前"
+            case .afterSecondStarts: "後の版を起こした後"
+            }
+        }
+    }
+
+    @Test(
+        "試聴の中で、作り直しの最中に読んだ保存も試聴の版で、いつ出ても本番にならない (#3796 の反証 1)",
+        arguments: LeaveAfterSecondRead.allCases)
+    func aSaveReadWhileAnotherBuildsKeepsItsAuditionRole(_ moment: LeaveAfterSecondRead) async throws {
+        let harness = try Harness()
+        let session = harness.session
+        let production = try #require(await harness.save())  // s1
+        _ = try await harness.ask("audition")
+        _ = try #require(await harness.save())  // s2 (試聴の子)
+        let building = try await holdBuild(harness)  // s3 (試聴の版) を作り直している
+        harness.placeSave()  // s4
+        await harness.beat()  // s4 を試聴の中で読む (作り直しの最中なので取りかからない)
+        switch moment {
+        case .whileFirstBuilds:
+            _ = try await harness.ask("leave")
+            await release(harness, building)
+        case .beforeSecondStarts:
+            await release(harness, building)
+            _ = try await harness.ask("leave")
+        case .afterSecondStarts:
+            await release(harness, building)
+            await harness.beat()
+            #expect(session.auditionChild != nil, "後の版の試聴の子が起きない")
+            _ = try await harness.ask("leave")
+        }
+        let launched = harness.gens.count
+        await harness.beat()
+        await harness.beat()
+        #expect(harness.gens.count == launched, "出た後の拍が、試聴の中で読んだ版を本番へ作り直した")
+        #expect(session.child === production && production.isRunning, "試聴の中で読んだ版が本番に入れ替わった")
+        #expect(harness.alive() == [production])
+        #expect(session.lastStamp == "s1")
+        let record = try buildRecord(harness)
+        #expect(record["stamp"] as? String == "s1" && record["audition"] == nil, "区画 build の記録が本番の版でない: \(record)")
+        // 中身を変えれば、本番の版として作り直す
+        let next = try #require(await harness.save())  // s5
+        #expect(session.child === next)
+    }
+
+    @Test("作り直しを捨てたら、端末とプレビューに捨てたことを名乗り、回る印を止める (#3796 の反証 3)")
+    func aDiscardedBuildSaysSoAndStopsSpinning() async throws {
+        let harness = try Harness()
+        _ = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        let building = try await holdBuild(harness)  // s2 (試聴の版)
+        _ = try await harness.ask("leave")
+        let before = harness.previewLines.count
+        await release(harness, building)
+        let shown = Array(harness.previewLines[before...])
+        #expect(shown == [WatchCommand.auditionDiscardedLine], "捨てた作り直しの後にプレビューへ出た行: \(shown)")
+        #expect(harness.previewSpinning.last == false, "捨てた後もプレビューが回る印のまま")
+        // 捨てたことは 1 度だけ名乗る
+        await harness.beat()
+        #expect(harness.previewLines.count == before + 1)
+    }
+
+    @Test("出た後に止めた試聴の作り直しは、戻した本番の記録を上書きしない (#3796 の反証 4)")
+    func stoppingADiscardedBuildKeepsTheProductionRecord() async throws {
+        let harness = try Harness()
+        _ = try #require(await harness.save())  // s1
+        _ = try await harness.ask("audition")
+        let building = try await holdBuild(harness)  // s2 (試聴の版)
+        _ = try await harness.ask("leave")
+        harness.session.noteStopRequested()
+        _ = await harness.session.stopRebuilding()
+        let record = try buildRecord(harness)
+        #expect(record["stamp"] as? String == "s1" && record["audition"] == nil, "止めた試聴の版の記録で上書きした: \(record)")
+        await release(harness, building)
+        #expect(try buildRecord(harness)["audition"] == nil)
+    }
+
+    @Test("本番のまま読んだ版の作り直しの最中に入って出ると、その版が本番になる。後で本番の前の版へ戻すと作り直す (#3796 の反証 5)")
+    func leavingDuringAProductionBuildLetsThatVersionBecomeProduction() async throws {
+        let harness = try Harness()
+        let session = harness.session
+        _ = try #require(await harness.save())  // s1
+        let building = try await holdBuild(harness)  // s2 (本番の版)
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        #expect(session.lastStamp == "s2", "進行中の本番の版の世代の控えを、前の本番の版へ戻した")
+        await release(harness, building)
+        let started = try #require(harness.gens.last)
+        #expect(session.child === started && started.isRunning, "進行中の本番の版が本番にならない")
+        #expect(try buildRecord(harness)["stamp"] as? String == "s2" && buildRecord(harness)["audition"] == nil)
+        // 進行中だった版が本番なので、ソースを前の本番の版へ戻したら作り直す
+        let launched = harness.gens.count
+        harness.stampOverride = "s1"
+        await harness.beat()
+        #expect(harness.gens.count == launched + 1, "本番の版と違うソースへ戻したのに、作り直されない")
+    }
+
+    /// 本番のまま、作り直しの最中に読んだ保存に対して、いつ入るか。
+    enum EnterAfterSecondRead: String, CaseIterable, CustomTestStringConvertible {
+        case whileFirstBuilds, beforeSecondStarts
+        var testDescription: String {
+            self == .whileFirstBuilds ? "前の版の作り直しの最中" : "後の版に取りかかる前"
+        }
+    }
+
+    @Test(
+        "本番のまま、作り直しの最中に読んだ保存は、その後いつ入っても本番の版になる (#3796 の反証 2)",
+        arguments: EnterAfterSecondRead.allCases)
+    func aSaveReadWhileAProductionBuildRunsStaysProduction(_ moment: EnterAfterSecondRead) async throws {
+        let harness = try Harness()
+        let session = harness.session
+        _ = try #require(await harness.save())  // s1
+        let building = try await holdBuild(harness)  // s2 (本番の版)
+        harness.placeSave()  // s3
+        await harness.beat()  // s3 を本番のまま読む
+        switch moment {
+        case .whileFirstBuilds:
+            #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+            await release(harness, building)
+            await harness.beat()
+        case .beforeSecondStarts:
+            await release(harness, building)
+            // 入る要求の拍で s3 に取りかかる
+            #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        }
+        #expect(session.isAuditioning)
+        let last = try #require(harness.gens.last)
+        #expect(session.child === last && session.auditionChild == nil, "本番のまま読んだ版が本番の子にならない")
+        #expect(!session.isAuditionGeneration(pid: last.processIdentifier))
+        #expect(try buildRecord(harness)["stamp"] as? String == "s3" && buildRecord(harness)["audition"] == nil)
+    }
+
+    @Test("作り直しの最中に世代がさらに変わったら、新しい世代を最初に読んだ時点の役で作り直す (#3796 の反証 1)")
+    func aNewerSaveTakesTheRoleOfItsOwnFirstRead() async throws {
+        let harness = try Harness()
+        let session = harness.session
+        let first = try #require(await harness.save())  // s1
+        let building = try await holdBuild(harness)  // s2 (本番の版)
+        harness.placeSave()  // s3 を本番のまま読む
+        await harness.beat()
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        harness.placeSave()  // s4 を試聴の中で読む
+        await harness.beat()
+        await release(harness, building)  // s2 が本番になる
+        let production = try #require(harness.gens.last)
+        #expect(session.child === production)
+        await session.generationPromoted(pid: production.processIdentifier)
+        #expect(!first.isRunning)
+        await harness.beat()  // s4 に取りかかる
+        let audition = try #require(harness.gens.last)
+        #expect(session.auditionChild === audition, "試聴の中で最初に読んだ s4 が、試聴の子にならない")
+        #expect(session.child === production && production.isRunning)
+        #expect(try buildRecord(harness)["stamp"] as? String == "s4" && buildRecord(harness)["audition"] as? Bool == true)
+    }
+
+    @Test("作り直しの最中に読んだ版が、作り直している版へ戻ったら控えを捨てる。後でまた変えた中身は、その時の読みが役を決める (#3796 の反証 1)")
+    func revertingToTheVersionBeingBuiltDropsTheFirstRead() async throws {
+        let harness = try Harness()
+        let session = harness.session
+        let production = try #require(await harness.save())  // s1
+        _ = try await harness.ask("audition")
+        let building = try await holdBuild(harness)  // s2 (試聴の版)
+        harness.stampOverride = "s3"  // s3 を試聴の中で読む
+        await harness.beat()
+        harness.stampOverride = "s2"  // 作り直している版へ戻す
+        await harness.beat()
+        await release(harness, building)
+        let audition = try #require(session.auditionChild)
+        let launched = harness.gens.count
+        await harness.beat()
+        #expect(harness.gens.count == launched, "作り直した版へ戻したのに、もう 1 度作り直した")
+        _ = try await harness.ask("leave")
+        #expect(!audition.isRunning && session.child === production)
+        // 出た後に s3 へ変えた中身は、出た後の読みで本番の版になる
+        harness.stampOverride = "s3"
+        await harness.beat()
+        #expect(harness.gens.count == launched + 1 && session.child === harness.gens.last, "出た後に読んだ版が本番にならない")
+    }
+
+    /// 前の試聴の作り直しが、いつの出入りの後に済むか。
+    enum ReentryMoment: String, CaseIterable, CustomTestStringConvertible {
+        case whileReading, whileBuilding
+        var testDescription: String { self == .whileReading ? "読みの最中" : "作り直しの最中" }
+    }
+
+    @Test(
+        "前の試聴で読んだ版は、出て入り直した後に読み・作り直しが済んでも、新しい試聴の版にならない (#3796 の反証 7)",
+        arguments: ReentryMoment.allCases)
+    func aVersionFromAnEndedAuditionNeverJoinsTheNextOne(_ moment: ReentryMoment) async throws {
+        let harness = try Harness()
+        let session = harness.session
+        let production = try #require(await harness.save())  // s1
+        _ = try await harness.ask("audition")
+        let launched = harness.gens.count
+        switch moment {
+        case .whileReading:
+            harness.holdStamp = true
+            harness.placeSave()  // s2
+            let reading = Task { await harness.beat() }
+            for _ in 0..<50 where !harness.isStampHeld { await Task.yield() }
+            try #require(harness.isStampHeld, "世代の読みが進行中にならない")
+            _ = try await harness.ask("leave")
+            _ = try await harness.ask("audition")
+            harness.releaseStamp()
+            await reading.value
+        case .whileBuilding:
+            let building = try await holdBuild(harness)  // s2
+            _ = try await harness.ask("leave")
+            _ = try await harness.ask("audition")
+            await release(harness, building)
+        }
+        #expect(session.isAuditioning)
+        await harness.beat()
+        #expect(harness.gens.count == launched, "前の試聴で読んだ版の子を起こした")
+        #expect(session.auditionChild == nil && session.child === production)
+        // 新しい試聴の中で中身を変えれば、試聴の子が起きる
+        let next = try #require(await harness.save())  // s3
+        #expect(session.auditionChild === next && session.child === production)
+    }
+
+    @Test("「試聴の版を起こした」の行は、試聴の版の記録だけに出る。試聴の間に起きた本番の版には出ない (#3796 の反証 8)")
+    func theAuditionStartedLineFollowsTheRecord() {
+        let timings = BuildReport.Timings(detectMs: nil, buildMs: 0, relaunchMs: 0)
+        let production = BuildReport.launched(output: "", stamp: "s2", configuration: "debug", timings: timings)
+        var audition = production
+        audition.audition = true
+        #expect(WatchCommand.auditionLines(for: production).isEmpty)
+        #expect(WatchCommand.auditionLines(for: audition) == [WatchCommand.auditionStartedLine])
+        var failed = BuildReport.failed(status: 1, output: "", stamp: "s2", configuration: "debug", timings: timings)
+        failed.audition = true
+        #expect(WatchCommand.auditionLines(for: failed).isEmpty)
+    }
+
     @Test("出た後に入り直し、保存せずにまた出ても、試聴の中で読んだ版を本番へ作り直さない (#3796)")
     func leavingAgainWithoutSavingKeepsProduction() async throws {
         let harness = try Harness()
