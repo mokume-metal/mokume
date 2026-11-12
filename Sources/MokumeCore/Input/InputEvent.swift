@@ -48,9 +48,10 @@ public enum InputEvent: Equatable, Sendable {
     /// ウィンドウが前に出た (`true`)・前から退いた (`false`) ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。
     /// スケッチからは ``SketchPart/focused`` として読む。
     ///
-    /// 届いたフレームから ``SketchPart/focused`` が変わる。**`false` が届いたら、押しているキーとボタンを離した扱いにする**
-    /// (`keyReleased()`・`mouseReleased()` が呼ばれる) — 退いた後に離したキーはウィンドウへ届かないので、
-    /// 自前のウィンドウが退いたときと同じに離す ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。
+    /// 届いたフレームから ``SketchPart/focused`` が変わる。**この出来事そのものは押下を離さない。** 退いたときに離すのは
+    /// ウィンドウが流した押下だけで、ウィンドウが `false` に続けて解放の出来事を流す
+    /// ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。外から注入した押下は、注入した側の解放まで残る —
+    /// `false` の間も押されたままでありうる。
     ///
     /// 自前のウィンドウと道具のウィンドウ (`mokume watch`) は、ウィンドウが key になった・外れたときにこれを送る。
     /// 道具のウィンドウは 1 行にして子へ渡すので、子の ``SketchPart/focused`` も道具のウィンドウに従う。外から送る線

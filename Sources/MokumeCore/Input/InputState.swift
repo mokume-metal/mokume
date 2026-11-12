@@ -120,6 +120,10 @@ package final class InputState {
     ///
     /// **`true` から始まり、``InputEvent/focusChanged(focused:)`` が届いたフレームから変わる。** ウィンドウの無い実行
     /// (書き出し) には届かないので `true` のまま — `if !focused { noLoop() }` が書き出しを止めない。
+    ///
+    /// **`false` が届いても、押されているキーとボタンは離さない。** 退いたときに離すのはウィンドウが流した押下だけで、
+    /// ウィンドウ (`SketchSurface`) が `false` を流した直後に解放を流す。外から注入した押下は、`false` の間も押されたままで
+    /// ありうる ([#2443](https://github.com/mokume-metal/mokume/issues/2443) の約束)。
     public private(set) var focused = true
 
     /// 入力の層が 1 度だけ言う注意の種類。
@@ -178,7 +182,7 @@ package final class InputState {
     public func enqueue(_ event: InputEvent) {
         enqueueObserver?(event)
         if pending.count - pendingHead >= Self.queueLimit {
-            for step in steps(of: pending[pendingHead]) { apply(step) }
+            apply(pending[pendingHead])
             pendingHead += 1
             droppedEvents += 1
             // 抜け殻が上限ぶん溜まったら 1 回で詰める。1 件ごとに詰めると溢れ続ける間 O(上限) を
@@ -222,43 +226,15 @@ package final class InputState {
         pending.removeAll(keepingCapacity: true)
         pendingHead = 0
         for event in events {
-            for step in steps(of: event) {
-                // 判定に要る「適用する前」を控えてから状態を進め、**進めた後の値で**配る
-                let before = Before(
-                    pressedButtons: pressedButtons, keyWasPressed: wasPressed(step), x: x, y: y)
-                // **捨てた出来事は配らない** (#2731)。状態に入らなかった量を配ると、配った量の和と
-                // 足し込んだ和 (``dragX`` ほか) が食い違う。配るのは当てた形 (位置を捨てた押下・解放は、
-                // 前の位置のまま)
-                guard let applied = apply(step) else { continue }
-                dispatchCallbacks(for: applied, before: before, to: dispatch)
-            }
+            // 判定に要る「適用する前」を控えてから状態を進め、**進めた後の値で**配る
+            let before = Before(
+                pressedButtons: pressedButtons, keyWasPressed: wasPressed(event), x: x, y: y)
+            // **捨てた出来事は配らない** (#2731)。状態に入らなかった量を配ると、配った量の和と
+            // 足し込んだ和 (``dragX`` ほか) が食い違う。配るのは当てた形 (位置を捨てた押下・解放は、
+            // 前の位置のまま)
+            guard let applied = apply(event) else { continue }
+            dispatchCallbacks(for: applied, before: before, to: dispatch)
         }
-    }
-
-    /// 溜めた 1 件を、当てる順の出来事に開く。**開くのはウィンドウが退いた知らせだけ** で、ほかは 1 件のまま。
-    ///
-    /// `focusChanged(false)` は、退いたことを当てた後に、**当てる時点で押されている**キーとボタンの解放を続ける
-    /// ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。自前のウィンドウが退いたとき
-    /// (`SketchSurface.releaseHeld()`) と同じ並び — キーは番号順、ボタンは番号順で、位置はいまの位置。解放は
-    /// 普通の出来事として当てて配るので、`keyReleased()`・`mouseReleased()` が呼ばれ、呼ばれた中から読む
-    /// ``focused`` は既に `false` である。
-    ///
-    /// **開くのは当てる直前** (フレームの頭か、溢れて当てるとき)。溜めた時点の押下では決めない — 同じ
-    /// フレームに後から届いた押下・解放と順が食い違う。
-    ///
-    /// 自前のウィンドウと道具のウィンドウは、退いたときに自分が流した押下の解放を先に流してから知らせるので、
-    /// ここで離すのは残りのもの (外から注入した押下) だけになる。退いたという知らせは、その押下の解放も
-    /// もう届かないという知らせなので、出どころを分けずに離す。
-    private func steps(of event: InputEvent) -> [InputEvent] {
-        guard case .focusChanged(false) = event else { return [event] }
-        var steps = [event]
-        for code in pressedKeys.sorted(by: { $0.rawValue < $1.rawValue }) {
-            steps.append(.keyUp(code: code))
-        }
-        for button in pressedButtons.sorted(by: { $0.rawValue < $1.rawValue }) {
-            steps.append(.mouseUp(x: x, y: y, button: button))
-        }
-        return steps
     }
 
     /// 描いたフレームを終える。**このフレームの押した・離したを消す** (``justPressedKeys``)。
@@ -365,7 +341,9 @@ package final class InputState {
             // ([#3061](https://github.com/mokume-metal/mokume/issues/3061))
             dispatch(.fileDropped(paths: paths))
         case .focusChanged:
-            // 呼び出しは生まない。退いたときの解放は、開いた後の出来事が配る (``steps(of:)``)
+            // 呼び出しは生まない。**押下も離さない** — 退いたときに離すのはウィンドウが流した押下だけで、
+            // それはウィンドウ (`SketchSurface.releaseHeld()`) が解放の出来事として流す。外から注入した押下は、
+            // 注入した側の解放で離れる (#2443 の約束・[#3709](https://github.com/mokume-metal/mokume/issues/3709) の決定)
             break
         }
     }
