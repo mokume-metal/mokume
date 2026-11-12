@@ -112,6 +112,9 @@ extension Canvas {
         do {
             group = try createGraphics(box.width, box.height)
         } catch {
+            // 保持した形の範囲 (`settings` を渡す) は、置く口が子ごとに掛けて描くことを 1 度知らせるので、ここでは
+            // 重ねて知らせない (#3564 の反証 2 回目の 5)
+            guard settings == nil else { return false }
             warnOnce(
                 .compositeGroupSurface,
                 "A composite group could not make its intermediate surface (\(error.headline)), so "
@@ -204,8 +207,9 @@ extension Canvas {
         placedWith settings: (mode: BlendMode, paint: Shape.Paint)?
     ) {
         note(placing: group)
-        // 絵はベクターへ埋め込まない (#3139)。単位をベクターへどう書くかは 2 段目が決める
-        noteVectorDrop(.image)
+        // 絵はベクターへ埋め込まない (#3139)。**保持した形の範囲 (`settings` を渡す) は数えない** — 置く口が
+        // `.retainedShape` として既に数えていて、利用者は画像を描いていない (#3564 の反証 2 回目の 6)
+        if settings == nil { noteVectorDrop(.image) }
         let kept = transform
         transform = .identity
         defer { transform = kept }

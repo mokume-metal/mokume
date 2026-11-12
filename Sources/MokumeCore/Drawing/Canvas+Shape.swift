@@ -700,7 +700,7 @@ extension Canvas {
     ///   (``withCompositeGroup(opacity:covering:_:)``)。中の範囲 (`inner`) は、中間面の上で同じように置く
     /// - 形の組み立ての中では単位を開かず、範囲を外側の記録へ引き継ぐ (``recordCompositeGroup(opacity:covering:_:)``)。
     ///   外接は外側の形の座標へ移す
-    /// - **単位にできないとき** (視点を通る・細かさが 1 未満・記録した混ぜ方が `replace`・中間面を作れない) は、
+    /// - **単位にできないとき** (視点を通る・細かさが 1 未満・外接を移せない変換・記録した混ぜ方が `replace`・中間面を作れない) は、
     ///   範囲の中の色ごとに不透明度を掛けて置き (重なった所は濃く出る)、そのことを 1 度知らせる。黙って色ごとに
     ///   掛けず、描かないこともしない (#3564 の 2026-11-10 の決定)。置く側の混ぜ方が `replace` でも、中間面は
     ///   記録した混ぜ方 (SVG なら `blend`) で置くので単位にできる (#3564 の 2026-11-12 の決定)
@@ -734,9 +734,10 @@ extension Canvas {
             .compositeGroupPerShape,
             "A shape whose overlapping parts are drawn together and then faded as one (the opacity of an SVG "
                 + "group, or of an SVG element with both fill and stroke) was placed where they cannot be drawn "
-                + "together (under a camera or a 3D transform, with pixelDensity below 1, "
-                + "or inside createShape with a transform that cannot be followed), so the opacity was "
-                + "applied to each part and where they overlap the result is more opaque")
+                + "together (under a camera or a 3D transform, with pixelDensity below 1, with a transform "
+                + "that is not finite, or because the surface to draw them on could not be made), so the "
+                + "opacity was applied to each part. Where the parts overlap the result is more opaque than in "
+                + "the SVG")
         var perShape = placement
         perShape.fill = Self.fade(placement.fill, by: group.opacity)
         placeComposed(shape, in: group.runs, groups: inner, at: perShape)

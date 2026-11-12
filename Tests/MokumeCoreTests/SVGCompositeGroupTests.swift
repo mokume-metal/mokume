@@ -195,6 +195,65 @@ struct SVGCompositeGroupTests {
         #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil)
     }
 
+    @Test("組み立ての途中で置いた側を描き切っても (#2850 の逃げ道)、引き戻した範囲は同じ区間を指し、置いた先で 1 度だけ掛かる")
+    func drawingOutDuringTheBuildKeepsTheUnits() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(8, 8)
+        let read = try drawing(Self.group)
+        var built: Shape?
+        var passes = -1
+        try canvas.draw {
+            let logo = canvas.shape(of: read, readFrom: "composite.svg")
+            // 組み立ての前に置いた列 (引き戻す区間の起点が 0 でなくなる)
+            canvas.noStroke()
+            canvas.fill(LinearRGBA.linear(red: 1, green: 0, blue: 0))
+            canvas.rect(200, 120, 4, 4)
+            canvas.image(layer, 220, 140)
+            canvas.failPlacedPictureCopyForTesting = .encoderUnavailable
+            built = canvas.createShape {
+                canvas.noStroke()
+                canvas.fill(LinearRGBA.linear(red: 0, green: 0, blue: 1))
+                canvas.rect(180, 10, 4, 4)
+                canvas.shape(logo)
+                // 置いた描き場所を描き換えると、写しを持てないので組み立ての前の列を描き切る
+                layer.beginDraw()
+                layer.background(LinearRGBA.linear(red: 0, green: 1, blue: 0))
+                layer.endDraw()
+                canvas.rect(190, 10, 4, 4)
+            }
+            canvas.failPlacedPictureCopyForTesting = nil
+            passes = canvas.passesThisFrame
+        }
+        #expect(passes == 1, "検査の前提: 逃げ道に入っていない")
+        let shape = try #require(built)
+        #expect(shape.compositeGroups.count == 1)
+        try canvas.draw {
+            canvas.background(LinearRGBA.transparent)
+            canvas.shape(shape)
+        }
+        let image = try canvas.output.encodeForDisplay()
+        #expect(abs(alpha(image, 30, 30) - 128) <= 1, "\(image[30, 30])")
+        #expect(abs(alpha(image, 80, 80) - 128) <= 1, "重なり: \(image[80, 80])")
+        #expect(alpha(image, 181, 11) == 255, "範囲の外の区間は不透明のまま: \(image[181, 11])")
+        #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil)
+    }
+
+    @Test("ベクターへ書き出すと、単位を持つ形は保持した形として 1 つだけ数え、単位の四角を画像として数えない")
+    func vectorCaptureCountsTheShapeOnly() throws {
+        let canvas = try makeCanvas()
+        let read = try drawing(Self.group)
+        var drops: [VectorDrop] = []
+        try canvas.draw {
+            let shape = canvas.shape(of: read, readFrom: "composite.svg")
+            canvas.beginVectorWindow(pending: [])
+            canvas.startVectorCapture(path: "x.svg")
+            canvas.shape(shape)
+            drops = canvas.endVectorWindow()?.drops ?? []
+        }
+        #expect(drops == [.retainedShape], "\(drops)")
+        #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil, "単位にできた (検査の前提)")
+    }
+
     // MARK: - 置く側の混ぜ方と断片 (反証 #1・#5)
 
     /// 単位にする群と、単位にしない半透明の矩形 (`fill-opacity`・x 180…220) を 1 つの形に持つ。
@@ -282,6 +341,21 @@ struct SVGCompositeGroupTests {
         }
         #expect(alpha(image, 30, 30) > 0)
         #expect(alpha(image, 80, 80) > alpha(image, 30, 30) + 40, "\(image[80, 80]) / \(image[30, 30])")
+    }
+
+    @Test("視点の下の単一要素の例: 子ごとに掛けて、塗りだけ・線だけは 128、線と塗りの重なる帯だけ 191 (変更前と同じ・知らせの文のとおり)")
+    func underACameraTheElementOverlapIsAsBefore() throws {
+        let (image, canvas) = try rendered(Self.element) { canvas, shape in
+            canvas.ortho()
+            canvas.shape(shape)
+        }
+        #expect(abs(alpha(image, 80, 80) - 128) <= 1, "塗りだけ: \(image[80, 80])")
+        #expect(abs(alpha(image, 22, 80) - 128) <= 1, "線だけ: \(image[22, 80])")
+        #expect(abs(alpha(image, 21, 21) - 128) <= 1, "線の角 (線どうしは重ねない): \(image[21, 21])")
+        #expect(abs(alpha(image, 35, 80) - 191) <= 1, "線と塗りの重なる帯: \(image[35, 80])")
+        #expect(abs(alpha(image, 39, 39) - 191) <= 1, "線と塗りの重なる角: \(image[39, 39])")
+        let message = try #require(canvas.warnings.message(for: .compositeGroupPerShape))
+        #expect(message.contains("more opaque"))
     }
 
     @Test("細かさが 1 未満の面でも、子ごとに掛けて描き、1 度だけ知らせる")
