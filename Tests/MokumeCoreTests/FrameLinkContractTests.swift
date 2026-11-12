@@ -246,6 +246,30 @@ struct FrameLinkContractTests {
         #expect(FrameLink.receive(on: announcement.receivePort, timeout: 100) == nil, "大きさが分からないのに繋いだ")
     }
 
+    /// **受け手の見本も、Schema が断る大きさを大きさとして受けない** ([#3949])。`JSONSerialization` の真偽値は `as? Int` で
+    /// 1 と読めてしまう。どの値でも、大きさの無い項目と同じく指定を頼んで終わる (繋ぎに行かない)。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test(
+        "受け手の見本は、真偽値・小数・文字列・0・負の大きさを受けず、大きさの指定を頼む",
+        arguments: ["true, \"height\": true", "2.5, \"height\": 8", "\"16\", \"height\": 8", "0, \"height\": 8", "16, \"height\": -1"])
+    func theReceiverRefusesSizesTheSchemaRefuses(_ size: String) throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let file = directory.appendingPathComponent("org.mokume.frames.1.a.main.json")
+        try Data(
+            """
+            {"schemaVersion": 1, "sketch": "S", "window": "main", "identity": "/s", "title": "S", "pid": 1,
+             "startedAt": 1, "serviceName": "org.mokume.frames.1.a.main", "width": \(size)}
+            """.utf8
+        ).write(to: file)
+        let receiver = try FrameReceiverProcess(arguments: ["--listing", file.path, "--timeout", "5"])
+        let ended = receiver.wait(upTo: 20) { !receiver.process.isRunning }
+        #expect(ended, "受け手が終わらない: \(receiver.events)")
+        #expect(receiver.events(named: "size").isEmpty, "\(size) を大きさとして受けた: \(receiver.events)")
+        #expect(!receiver.events(named: "sizeUnknown").isEmpty, "\(receiver.events)")
+        #expect(receiver.process.terminationStatus == 6)
+    }
+
     @Test("大きさの無い旧い項目でも、知っている大きさを渡せばその大きさの面で繋ぐ")
     func aReceiverUsesAKnownSizeForAnOlderSender() throws {
         let directory = try TestScratch.directory("mokume-frames")
