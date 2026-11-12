@@ -144,22 +144,23 @@ struct RawInputEvent: Decodable {
         type = try container.decode(String.self, forKey: .type)
         x = try container.decodeIfPresent(Float.self, forKey: .x)
         y = try container.decodeIfPresent(Float.self, forKey: .y)
-        button = try container.decodeIfPresent(Int.self, forKey: .button)
+        // 整数の欄は、桁の多い端数つきの数も `2.5` と同じに断る (#4015)
+        button = try container.decodeWholeIfPresent(Int.self, forKey: .button)
         dx = try container.decodeIfPresent(Float.self, forKey: .dx)
         dy = try container.decodeIfPresent(Float.self, forKey: .dy)
-        code = try container.decodeIfPresent(Int.self, forKey: .code)
+        code = try container.decodeWholeIfPresent(Int.self, forKey: .code)
         characters = try container.decodeIfPresent(String.self, forKey: .characters)
         isRepeat = try container.decodeIfPresent(Bool.self, forKey: .isRepeat)
         // 種別が読まない鍵は解かない (値の型が違っても、その 1 件は解ける)
         let kind = InputEventType(rawValue: type)
         amount = kind == .pinched ? try container.decodeIfPresent(Float.self, forKey: .amount) : nil
         clickCount =
-            kind == .mouseDown ? try container.decodeIfPresent(Int.self, forKey: .clickCount) : nil
+            kind == .mouseDown ? try container.decodeWholeIfPresent(Int.self, forKey: .clickCount) : nil
         paths =
             kind == .fileDropped || kind == .fileSelected
             ? try container.decodeIfPresent([String].self, forKey: .paths) : nil
         serial =
-            kind == .fileSelected ? try container.decodeIfPresent(Int.self, forKey: .serial) : nil
+            kind == .fileSelected ? try container.decodeWholeIfPresent(Int.self, forKey: .serial) : nil
     }
 
     /// 線の番号をボタンにする。**番号を型へ絞る関所は、こことウィンドウ (`SketchSurface`) の 2 つだけ。**
