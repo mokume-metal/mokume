@@ -156,19 +156,74 @@ extension SketchPart {
     /// 毎回新しいということは、**読んだ画像を塗り替えても次の読み込みには影響しない**
     /// ということでもある。走らせたままファイルを差し替えれば、次の読み込みからそちらが出る。
     ///
+    /// ## URL から読む
+    ///
+    /// **名前が `http://` か `https://` で始まれば、その URL から受け取る** (Processing の
+    /// `loadImage(url)`・[#3715])。他の読み込み (``loadStrings(_:)``・``loadJSONObject(_:)`` など) と同じ
+    /// 決まりで、`file://` で始まる名前はファイルの名前として探す。受け取るまで最長 60 秒フレームを止めるので、
+    /// 待たない ``requestImage(_:)`` を使うほうがよい。
+    ///
+    /// <!-- example: 文脈 var photo: Image? -->
+    /// ```swift
+    /// func setup() throws {
+    ///     photo = try loadImage("https://example.com/photo.png")
+    /// }
+    /// ```
+    ///
+    /// **URL の画像は、実行のあいだ URL ごとに 1 度だけ受け取る。** 2 度目からは通信せず、1 度目に受け取った
+    /// 画像を返す — サーバの側で画像が差し替わっても、走らせている間は拾わない (ファイルと違い、更新を
+    /// 確かめる手段を持たない)。拡張子の無い URL は ``loadImage(_:extension:)`` で種類を添えて読める。
+    ///
     /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
     ///   場所が載る ``ImageFailure/unopenable(path:location:reason:)``)・画像として読めないとき・GPU 側へ
-    ///   置けないときに ``ImageFailure``。
+    ///   置けないときに ``ImageFailure``。URL から受け取れなかったとき (繋がらない・時間切れ・2xx 以外の状態)
+    ///   は ``ImageFailure/unreachable(url:reason:)`` で、受け取った本文が画像でなければ
+    ///   ``ImageFailure/undecodable(path:)``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
+    /// [#3715]: https://github.com/mokume-metal/mokume/issues/3715
     // shot: 1 snippet=d21cd07f
     // shot: 2 snippet=75a302ec
     // shot: 3 snippet=1417ff4a
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
         noticeBlockingLoad("loadImage(_:)", instead: "requestImage(_:)")
+        noteWebImage(path)
         return try resourceCanvas(ImageFailure.self).loadImage(path)
+    }
+
+    /// 種類 (拡張子) を添えて画像を読む。読み終わるまで返らない。
+    ///
+    /// Processing の `loadImage(filename, extension)` に当たる。URL が拡張子で終わらず、中身からも種類が
+    /// 分からないときのための形で、`extension` は `"png"`・`"jpg"` のように点を付けずに渡す。
+    ///
+    /// <!-- example: 文脈 var photo: Image? -->
+    /// ```swift
+    /// func setup() throws {
+    ///     photo = try loadImage("https://example.com/photo", extension: "png")
+    /// }
+    /// ```
+    ///
+    /// **種類は手がかりで、中身に勝たない。** 中身の先頭から種類が分かる画像 (PNG・JPEG など) は、渡した
+    /// 種類によらず中身のとおりに読む。手がかりが効くのは、中身に種類の印の無い形式 (TGA など) だけである。
+    /// 知らない種類を渡したときは、手がかり無しで中身から読む。ファイルの名前にも同じく効く。
+    ///
+    /// 探し方・URL の扱い・控えは ``loadImage(_:)`` と同じ。**控えの鍵は名前だけ**なので、同じ名前を
+    /// 種類を変えて読み直しても、2 度目は 1 度目の画像を返す。
+    ///
+    /// - Throws: ``loadImage(_:)`` と同じ (``ImageFailure``)。
+    // shot: 参照 loadImage(_:)
+    public func loadImage(_ path: String, extension: String) throws(ImageFailure) -> Image {
+        noticeBlockingLoad("loadImage(_:extension:)", instead: "requestImage(_:extension:)")
+        noteWebImage(path)
+        return try resourceCanvas(ImageFailure.self).loadImage(path, extension: `extension`)
+    }
+
+    /// URL の画像を読むなら、記録に「再現を保証しない」と書く。本文は記録に持たない (#3570)。
+    private func noteWebImage(_ path: String) {
+        guard (try? WebFile.url(path)) != nil else { return }
+        LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
     }
 
     /// 画像を読む。**読んでいる間、他の仕事を止めない。**
@@ -257,14 +312,60 @@ extension SketchPart {
     /// > 何枚目のフレームで届くかは画像の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
     /// > ずれうるので、この API だけの画像は撮っていない。
     ///
+    /// ## URL から読む
+    ///
+    /// **名前が `http://` か `https://` で始まれば、その URL から受け取る** (Processing の
+    /// `requestImage(url)`・[#3715])。受け取る間もフレームは進む。URL ごとに 1 度だけ受け取り、サーバの側の
+    /// 差し替えを拾わないのは ``loadImage(_:)`` と同じ。
+    ///
+    /// <!-- example: 文脈 var photo: Image? -->
+    /// ```swift
+    /// func setup() {
+    ///     Task { photo = try? await requestImage("https://example.com/photo.png") }
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     if let photo { image(photo, 0, 0) }
+    /// }
+    /// ```
+    ///
     /// - Throws: ``loadImage(_:)`` と同じ (``ImageFailure``)。
     ///   実行中の実行から起動していない所 (`init`・終了処理の後・`Task.detached`) で呼ぶと
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
+    /// [#3715]: https://github.com/mokume-metal/mokume/issues/3715
     // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
-        try await loadingCanvas(ImageFailure.self).requestImage(path)
+        let canvas = try loadingCanvas(ImageFailure.self)
+        noteWebImage(path)
+        return try await canvas.requestImage(path)
+    }
+
+    /// 種類 (拡張子) を添えて画像を読む。**読んでいる間、他の仕事を止めない。**
+    ///
+    /// Processing の `requestImage(filename, extension)` に当たる。種類の手がかりの効き方と控えは
+    /// ``loadImage(_:extension:)``、呼び方と届く前の扱いは ``requestImage(_:)`` と同じ。
+    ///
+    /// <!-- example: 文脈 var photo: Image? -->
+    /// ```swift
+    /// func setup() {
+    ///     Task { photo = try? await requestImage("https://example.com/photo", extension: "png") }
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     if let photo { image(photo, 0, 0) }
+    /// }
+    /// ```
+    ///
+    /// - Throws: ``requestImage(_:)`` と同じ (``ImageFailure``)。
+    // shot: 参照 loadImage(_:)
+    public func requestImage(_ path: String, extension: String) async throws(ImageFailure) -> Image {
+        let canvas = try loadingCanvas(ImageFailure.self)
+        noteWebImage(path)
+        return try await canvas.requestImage(path, extension: `extension`)
     }
 
     /// 空の画像を作る。中身は透明。

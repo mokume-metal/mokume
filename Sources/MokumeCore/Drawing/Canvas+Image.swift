@@ -17,12 +17,32 @@ extension Canvas {
     /// OpenEXR など) の、白をずっと越える成分も同じである。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
+    ///
+    /// **名前が `http://` か `https://` で始まれば、URL から受け取る** ([#3715])。URL の画像は
+    /// 実行のあいだ URL ごとに 1 度だけ受け取り、サーバの側で差し替わっても読み直さない。
+    ///
+    /// [#3715]: https://github.com/mokume-metal/mokume/issues/3715
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
+        try loadImage(path, kind: nil)
+    }
+
+    /// 種類の手がかり (拡張子) を添えて絵を読む。手がかりは中身から種類が分からないときだけ効く
+    /// (`ImageFile.hints(_:)`)。**控えの鍵は名前だけ** — 同じ名前を手がかりを変えて読んでも、2 度目は控えを返す。
+    public func loadImage(_ path: String, extension kind: String) throws(ImageFailure) -> Image {
+        try loadImage(path, kind: Optional(kind))
+    }
+
+    private func loadImage(_ path: String, kind: String?) throws(ImageFailure) -> Image {
         if let fresh = freshDecoded(for: path) { return try makeImage(fresh) }
+        if let web = try ImageFile.webURL(path) {
+            let decoded = try ImageFile.decode(ImageFile.fetchWaiting(web, path: path), name: path, kind: kind)
+            remember(decoded, path: path, origin: .web)
+            return try makeImage(decoded)
+        }
         let url = try ImageFile.locate(path)
         let stamp = ImageFile.stamp(of: url)
-        let decoded = try ImageFile.decode(at: url, name: path)
-        remember(decoded, path: path, url: url, stamp: stamp)
+        let decoded = try ImageFile.decode(at: url, name: path, kind: kind)
+        remember(decoded, path: path, origin: .file(url: url, stamp: stamp))
         return try makeImage(decoded)
     }
 
@@ -34,42 +54,65 @@ extension Canvas {
     /// 経路が面へ移すときと同じ)、有限の成分は面が表せる ±65504 で止まる。浮動小数の絵 (TIFF・
     /// OpenEXR など) の、白をずっと越える成分も同じである。
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
+        try await requestImage(path, kind: nil)
+    }
+
+    /// 種類の手がかり (拡張子) を添えて絵を読む。読んでいる間、他の仕事を止めない。手がかりと控えの
+    /// 扱いは ``loadImage(_:extension:)`` と同じ。
+    public func requestImage(_ path: String, extension kind: String) async throws(ImageFailure) -> Image {
+        try await requestImage(path, kind: Optional(kind))
+    }
+
+    private func requestImage(_ path: String, kind: String?) async throws(ImageFailure) -> Image {
         if let fresh = freshDecoded(for: path) { return try makeImage(fresh) }
-        let read: ImageFile.Read
-        do {
-            read = try await Task.detached(priority: .utility) {
-                try ImageFile.read(path)
-            }.value
-        } catch let failure as ImageFailure {
-            throw failure
-        } catch {
-            throw .undecodable(path: path)
+        if let web = try ImageFile.webURL(path) {
+            let body = try await ImageFile.fetch(web, path: path)
+            let decoded = try await Self.away { () throws(ImageFailure) in
+                try ImageFile.decode(body, name: path, kind: kind)
+            }
+            remember(decoded, path: path, origin: .web)
+            return try makeImage(decoded)
         }
-        remember(read.decoded, path: path, url: read.url, stamp: read.stamp)
+        let read = try await Self.away { () throws(ImageFailure) in try ImageFile.read(path, kind: kind) }
+        remember(read.decoded, path: path, origin: .file(url: read.url, stamp: read.stamp))
         return try makeImage(read.decoded)
+    }
+
+    /// 探索・復号を別の仕事として回し、終わりを待つ。
+    private static func away<Value: Sendable>(
+        _ work: @escaping @Sendable () throws(ImageFailure) -> Value
+    ) async throws(ImageFailure) -> Value {
+        let outcome = await Task.detached(priority: .utility) {
+            Result { () throws(ImageFailure) in try work() }
+        }.value
+        return try outcome.get()
     }
 
     // MARK: - 控え
 
-    /// 控えのうち、**いまもファイルと一致しているもの**を返す。
+    /// 控えのうち、**いまも元と一致しているもの**を返す。
     ///
-    /// 名前だけを鍵にしない。走らせたまま絵を差し替える書き方は、いまは毎フレーム読み直す
+    /// ファイルは名前だけを鍵にしない。走らせたまま絵を差し替える書き方は、いまは毎フレーム読み直す
     /// ことで成り立っており、名前だけで引くとそれが黙って効かなくなる。更新時刻を読めな
     /// かったときも当たりにしない — 読み直す側 (安全な側) へ倒す。
+    ///
+    /// **URL は名前だけで当てる** (#3715 の決定)。実行のあいだ URL ごとに 1 度だけ受け取り、サーバの
+    /// 側の差し替えは拾わない — 毎フレーム読む書き方で、毎フレーム通信しないため。
     private func freshDecoded(for path: String) -> ImageFile.Decoded? {
-        guard let cached = imageCache[ImageRequest(path: path)],
-            let stamp = ImageFile.stamp(of: cached.url), stamp == cached.stamp
-        else { return nil }
-        return cached.decoded
+        guard let cached = imageCache[ImageRequest(path: path)] else { return nil }
+        switch cached.origin {
+        case .web:
+            return cached.decoded
+        case .file(let url, let stamp):
+            guard let now = ImageFile.stamp(of: url), now == stamp else { return nil }
+            return cached.decoded
+        }
     }
 
     /// 復号したものを控えに入れる。**量が上限を超えたら、収まるまで古い順に捨てる**
     /// (``BoundedCache``。いま読んだものは、1 枚で上限を超えても残る)。
-    private func remember(
-        _ decoded: ImageFile.Decoded, path: String, url: URL, stamp: FileStamp?
-    ) {
-        imageCache.insert(
-            DecodedImage(url: url, stamp: stamp, decoded: decoded), for: ImageRequest(path: path))
+    private func remember(_ decoded: ImageFile.Decoded, path: String, origin: DecodedImage.Origin) {
+        imageCache.insert(DecodedImage(origin: origin, decoded: decoded), for: ImageRequest(path: path))
     }
 
     /// 空の絵を作る。中身は透明。
@@ -290,8 +333,15 @@ struct ImageRequest: Hashable {
 
 /// 控えた復号結果。**読んだ場所と更新時刻も持つ** — 差し替えを見逃さないため。
 struct DecodedImage {
-    var url: URL
-    var stamp: FileStamp?
+    /// どこから読んだか。
+    enum Origin {
+        /// ファイル。読んだ場所と、そのときの更新時刻 (読めなければ nil)。
+        case file(url: URL, stamp: FileStamp?)
+        /// URL から受け取った。実行のあいだ読み直さない (#3715)。
+        case web
+    }
+
+    var origin: Origin
     var decoded: ImageFile.Decoded
 
     /// 画素が占める大きさ (バイト)。控えの量を数えるのに使う。
