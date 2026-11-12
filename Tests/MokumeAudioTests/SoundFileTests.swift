@@ -495,6 +495,65 @@ struct SoundFileTests {
         #expect(muted[2].isPlaying && muted[2].level == 0)
     }
 
+    /// 定位 (#3473): 範囲の外・数でない値の扱いは合成した音の `pan(_:)` と同じ。解析するのは定位を掛ける前の音。
+    @Test("pan は -1〜1 の外を丸め、数でない値は無視して、それぞれ 1 度だけ知らせる。鳴る左右は変わり、解析の値は変わらない")
+    func panClampsIgnoresAndKeepsTheAnalysis() throws {
+        let tone = sine(band: 40, amplitude: 0.5, count: 48_000)
+        let url = try writeChannelsWAV([tone], sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        var notices: [String] = []
+        func run(_ adjust: @escaping (SoundFile) -> Void) throws -> (heard: [Heard], left: [Float], right: [Float]) {
+            let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+            var left: [Float] = []
+            var right: [Float] = []
+            let heard = try record(
+                frames: 4,
+                { sketch in
+                    let loaded = try AudioFile.load(url, path: "tone.wav")
+                    let sound = SoundFile(
+                        name: "tone.wav", buffer: loaded, owner: sketch, flow: flow,
+                        warn: { notices.append($0) })
+                    sketch.attach(sound)
+                    adjust(sound)
+                    sound.play()
+                    return sound
+                },
+                between: { _ in
+                    let both = try renderBoth(flow, Self.perFrame)
+                    left += both.left
+                    right += both.right
+                })
+            return (heard, left, right)
+        }
+
+        let centre = try run { _ in }
+        let played = Array(tone.prefix(4 * Self.perFrame))
+        #expect(centre.left == played && centre.right == played, "既定の中央は左右とも元の標本そのまま")
+        #expect(notices.isEmpty)
+
+        let leftEdge = try run { sound in
+            sound.pan(-3)
+            sound.pan(-2)
+        }
+        #expect(leftEdge.right.allSatisfy { $0 == 0 }, "-1 に丸めたので右は無音")
+        #expect(leftEdge.left.contains { $0 > 0.5 }, "左は元の √2 倍")
+        #expect(leftEdge.heard == centre.heard, "解析の値 (level・rms・spectrum) は定位で変わらない")
+        #expect(notices.count == 1, "丸めたことは 1 度だけ言う: \(notices)")
+        #expect(notices.first?.contains("from -1 to 1") == true)
+
+        notices.removeAll()
+        let ignored = try run { sound in
+            sound.pan(1)
+            sound.pan(.nan)
+            sound.pan(-.infinity)
+        }
+        #expect(ignored.left.allSatisfy { $0 == 0 }, "数でない値の前の定位 (右の端) のまま")
+        #expect(ignored.heard == centre.heard)
+        #expect(notices.count == 1, "\(notices)")
+        #expect(notices.first?.contains("not a number") == true)
+    }
+
     // MARK: - 解析は読まれたときだけ (#2379)
 
     @Test("値を読まない再生は解析されず、読む再生は 1 フレームに何度読んでも 1 回だけ解析される")

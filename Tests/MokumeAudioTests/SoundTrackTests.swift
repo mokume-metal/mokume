@@ -162,6 +162,130 @@ struct SoundTrackTests {
         #expect(second.left == first.left && second.right == first.right)
     }
 
+    // MARK: - 定位 (#3473)
+
+    /// 左右で違う、形の読める標本列 (12000 標本)。
+    static let shaped: [Float] = (0..<12_000).map { Float(($0 * 37) % 1001) / 1000 - 0.5 }
+
+    /// 1 フレーム目の draw() で鳴らした `wav` を 61 フレーム録る。`adjust` は鳴らす前に呼ぶ。
+    private func recordOnce(
+        _ wav: URL, routed: Bool = false, adjust: @escaping (SoundFile) -> Void = { _ in },
+        draw: @escaping (SoundFile, Int) -> Void = { _, _ in }
+    ) async throws -> Heard {
+        let url = temporaryMovie()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var sound: SoundFile?
+        try record(
+            to: url, ends: 61,
+            setup: { sketch in
+                sound = try sketch.loadSound(wav.path)
+                if routed, let sound {
+                    let filter = sketch.createLowPass()
+                    filter.freq(20_000)
+                    filter.process(sound)
+                }
+            },
+            draw: { sketch in
+                guard let sound else { return }
+                if sketch.frameCount == 1 {
+                    adjust(sound)
+                    sound.play()
+                }
+                draw(sound, sketch.frameCount)
+            })
+        return try await hear(url)
+    }
+
+    /// 定位を入れる前の木では、1 チャンネルのファイルは流れの混ぜる節が左右とも 1 倍で配っていた (`FilePlayerTests` の
+    /// 「既定の定位では」を直す前の木で回して確かめた)。既定の定位では、書き出しの標本も元の標本そのまま。
+    @Test("既定の定位では、モノラル・ステレオのファイルを書き出した音声トラックが元の標本そのまま (1 標本も違わない)")
+    func defaultPanKeepsTheTrackSamples() async throws {
+        let mono = try writeChannelsWAV([Self.shaped], sampleRate: 48_000)
+        let other = Self.shaped.map { 0.25 - $0 * 0.5 }
+        let stereo = try writeChannelsWAV([Self.shaped, other], sampleRate: 48_000)
+        defer {
+            try? FileManager.default.removeItem(at: mono)
+            try? FileManager.default.removeItem(at: stereo)
+        }
+        let monoHeard = try await recordOnce(mono)
+        try #require(monoHeard.left.count == 48_000)
+        #expect(Array(monoHeard.left.prefix(12_000)) == Self.shaped)
+        #expect(monoHeard.right == monoHeard.left)
+        #expect(monoHeard.left[12_000...].allSatisfy { $0 == 0 })
+        let stereoHeard = try await recordOnce(stereo)
+        #expect(Array(stereoHeard.left.prefix(12_000)) == Self.shaped)
+        #expect(Array(stereoHeard.right.prefix(12_000)) == other)
+    }
+
+    @Test("モノラルの pan(-1) で右が無音・左が元の √2 倍、pan(1) で左が無音。ステレオの pan(-1) で右が無音・左は元の左のまま")
+    func panEdgesSilenceTheOtherSide() async throws {
+        let mono = try writeChannelsWAV([Self.shaped], sampleRate: 48_000)
+        let other = Self.shaped.map { 0.25 - $0 * 0.5 }
+        let stereo = try writeChannelsWAV([Self.shaped, other], sampleRate: 48_000)
+        defer {
+            try? FileManager.default.removeItem(at: mono)
+            try? FileManager.default.removeItem(at: stereo)
+        }
+        let root2 = Float(2.0.squareRoot())
+        let left = try await recordOnce(mono) { $0.pan(-1) }
+        try #require(left.left.count == 48_000)
+        #expect(left.right.allSatisfy { $0 == 0 })
+        let worst = (0..<12_000).map { abs(left.left[$0] - Self.shaped[$0] * root2) }.max() ?? 1
+        #expect(worst < 1e-6, "左が元の √2 倍から \(worst) ずれた")
+        let right = try await recordOnce(mono) { $0.pan(1) }
+        #expect(right.left.allSatisfy { $0 == 0 })
+        #expect(right.right.contains { $0 != 0 })
+        let balanced = try await recordOnce(stereo) { $0.pan(-1) }
+        #expect(balanced.right.allSatisfy { $0 == 0 })
+        #expect(Array(balanced.left.prefix(12_000)) == Self.shaped)
+    }
+
+    /// フレーム N の draw() で頼んだ定位は、ウィンドウ N の先頭の標本から移り始め、約 5 ミリ秒 (240 標本) で移りきる。
+    @Test("31 フレーム目の draw() で頼んだ pan(-1) は、標本 24000 から移り始め、24240 から右が無音。前の標本は変わらない")
+    func panTakesEffectFromItsWindow() async throws {
+        let steady = try writeChannelsWAV([[Float](repeating: 0.5, count: 48_000)], sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: steady) }
+        let heard = try await recordOnce(
+            steady,
+            draw: { sound, frame in
+                if frame == 31 { sound.pan(-1) }
+            })
+        try #require(heard.right.count == 48_000)
+        #expect(heard.left[0..<24_000].allSatisfy { $0 == 0.5 } && heard.right[0..<24_000].allSatisfy { $0 == 0.5 })
+        #expect(heard.right[24_000] < 0.5 && heard.right[24_000] > 0.4, "\(heard.right[24_000])")
+        #expect(heard.right[24_240...].allSatisfy { $0 == 0 })
+    }
+
+    @Test("毎フレーム定位を変える同じ操作の列で 2 回書くと、音声トラックの標本が全部一致する")
+    func movingPanIsRepeatable() async throws {
+        let mono = try writeChannelsWAV([Array(repeating: Self.shaped, count: 4).flatMap { $0 }], sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: mono) }
+        func once() async throws -> Heard {
+            try await recordOnce(
+                mono,
+                draw: { sound, frame in
+                    sound.pan(Float(frame % 9) / 4 - 1)
+                })
+        }
+        let first = try await once()
+        let second = try await once()
+        try #require(first.left.count == 48_000)
+        #expect(first.left == second.left && first.right == second.right)
+        #expect(first.left != first.right, "定位が左右に効いている")
+    }
+
+    /// エフェクトへ通したファイルの定位は、エフェクトの出口で中央 (合成した音の `pan(_:)` と同じ)。
+    @Test("エフェクトへ通したファイルは、pan(-1) でも pan を呼ばない回と同じ標本 (エフェクトの出口で中央)")
+    func aRoutedFileStaysCentred() async throws {
+        let mono = try writeChannelsWAV([Self.shaped], sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: mono) }
+        let plain = try await recordOnce(mono, routed: true)
+        let panned = try await recordOnce(mono, routed: true) { $0.pan(-1) }
+        try #require(plain.left.count == 48_000)
+        #expect(plain.left.contains { $0 != 0 })
+        #expect(panned.left == plain.left && panned.right == plain.right)
+    }
+
     // MARK: - 合成した音
 
     @Test("合成した音 (オシレータ・包絡) も載る。鳴らした操作は、そのウィンドウの先頭から効く")
