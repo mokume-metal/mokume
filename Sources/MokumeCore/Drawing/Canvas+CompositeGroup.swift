@@ -67,7 +67,8 @@ extension Canvas {
     ///     視点を通る下では、中間面の画素と置く側の画素が重ならず、外接も移せない。
     ///   - 描く格子が座標の格子と違う (細かさを 1 未満にしている)。中間面は細かさ 1 の描き場所なので、
     ///     置く側の描く画素と重ならない。
-    ///   - 置く側の混ぜ方が、透明な画素でも下地を変える (``BlendMode/replace``)。単位の箱は四角で置かれ、
+    ///   - 四角を置く混ぜ方 (`settings` があればその混ぜ方、無ければ置く側の混ぜ方) が、透明な画素でも下地を
+    ///     変える (``BlendMode/replace``)。単位の箱は四角で置かれ、
     ///     中の透明な画素もその混ぜ方で下地に載るので、`replace` では箱いっぱいの下地が消える。他のどの
     ///     混ぜ方もアルファ 0 の画素は下地を変えない (`CompositeGroupTests` が全部の混ぜ方で確かめる)。
     ///   - 形の組み立て (``createShape(_:)``) の中、またはフレームの外 (どちらも 1 度知らせる)。2 段目は、
@@ -83,9 +84,11 @@ extension Canvas {
         opacity: Float, covering bounds: PlaneBox, placedWith settings: (mode: BlendMode, paint: Shape.Paint)? = nil,
         _ body: (Canvas) -> Void
     ) -> Bool {
-        // `replace` の判定は、四角を置く混ぜ方 (`settings`) ではなく置く側の混ぜ方で見る (#3564 の完了条件 9 が
-        // 名指す場面。四角を記録した混ぜ方で置くときに外せるかは、条件 9 を改める判断が先)
-        guard currentFlatView.clip == nil, target === output, style.blendMode.leavesBaseUnderTransparent else {
+        // `replace` の判定は、四角を置く混ぜ方で見る (`settings` があればそちら)。保持した形の範囲は記録した
+        // `blend` で置くので、置く側が `replace` でも単位にできる (#3564 の 2026-11-12 の決定)
+        guard currentFlatView.clip == nil, target === output,
+            (settings?.mode ?? style.blendMode).leavesBaseUnderTransparent
+        else {
             return false
         }
         guard !recordingShape else {

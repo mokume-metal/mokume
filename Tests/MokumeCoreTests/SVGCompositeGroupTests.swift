@@ -291,14 +291,21 @@ struct SVGCompositeGroupTests {
         #expect(canvas.warnings.message(for: .compositeGroupPerShape) != nil)
     }
 
-    @Test("置く側の混ぜ方が replace でも、子ごとに掛けて描き、1 度だけ知らせる")
-    func replaceEachShapeIsFaded() throws {
-        let (image, canvas) = try rendered(Self.group) { canvas, shape in
+    @Test(
+        "置く側の混ぜ方が replace でも単位にする (記録した blend で置く): 重なりも単独の所も単位にしない区間と同じ色、箱の中の形の外は地のまま、知らせない")
+    func replacePlacingModeStillMakesAUnit() throws {
+        let (image, canvas) = try rendered(Self.groupBesideAPlainRect) { canvas, shape in
+            canvas.background(LinearRGBA.linear(red: 0.2, green: 0.2, blue: 0.2))
             canvas.blendMode(.replace)
             canvas.shape(shape)
         }
-        #expect(alpha(image, 30, 30) > 0, "描かれている")
-        #expect(canvas.warnings.message(for: .compositeGroupPerShape) != nil)
+        #expect(alpha(image, 200, 40) == 255, "単位にしない矩形は地と混ざる (blend): \(image[200, 40])")
+        #expect(sameColor(image, (30, 30), (200, 40)), "単独: \(image[30, 30]) / 単位にしない矩形: \(image[200, 40])")
+        #expect(sameColor(image, (80, 80), (30, 30)), "重なり: \(image[80, 80]) / 単独: \(image[30, 30])")
+        // 箱 (20…170, 20…140) の中で形の外の画素。四角を replace で置くと、透明な画素が地を消す
+        #expect(sameColor(image, (160, 30), (230, 150)), "箱の中の形の外: \(image[160, 30]) / 地: \(image[230, 150])")
+        #expect(sameColor(image, (25, 135), (230, 150)), "箱の中の形の外: \(image[25, 135]) / 地: \(image[230, 150])")
+        #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil, "単位にできた")
     }
 
     @Test("フレームの外で置くと、置く口がフレームの外として断る (単位の知らせは出ない)")
