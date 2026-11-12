@@ -32,7 +32,7 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     /// `shader: error: the fragment does not define its entry point float4 paint(Fragment in, Values values)…`
     /// の 1 行が出る。計算は `name:` (ファイルならファイル名) の `kernel` 関数が無いことを言う。
     ///
-    /// **`values:`・`surfaces:` に断片の中で書けない名前を渡すと、組み立ての前にこの case で断る**
+    /// **`values:`・`surfaces:`・`numbers:` に断片の中で書けない名前を渡すと、組み立ての前にこの case で断る**
     /// ([#2783](https://github.com/mokume-metal/mokume/issues/2783))。理由は渡した口と名前を名指しする。
     /// 受けるのは文字か `_` で始まり、文字・数字・`_` が続く名前 (ASCII の外の文字も受ける)。字の並びは
     /// 通っても Metal で使えない名前 (予約語・組み込みの型の `half`・前置きのマクロの `MOKUME_SURFACES`
@@ -43,8 +43,11 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     case tooManyValues(path: String, count: Int, capacity: Int)
     /// 渡す面が口の数に収まらない。枚数と上限を添える。
     case tooManySurfaces(path: String, count: Int, capacity: Int)
+    /// 名前で渡す数の並び (`numbers:`) が口の数に収まらない。本数と上限を添える
+    /// ([#3576](https://github.com/mokume-metal/mokume/issues/3576))。
+    case tooManyNumbers(path: String, count: Int, capacity: Int)
     /// 走っている面を取れない所で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
-    /// (`"createShader(_:name:values:surfaces:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// (`"createShader(_:name:values:surfaces:numbers:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
     ///
     /// 面を取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで起こした
@@ -94,6 +97,14 @@ extension ShaderFailure: CustomStringConvertible {
                 Each named surface takes one slot, and the number of slots is fixed whatever the \
                 fragment. Pass fewer, or combine several pictures into one (bake them side by \
                 side, and pick one by where you read)
+                """
+        case .tooManyNumbers(let path, let count, let capacity):
+            return """
+                Too many arrays in numbers: for the fragment "\(path)" (\(count), but the limit is \
+                \(capacity)).
+                Each named array takes one slot, and the number of slots is fixed whatever the \
+                fragment. Pass fewer, or put several into one array (make it longer, and read each \
+                part from its own offset)
                 """
         case .notRunning(let call):
             return OutsideRun.notRunningNotice(call)

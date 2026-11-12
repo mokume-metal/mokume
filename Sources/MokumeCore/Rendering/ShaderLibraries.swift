@@ -120,24 +120,28 @@ final class ShaderLibraries {
     /// **前置きは無条件。** 断片が既に宣言を持っているかは見ない (ShaderSource を参照)。
     func makeShapeLibrary(
         named name: String, body: String, bodyName: String? = nil,
-        values: [String: ShaderValue] = [:], surfaces: [String: ShaderSurface] = [:]
+        values: [String: ShaderValue] = [:], surfaces: [String: ShaderSurface] = [:],
+        numbers: [String] = []
     ) throws(RenderFailure) -> any MTLLibrary {
         try shapeLibraryJob(
-            named: name, body: body, bodyName: bodyName, values: values, surfaces: surfaces
+            named: name, body: body, bodyName: bodyName, values: values, surfaces: surfaces,
+            numbers: numbers
         ).runNow()
     }
 
-    /// ``makeShapeLibrary(named:body:bodyName:values:surfaces:)`` の組み立てを、走らせずに用意する。
+    /// ``makeShapeLibrary(named:body:bodyName:values:surfaces:numbers:)`` の組み立てを、走らせずに用意する。
     /// 裏で組む経路 (``ShaderBox``・[#2365]) が使う。
     ///
     /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
     func shapeLibraryJob(
         named name: String, body: String, bodyName: String? = nil,
-        values: [String: ShaderValue] = [:], surfaces: [String: ShaderSurface] = [:]
+        values: [String: ShaderValue] = [:], surfaces: [String: ShaderSurface] = [:],
+        numbers: [String] = []
     ) throws(RenderFailure) -> LibraryJob {
         try userJob(
             prelude: "Common", named: name, body: body, bodyName: bodyName, values: values,
-            surfaces: surfaces, entry: .paint(surfaces: !surfaces.isEmpty))
+            surfaces: surfaces, numbers: numbers,
+            entry: .paint(surfaces: !surfaces.isEmpty, numbers: !numbers.isEmpty))
     }
 
     /// 計算の断片を、共通部分を前置きしてから組み立てる。
@@ -181,7 +185,7 @@ final class ShaderLibraries {
 
     /// 利用者の断片を組む仕事。**塗り・効果・計算の利用者の断片は、すべてここを通る。**
     ///
-    /// - **`values:`・`surfaces:` の名前の字の並びを、組み立ての前に検める** ([#2783])。書けない名前
+    /// - **`values:`・`surfaces:`・`numbers:` の名前の字の並びを、組み立ての前に検める** ([#2783])。書けない名前
     ///   (`tint color`・空・`;` を含む) は組まずに断る。検めをここ 1 か所に置くのは、断片を作る
     ///   口 (文字列・ファイル × 3 種) と差し替えの経路がすべて通るからで、口ごとに写すと足し忘れる
     ///   口ができる
@@ -193,20 +197,23 @@ final class ShaderLibraries {
     private func userJob(
         prelude preludeName: String, named name: String, body: String, bodyName: String?,
         values: [String: ShaderValue], surfaces: [String: ShaderSurface] = [:],
-        entry: ShaderEntryPoint?
+        numbers: [String] = [], entry: ShaderEntryPoint?
     ) throws(RenderFailure) -> LibraryJob {
         let fragment = bodyName ?? name
-        if let reason = ShaderSource.unusableNames(values: values, surfaces: surfaces, in: fragment) {
+        if let reason = ShaderSource.unusableNames(
+            values: values, surfaces: surfaces, numbers: numbers, in: fragment)
+        {
             throw .shaderCompilationFailed(name: name, reason: reason)
         }
         let source = ShaderSource.assemble(
             prelude: try prelude(named: preludeName), values: values, surfaces: surfaces,
-            body: .init(name: fragment, text: body))
+            numbers: numbers, body: .init(name: fragment, text: body))
         return job(
             source, name: name,
             restatement: .init(
                 fragment: fragment, entry: entry,
-                names: ShaderSource.declaredNames(values: values, surfaces: surfaces)))
+                names: ShaderSource.declaredNames(
+                    values: values, surfaces: surfaces, numbers: numbers)))
     }
 
     /// 原文を組む。

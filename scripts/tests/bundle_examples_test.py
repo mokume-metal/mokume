@@ -353,7 +353,7 @@ class 本物の木(unittest.TestCase):
 
     def test_断片を読む_loadShader_の例が資材ごと入る(self):
         """#3836 の完了条件 1。`waves.metal` を添えた例が一覧に並ぶ。"""
-        shaders = [e for e in self.entries if e.heading == "loadShader(_:values:surfaces:)"]
+        shaders = [e for e in self.entries if e.heading == "loadShader(_:values:surfaces:numbers:)"]
         self.assertEqual(len(shaders), 1, [e.spelling for e in shaders])
         self.assertEqual([name for name, _ in shaders[0].assets], ["assets/waves.metal"])
         self.assertIn("float4 paint(Fragment in, Values values)", shaders[0].assets[0][1])
