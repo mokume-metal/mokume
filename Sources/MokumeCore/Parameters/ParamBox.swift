@@ -103,6 +103,7 @@ public final class ParamBox<Value> {
             observation.withMutation(of: self, keyPath: valueKeyPath) {
                 storedValue = newValue
             }
+            changeCount &+= 1
         }
         _modify {
             observation.access(self, keyPath: valueKeyPath)
@@ -120,6 +121,7 @@ public final class ParamBox<Value> {
                     observation.withMutation(of: self, keyPath: valueKeyPath) {
                         storedValue = working
                     }
+                    changeCount &+= 1
                 }
             } else {
                 refuse(working, keeping: storedValue)
@@ -129,6 +131,8 @@ public final class ParamBox<Value> {
 
     private var storedValue: Value
     private let observation = ObservationRegistrar()
+    /// 面に出る姿が変わった回数 (``DeclaredParam/changeCount``)。変化の通知を出すときにだけ進める。
+    private(set) var changeCount: UInt64 = 0
 
     /// この置き場が 1 度だけ言う注意の種類。
     enum Warning: Hashable {
@@ -388,6 +392,12 @@ protocol DeclaredParam: AnyObject {
     /// 持つ実装が書き忘れて「変わったか見ない」へ黙って落ちる)。
     var defaultValue: ParamValue? { get }
     func write(_ incoming: ParamValue) -> ParamOutcome
+    /// 面に出る姿 (``declaration`` の値) が変わった回数 ([#2618](https://github.com/mokume-metal/mokume/issues/2618))。
+    /// **入口 (作者のコードの代入・外からの書き込み・復元) を問わず、値が変わるたびに進める。** 観測の持ち出しが、
+    /// 絵を描いた `draw()` の終わりから値が動いたかを、値を写さずにこの数で見る。等しさだけに使う。
+    ///
+    /// **既定の実装は置かない** — 数え漏らす実装は、動いた値を古い絵に結び付ける。
+    var changeCount: UInt64 { get }
     /// 外から来た書き込みが置かれたことを知らせる先を差す (記録・#3570)。外すときは `nil`。
     func observeWrites(_ observer: ((String, ParamValue) -> Void)?)
 }

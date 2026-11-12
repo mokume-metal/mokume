@@ -304,10 +304,14 @@ final class RemoteParam: DeclaredParam {
     /// ここは見た目をその場で合わせて、要求を置くだけにする — 二重に判断すると、
     /// 道具の版とスケッチの版で違う端に収まる日が来る。
     func write(_ incoming: ParamValue) -> ParamOutcome {
+        if incoming != value { changeCount &+= 1 }
         value = incoming
         post(name, incoming)
         return .applied
     }
+
+    /// 見せている値が変わった回数 (``DeclaredParam/changeCount``)。
+    @ObservationIgnored private(set) var changeCount: UInt64 = 0
 
     /// **聴かない。** 値を置くのも記録するのも子の側 (``ParamBox``) で、道具のウィンドウのつまみは要求を置くだけである (#3570)。
     func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {}
@@ -315,6 +319,7 @@ final class RemoteParam: DeclaredParam {
     /// 子が名乗った値へ合わせる。
     func adopt(_ settled: ParamValue) {
         guard settled != value else { return }
+        changeCount &+= 1
         value = settled
     }
 }
