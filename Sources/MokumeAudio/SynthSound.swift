@@ -637,15 +637,41 @@ public class Oscillator: SynthSource {
         send(.frequency, value)
     }
 
+    /// 周波数と音量を、再生せずに設定する。オフセット・定位は 0 (中央) に戻る。
+    ///
+    /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)`` と同じに扱う。
+    public func set(_ freq: Float, _ amp: Float) {
+        set(freq, amp, 0, 0)
+    }
+
+    /// 周波数・音量・定位を、再生せずに設定する。オフセットは 0 に戻る。
+    ///
+    /// <!-- example: 文脈 var osc: SinOsc? -->
+    /// ```swift
+    /// func setup() {
+    ///     osc = createSinOsc()
+    ///     // 440 Hz を左へ寄せてから鳴らす
+    ///     osc?.set(440, 0.5, -1)
+    ///     osc?.play()
+    /// }
+    /// ```
+    ///
+    /// **第 3 引数は定位** (Processing Sound の `set(freq, amp, pos)` と同じ)。オフセットも渡すなら
+    /// ``set(_:_:_:_:)`` で、定位は 4 つ目になる。範囲の外・NaN は、それぞれ ``freq(_:)``・
+    /// ``SynthSource/amp(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
+    public func set(_ freq: Float, _ amp: Float, _ pos: Float) {
+        set(freq, amp, 0, pos)
+    }
+
     /// 周波数・音量・オフセット・定位を、再生せずに設定する。
     ///
     /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
     /// ``SynthSource/pan(_:)`` と同じに扱う。
-    public func set(_ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
+    public func set(_ freq: Float, _ amp: Float, _ add: Float, _ pos: Float) {
         self.freq(freq)
         self.amp(amp)
         self.add(add)
-        self.pan(pan)
+        self.pan(pos)
     }
 }
 
@@ -711,7 +737,7 @@ public class Noise: SynthSource {
             stage: stage, node: stage.rack.addSource(.noise(color)), name: name)
     }
 
-    /// 音量・オフセット・定位を指定して、再生を始める。
+    /// 音量を指定して、再生を始める。オフセット・定位は 0 (中央) に戻る。
     ///
     /// <!-- example: 文脈 var noise: WhiteNoise? -->
     /// ```swift
@@ -721,13 +747,39 @@ public class Noise: SynthSource {
     /// }
     /// ```
     ///
-    /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
-    /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:at:)``。
-    public func play(_ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
-        play(amp, add, pan, at: 0)
+    /// 範囲の外・NaN は ``SynthSource/amp(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:at:)``。
+    public func play(_ amp: Float) {
+        play(amp, 0, 0, at: 0)
     }
 
-    /// 音量・オフセット・定位を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    /// 音量と定位を指定して、再生を始める。オフセットは 0 に戻る。
+    ///
+    /// <!-- example: 文脈 var noise: WhiteNoise? -->
+    /// ```swift
+    /// func setup() {
+    ///     noise = createWhiteNoise()
+    ///     // 左へ寄せて鳴らす
+    ///     noise?.play(0.2, -1)
+    /// }
+    /// ```
+    ///
+    /// **第 2 引数は定位** (Processing Sound の `play(amp, pos)` と同じ)。オフセットも渡すなら
+    /// ``play(_:_:_:)`` で、定位は 3 つ目になる。範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・
+    /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:at:)``。
+    public func play(_ amp: Float, _ pos: Float) {
+        play(amp, 0, pos, at: 0)
+    }
+
+    /// 音量・オフセット・定位を指定して、再生を始める。
+    ///
+    /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
+    /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:at:)``。
+    public func play(_ amp: Float, _ add: Float, _ pos: Float) {
+        play(amp, add, pos, at: 0)
+    }
+
+    /// 音量を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    /// オフセット・定位は 0 (中央) に戻る。
     ///
     /// <!-- example: 文脈 var noise: WhiteNoise? -->
     /// ```swift
@@ -737,25 +789,56 @@ public class Noise: SynthSource {
     /// ```
     ///
     /// **値も、再生と同じサンプルの先頭から反映される。** `time` の意味・現在より前の値・``SynthSource/stop()`` が予約を
-    /// 取り消すことは ``SynthSource/play(at:)`` と同じ。範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・
+    /// 取り消すことは ``SynthSource/play(at:)`` と同じ。範囲の外・NaN は ``SynthSource/amp(_:)`` と同じに扱う。
+    public func play(_ amp: Float, at time: Double) {
+        play(amp, 0, 0, at: time)
+    }
+
+    /// 音量と定位を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    /// オフセットは 0 に戻る。
+    ///
+    /// **第 2 引数は定位** (``play(_:_:)`` と同じ並び)。値の反映と `time` の扱いは ``play(_:at:)`` と同じ。
+    /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
+    public func play(_ amp: Float, _ pos: Float, at time: Double) {
+        play(amp, 0, pos, at: time)
+    }
+
+    /// 音量・オフセット・定位を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    ///
+    /// 値の反映と `time` の扱いは ``play(_:at:)`` と同じ。範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・
     /// ``SynthSource/add(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
-    public func play(_ amp: Float, _ add: Float = 0, _ pan: Float = 0, at time: Double) {
+    public func play(_ amp: Float, _ add: Float, _ pos: Float, at time: Double) {
         guard let position = reservationPosition(time, call: "play") else { return }
-        guard postReservation(values: mixValues(amp, add, pan), ops: [.play], at: position) else {
+        guard postReservation(values: mixValues(amp, add, pos), ops: [.play], at: position) else {
             return
         }
         isActive = true
         isPlaying = true
     }
 
+    /// 音量を、再生せずに設定する。オフセット・定位は 0 (中央) に戻る。
+    ///
+    /// 範囲の外・NaN は ``SynthSource/amp(_:)`` と同じに扱う。
+    public func set(_ amp: Float) {
+        set(amp, 0, 0)
+    }
+
+    /// 音量と定位を、再生せずに設定する。オフセットは 0 に戻る。
+    ///
+    /// **第 2 引数は定位** (Processing Sound の `set(amp, pos)` と同じ)。範囲の外・NaN は、それぞれ
+    /// ``SynthSource/amp(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
+    public func set(_ amp: Float, _ pos: Float) {
+        set(amp, 0, pos)
+    }
+
     /// 音量・オフセット・定位を、再生せずに設定する。
     ///
     /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
     /// ``SynthSource/pan(_:)`` と同じに扱う。
-    public func set(_ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
+    public func set(_ amp: Float, _ add: Float, _ pos: Float) {
         self.amp(amp)
         self.add(add)
-        self.pan(pan)
+        self.pan(pos)
     }
 }
 

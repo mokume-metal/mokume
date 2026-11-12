@@ -58,7 +58,8 @@ final class SynthAndFilter: Sketch {
 
         // 正弦波は 0.01 秒で立ち上がり、0.6 秒保ち、0.3 秒で下がる (45 フレーム目はその途中)
         env.play(sine, 0.01, 0.6, 0.8, 0.3)
-        delay.process(triangle, 1, 0.5)
+        delay.process(triangle, 1)
+        delay.feedback(0.5)
         delay.time(0.1)
         reverb.process(saw, 0.8, 0.4, 0.5)
         low.process(white, 800)

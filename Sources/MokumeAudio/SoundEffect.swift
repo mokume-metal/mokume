@@ -385,8 +385,9 @@ public final class Reverb: SoundEffect {
 ///     osc = createSinOsc()
 ///     env = createEnv()
 ///     delay = createDelay()
-///     if let osc { delay?.process(osc, 2, 0.5) }
-///     delay?.time(0.3)
+///     // 上限 2 秒・遅れ 0.3 秒・戻す割合 0.5
+///     if let osc { delay?.process(osc, 2, 0.3) }
+///     delay?.feedback(0.5)
 /// }
 /// func mousePressed() {
 ///     if let osc { env?.play(osc, 0.01, 0.05, 0.5, 0.1) }
@@ -411,21 +412,41 @@ public final class Delay: SoundEffect {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func process(_ input: any EffectInput, _ maxDelayTime: Float) {
+        acceptMaximum(maxDelayTime)
+        process(input)
+    }
+
+    /// 入力した音に、ディレイタイムの上限と始めのディレイタイムを指定してエフェクトをかける。
+    ///
+    /// <!-- example: 文脈 var osc: SinOsc?; var delay: Delay? -->
+    /// ```swift
+    /// func setup() {
+    ///     osc = createSinOsc()
+    ///     delay = createDelay()
+    ///     // 上限 2 秒・遅れ 0.3 秒。戻す割合は feedback(_:) で決める
+    ///     if let osc { delay?.process(osc, 2, 0.3) }
+    ///     delay?.feedback(0.5)
+    /// }
+    /// ```
+    ///
+    /// **第 3 引数はディレイタイム (秒)** で、``time(_:)`` と同じ (Processing Sound の
+    /// `process(input, maxDelayTime, delayTime)` と同じ)。フィードバックの割合は ``feedback(_:)`` か
+    /// ``set(_:_:)`` で決める。範囲の外・NaN は、それぞれ ``process(_:_:)``・``time(_:)`` と同じに扱う
+    /// (ディレイタイムは、この呼び出しで決めた上限で丸める)。
+    public func process(_ input: any EffectInput, _ maxDelayTime: Float, _ delayTime: Float) {
+        acceptMaximum(maxDelayTime)
+        time(delayTime)
+        process(input)
+    }
+
+    /// ディレイタイムの上限を受け、範囲の外は丸め、数でない値は無視する (どちらも 1 度だけ知らせる)。
+    private func acceptMaximum(_ maxDelayTime: Float) {
         if let value = accept(
             maxDelayTime, 0...Float(EchoKernel.maximumSeconds), call: "process",
             meaning: "a maxDelayTime")
         {
             maximumTime = value
         }
-        process(input)
-    }
-
-    /// 入力した音に、ディレイタイムの上限とフィードバックの割合を指定してエフェクトをかける。
-    ///
-    /// 範囲の外・NaN は、それぞれ ``process(_:_:)``・``feedback(_:)`` と同じに扱う。
-    public func process(_ input: any EffectInput, _ maxDelayTime: Float, _ feedback: Float) {
-        self.feedback(feedback)
-        process(input, maxDelayTime)
     }
 
     /// ディレイタイムを設定する。単位は秒で、0 から ``process(_:_:)`` で指定した上限まで (既定は 5)。既定のディレイタイムは 0.25。
