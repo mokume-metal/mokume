@@ -295,6 +295,10 @@ extension Canvas {
     static func computeFrameSlot(of index: Int) -> Int { index * computeSlotsPerDispatch + 1 }
 
     /// 1 組の大きさ。**GPU が受け取れる上限に収める。**
+    ///
+    /// 1 次元の幅は `threadExecutionWidth` (32) で、利用者の断片が `[[dispatch_threads_per_threadgroup]]` で読める約束である
+    /// (`compute` の説明・#3902。`[[threads_per_threadgroup]]` は端の組で端数になる)。広げる・要素数や断片で切り替えるのは、32 を前提にした断片を黙って壊すので
+    /// しない。2 次元の大きさは約束しない。
     static func threadgroup(
         for state: any MTLComputePipelineState, isFlat: Bool
     ) -> MTLSize {
