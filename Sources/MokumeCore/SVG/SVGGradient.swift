@@ -8,8 +8,8 @@ import Foundation
 // **読む範囲**: `stop` (`offset`・`stop-color`・`stop-opacity`)・`x1`〜`y2`・`cx`・`cy`・`r`・`gradientTransform`・
 // `gradientUnits` (既定は `objectBoundingBox`)・`href` (`xlink:href` を含む) による区切りの継承。
 // **読まずに名乗るもの**: `spreadMethod` (`reflect`・`repeat`)・放射の焦点 (`fx`・`fy` が中心と違う・`fr` が 0 でない)・
-// `href` で指した勾配の属性 (区切りだけを引き継ぐ)・11 個目からの区切り (``GradientShader/stopCapacity``)。
-// 勾配は `pad` と中心の焦点として描く。
+// `href` で指した勾配の属性のうち既定と違う値 (区切りだけを引き継ぐ)・11 個目からの区切り
+// (``GradientShader/stopCapacity``)・勾配と区切りの中のアニメーション。勾配は `pad` と中心の焦点・書いた値のまま描く。
 //
 // 塗るのは本体の勾配 (``Gradient``) で、置く側 (``Canvas``) が `fill(_: Gradient)` を呼ぶ。線 (`stroke`) の勾配は
 // 本体に無いので、`stroke="url(#…)"` はこれまでどおり読まずに名乗る。
@@ -78,36 +78,138 @@ extension SVGFile {
     // MARK: - 集める
 
     /// ファイルの中の勾配を、書かれた場所 (`defs` の中でも外でも・後ろに書かれていても) によらず `id` ごとに集める。
-    /// 同じ `id` が 2 つあれば先のもの。区切りは勾配の直下の `stop` だけを、書いた順に読む。
+    /// **同じ `id` は文書で最初の要素が勝つ** (ブラウザの参照と同じ)。最初の要素が勾配でなければ (`<pattern>` など)、
+    /// その `id` の勾配は集めない。区切りは勾配の直下の `stop` だけを、書いた順に読む。勾配と `stop` の直下の
+    /// アニメーションの要素は、読まずに勾配の名乗りに積む (形の中のアニメーションと同じ形で、静止した値で描く)。
     nonisolated static func collectGradients(
         _ events: [Event], prefix: String, rules: [StyleRule]
     ) -> [String: GradientDefinition] {
         var found: [String: GradientDefinition] = [:]
-        // 開いている要素ごとに、受け入れた勾配ならその `id`
-        var open: [String?] = []
+        /// 文書の中で出た `id` (要素の種類によらない)。
+        var seen: Set<String> = []
+        /// 開いている要素 1 つ: 受け入れた勾配 (か、その直下の `stop`) ならその `id`、と受け継ぐ塗りの値。
+        struct Open {
+            var gradient: String?
+            var isStop = false
+            var paint: StopPaint
+        }
+        var open: [Open] = []
         for event in events {
             switch event {
             case .end:
                 _ = open.popLast()
             case .start(let raw, let attributes, let line):
                 let name = localName(raw, prefix: prefix)
-                if name == "stop", let parent = open.last, let id = parent {
-                    found[id]?.add(stop: attributes, line: line, rules: rules)
-                    open.append(nil)
+                let parent = open.last
+                let parentPaint = parent?.paint ?? StopPaint()
+                let isStop = name == "stop" && parent?.gradient != nil && parent?.isStop == false
+                var notes: [(what: String, line: Int)] = []
+                let paint = StopPaint(
+                    attributes, name: name ?? raw, parent: parentPaint, rules: rules,
+                    note: { notes.append(($0, line)) })
+                defer { if let id = attributes["id"] { seen.insert(id) } }
+                if let name, animationElements.contains(name), let id = parent?.gradient {
+                    found[id]?.notes.append(("<\(name)>", line))
+                    open.append(Open(paint: paint))
+                    continue
+                }
+                if isStop, let id = parent?.gradient {
+                    found[id]?.add(stop: attributes, line: line, paint: paint, notes: notes)
+                    open.append(Open(gradient: id, isStop: true, paint: paint))
                     continue
                 }
                 guard name == "linearGradient" || name == "radialGradient", let id = attributes["id"],
-                    found[id] == nil
+                    !seen.contains(id)
                 else {
-                    open.append(nil)
+                    open.append(Open(paint: paint))
                     continue
                 }
                 found[id] = GradientDefinition(
                     isRadial: name == "radialGradient", attributes: attributes, stops: [], notes: [], line: line)
-                open.append(id)
+                open.append(Open(gradient: id, paint: paint))
             }
         }
         return found
+    }
+
+    /// 区切りの色を決める値 (要素ごと)。`color` は受け継ぐ性質、`stop-color`・`stop-opacity` は受け継がない性質で、
+    /// `inherit` のときだけ親の値を取る。
+    nonisolated struct StopPaint {
+        var color = Color.black
+        var stopColor = Color.black
+        var stopOpacity: Float = 1
+
+        init() {}
+
+        /// 要素の宣言 (属性 < `<style>` の規則 < `style` 属性。`!important` が上) を重ねて決める。性質ごとに、読める
+        /// 宣言のうち順位が最も高い 1 つが勝つ。読めない `stop-color`・`stop-opacity` は `note` で名乗り、下の宣言を残す。
+        /// `stop-color` の `currentColor` はこの要素の `color` で読む。
+        init(
+            _ attributes: [String: String], name: String, parent: StopPaint, rules: [StyleRule],
+            note: (String) -> Void
+        ) {
+            let properties: Set<String> = ["color", "stop-color", "stop-opacity"]
+            var candidates: [(rank: Rank, declaration: Declaration)] = []
+            func collect(_ declaration: Declaration, _ origin: Rank.Origin, specificity: Int = 0) {
+                guard properties.contains(declaration.name) else { return }
+                candidates.append(
+                    (Rank(
+                        isImportant: declaration.isImportant, origin: origin, specificity: specificity,
+                        order: candidates.count), declaration))
+            }
+            for key in ["color", "stop-color", "stop-opacity"] {
+                if let value = attributes[key] { collect(.init(name: key, value: value, isImportant: false), .attribute) }
+            }
+            let classes = Set((attributes["class"] ?? "").split(whereSeparator: \.isWhitespace).map(String.init))
+            for rule in rules where rule.selector.matches(name: name, classes: classes) {
+                for declaration in rule.declarations { collect(declaration, .rule, specificity: rule.selector.specificity) }
+            }
+            if let style = attributes["style"] {
+                for declaration in parseDeclarations(style).declarations { collect(declaration, .styleAttribute) }
+            }
+            let ordered = candidates.sorted { $0.rank < $1.rank }.map(\.declaration)
+            func value(of declaration: Declaration) -> String {
+                declaration.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            // `color` を先に決める (`stop-color: currentColor` が読む)。読めない値は、ここでは名乗らない (描く要素の
+            // `color` は辿る側が名乗る)
+            color = parent.color
+            for declaration in ordered where declaration.name == "color" {
+                let text = value(of: declaration).lowercased()
+                switch text {
+                case "inherit", "unset", "revert", "revert-layer", "currentcolor": color = parent.color
+                case "initial": color = .black
+                default: if let read = parseColor(text) { color = read }
+                }
+            }
+            for declaration in ordered where declaration.name != "color" {
+                let text = value(of: declaration)
+                let keyword = text.lowercased()
+                if declaration.name == "stop-color" {
+                    switch keyword {
+                    case "inherit": stopColor = parent.stopColor
+                    case "initial", "unset", "revert", "revert-layer": stopColor = .black
+                    case "currentcolor": stopColor = color
+                    default:
+                        if let read = parseColor(text) { stopColor = read } else { note(valueNote("stop-color", text)) }
+                    }
+                } else {
+                    switch keyword {
+                    case "inherit": stopOpacity = parent.stopOpacity
+                    case "initial", "unset", "revert", "revert-layer": stopOpacity = 1
+                    default:
+                        let amount =
+                            text.hasSuffix("%")
+                            ? DecimalText.spelled(text.dropLast()).map { $0 / 100 } : DecimalText.spelled(text)
+                        if let amount, amount.isFinite {
+                            stopOpacity = min(max(amount, 0), 1)
+                        } else {
+                            note(valueNote("stop-opacity", text))
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - 解く
@@ -150,13 +252,15 @@ extension SVGFile {
             }
             stopsOwner = owner
         }
+        // 引き継がなかった属性のうち、絵を変えうるもの (既定と違う値) だけを名乗る。鎖の近いほうの値が SVG では効く
         var inherited: Set<String> = []
         for ancestor in chain {
             let keys = ["gradientUnits", "gradientTransform", "spreadMethod"]
                 + (ancestor.isRadial == definition.isRadial
                     ? (definition.isRadial ? ["cx", "cy", "r", "fx", "fy", "fr"] : ["x1", "y1", "x2", "y2"]) : [])
-            for key in keys where definition.attributes[key] == nil && ancestor.attributes[key] != nil {
-                if inherited.insert(key).inserted {
+            for key in keys where definition.attributes[key] == nil {
+                guard let text = ancestor.attributes[key], inherited.insert(key).inserted else { continue }
+                if !isDefault(key, text, of: definition) {
                     notes.append(("<\(element) \(key)> inherited through href", definition.line))
                 }
             }
@@ -224,6 +328,13 @@ extension SVGFile {
             geometry = .linear(from: from, to: to)
         }
 
+        // つぶれた変換は、要素によらず塗れない。名乗りを出し切るため、要素ごとに変わる外接矩形より先に見る —
+        // 名乗りは勾配ごとに最初に使った要素で 1 度だけ出すので、外接矩形の幅か高さが 0 の要素で先に抜けると、
+        // 後の要素で名乗る機会が無い
+        guard transform.inverted != nil else {
+            note("gradientTransform", attributes["gradientTransform"] ?? "")
+            return (.nothing, notes)
+        }
         var space = transform
         if boundingBox {
             guard let box = geometryBounds(of: outline), box.high.x > box.low.x, box.high.y > box.low.y else {
@@ -238,6 +349,32 @@ extension SVGFile {
         }
         if stops.count == 1 { return (.color(stops[0].color), notes) }
         return (.gradient(GradientFill(geometry: geometry, stops: stops, space: space)), notes)
+    }
+
+    /// `href` で指した勾配の属性の値が、書いていないときと同じ絵になる値か。座標は外接矩形の割合 (と百分率) で比べる。
+    nonisolated private static func isDefault(_ key: String, _ text: String, of definition: GradientDefinition) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch key {
+        case "gradientUnits": return trimmed == "objectBoundingBox"
+        case "spreadMethod": return trimmed == "pad"
+        case "gradientTransform": return parseTransform(trimmed) == .identity
+        default: break
+        }
+        // `userSpaceOnUse` の勾配では、数は長さで割合ではない。百分率だけを割合として比べる
+        let userSpace = definition.attributes["gradientUnits"]?.trimmingCharacters(in: .whitespaces) == "userSpaceOnUse"
+        guard !userSpace || trimmed.hasSuffix("%"), let value = parseLength(trimmed, reference: 1) else { return false }
+        let fallback: Float
+        switch key {
+        case "x2": fallback = 1
+        case "cx", "cy", "r": fallback = 0.5
+        case "fx", "fy":
+            // 焦点の既定は中心 (この勾配の `cx` / `cy`)
+            let center = definition.attributes[key == "fx" ? "cx" : "cy"]
+            guard let center else { return value == 0.5 }
+            return parseLength(center, reference: 1) == value && (!userSpace || center.hasSuffix("%"))
+        default: fallback = 0  // x1・y1・y2・fr
+        }
+        return value == fallback
     }
 
     // MARK: - 外接矩形
@@ -305,9 +442,11 @@ extension SVGFile {
 }
 
 extension SVGFile.GradientDefinition {
-    /// 直下の `stop` 1 つを読んで足す。`stop-color`・`stop-opacity` は属性 < `<style>` の規則 < `style` 属性の順で
-    /// 重ね (`!important` が上)、読めない値は名乗って下の宣言を残す。位置は前の区切りより小さければ寄せる (SVG の約束)。
-    nonisolated fileprivate mutating func add(stop attributes: [String: String], line: Int, rules: [SVGFile.StyleRule]) {
+    /// 直下の `stop` 1 つを足す。色は `paint` (``SVGFile/StopPaint``) が決めたもので、`notes` はそのときの名乗り。
+    /// 位置は前の区切りより小さければ寄せ、0…1 の外は端へ寄せる (SVG の約束)。
+    nonisolated fileprivate mutating func add(
+        stop attributes: [String: String], line: Int, paint: SVGFile.StopPaint, notes stopNotes: [(what: String, line: Int)]
+    ) {
         var offset: Float = 0
         if let text = attributes["offset"] {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -321,53 +460,9 @@ extension SVGFile.GradientDefinition {
             }
         }
         offset = max(offset, stops.last?.offset ?? 0)
-
-        var candidates: [(rank: SVGFile.Rank, declaration: SVGFile.Declaration)] = []
-        func collect(_ declaration: SVGFile.Declaration, _ origin: SVGFile.Rank.Origin, specificity: Int = 0) {
-            guard declaration.name == "stop-color" || declaration.name == "stop-opacity" else { return }
-            candidates.append(
-                (SVGFile.Rank(
-                    isImportant: declaration.isImportant, origin: origin, specificity: specificity,
-                    order: candidates.count), declaration))
-        }
-        for key in ["stop-color", "stop-opacity"] {
-            if let value = attributes[key] { collect(.init(name: key, value: value, isImportant: false), .attribute) }
-        }
-        let classes = Set((attributes["class"] ?? "").split(whereSeparator: \.isWhitespace).map(String.init))
-        for rule in rules where rule.selector.matches(name: "stop", classes: classes) {
-            for declaration in rule.declarations { collect(declaration, .rule, specificity: rule.selector.specificity) }
-        }
-        if let style = attributes["style"] {
-            for declaration in SVGFile.parseDeclarations(style).declarations { collect(declaration, .styleAttribute) }
-        }
-        var color = SVGFile.Color.black
-        var opacity: Float = 1
-        for (_, declaration) in candidates.sorted(by: { $0.rank < $1.rank }) {
-            let value = declaration.value.trimmingCharacters(in: .whitespacesAndNewlines)
-            // 全体キーワードは初めの値 (`stop-color` は黒・`stop-opacity` は 1)。どちらも受け継がない性質
-            let keyword = ["inherit", "initial", "unset", "revert", "revert-layer"].contains(value.lowercased())
-            if declaration.name == "stop-color" {
-                if keyword {
-                    color = .black
-                } else if let read = SVGFile.parseColor(value) {
-                    color = read
-                } else {
-                    notes.append((SVGFile.valueNote("stop-color", value), line))
-                }
-            } else {
-                let amount =
-                    value.hasSuffix("%")
-                    ? DecimalText.spelled(value.dropLast()).map { $0 / 100 } : DecimalText.spelled(value)
-                if keyword {
-                    opacity = 1
-                } else if let amount, amount.isFinite {
-                    opacity = min(max(amount, 0), 1)
-                } else {
-                    notes.append((SVGFile.valueNote("stop-opacity", value), line))
-                }
-            }
-        }
-        color.alpha *= opacity
+        notes += stopNotes
+        var color = paint.stopColor
+        color.alpha *= paint.stopOpacity
         stops.append(SVGFile.GradientFill.Stop(color: color, offset: offset))
     }
 }

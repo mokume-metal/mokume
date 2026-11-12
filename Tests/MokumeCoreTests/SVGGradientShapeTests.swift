@@ -184,4 +184,52 @@ struct SVGGradientShapeTests {
         #expect(abs(Int(image[80, 80].alpha) - 128) <= 1, "塗りだけ: \(image[80, 80])")
         #expect(abs(Int(image[35, 80].alpha) - 128) <= 1, "塗りと線の重なり: \(image[35, 80])")
     }
+
+    // MARK: - 形の変換・入れ子の svg の下 (検めの指摘)
+
+    @Test("要素と祖先の変換の下でも、勾配は形に付いて回る: 平行移動と縦横で違う拡大・回転")
+    func gradientFollowsElementTransforms() throws {
+        let (pixels, _) = try rendered(
+            "<linearGradient id='g'>\(Self.stops)</linearGradient>"
+                + "<g transform='translate(100,10) scale(2,1)'><rect width='40' height='50' fill='url(#g)'/></g>"
+                + "<rect width='60' height='30' transform='translate(40 70) rotate(90)' fill='url(#g)'/>")
+        #expect(isReddish(pixels[102, 35]), "拡大した矩形の左端: \(pixels[102, 35])")
+        #expect(isBluish(pixels[177, 35]), "拡大した矩形の右端: \(pixels[177, 35])")
+        // 回した矩形は x 10…40・y 70…130 で、勾配は下へ向かう
+        #expect(isReddish(pixels[25, 72]), "回した矩形の上: \(pixels[25, 72])")
+        #expect(isBluish(pixels[25, 127]), "回した矩形の下: \(pixels[25, 127])")
+    }
+
+    @Test("入れ子の svg の viewBox の下の userSpaceOnUse: 百分率は内側の表示枠で読み、拡大と一緒に動く")
+    func gradientUnderANestedViewBox() throws {
+        let (pixels, _) = try rendered(
+            "<svg x='0' y='80' width='120' height='60' viewBox='0 0 60 30'>"
+                + "<linearGradient id='u' gradientUnits='userSpaceOnUse' x2='50%'>\(Self.stops)</linearGradient>"
+                + "<rect width='60' height='30' fill='url(#u)'/></svg>")
+        #expect(isReddish(pixels[1, 110]), "\(pixels[1, 110])")
+        #expect(isHalfway(pixels[30, 110]), "内側の 15 (外の 30) で半分: \(pixels[30, 110])")
+        #expect(pixels[90, 110].red < 0.001 && pixels[90, 110].blue > 0.8, "外の 60 より右は最後の色: \(pixels[90, 110])")
+    }
+
+    @Test("勾配の要素の後ろの色の要素は、勾配が外れて色一色で出る")
+    func colorAfterAGradientIsPlain() throws {
+        let (pixels, _) = try rendered(
+            "<linearGradient id='g'>\(Self.stops)</linearGradient><rect width='80' height='50' fill='url(#g)'/>"
+                + "<rect x='100' width='60' height='50' fill='red'/>")
+        #expect(pixels[102, 25] == pixels[157, 25], "\(pixels[102, 25]) / \(pixels[157, 25])")
+        #expect(
+            abs(pixels[130, 25].red - Self.red.red) < 0.01 && abs(pixels[130, 25].blue - Self.red.blue) < 0.005,
+            "SVG の red のまま: \(pixels[130, 25])")
+    }
+
+    @Test("部分パスが 2 本ある path は、全体の外接矩形で 1 つの勾配を持つ")
+    func multiSubpathPathSharesOneGradient() throws {
+        let (pixels, _) = try rendered(
+            "<linearGradient id='g'>\(Self.stops)</linearGradient>"
+                + "<path d='M0 0 H40 V50 H0 Z M60 0 H100 V50 H60 Z' fill='url(#g)'/>")
+        #expect(isReddish(pixels[1, 25]), "\(pixels[1, 25])")
+        #expect(isBluish(pixels[98, 25]), "\(pixels[98, 25])")
+        #expect(pixels[50, 25].alpha == 0, "部分パスの間は塗らない")
+        #expect(pixels[38, 25].red > pixels[62, 25].red, "左の部分パスの右端は、右の左端より赤い")
+    }
 }

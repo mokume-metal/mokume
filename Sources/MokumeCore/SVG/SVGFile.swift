@@ -190,7 +190,7 @@ nonisolated enum SVGFile {
     ]
 
     /// アニメーションの要素。形の中に書かれていても名乗る。
-    private static let animationElements: Set<String> = [
+    static let animationElements: Set<String> = [
         "animate", "animateMotion", "animateTransform", "animateColor", "set",
     ]
 

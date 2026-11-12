@@ -286,4 +286,108 @@ struct SVGGradientTests {
         #expect(drawing.items.first?.fill == nil && drawing.items.first?.stroke == .black)
         #expect(drawing.skipped.isEmpty)
     }
+
+    // MARK: - 検め (#3031 の PR) の指摘
+
+    @Test("勾配と区切りの中のアニメーションは、形の中のものと同じ形で名乗り、書いた値のまま描く")
+    func animationsInsideGradientsAreNamed() throws {
+        let drawing = try document(
+            "<linearGradient id='g'><animateTransform attributeName='gradientTransform' type='rotate'/>"
+                + "<stop offset='0' stop-color='red'><animate attributeName='stop-color' to='lime'/></stop>"
+                + "<stop offset='1' stop-color='blue'><set attributeName='offset' to='0.5'/></stop></linearGradient>"
+                + "<rect width='80' height='50' fill='url(#g)'/>")
+        #expect(drawing.skipped.map(\.what) == ["<animateTransform>", "<animate>", "<set>"], "\(drawing.skipped)")
+        #expect(drawing.items.first?.gradient?.stops.map(\.color) == [Self.red, Self.blue])
+    }
+
+    @Test("名乗りは、最初に使った要素の外接矩形が平らで塗らなかった回でも取りこぼさない (つぶれた gradientTransform)")
+    func notesSurviveAFlatFirstUse() throws {
+        let drawing = try document(
+            "<linearGradient id='g' gradientTransform='scale(0)'>\(Self.stops)</linearGradient>"
+                + "<polyline points='0 10 80 10' fill='url(#g)' stroke='black'/>"
+                + "<rect y='20' width='80' height='50' fill='url(#g)'/><rect y='80' width='8' height='5' fill='url(#g)'/>")
+        #expect(
+            drawing.skipped == [SVGFile.Skip(what: #"<linearGradient gradientTransform="scale(0)">"#, count: 1, line: 1)])
+        #expect(drawing.items.count == 1, "線だけ: \(drawing.items)")
+    }
+
+    @Test(
+        "同じ id は文書で先の要素を指す: 先が勾配でなければ代わりの色で塗って名乗り、先が勾配なら後ろの要素は見ない",
+        arguments: [
+            ("<pattern id='g'/><linearGradient id='g'>STOPS</linearGradient>", false),
+            ("<rect id='g' width='1' height='1' fill='none'/><linearGradient id='g'>STOPS</linearGradient>", false),
+            ("<linearGradient id='g'>STOPS</linearGradient><pattern id='g'/>", true),
+            ("<linearGradient id='g'>STOPS</linearGradient><linearGradient id='g'><stop stop-color='lime'/></linearGradient>", true),
+        ])
+    func firstElementWithTheIdWins(_ sample: (String, Bool)) throws {
+        let drawing = try document(
+            sample.0.replacingOccurrences(of: "STOPS", with: Self.stops)
+                + "<rect width='80' height='50' fill='url(#g) red'/>")
+        let item = try #require(drawing.items.first)
+        if sample.1 {
+            #expect(item.gradient?.stops.map(\.color) == [Self.red, Self.blue], "\(sample.0)")
+            #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        } else {
+            #expect(item.gradient == nil && item.fill == Self.red, "\(sample.0)")
+            #expect(drawing.skipped.map(\.what) == [#"fill="url(…)""#], "\(drawing.skipped)")
+        }
+    }
+
+    @Test("stop-color の currentColor は区切りに効いている color (区切り → 勾配 → 祖先) で、inherit は勾配の要素の値で読む")
+    func stopColorKeywordsFollowTheCascade() throws {
+        let drawing = try document(
+            "<g color='red'><defs><linearGradient id='g' color='lime' stop-color='blue'>"
+                + "<stop offset='0' stop-color='currentColor'/><stop offset='0.5' stop-color='currentColor' color='blue'/>"
+                + "<stop offset='0.7' stop-color='inherit'/><stop offset='1' style='stop-color: currentColor'/>"
+                + "</linearGradient><linearGradient id='h'><stop stop-color='currentColor'/><stop offset='1' stop-color='blue'/>"
+                + "</linearGradient></defs></g>"
+                + "<rect width='80' height='50' fill='url(#g)'/><rect y='60' width='80' height='50' fill='url(#h)'/>")
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        let lime = SVGFile.Color(red: 0, green: 1, blue: 0, alpha: 1)
+        #expect(drawing.items.first?.gradient?.stops.map(\.color) == [lime, Self.blue, Self.blue, lime])
+        #expect(drawing.items.last?.gradient?.stops.first?.color == Self.red, "祖先の color を受け継ぐ")
+    }
+
+    @Test("href で指した勾配の属性が既定と同じ値なら、引き継がなくても絵は同じなので名乗らない")
+    func defaultAttributesThroughHrefAreNotNamed() throws {
+        let drawing = try document(
+            "<linearGradient id='a' spreadMethod='pad' gradientUnits='objectBoundingBox' gradientTransform='translate(0)' "
+                + "x1='0' y1='0%' x2='100%' y2='0'>\(Self.stops)</linearGradient>"
+                + "<radialGradient id='c' cx='50%' cy='0.5' r='0.5' fx='0.5' fr='0'>\(Self.stops)</radialGradient>"
+                + "<linearGradient id='b' href='#a'/><radialGradient id='d' href='#c'/>"
+                + "<rect width='80' height='50' fill='url(#b)'/><rect y='60' width='80' height='50' fill='url(#d)'/>")
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+    }
+
+    @Test("userSpaceOnUse の百分率は、使う要素がいる入れ子の svg の表示枠で読む。r の百分率は対角線の式で読む")
+    func userSpacePercentagesUseTheNearestViewport() throws {
+        let nested = try SVGFile.parse(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='300' height='400'>"
+                + "<linearGradient id='u' gradientUnits='userSpaceOnUse' x2='50%'>\(Self.stops)</linearGradient>"
+                + "<radialGradient id='r' gradientUnits='userSpaceOnUse' r='10%'>\(Self.stops)</radialGradient>"
+                + "<svg width='200' height='100' viewBox='0 0 400 200'><rect width='400' height='200' fill='url(#u)'/></svg>"
+                + "<rect width='10' height='10' fill='url(#r)'/></svg>",
+            path: "nested.svg")
+        let linear = try #require(nested.items.first?.gradient)
+        let (from, to) = try #require(ends(linear))
+        #expect(isClose(from, [0, 0]) && isClose(to, [200, 0]), "viewBox の幅 400 の半分: \(from) → \(to)")
+        guard case .radial(_, let radius) = nested.items.last?.gradient?.geometry else {
+            Issue.record("放射でない")
+            return
+        }
+        // 対角線の式: √((300² + 400²) / 2) の 10%
+        #expect(abs(radius - (Float(300 * 300 + 400 * 400) / 2).squareRoot() * 0.1) < 1e-3, "\(radius)")
+    }
+
+    @Test("範囲の外の offset は 0…1 へ寄せる。負の半径は塗らずに名乗る")
+    func outOfRangeValues() throws {
+        let fill = try gradient(
+            "<linearGradient id='g'><stop offset='-0.5' stop-color='red'/><stop offset='150%' stop-color='blue'/>"
+                + "</linearGradient><rect width='80' height='50' fill='url(#g)'/>")
+        #expect(fill.stops.map(\.offset) == [0, 1])
+        let negative = try document(
+            "<radialGradient id='r' r='-1'>\(Self.stops)</radialGradient><rect width='80' height='50' fill='url(#r)'/>")
+        #expect(negative.items.isEmpty)
+        #expect(negative.skipped.map(\.what) == [#"<radialGradient r="-1">"#])
+    }
 }

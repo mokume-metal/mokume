@@ -223,8 +223,11 @@ extension SketchPart {
     /// - 塗りの勾配: `fill="url(#…)"` が指す `<linearGradient>`・`<radialGradient>`。`stop` の `offset`・`stop-color`・
     ///   `stop-opacity` (属性・`style` 属性・`<style>`)・`x1`〜`y2`・`cx`・`cy`・`r`・`gradientTransform`・`gradientUnits`
     ///   (既定の `objectBoundingBox` は形の外接矩形の割合、`userSpaceOnUse` は形の座標)・`href` (`xlink:href`) で
-    ///   指した勾配からの区切りの引き継ぎを読む。勾配はファイルのどこに書いてもよい。区切りが 1 つ・2 点が同じ・
-    ///   半径 0 の勾配は 1 色で、区切りの無い勾配は塗らない (どれも SVG のとおり)
+    ///   指した勾配からの区切りの引き継ぎを読む。`stop-color` の `currentColor` は区切りに効いている `color` (区切り・
+    ///   勾配の要素・その祖先の順に受け継ぐ) で、`inherit` は勾配の要素の値で読む。勾配はファイルのどこに書いてもよく、
+    ///   同じ `id` が 2 つあれば文書で先の要素を指す。区切りが 1 つ・2 点が同じ・半径 0 の勾配は 1 色で、区切りの無い
+    ///   勾配と、`objectBoundingBox` の勾配で塗る形のうち外接矩形の幅か高さが 0 のもの (水平な `polyline` など) は
+    ///   塗らない (どれも SVG のとおりで、知らせない)
     /// - 書き方: 属性・`style` 属性・`<style>` の規則 (`*`・要素名 1 つ・クラス 1 つのセレクタ。
     ///   Illustrator の書き出しの既定がこの形)。優先の順は CSS のとおりで、属性 < `*` の規則 <
     ///   要素名の規則 < クラスの規則 < `style` 属性。`!important` を付けた宣言はそれらすべてより上で、
@@ -242,7 +245,9 @@ extension SketchPart {
     /// 勾配の書き方のうち描けないものも知らせる (勾配ごとに 1 度): `spreadMethod` の `reflect`・`repeat`
     /// (端の外は端の色のまま伸ばす `pad` で描く)・中心と違う焦点 (`fx`・`fy`) と 0 でない `fr` (中心を焦点として
     /// 描く)・`href` で指した勾配の属性 (区切りだけを引き継ぎ、`gradientTransform` などは引き継がない)・11 個目からの
-    /// 区切り (使わない)・読めない `offset`・`stop-color` などの値。`href` の指す先が無い・循環する勾配は塗らずに知らせる。
+    /// 区切り (使わない)・読めない `offset`・`stop-color` などの値・勾配と区切りの中のアニメーション (`<animate>` など。
+    /// 書いた値のまま描く)。`href` の指す先が無い・循環する勾配と、`gradientTransform` がつぶれた勾配・半径が負の勾配は
+    /// 塗らずに知らせる。
     ///
     /// **読まない性質のうち、形の大きさ・位置が黙って変わるものも知らせる。** CSS (`style` 属性・`<style>`) で
     /// 書いた幾何の性質 (`rect` の `width` / `height` / `x` / `y` / `rx` / `ry`・`circle` の `cx` / `cy` / `r`・
