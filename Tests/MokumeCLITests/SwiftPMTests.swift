@@ -340,11 +340,49 @@ struct SwiftPMTests {
     @Test("依存のパッケージの名前が読めなければ、古い包みは除かない")
     func leftoversStayWithoutDependencyNames() throws {
         let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump))
-        #expect(
-            package.resourceScope(
-                forProduct: "Demo", beside: ["Demo_Lib.bundle", "Demo_DemoTests.bundle"],
-                dependencyPackages: nil
-            ).excluded.isEmpty)
+        let scope = package.resourceScope(
+            forProduct: "Demo", beside: ["Demo_Lib.bundle", "Demo_DemoTests.bundle"],
+            dependencyPackages: nil)
+        #expect(scope.excluded.isEmpty)
+        // 除かずに入れた候補は、束ねた報せで `Kept:` と名乗らせる
+        #expect(scope.kept == ["Demo_DemoTests.bundle"])
+        #expect(scope.leftovers.isEmpty)
+    }
+
+    /// **置き場の包みを宣言の target に結び付ける規則は 1 つ** (#4005 の 2 回目の反証)。閉包の外の target を
+    /// 除く判定 (#3982) も同じ規則を使う。テストの target を `demoTests` → `DemoTests` と大文字と小文字だけ
+    /// 改名すると、区別しないボリュームでは置き場の包みが古い綴り `Demo_demoTests.bundle` のまま残る。
+    /// 綴りの完全一致だけで除くと一致せず、残す側は「宣言にある」と読むので、テストの資材が `.app` に入る。
+    @Test("大文字と小文字だけ違う綴りで残った包みも、宣言の target のものとして閉包の内外で決める")
+    func caseOnlyRenamedTestTargetsStayOut() throws {
+        let dump = """
+            {"name":"Demo",
+             "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
+             "targets":[
+               {"name":"Demo","type":"executable"},
+               {"name":"DemoTests","type":"test","resources":[{"rule":{"copy":{}},"path":"f"}],
+                "dependencies":[{"byName":["Demo",null]}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+        let scope = package.resourceScope(
+            forProduct: "Demo", beside: ["Demo_Demo.bundle", "Demo_demoTests.bundle"],
+            dependencyPackages: ["mokume"])
+        #expect(scope.excluded == ["Demo_demoTests.bundle"])
+        #expect(scope.leftovers.isEmpty)
+        #expect(package.declaredTarget(ofBundle: "Demo_demoTests.bundle", among: ["Demo_demoTests.bundle"])?.name == "DemoTests")
+    }
+
+    /// 区別するボリュームで `Lib` → `LIB` と改名すると、古い `Demo_Lib.bundle` と新しい `Demo_LIB.bundle` が
+    /// 並ぶ。完全に一致する綴りの包みが隣に在るので、古い側はどの target のものでもない (古い包み) と読み、
+    /// 除いて名乗る (#4005 の 2 回目の反証)。
+    @Test("完全に一致する綴りの包みが並べば、大文字と小文字だけ違う古い綴りは古い包みとして除く")
+    func caseOnlyOldSpellingsBesideTheNewOneAreLeftovers() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump(named: "Demo", library: "LIB")))
+        let scope = package.resourceScope(
+            forProduct: "Demo", beside: ["Demo_Lib.bundle", "Demo_LIB.bundle"], dependencyPackages: ["mokume"])
+        #expect(scope.required == ["Demo_LIB.bundle"])
+        #expect(scope.excluded == ["Demo_Lib.bundle"])
+        #expect(scope.leftovers == ["Demo_Lib.bundle"])
     }
 
     /// 閉包が求められない (宣言が読めない) ときも、古い包みを含めて何も除かない。

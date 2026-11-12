@@ -104,25 +104,66 @@ nonisolated enum SwiftPM {
             ///
             /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
             let leftovers: Set<String>
+            /// 古い包みの候補 (``leftoverCandidates(forProduct:beside:)``) のうち、依存の名前を読めなかった
+            /// ので除かずに入れたもの (#4005)。**束ねた報せで名乗る** — 古い包みが入ったかもしれないことを
+            /// 黙らない。
+            let kept: Set<String>
 
-            init(required: [String], excluded: Set<String>, leftovers: Set<String> = []) {
+            init(
+                required: [String], excluded: Set<String>, leftovers: Set<String> = [],
+                kept: Set<String> = []
+            ) {
                 self.required = required
                 self.excluded = excluded
                 self.leftovers = leftovers
+                self.kept = kept
             }
         }
 
         /// `product` を配る範囲。**名前の形 (`…Tests`) では決めない** — 依存の閉包の内外で決める。
         /// 閉包が求められない (product の宣言が無い・読めない依存に出会った) ときは、推し量らずに従来の
         /// 判定 (資材を宣言した target を全部数え、何も除かない) へ倒す。
+        ///
+        /// 隣の並びを知らない形。宣言のどの target の包みも、宣言どおりの綴りで並んでいるとして求める
+        /// (``resourceScope(forProduct:beside:dependencyPackages:)`` と同じ規則)。
         func resourceScope(forProduct product: String) -> ResourceScope {
-            let used = targetClosure(ofProduct: product)
-            return ResourceScope(
-                required: targets.filter { !$0.resources.isEmpty && used?.contains($0.name) != false }
-                    .map { "\(name)_\($0.name).bundle" },
-                excluded: used.map { used in
-                    Set(targets.filter { !used.contains($0.name) }.map { "\(name)_\($0.name).bundle" })
-                } ?? [])
+            resourceScope(
+                forProduct: product, beside: targets.map { bundleName(of: $0) }, dependencyPackages: [])
+        }
+
+        /// `target` の包みの名前 (道具立てが付ける綴り)。
+        func bundleName(of target: Target) -> String { "\(name)_\(target.name).bundle" }
+
+        /// 置き場の包み `bundle` を作った、いまの宣言の target。**除く側 (#3982 の閉包の外) と残す側
+        /// (#4005 の古い包み) の両方が、この 1 つの規則で結び付ける** (#4005 の 2 回目の反証)。
+        ///
+        /// - 綴りが完全に一致すれば、その target の包み
+        /// - 一致しないが大文字と小文字を除いて一致し、しかも**完全に一致する綴りの包みが隣に無ければ**、
+        ///   その target の包み。区別しないボリュームで target を `Lib` → `LIB` と改名すると、置き場の包みは
+        ///   古い綴り (`Demo_Lib.bundle`) のまま作り直される
+        /// - 完全に一致する綴りの包みが隣に在れば (区別するボリュームで `Demo_Lib.bundle` と
+        ///   `Demo_LIB.bundle` が並ぶ)、どの target のものでもない (古い包み)
+        ///
+        /// - Parameter built: 隣に並んだ包みの名前。
+        func declaredTarget(ofBundle bundle: String, among built: [String]) -> Target? {
+            if let exact = targets.first(where: { bundleName(of: $0) == bundle }) { return exact }
+            let folded = bundle.lowercased()
+            return targets.first { target in
+                let spelled = bundleName(of: target)
+                return spelled.lowercased() == folded && !built.contains(spelled)
+            }
+        }
+
+        /// 宣言から消えた target の古い包みの候補 (#4005): 隣に並んだ包みのうち、いまのパッケージの宣言の
+        /// 名前で始まり (`<name>_…`。大文字と小文字を区別する — 区別しないと除くものが増える)、いまの宣言の
+        /// どの target の包みでもない (``declaredTarget(ofBundle:among:)``) もの。閉包が求められなければ空
+        /// (何も除かない)。**候補が無ければ、依存の名前を道具立てに問わない。**
+        func leftoverCandidates(forProduct product: String, beside built: [String]) -> [String] {
+            guard targetClosure(ofProduct: product) != nil else { return [] }
+            return built.filter {
+                $0.hasSuffix(".bundle") && $0.hasPrefix("\(name)_")
+                    && declaredTarget(ofBundle: $0, among: built) == nil
+            }
         }
 
         /// `product` を配る範囲に、**宣言から消えた target の古い包み**の除外を足したもの (#4005)。
@@ -132,12 +173,14 @@ nonisolated enum SwiftPM {
         /// うち、**いまのパッケージの宣言の名前**で始まり (`<name>_…`)、いまの宣言のどの target の包みでもなく、
         /// **どの依存のパッケージの名前 (`<依存>_…`) でも説明できない**もの。自分の名前が依存の名前で始まる
         /// (`Demo_Extras` と `Demo`) と、`Demo_Extras_Gone.bundle` はどちらのものとも読めるので除かない
-        /// (入れすぎる側へ倒す)。依存の名前が読めない (`nil`)・閉包が求められないときは、古い包みを除かない。
+        /// (入れすぎる側へ倒す)。閉包が求められないときは、何も除かない。依存の名前が読めない (`nil`) ときは
+        /// 古い包みの候補を除かず、``ResourceScope/kept`` に載せる。
         ///
-        /// **残す側の比べ方は大文字と小文字を区別しない** (いまの宣言の target・依存の名前)。区別しない
-        /// ボリュームでは、target を `Lib` → `LIB` と改名しても置き場の包みは古い綴り (`Demo_Lib.bundle`) の
-        /// ままで、区別すると古い包みと読んで除いてしまう。除く側の頭 (`<name>_`) は区別する (区別しないと
-        /// 除くものが増える)。
+        /// 隣の包みを宣言の target に結び付けるのは ``declaredTarget(ofBundle:among:)`` の 1 つの規則で、
+        /// 閉包の外の target の包みを除く判定 (#3982) も同じ規則を使う。依存の名前との比べ方は大文字と
+        /// 小文字を区別しない (残す側へ倒れる)。依存の identity も根拠に数えるので、identity が自分の
+        /// パッケージ名と大文字と小文字を除いて一致する依存があると、古い包みは 1 つも除かれない (決められない
+        /// ときは入れる側へ倒す。包みの名前に identity を使う版の道具立てに備えて残す)。
         ///
         /// 範囲の外: `Package(name:)` を改名する前の名前で始まる包みと、`Package.swift` から外した依存の
         /// 包みは、持ち主を名前の形から決められないので除かない。
@@ -145,22 +188,37 @@ nonisolated enum SwiftPM {
         /// - Parameters:
         ///   - built: 実行ファイルの隣に並んだ包みの名前。
         ///   - dependencyPackages: 依存のパッケージの宣言の名前と identity (``DependencyTree/dependencyNames``)。
-        ///     読めなければ `nil`。
+        ///     読めなければ `nil`。候補 (``leftoverCandidates(forProduct:beside:)``) が無いときは見ない。
         func resourceScope(
             forProduct product: String, beside built: [String], dependencyPackages: [String]?
         ) -> ResourceScope {
-            let scope = resourceScope(forProduct: product)
-            guard let dependencyPackages, targetClosure(ofProduct: product) != nil else { return scope }
-            let declared = Set(targets.map { "\(name)_\($0.name).bundle".lowercased() })
-            let owners = dependencyPackages.map { "\($0)_".lowercased() }
-            let leftovers = Set(
+            guard let used = targetClosure(ofProduct: product) else {
+                // 推し量らない: 資材を宣言した target を全部数え、何も除かない
+                return ResourceScope(
+                    required: targets.filter { !$0.resources.isEmpty }.map { bundleName(of: $0) },
+                    excluded: [])
+            }
+            let outside = Set(
                 built.filter { bundle in
-                    let folded = bundle.lowercased()
-                    return bundle.hasSuffix(".bundle") && bundle.hasPrefix("\(name)_")
-                        && !declared.contains(folded) && !owners.contains { folded.hasPrefix($0) }
+                    declaredTarget(ofBundle: bundle, among: built).map { !used.contains($0.name) } ?? false
                 })
+            let candidates = Set(leftoverCandidates(forProduct: product, beside: built))
+            let leftovers: Set<String>
+            let kept: Set<String>
+            if let dependencyPackages {
+                let owners = dependencyPackages.map { "\($0)_".lowercased() }
+                leftovers = candidates.filter { bundle in
+                    !owners.contains { bundle.lowercased().hasPrefix($0) }
+                }
+                kept = []
+            } else {
+                leftovers = []
+                kept = candidates
+            }
             return ResourceScope(
-                required: scope.required, excluded: scope.excluded.union(leftovers), leftovers: leftovers)
+                required: targets.filter { !$0.resources.isEmpty && used.contains($0.name) }
+                    .map { bundleName(of: $0) },
+                excluded: outside.union(leftovers), leftovers: leftovers, kept: kept)
         }
 
         /// `product` を作る target と、それらがこのパッケージの中で (推移的に) 依存する target の名前。
