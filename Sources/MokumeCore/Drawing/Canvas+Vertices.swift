@@ -149,6 +149,18 @@ extension Canvas {
         bezierVertex(c1.x, c1.y, c2.x, c2.y, end.x, end.y)
     }
 
+    /// 3 次の曲線で、いまの点から `end` まで繋ぐ。``bezierVertex(_:_:_:_:_:_:)`` に制御点 2 つと
+    /// 終点の成分を同じ順で渡すのと同じ (#3781)。
+    public func bezierVertex(control1: Vector2, control2: Vector2, to end: Vector2) {
+        bezierVertex(control1.x, control1.y, control2.x, control2.y, end.x, end.y)
+    }
+
+    /// 2 次の曲線で、いまの点から `end` まで繋ぐ。``quadraticVertex(_:_:_:_:)`` に制御点と終点の
+    /// 成分を同じ順で渡すのと同じ (#3781)。
+    public func quadraticVertex(control: Vector2, to end: Vector2) {
+        quadraticVertex(control.x, control.y, end.x, end.y)
+    }
+
     /// 通過点を結ぶ曲線の制御点を置く。
     ///
     /// **4 つ揃って初めて 1 区間が引ける** — 最初と最後の点は曲がり方を決めるためだけに
@@ -214,6 +226,24 @@ extension Canvas {
     public func curveTightness(_ amount: some ScalarConvertible) {
         let amount = amount.asFloat
         currentCurveTightness = amount
+    }
+
+    /// 通過点を結ぶ曲線の上の点の、1 つの軸の値 (#3710)。**この描画先の張り (``curveTightness(_:)``) を読む。**
+    /// 意味の正本は ``SketchPart/curvePoint(_:_:_:_:_:)``。
+    public func curvePoint(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ t: some ScalarConvertible
+    ) -> Float {
+        curvePointValue(a.asFloat, b.asFloat, c.asFloat, d.asFloat, t.asFloat, tightness: currentCurveTightness)
+    }
+
+    /// 通過点を結ぶ曲線の、1 つの軸についての傾き (#3710)。**この描画先の張りを読む。**
+    /// 意味の正本は ``SketchPart/curveTangent(_:_:_:_:_:)``。
+    public func curveTangent(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ t: some ScalarConvertible
+    ) -> Float {
+        curveTangentValue(a.asFloat, b.asFloat, c.asFloat, d.asFloat, t.asFloat, tightness: currentCurveTightness)
     }
 
     public func beginContour() {

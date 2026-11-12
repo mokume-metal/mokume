@@ -6,7 +6,9 @@ import MokumeDiagnostics
 
 /// 文字のファイルを読み書きする。文字列の行 (``SketchPart/loadStrings(_:)``)・表
 /// (``SketchPart/loadTable(_:header:)``)・JSON (``SketchPart/loadJSONObject(_:)``)・XML
-/// (``SketchPart/loadXML(_:)``) が共有する。
+/// (``SketchPart/loadXML(_:)``) が共有する。バイト列 (``SketchPart/loadBytes(_:)``・
+/// ``SketchPart/saveBytes(_:_:)``) も、開く・書く段だけを同じ道で通す (``readData(_:path:)``・
+/// バイト列の `write(_:to:)`)。
 ///
 /// **探すのは呼ぶ側** (``SketchPart/assetURL(_:)``)。ここが受け取るのは場所が分かったファイルで、
 /// 名前 (`path`) は失敗を名乗るためだけに持ち回る。
@@ -24,14 +26,18 @@ nonisolated enum TextFile {
     /// 添えて投げる。``DataFailure/unreadable(path:)`` (UTF-8 で保存し直せ) は、開けた中身を
     /// ``text(of:path:)`` が解けなかったときだけである。
     static func read(_ url: URL, path: String) throws(DataFailure) -> String {
-        let data: Data
+        try text(of: try readData(url, path: path), path: path)
+    }
+
+    /// ファイルの中身をそのまま読む。開けなければ ``read(_:path:)`` と同じく
+    /// ``DataFailure/unopenable(path:location:reason:)`` を投げる。中身は解かない。
+    static func readData(_ url: URL, path: String) throws(DataFailure) -> Data {
         do {
-            data = try Data(contentsOf: url)
+            return try Data(contentsOf: url)
         } catch {
             throw .unopenable(
                 path: path, location: url.standardizedFileURL.path, reason: Self.openingReason(of: error))
         }
-        return try text(of: data, path: path)
     }
 
     /// 開けなかった事情を、人が読む短い句にする。OS が名乗った事情 (`Is a directory`・
@@ -91,11 +97,17 @@ nonisolated enum TextFile {
     /// **書きかけを残さない。** 隣の一時ファイルへ書いてから置き換えるので、書いている途中で
     /// 止まっても、前の中身か新しい中身のどちらかが残る。
     static func write(_ text: String, to path: String) throws(DataFailure) {
+        try write(Data(text.utf8), to: path)
+    }
+
+    /// バイト列をそのままファイルにする。途中のディレクトリと書きかけの扱いは
+    /// 文字の `write(_:to:)` と同じ。
+    static func write(_ data: Data, to path: String) throws(DataFailure) {
         let url = URL(fileURLWithPath: path)
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data(text.utf8).write(to: url, options: .atomic)
+            try data.write(to: url, options: .atomic)
         } catch {
             throw .unwritable(path: path, reason: Self.writingReason(of: error, at: url))
         }

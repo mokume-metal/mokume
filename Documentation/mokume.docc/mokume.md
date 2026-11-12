@@ -591,6 +591,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
 - ``lerpColor(_:_:_:)``
+- ``lerpColor(_:_:amount:)``
 - ``paletteLerp(_:_:)``
 - ``red(_:)``
 - ``green(_:)``
@@ -628,6 +629,9 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/line(_:_:_:_:)``
 - ``SketchPart/line(_:_:)-(Vector2,_)``
 - ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
+- ``SketchPart/bezier(from:control1:control2:to:)``
+- ``SketchPart/curve(_:_:_:_:_:_:_:_:)``
+- ``SketchPart/curve(from:control1:control2:to:)``
 
 ### 座標の読み方
 
@@ -651,16 +655,22 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/vertex(_:_:_:)``
 - ``SketchPart/vertex(_:)-(Vector3)``
 - ``SketchPart/vertex(_:_:_:_:)``
+- ``SketchPart/vertex(_:uv:)-(Vector2,_)``
 - ``SketchPart/vertex(_:_:_:_:_:)``
+- ``SketchPart/vertex(_:uv:)-(Vector3,_)``
 - ``SketchPart/index(_:)``
 - ``SketchPart/normal(_:_:_:)``
 - ``SketchPart/bezierVertex(_:_:_:_:_:_:)``
+- ``SketchPart/bezierVertex(control1:control2:to:)``
 - ``SketchPart/quadraticVertex(_:_:_:_:)``
+- ``SketchPart/quadraticVertex(control:to:)``
 - ``SketchPart/curveVertex(_:_:)``
 - ``SketchPart/curveDetail(_:)``
 - ``SketchPart/curveTightness(_:)``
 - ``bezierPoint(_:_:_:_:_:)``
 - ``bezierTangent(_:_:_:_:_:)``
+- ``SketchPart/curvePoint(_:_:_:_:_:)``
+- ``SketchPart/curveTangent(_:_:_:_:_:)``
 - ``SketchPart/beginContour()``
 - ``SketchPart/endContour()``
 - ``SketchPart/endShape(_:)``
@@ -759,6 +769,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/image(_:_:_:)-23fpf``
 - ``SketchPart/image(_:_:_:_:_:)-4ch39``
 - ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-6fe4h``
+- ``SketchPart/image(_:in:)-(Image,_)``
+- ``SketchPart/image(_:in:from:)-(Image,_,_)``
 - ``SketchPart/texture(_:)-c9g``
 - ``SketchPart/noTexture()``
 - ``Image``
@@ -807,6 +819,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``Sketch/createSawOsc()``
 - ``Sketch/createWhiteNoise()``
 - ``Sketch/createPinkNoise()``
+- ``Sketch/createBrownNoise()``
 - ``Sketch/createEnv()``
 - ``Sketch/createLowPass()``
 - ``Sketch/createHighPass()``
@@ -824,6 +837,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``Noise``
 - ``WhiteNoise``
 - ``PinkNoise``
+- ``BrownNoise``
 - ``Env``
 - ``SoundEffect``
 - ``Filter``
@@ -878,7 +892,11 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/pixels``
 - ``SketchPart/loadPixels()``
 - ``SketchPart/get(_:_:)``
+- ``SketchPart/get()``
+- ``SketchPart/get(_:_:_:_:)``
+- ``SketchPart/get(in:)``
 - ``SketchPart/set(_:_:_:)``
+- ``SketchPart/set(x:y:to:)``
 - ``Pixels``
 - ``PixelBuffer``
 
@@ -888,6 +906,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/image(_:_:_:)-7psdx``
 - ``SketchPart/image(_:_:_:_:_:)-666br``
 - ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-3q9cm``
+- ``SketchPart/image(_:in:)-(Canvas,_)``
+- ``SketchPart/image(_:in:from:)-(Canvas,_,_)``
 - ``SketchPart/texture(_:)-6aozc``
 - ``Canvas``
 
@@ -899,11 +919,14 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``PNGFile``
 - ``ImageWriteFailure``
 
-### 文字列と表を読み書きする
+### 文字列・バイト列・表を読み書きする
 
 - ``SketchPart/loadStrings(_:)``
 - ``SketchPart/requestStrings(_:)``
 - ``SketchPart/saveStrings(_:_:)``
+- ``SketchPart/loadBytes(_:)``
+- ``SketchPart/requestBytes(_:)``
+- ``SketchPart/saveBytes(_:_:)``
 - ``SketchPart/loadTable(_:header:)``
 - ``SketchPart/requestTable(_:header:)``
 - ``SketchPart/saveTable(_:_:)``
@@ -948,12 +971,15 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 
 - ``SketchPart/camera()``
 - ``SketchPart/camera(_:_:_:_:_:_:_:_:_:)``
+- ``SketchPart/camera(eye:center:up:)``
 - ``SketchPart/currentCamera``
 - ``SketchPart/setCamera(_:)``
 - ``SketchPart/perspective()``
 - ``SketchPart/perspective(_:_:_:_:)``
+- ``SketchPart/perspective(fieldOfView:aspect:near:far:)``
 - ``SketchPart/ortho()``
 - ``SketchPart/ortho(_:_:_:_:_:_:)``
+- ``SketchPart/ortho(left:right:bottom:top:near:far:)``
 - ``SketchPart/orbitControl(_:_:_:)``
 - ``SketchPart/orbit``
 - ``Camera``
@@ -975,10 +1001,13 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/ambientLight(_:_:_:)``
 - ``SketchPart/directionalLight(_:_:_:_:)``
 - ``SketchPart/directionalLight(_:_:_:_:_:_:)``
+- ``SketchPart/directionalLight(color:direction:)``
 - ``SketchPart/pointLight(_:_:_:_:)``
 - ``SketchPart/pointLight(_:_:_:_:_:_:)``
+- ``SketchPart/pointLight(color:position:)``
 - ``SketchPart/spotLight(_:_:_:_:_:_:_:angle:)``
 - ``SketchPart/spotLight(_:_:_:_:_:_:_:_:_:angle:)``
+- ``SketchPart/spotLight(color:position:direction:angle:)``
 - ``SketchPart/lights()``
 - ``SketchPart/noLights()``
 - ``SketchPart/shininess(_:)``
@@ -1009,6 +1038,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/random(_:_:)``
 - ``SketchPart/randomGaussian()``
 - ``SketchPart/randomGaussian(_:_:)``
+- ``SketchPart/randomGaussian(mean:standardDeviation:)``
 - ``SketchPart/random(_:)-([Element])``
 - ``SketchPart/shuffle(_:)``
 - ``SketchPart/randomSeed(_:)``
@@ -1017,6 +1047,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/noise(_:_:_:_:)``
 - ``SketchPart/noiseSeed(_:)``
 - ``SketchPart/noiseDetail(_:_:)``
+- ``SketchPart/noiseDetail(octaves:falloff:)``
 - ``NoiseField``
 
 ### 角度と数値の変換
@@ -1029,13 +1060,18 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``radians(_:)``
 - ``degrees(_:)``
 - ``map(_:_:_:_:_:)``
+- ``map(_:fromLow:fromHigh:toLow:toHigh:)``
 - ``lerp(_:_:_:)``
+- ``lerp(_:_:amount:)``
 - ``constrain(_:_:_:)``
 - ``norm(_:_:_:)``
 - ``smoothstep(_:_:_:)``
+- ``smoothstep(_:_:x:)``
 - ``damp(_:_:_:_:)``
+- ``damp(_:toward:lambda:deltaTime:)``
 - ``pingpong(_:_:)``
 - ``lerpAngle(_:_:_:)``
+- ``lerpAngle(_:_:amount:)``
 - ``dist(_:_:_:_:)``
 - ``dist(_:_:_:_:_:_:)``
 - ``dist(_:_:)-(Vector2,_)``
@@ -1154,6 +1190,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 ### ゲームを作る
 
 - ``Scene``
+- ``ArcadeBody``
+- ``Camera2D``
 
 ### 実行中に値を調整する
 

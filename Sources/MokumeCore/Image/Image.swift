@@ -81,6 +81,8 @@ import simd
     private(set) var directUploads = 0
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
     private var warnedMismatch = false
+    /// 大きさの違うマスクを渡されたことを、もう知らせたか (``mask(_:)``)。
+    var warnedMaskMismatch = false
     /// ``filtered(_:)`` が効果を通す作業の面のうち、この絵が最後に使ったもの。**大きさが同じ絵どうしで
     /// 使い回す** (``FilterWorkspaces``) ので、この絵だけのものではない。持つのは、掛け終えた面がすぐ手放されて、
     /// 次の呼び出しで作り直すことにならないため。注意を 1 度だけ言う控えは面が持つ。
@@ -348,13 +350,17 @@ import simd
     /// ## スケッチの `save(_:)` との違い
     ///
     /// スケッチの ``SketchPart/save(_:)`` はフレームの外で書くので予約するだけで、呼んだ時点では
-    /// 失敗が分からない。**この口は呼んだその場で書く**ので、書けなければその場で投げる。
+    /// 失敗が分からない。**この API は呼んだその場で書く**ので、書けなければその場で投げる。`.png` で終わらない
+    /// 名前も、スケッチの `save(_:)` は `draw()` の中で毎フレーム止めないよう PNG で書いて警告し、この API は投げる。
     ///
-    /// **名前が `.svg` で終わるものは受けない。** この口は PNG の絵を書くので、`.svg` の名前では PNG の中身が
-    /// 黙って並ぶ。図形の線を SVG に書くのはスケッチの ``SketchPart/save(_:)`` で、`save("plot.svg")` と呼ぶ。
+    /// **名前が `.png` (大文字小文字を区別しない) で終わらないものは書かずに投げる。** この API は PNG の絵だけを
+    /// 書くので、`.jpg`・`.tif`・拡張子を省いた名前では PNG の中身が別の名前で黙って並ぶ。拡張子で形式は選ばない
+    /// (JPEG・TIFF などは書けない)。図形の線を SVG に書くのはスケッチの ``SketchPart/save(_:)`` で、
+    /// `save("plot.svg")` と呼ぶ。
     ///
-    /// - Parameter path: 書き出す先。
-    /// - Throws: 書けなかったとき ``ImageFailure/unwritable(path:reason:)``。行き先と事情が載る。
+    /// - Parameter path: 書き出す先。`.png` で終わる名前。
+    /// - Throws: 書けなかったとき・名前が `.png` で終わらないとき ``ImageFailure/unwritable(path:reason:)``。
+    ///   行き先と事情が載る。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     // shot: 撮れない 結果が絵ではなくファイルになる
@@ -362,6 +368,10 @@ import simd
         // `.svg` の名前で PNG の中身を書かない (#3139)。線を書く口は、スケッチの `save("plot.svg")`
         guard !FrameRecorder.isVector(path) else {
             throw .unwritable(path: path, reason: FrameRecorder.vectorSeriesReason)
+        }
+        // `.jpg` ほかの名前でも PNG の中身を書かない (#3723)。形式は選ばない (JPEG などは無い形)
+        guard FrameRecorder.isPNG(path) else {
+            throw .unwritable(path: path, reason: FrameRecorder.notPNGImageReason)
         }
         let picture = OutputStage.encode(readPixels())
         let url = FrameWriter.url(for: path)

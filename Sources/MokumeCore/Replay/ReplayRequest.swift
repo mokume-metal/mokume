@@ -44,6 +44,59 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
         return url.deletingLastPathComponent().appendingPathComponent(numbered).path
     }
 
+    /// `watch` の次の世代を、`number` の次の番号から選ぶ ([#3970])。
+    ///
+    /// **世代の名前は道具が作ったもので、利用者は名指していない** (`run --record` の行き先とは違う)。その名前に
+    /// 記録でないもの (記録の頭で始まらない通常ファイル・フォルダ・シンボリックリンクなど) が在れば、子が行き先として
+    /// 置き換えないように**番号を飛ばし**、何も無いか記録の残りが在る番号を選ぶ。飛ばした名前は呼ぶ側が知らせる。
+    ///
+    /// [#3970]: https://github.com/mokume-metal/mokume/issues/3970
+    ///
+    /// - Parameter destination: `--record` で頼まれた行き先 (絶対パス)。
+    /// - Parameter number: 前の世代の番号 (始まりは 0)。
+    /// - Returns: 選んだ番号と、飛ばした番号を塞いでいた名前 (番号の順。行き先 `take-1.json` か、錠の名前
+    ///   `take-1.json.lock` のどちらか実際に塞いでいたもの)。
+    package static func nextGeneration(of destination: String, after number: Int) -> (number: Int, skipped: [String]) {
+        var candidate = number + 1
+        var skipped: [String] = []
+        while true {
+            let path = generation(of: destination, number: candidate)
+            guard let blocking = blockingName(of: path) else { return (candidate, skipped) }
+            skipped.append(URL(fileURLWithPath: blocking).lastPathComponent)
+            candidate += 1
+        }
+    }
+
+    /// 世代の行き先を塞いでいる名前。使えれば `nil`。使えるのは、行き先が何も無いか記録 (``isRecordFile(_:)``) で、
+    /// **錠の名前 (`<行き先>.lock`) も何も無いか通常ファイル**のもの。錠の名前にリンク・フォルダなどが在ると、子は錠を
+    /// 取れずにその世代を記録しない (``ReplayClaim/take(destination:)``) ので、その番号も飛ばす。
+    ///
+    /// 見られない名前 (親がファイル・権限が無い) は空きとして返す — どの番号でも同じなので、飛ばし続けずに子に
+    /// 渡し、子が書けない理由を言う。
+    private static func blockingName(of path: String) -> String? {
+        var status = stat()
+        if lstat(path, &status) == 0, !isRecordFile(path) { return path }
+        let lock = path + ReplayClaim.lockSuffix
+        guard lstat(lock, &status) == 0 else { return nil }
+        return (status.st_mode & S_IFMT) == S_IFREG ? nil : lock
+    }
+
+    /// 記録の頭 (`{"schemaVersion":`) で始まる**通常ファイル**か。**リンクはたどらず、通常ファイルでないもの (フォルダ・
+    /// FIFO など) は開かない** — FIFO を読みに開くと、書き手が来るまで止まる (#3970)。世代の番号を選ぶ側
+    /// (``nextGeneration(of:after:)``) と、前の見張りの世代を消す側 (``discardGenerations(of:)``) が、同じこの判定を使う。
+    static func isRecordFile(_ path: String) -> Bool {
+        let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else { return false }
+        // 通常ファイルは 1 度の read で頭の 32 バイト (短ければ全部) が返る
+        var head = [UInt8](repeating: 0, count: 32)
+        let count = head.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
+        guard count > 0 else { return false }
+        return head[..<count].starts(with: Array("{\"schemaVersion\":".utf8))
+    }
+
     /// 起動の口。**記録しない実行 (ホストのアプリの中の ``SketchView``・書き出しの子) でも、合図は読まずに環境
     /// から消す** — 残れば、そこから起こす子 (孫) が継いで、頼んでいない実行が記録を始める。
     ///
@@ -88,8 +141,10 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     /// **1 から振り直すので、残しておくと前回の `take-3` が今回の `take-1`・`take-2` と混ざる** (`run` が前回の
     /// 完成品を消すのと同じ扱い)。
     ///
-    /// 消すのは、**記録の頭 (`{"schemaVersion":`) で始まる完成品** と、``ReplayClaim`` の名前の形の `.partial` だけ
-    /// — 同じ並びの名前の、記録でないファイルには触らない。世代ごとの錠を取れない行き先 (今、別の実行が書いている)
+    /// 消すのは、**記録の頭 (`{"schemaVersion":`) で始まる通常ファイルの完成品** (``isRecordFile(_:)``。リンク・
+    /// フォルダ・FIFO は残す) と、``ReplayClaim`` の名前の形の `.partial` だけ
+    /// — 同じ並びの名前の、記録でないファイルにも、`.partial` の名前のフォルダ (``AtomicFile/remove(_:)``・#3943)
+    /// にも触らない。世代ごとの錠を取れない行き先 (今、別の実行が書いている)
     /// も飛ばす。
     ///
     /// - Parameter destination: `--record` で頼まれた行き先 (絶対パス)。
@@ -111,14 +166,14 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
             let target = directory.appendingPathComponent(name)
             guard let claim = ReplayClaim.take(destination: target).claim else { continue }
             defer { claim.release() }
-            if looksLikeARecord(target) {
-                if (try? manager.removeItem(at: target)) != nil { removed.append(name) }
+            // 見てから消すまでの間にフォルダへ替わっても消さない (``AtomicFile/remove(_:)``・#3943)
+            // リンク・フォルダ・FIFO は記録でないものとして残す (番号を選ぶ側と同じ判定・#3970)
+            if isRecordFile(target.path), AtomicFile.remove(target) {
+                removed.append(name)
             }
             for entry in (try? manager.contentsOfDirectory(atPath: directory.path)) ?? []
             where ReplayClaim.isPartial(entry, of: name) {
-                if (try? manager.removeItem(at: directory.appendingPathComponent(entry))) != nil {
-                    removed.append(entry)
-                }
+                if AtomicFile.remove(directory.appendingPathComponent(entry)) { removed.append(entry) }
             }
         }
         return removed
@@ -134,13 +189,5 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
         let name = prefix + String(digits) + suffix
         if entry == name || ReplayClaim.isPartial(entry, of: name) { return name }
         return nil
-    }
-
-    /// 記録の頭で始まるファイルか。
-    private static func looksLikeARecord(_ url: URL) -> Bool {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
-        defer { try? handle.close() }
-        let head = (try? handle.read(upToCount: 32)) ?? Data()
-        return head.starts(with: Data("{\"schemaVersion\":".utf8))
     }
 }

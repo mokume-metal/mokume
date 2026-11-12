@@ -177,8 +177,9 @@ final class RecordedSource: AudioSource {
         return Self.index(at: seconds - origin.seconds, sampleRate: sampleRate)
     }
 
-    /// 時刻 `time` (秒) までに届いた標本の数 (標本の間に落ちる時刻は切り捨てる)。
+    /// 時刻 `time` (秒) までに届いた標本の数 (標本の間に落ちる時刻は切り捨てる)。巨大な秒は寄せる
+    /// (``FrameSamples/sampleIndex(_:)``・#3997)。
     static func index(at time: Double, sampleRate: Float) -> Int {
-        max(0, Int((time * Double(sampleRate)).rounded(.down)))
+        max(0, FrameSamples.sampleIndex(time * Double(sampleRate)))
     }
 }

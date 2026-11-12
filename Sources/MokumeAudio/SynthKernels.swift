@@ -67,6 +67,8 @@ nonisolated enum NoiseColor: UInt8, Sendable {
     case white
     /// 1 オクターブごとに同じ強さ (低い帯域ほど強い)。
     case pink
+    /// 周波数の 2 乗に反比例する強さ (ピンクより低域へ寄る)。ブラウンノイズ・レッドノイズ。
+    case brown
 }
 
 /// ノイズを作る。**種が決まれば同じ列を返す** (固定の種から始まる擬似乱数) — 同じ順に作れば
@@ -81,6 +83,8 @@ nonisolated struct NoiseKernel {
     private var b4: Float = 0
     private var b5: Float = 0
     private var b6: Float = 0
+    // ブラウンにする積分器の状態
+    private var brown: Float = 0
 
     /// `seed` から始める。同じ種からは同じ列が出る。
     init(seed: UInt64) {
@@ -92,7 +96,7 @@ nonisolated struct NoiseKernel {
         state = z == 0 ? 0x9E37_79B9_7F4A_7C15 : z
     }
 
-    /// 次の標本。-1 以上 1 未満 (ピンクは約 ±1 に収まる)。
+    /// 次の標本。-1 以上 1 未満 (ピンクは約 ±1 に収まる。ブラウンは -1〜1)。
     mutating func next(_ color: NoiseColor) -> Float {
         let white = nextWhite()
         switch color {
@@ -108,6 +112,12 @@ nonisolated struct NoiseKernel {
             let pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362
             b6 = white * 0.115926
             return pink * 0.11
+        case .brown:
+            // 白色雑音を、1 標本ごとに 2% 漏らす積分器に通す (1 次の低域通過。切れ目は約 150 Hz)。切れ目より上は
+            // 1 オクターブごとに 6 dB 下がり (ピンクの倍の傾き)、下は平らなので直流が溜まらず、音量が偏らない
+            brown = (brown + white * 0.02) / 1.02
+            // 3 倍で実効値は約 0.17、山は 0.85 ほど。積分器の値は 1 を越えないが、3 倍した稀な山を -1〜1 に丸める
+            return min(max(brown * 3, -1), 1)
         }
     }
 
@@ -148,16 +158,40 @@ nonisolated struct EnvelopeShape: Equatable {
     }
 
     /// 秒で与えられた形を、標本の数の形にする。負の値は 0 秒として扱う。
+    ///
+    /// 区間か合計が `Int` に収まらない形は、長さ 0 (鳴らない) にする。**呼ぶ側
+    /// (``SynthSource``・`Env.play`) が ``sampleCounts(attack:sustain:release:sampleRate:)`` で先に
+    /// 拒む** (#3951) ので、ここは音の側で落ちないための守りにすぎない。
     init(attack: Float, sustain: Float, level: Float, release: Float, sampleRate: Double) {
-        func samples(_ seconds: Float) -> Int {
-            guard seconds.isFinite, seconds > 0 else { return 0 }
-            return Int((Double(seconds) * sampleRate).rounded())
-        }
-        self.attack = samples(attack)
-        self.sustain = samples(sustain)
-        self.release = samples(release)
+        let counts = Self.sampleCounts(
+            attack: attack, sustain: sustain, release: release, sampleRate: sampleRate)
+        self.attack = counts?.attack ?? 0
+        self.sustain = counts?.sustain ?? 0
+        self.release = counts?.release ?? 0
         self.level = level.isFinite ? min(max(level, 0), 1) : 0
     }
 
     init() {}
+
+    /// 秒の長さを標本の数にする。負・数でない値は 0。**`Int` に収まらなければ `nil`。**
+    static func sampleCount(_ seconds: Float, sampleRate: Double) -> Int? {
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        return Int(exactly: (Double(seconds) * sampleRate).rounded())
+    }
+
+    /// 3 区間の標本の数。どれかの区間、または合計 (``length``) が `Int` に収まらなければ `nil`。
+    static func sampleCounts(
+        attack: Float, sustain: Float, release: Float, sampleRate: Double
+    ) -> (attack: Int, sustain: Int, release: Int)? {
+        guard
+            let attack = sampleCount(attack, sampleRate: sampleRate),
+            let sustain = sampleCount(sustain, sampleRate: sampleRate),
+            let release = sampleCount(release, sampleRate: sampleRate)
+        else { return nil }
+        let held = attack.addingReportingOverflow(sustain)
+        guard !held.overflow, !held.partialValue.addingReportingOverflow(release).overflow else {
+            return nil
+        }
+        return (attack, sustain, release)
+    }
 }

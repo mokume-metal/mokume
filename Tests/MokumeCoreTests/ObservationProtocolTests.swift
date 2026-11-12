@@ -420,6 +420,10 @@ struct ObservationProtocolTests {
             // 桁あふれの大きな数 (`1e19` など) は読めない要求にせず、範囲の丸めで撮る (下の検査)
             (#"{"id":"x1","count":2.5}"#, "count"),
             (#"{"id":"x1","every":0.5}"#, "every"),
+            // 桁の多い端数つきの数も整数でない (#3959)。`JSONDecoder` の `Int` への読みは端数を捨てる
+            (#"{"id":"x1","count":1.00000000000000000000001}"#, "count"),
+            (#"{"id":"x1","every":12345678901234567.5}"#, "every"),
+            (#"{"id":"x1","count":100000000000000000000000000000.5}"#, "count"),
         ] as [(String, String?)])
     func answersARequestThatCannotBeDecoded(_ request: String, _ key: String?) throws {
         let facet = try makeFacet()

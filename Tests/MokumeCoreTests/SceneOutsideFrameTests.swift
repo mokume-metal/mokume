@@ -67,6 +67,14 @@ struct SceneOutsideFrameTests {
             Mouth("perspective(4)", .camera) { $0.perspective(Float.pi / 3, 1, 1, 1000) },
             Mouth("ortho()", .camera) { $0.ortho() },
             Mouth("ortho(6)", .camera) { $0.ortho(-8, 8, -8, 8, 1, 1000) },
+            // ラベル付きの形 (#3778・#3779)
+            Mouth("camera(eye:center:up:)", .camera) {
+                $0.camera(eye: Vector3(0, 0, 100), center: Vector3(0, 0, 0), up: Vector3(0, 1, 0))
+            },
+            Mouth("perspective(fieldOfView:…)", .camera) {
+                $0.perspective(fieldOfView: Float.pi / 3, aspect: 1, near: 1, far: 1000)
+            },
+            Mouth("ortho(left:…)", .camera) { $0.ortho(left: -8, right: 8, bottom: -8, top: 8, near: 1, far: 1000) },
             // 変換 (#941)
             Mouth("translate(x,y)", .transform) { $0.translate(10, 20) },
             Mouth("translate(x,y,z)", .transform) { $0.translate(10, 20, 30) },
@@ -109,6 +117,14 @@ struct SceneOutsideFrameTests {
             Mouth("pointLight(r,g,b)", .light) { $0.pointLight(200, 180, 160, 8, 8, 50) },
             Mouth("spotLight(color)", .light) { $0.spotLight(white, 8, 8, 50, 0, 0, -1) },
             Mouth("spotLight(r,g,b)", .light) { $0.spotLight(200, 180, 160, 8, 8, 50, 0, 0, -1) },
+            // ラベル付きの形 (#3780)
+            Mouth("directionalLight(color:direction:)", .light) {
+                $0.directionalLight(color: white, direction: Vector3(0, 1, -1))
+            },
+            Mouth("pointLight(color:position:)", .light) { $0.pointLight(color: white, position: Vector3(8, 8, 50)) },
+            Mouth("spotLight(color:position:direction:)", .light) {
+                $0.spotLight(color: white, position: Vector3(8, 8, 50), direction: Vector3(0, 0, -1))
+            },
             Mouth("lights", .light) { $0.lights() },
             Mouth("noLights", .light) { $0.noLights() },
             // 材質

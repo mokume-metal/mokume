@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 /// 標準入出力でやりとりする JSON-RPC の 1 往復。
 ///
@@ -59,6 +60,31 @@ nonisolated enum JSONRPC {
             return nil
         }
         return number
+    }
+
+    /// 数を整数として読む。**整数でなければ `nil`。** `Int` に収まらない整数は符号の側の端
+    /// (`Int.max` / `Int.min`) に寄せる。
+    ///
+    /// **整数かは、読み手が渡した値そのもので見る** ([#3959](https://github.com/mokume-metal/mokume/issues/3959))。
+    /// `JSONSerialization` は桁の多い数を `NSDecimalNumber` で渡す。`as? Int` は端数を捨て
+    /// (`12345678901234567.5` → 12345678901234567)、`doubleValue` は端数を丸めて消す
+    /// (`1.00000000000000000000001` → 1.0) ので、どちらで決めても端数のある数を整数と読む。
+    /// 10 進の値は 10 進のまま (撮る側が `observe-request` を読むときと同じ ``WholeDecimal``)、浮動小数は
+    /// 浮動小数のまま (2 進の値はどれも正確) 見る。**10 進の値が正確なのは仮数の 38 桁まで**で、39 桁以上の
+    /// 綴りは `JSONSerialization` が `NSDecimalNumber` にする段で丸める (45 桁の `1.000…0001` は 1 として
+    /// 届き、整数と読む)。
+    static func wholeNumber(_ number: NSNumber) -> Int? {
+        if let decimal = number as? NSDecimalNumber {
+            return WholeDecimal.integer(decimal.decimalValue)
+        }
+        if CFNumberIsFloatType(number) {
+            let double = number.doubleValue
+            guard double.isFinite, double == double.rounded() else { return nil }
+            if let exact = Int(exactly: double) { return exact }
+            return double > 0 ? .max : .min
+        }
+        // 整数の型。`Int` に収まらないのは符号なしの大きな数だけ
+        return (number as? Int) ?? .max
     }
 
     /// 受け取った呼び出し。
