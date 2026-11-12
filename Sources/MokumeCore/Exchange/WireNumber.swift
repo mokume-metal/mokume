@@ -133,6 +133,13 @@ extension KeyedDecodingContainer {
 /// **合成の `Codable` の型の整数の欄に付ける** (`@WholeNumber var pid: Int32`)。型ごとに `init(from:)` を
 /// 書き起こすと、欄を足したときに読み落としが生まれる。書くときは包まずに数のまま書くので、書き出す JSON の
 /// 形は変わらない。手で読む `init(from:)` は `KeyedDecodingContainer.decodeWhole(_:forKey:)` を使う。
+///
+/// **`decodeWireNumber(_:forKey:)` との使い分け**: 収まらない数を断らずに姿 (``WireNumber``) で受け取り、
+/// 端へ寄せるか理由を言って断るかを読み手が決める欄 (`observe-request` の `count`・`every`) はそちら。
+/// 整数でなければ `2.5` と同じに断ればよい欄はこちら。整数かの判定はどちらも ``WholeDecimal/integer(_:)``。
+///
+/// **限界**: `Decimal` の仮数 (38 桁) より後ろにだけ端数がある綴り (`12345678901234567.0000000000000000000000001`)
+/// は、`Decimal` に読む段で丸まって整数として届き、端数を捨てて読む (``WholeDecimal/integer(_:)`` と同じ限界)。
 @propertyWrapper
 package nonisolated struct WholeNumber<Value: FixedWidthInteger & Codable & Sendable>: Codable, Hashable, Sendable {
     package var wrappedValue: Value

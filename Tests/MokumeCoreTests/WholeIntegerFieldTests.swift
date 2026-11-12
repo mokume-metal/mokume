@@ -189,6 +189,22 @@ struct WholeIntegerFieldTests {
         #expect((read(field, "4294967296") == read(field, "2.5")) == narrow, "\(read(field, "4294967296"))")
     }
 
+    /// 時計の引き継ぎが「使えない」と言うときの文面は、値と場所を言う。直す前は `2.5` で
+    /// `DecodingError: The given data was not valid JSON.` と言い、桁の多い端数は黙って使っていた。
+    @Test(
+        "時計の引き継ぎの端数つきの数は、値と場所を言って使わない",
+        arguments: ["version", "writer"], ["2.5", "1.00000000000000000000001", "12345678901234567.5"])
+    func saysWhereTheClockHandoverHasAFraction(key: String, spelling: String) throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("whole-integer-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let json = key == "version" ? Self.snapshot(version: spelling) : Self.snapshot(writer: spelling)
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        #expect(
+            ClockHandover.read(path: url.path)
+                == .unusable(reason: "DecodingError: Number \(spelling) is not a whole number (at \(key))"))
+    }
+
     /// 包んだ欄 (``WholeNumber``) は、書くときは包まずに数のまま書く。書き出す JSON の形と、読み戻した値の
     /// 等しさは変わらない (`frame-listing` の Schema と読み手の約束)。
     @Test("包んだ欄も、数のまま書いて同じ値に読み戻す")
