@@ -631,10 +631,10 @@ final class WatchSession {
         firstRead = nil
         var buildRole = read.role
         if let readRole = read.role, readRole != readingRole {
-            // **試聴の中で読んだ版の試聴が、取りかかる前に終わった。** 出る要求が本番を動かさないと決めた (控えを立てた)
-            // 回は、その版を捨てて控えを寄せる — 次の拍が本番へ作り直さない。控えの無い回 (本番が居ない・プレビューを
-            // 戻せない) は、出る要求が「出た時点のソースを本番に作り直す」と決めているので、本番の版として取りかかる
-            if unadoptedStamp != nil {
+            // **試聴の中で読んだ版の試聴が、取りかかる前に終わった。** その版は捨てて控えを寄せる — 次の拍が本番へ作り直さない。
+            // 出る要求が「出た時点のソースを本番に作り直す」と決めた試聴 (本番が居ない・プレビューを戻せない) の版だけは、
+            // 本番の版として取りかかる (``auditionsLeftForSource``)
+            guard auditionsLeftForSource.contains(readRole) else {
                 unadoptedStamp = stamp
                 noticedAt = nil
                 return nil
@@ -652,6 +652,10 @@ final class WatchSession {
         let role: Int?
     }
     private var firstRead: FirstRead?
+
+    /// 出る要求が「出た時点のソースを本番に作り直す」と決めた試聴の番号 (``Left/rebuilds``・``Left/starts``)。その試聴の中で読んで
+    /// まだ取りかかっていない版は、捨てずに本番の版として作り直す (``tick()``・#3796)。
+    private var auditionsLeftForSource: Set<Int> = []
 
     /// 最初の 1 回。変化を待たずに作って走らせる。
     ///
@@ -2013,12 +2017,14 @@ final class WatchSession {
         } else if !hasProduction {
             unadoptedStamp = nil
             lastStamp = nil
+            auditionsLeftForSource.insert(auditionCount)
             left = .starts
         } else if returned {
             restoreProductionRecord(holding: true)
             left = .kept
         } else {
             restoreProductionRecord(holding: false)
+            auditionsLeftForSource.insert(auditionCount)
             left = .rebuilds
         }
         let leaving = auditionChild
