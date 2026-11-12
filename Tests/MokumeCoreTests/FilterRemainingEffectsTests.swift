@@ -136,6 +136,22 @@ struct FilterRemainingEffectsTests {
         // 成分ごとに最大を取ると黄 (255, 255, 0) になる — 丸ごと選んでいれば出ない
         let mixed = try filtered([[red, LinearRGBA.display(red: 0, green: 0.9, blue: 0)]], [.dilate])
         #expect(mixed[0, 0] == mixed[1, 0], "成分ごとに最大を取った: \(mixed[0, 0])")
+        // 物差しが 3 成分の最大 (brightness) なら赤 (1) が暗い緑 (0.6) より明るいが、輝度の加重では緑
+        // (0.6 × 151 > 77) が明るい
+        let dimGreen = LinearRGBA.display(red: 0, green: 0.6, blue: 0)
+        let dimRead = try plain(dimGreen)
+        let grown = try filtered([[red, dimGreen]], [.dilate])
+        #expect(grown[0, 0] == dimRead && grown[1, 0] == dimRead, "dilate: \(grown[0, 0])・\(grown[1, 0])")
+        let shrunk = try filtered([[red, dimGreen]], [.erode])
+        #expect(shrunk[0, 0] == redRead && shrunk[1, 0] == redRead, "erode: \(shrunk[0, 0])・\(shrunk[1, 0])")
+    }
+
+    @Test("半透明の画素も乗算を戻さずに比べる: 不透明度 0.3 の白は、不透明な 0.7 の灰より暗い")
+    func semiTransparentPixelsCompareAsPremultiplied() throws {
+        let faintWhite = LinearRGBA.display(red: 1, green: 1, blue: 1, alpha: 0.3)
+        let grayRead = try plain(gray(0.7))
+        let image = try filtered([[faintWhite, gray(0.7)]], [.dilate])
+        #expect(image[0, 0] == grayRead && image[1, 0] == grayRead, "\(image[0, 0])・\(image[1, 0])")
     }
 
     @Test("乗算済みのまま比べるので、透明な画素は暗い側。白の隣の透明は dilate で白に、erode では白が透明になる")
