@@ -133,6 +133,90 @@ struct ShaderNumbersTests {
         #expect(canvas.get(12, 8) == .linear(red: 0, green: 0, blue: 0))
     }
 
+    /// 反証 7 (#3576)。保持した形は、置いた時点ではなく記録した時点の並びを読む (面・値と同じ)。
+    @Test("保持した形は、記録した後に差し替えた並びではなく、記録した時点の並びを読む")
+    func aHeldShapeReadsTheArrayItWasRecordedWith() throws {
+        let canvas = try makeCanvas()
+        let first = try numbers([1], on: canvas)
+        let second = try numbers([0], on: canvas)
+        let shader = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values, Numbers numbers) {
+                return float4(numbers.level[0], 0.0, 1.0 - numbers.level[0], 1.0);
+            }
+            """,
+            numbers: ["level": first])
+        let tile = canvas.createShape {
+            canvas.noStroke()
+            canvas.shader(shader)
+            canvas.rect(0, 0, 8, 16)
+            canvas.resetShader()
+        }
+        shader.set("level", second)
+
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(tile, 0, 0)
+            canvas.noStroke()
+            canvas.shader(shader)
+            canvas.rect(8, 0, 8, 16)
+            canvas.resetShader()
+        }
+        #expect(canvas.get(4, 8) == .linear(red: 1, green: 0, blue: 0), "記録した後の並びを読んだ")
+        #expect(canvas.get(12, 8) == .linear(red: 0, green: 0, blue: 1))
+    }
+
+    /// 反証 5 (#3576)。名前の並びを持つ別々の断片を同じフレームで交互に置いても、どちらも自分の
+    /// 並びを読む。間に、名前の並びを持たない図形 (組み込みの塗り・位置で読む `in.numbers` だけの
+    /// 断片) を挟む — 口を束ね直す相手が前の図形のまま残れば、後の断片が前の断片の並びを読む。
+    @Test("名前の並びを持つ 2 本の断片を交互に置いても、それぞれが自分の並びを読む")
+    func twoShadersWithNamedArraysAlternate() throws {
+        let canvas = try makeCanvas(width: 48, height: 8)
+        // 名前も口も同じ 0 番になるように 1 本ずつ。中身だけが違う
+        let red = try numbers([1, 0], on: canvas)
+        let green = try numbers([0, 1], on: canvas)
+        let body = """
+            float4 paint(Fragment in, Values values, Numbers numbers) {
+                return float4(numbers.tone[0], numbers.tone[1], 0.0, 1.0);
+            }
+            """
+        let first = try canvas.makeShader(body, name: "first", numbers: ["tone": red])
+        let second = try canvas.makeShader(body, name: "second", numbers: ["tone": green])
+        let positional = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return float4(in.numbers[0], in.numbers[1], 1.0, 1.0); }",
+            name: "positional")
+        let unnamed = try numbers([1, 1], on: canvas)
+
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(first)
+            canvas.rect(0, 0, 8, 8)
+            canvas.resetShader()
+            canvas.fill(.linear(red: 0, green: 0, blue: 1))
+            canvas.rect(8, 0, 8, 8)
+            canvas.shader(second)
+            canvas.rect(16, 0, 8, 8)
+            canvas.shader(positional)
+            canvas.numbers(unnamed)
+            canvas.rect(24, 0, 8, 8)
+            canvas.resetNumbers()
+            canvas.shader(first)
+            canvas.rect(32, 0, 8, 8)
+            canvas.shader(second)
+            canvas.rect(40, 0, 8, 8)
+            canvas.resetShader()
+        }
+        let expected: [(Int, LinearRGBA)] = [
+            (4, .linear(red: 1, green: 0, blue: 0)), (12, .linear(red: 0, green: 0, blue: 1)),
+            (20, .linear(red: 0, green: 1, blue: 0)), (28, .linear(red: 1, green: 1, blue: 1)),
+            (36, .linear(red: 1, green: 0, blue: 0)), (44, .linear(red: 0, green: 1, blue: 0)),
+        ]
+        for (x, color) in expected {
+            #expect(canvas.get(x, 4) == color, "x = \(x)")
+        }
+    }
+
     @Test("宣言していない名前の並びは受け付けない")
     func undeclaredNamesAreRefused() throws {
         let canvas = try makeCanvas()
@@ -219,23 +303,62 @@ struct ShaderNumbersTests {
                 "\(text)")
         }
     }
+
+    /// 反証 4 (#3576)。面と並びの両方を渡した断片の入口の記号 (`…8Surfaces7Numbers`) を、手で組んだ
+    /// 理由の文字列ではなく、実際のリンクの誤りで見る。
+    @Test("面と並びを渡したのに並びの引数を書き忘れると、4 引数の形を言う")
+    func aMissingNumbersParameterAfterSurfacesIsRestated() throws {
+        let canvas = try makeCanvas()
+        let tone = try canvas.createImage(4, 4)
+        let one = try numbers([1], on: canvas)
+        do {
+            _ = try canvas.makeShader(
+                """
+                float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                    return mokume_sample(surfaces.tone, in.place);
+                }
+                """,
+                surfaces: ["tone": .image(tone)], numbers: ["level": one])
+            Issue.record("入口の書き違えが通った")
+        } catch {
+            let text = "\(error)"
+            #expect(
+                text.contains(
+                    "shader: error: the fragment does not define its entry point "
+                        + "float4 paint(Fragment in, Values values, Surfaces surfaces, Numbers numbers)"),
+                "\(text)")
+        }
+    }
 }
 
 /// 名前で読む並びの原稿 (#3576)。**GPU を使わない。**
 @Suite("名前で読む数の並びの原稿")
 struct ShaderNumbersSourceTests {
-    @Test("並びを宣言しなければ、前置きは 1 バイトも増えない")
-    func noNumbersAddsNothing() {
+    /// 言えるのは「宣言の区切りが出ない」まで。`Common.metal` 自体には並びの分岐とマクロが
+    /// 足されたので、組み上がる原稿の全体はこの変更の前と同じではない (分岐は宣言が無ければ
+    /// 何も足さない)。断片ごとに組む部分は、この変更の前の文字列を直に書いて比べる。
+    @Test("並びを宣言しない断片には、並びの宣言も入口の引数も足されない")
+    func noNumbersAddsNoDeclaration() {
         #expect(ShaderSource.declaration(ofNumbers: []).isEmpty)
-        let body = "float4 paint(Fragment in, Values values) { return in.color; }"
-        let plain = ShaderSource.assemble(
-            prelude: [.init(name: "mokume/Common.metal", text: "COMMON")], values: [:],
-            body: .init(name: "shader", text: body))
-        let withEmpty = ShaderSource.assemble(
-            prelude: [.init(name: "mokume/Common.metal", text: "COMMON")], values: [:],
-            numbers: [], body: .init(name: "shader", text: body))
-        #expect(plain == withEmpty)
-        #expect(!plain.contains("mokume/Numbers"))
+        let assembled = ShaderSource.assemble(
+            prelude: [.init(name: "mokume/Common.metal", text: "COMMON")], values: ["level": 0.5],
+            body: .init(name: "shader", text: "BODY"))
+        // #3576 の前の組み立てが出していた文字列 (値の宣言 → 共通部分 → 断片)
+        let before = """
+            #line 1 "mokume/Values"
+            struct Values {
+                float level;
+            };
+
+            #line 1 "mokume/Common.metal"
+            COMMON
+            #line 1 "shader"
+            BODY
+
+            """
+        #expect(assembled == before)
+        #expect(!assembled.contains("MOKUME_NUMBERS"))
+        #expect(!assembled.contains("mokume/Numbers"))
     }
 
     @Test("並びの宣言は名前順に並び、口の数だけ受け取り、区切りの名前を名乗る")

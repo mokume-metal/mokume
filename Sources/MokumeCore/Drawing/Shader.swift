@@ -175,6 +175,7 @@ public final class Shader {
     ///
     /// **宣言していない名前は受け付けない** — 並びの宣言も断片と一緒に組み上がるので、後から名前を
     /// 増やすと組み直しになる (面と同じ規則)。差し替える前に置いた図形は、前の並びを読む。
+    /// 保持した形 (`createShape`) は、置いた時点ではなく**記録した時点の並び**を読む (面・値と同じ)。
     ///
     /// [#3576]: https://github.com/mokume-metal/mokume/issues/3576
     public func set(_ name: String, _ numbers: Numbers) {
