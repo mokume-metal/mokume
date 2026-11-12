@@ -139,6 +139,136 @@ nonisolated struct PathClippedValueTests {
             #expect(simd_distance(SIMD2<Double>(point), [100, 100]) <= 50.05, "\(point)")
         }
     }
+
+    /// 開いた折れ線 (点 3 つ以上)。CoreGraphics の `lineIntersection` は、この形で最後の辺を落としたり外側の片を
+    /// 返したりした (macOS 27.0.1 で確かめた)。
+    private func polyline(_ points: [SIMD2<Float>]) -> Path {
+        Path(subpaths: [
+            Path.Subpath(points: points, isClosed: false, isCurveStep: Array(repeating: false, count: points.count))
+        ])
+    }
+
+    @Test("開いた折れ線が全部内側なら、開いたまま・長さも端点も元と同じで返る")
+    func openPolylineFullyInside() {
+        let clipped = polyline([[80, 90], [120, 90], [120, 110], [80, 110]]).clipped(to: a)
+        #expect(clipped.subpaths.count == 1)
+        #expect(clipped.subpaths.allSatisfy { !$0.isClosed })
+        #expect(abs(clipped.length - 100) < 1e-3, "length = \(clipped.length)")
+        #expect(near(clipped.point(at: 0), [80, 90]) && near(clipped.point(at: 1), [80, 110]))
+    }
+
+    /// `a` の縁は y = 90 で x = 100 - √2400 = 51.01。
+    @Test("外から入って内側で終わる折れ線は、内側の部分だけを元の向きで残す")
+    func openPolylineEndingInside() {
+        let clipped = polyline([[0, 90], [80, 90], [80, 110]]).clipped(to: a)
+        let edge = 100 - Float(sqrt(2400.0))
+        #expect(clipped.subpaths.count == 1)
+        #expect(abs(clipped.length - (80 - edge + 20)) < 0.05, "length = \(clipped.length)")
+        #expect(near(clipped.point(at: 0), [edge, 90]), "point(at: 0) = \(clipped.point(at: 0))")
+        #expect(near(clipped.point(at: 1), [80, 110]), "point(at: 1) = \(clipped.point(at: 1))")
+    }
+
+    @Test("縁に接するだけの線 (頂点に触れる直線・頂点で折れ返す折れ線・四角の角) は空の道")
+    func touchingLinesAreEmpty() {
+        // `a` は右端 (150, 100) を頂点に持つ
+        #expect(segment([150, 0], [150, 200]).clipped(to: a).subpaths.isEmpty)
+        #expect(polyline([[200, 50], [150, 100], [200, 150]]).clipped(to: a).subpaths.isEmpty)
+        let square = Path(subpaths: [
+            Path.Subpath(
+                points: [[0, 0], [100, 0], [100, 100], [0, 100]], isClosed: true, isCurveStep: [false, false, false, false])
+        ])
+        #expect(segment([-50, 50], [50, -50]).clipped(to: square).subpaths.isEmpty)
+        #expect(polyline([[-50, 50], [0, 0], [-50, -50]]).clipped(to: square).subpaths.isEmpty)
+    }
+
+    /// 縁の上をなぞる線は、`contains` が辺の上の点に答えるのと同じく、辺によって残ったり消えたりする。
+    @Test("縁の上をなぞる線: 四角の上の辺 (y = 0) は残り、下の辺 (y = 100) は消える")
+    func linesAlongTheEdge() {
+        let square = Path(subpaths: [
+            Path.Subpath(
+                points: [[0, 0], [100, 0], [100, 100], [0, 100]], isClosed: true, isCurveStep: [false, false, false, false])
+        ])
+        let top = segment([20, 0], [80, 0]).clipped(to: square)
+        let bottom = segment([20, 100], [80, 100]).clipped(to: square)
+        #expect(abs(top.length - 60) < 1e-3, "上の辺 \(top.length)")
+        #expect(bottom.subpaths.isEmpty, "下の辺 \(bottom.length)")
+        // `contains` も同じ答え
+        #expect(square.contains([50, 0]) && !square.contains([50, 100]))
+    }
+
+    /// 2 本の線分は (100, 100) で交わる。それぞれ `a` の中の長さは直径の 100。
+    @Test("自分自身と交わる線も、辺ごとに内側の部分を残す")
+    func selfCrossingLine() {
+        let clipped = polyline([[0, 80], [200, 120], [200, 80], [0, 120]]).clipped(to: a)
+        #expect(clipped.subpaths.count == 2)
+        #expect(abs(clipped.length - 200) < 0.1, "length = \(clipped.length)")
+    }
+
+    @Test("穴のある相手: 穴の中 (回り数 0) は外側")
+    func holeIsOutside() {
+        let hole = Path(
+            subpaths: disc(100, 100, 20).subpaths.map {
+                Path.Subpath(points: $0.points.reversed(), isClosed: true, isCurveStep: $0.isCurveStep)
+            })
+        let ring = Path(subpaths: a.subpaths + hole.subpaths)
+        let clipped = segment([0, 100], [200, 100]).clipped(to: ring)
+        #expect(clipped.subpaths.count == 2)
+        #expect(abs(clipped.length - 60) < 0.1, "length = \(clipped.length)")
+        #expect(near(clipped.point(at: 0), [50, 100]) && near(clipped.point(at: 1), [150, 100]))
+    }
+
+    @Test("曲線の線を切っても、残った点は曲線の上に乗る")
+    func curvedLineStaysOnTheCurve() {
+        // `b` の半周 ((210, 100) から (160, 150) を通って (110, 100) まで) を開いた弧にして、x ≥ 150 の四角で切る
+        let arc = Path(subpaths: b.subpaths.map {
+            Path.Subpath(points: Array($0.points[0...56]), isClosed: false, isCurveStep: Array($0.isCurveStep[0...56]))
+        })
+        let box = Path(subpaths: [
+            Path.Subpath(
+                points: [[150, 90], [250, 90], [250, 200], [150, 200]], isClosed: true,
+                isCurveStep: [false, false, false, false])
+        ])
+        let clipped = arc.clipped(to: box)
+        #expect(clipped.subpaths.count == 1)
+        for point in clipped.subpaths.flatMap(\.points) {
+            let distance = simd_distance(SIMD2<Double>(point), [160, 100])
+            #expect(distance <= 50.001 && distance >= 49.97, "\(point) は中心から \(distance)")
+        }
+        // 始点は弧の始まり、終点は x = 150 で切った所 (150, 100 + √2400)
+        #expect(near(clipped.point(at: 0), [210, 100]))
+        #expect(near(clipped.point(at: 1), [150, 100 + Float(sqrt(2400.0))]), "\(clipped.point(at: 1))")
+    }
+
+    @Test("相手の数でない座標を持つ部分道は落ちる (残りの部分道だけで切る)")
+    func nonFiniteRegionSubpathsAreDropped() {
+        let broken = Path.Subpath(points: [[300, 0], [.nan, 0], [300, 50]], isClosed: true, isCurveStep: [false, false, false])
+        let withBroken = Path(subpaths: a.subpaths + [broken])
+        let line = segment([0, 100], [400, 100])
+        #expect(line.clipped(to: withBroken) == line.clipped(to: a))
+    }
+
+    @Test("別の部分道の片は、端点が同じ所にあっても繋がない")
+    func separateSubpathsAreNotJoined() {
+        let first = segment([0, 90], [80, 90]).subpaths
+        let second = segment([80, 90], [200, 90]).subpaths
+        let clipped = Path(subpaths: first + second).clipped(to: a)
+        #expect(clipped.subpaths.count == 2)
+    }
+
+    @Test("始点で割れた片を繋ぐのは、閉じた部分道の始点と終わりが両方内側のときだけ")
+    func joiningAcrossTheStart() {
+        let head = Path.ClipPiece(points: [[0, 0], [1, 0]], isCurveStep: [false, true])
+        let middle = Path.ClipPiece(points: [[2, 0], [3, 0]], isCurveStep: [false, false])
+        let tail = Path.ClipPiece(points: [[5, 0], [0, 0]], isCurveStep: [false, false])
+        let joined = Path.joinedAcrossStart([head, middle, tail], isClosed: true, startsInside: true, endsInside: true)
+        #expect(joined.count == 2)
+        #expect(joined.last?.points == [[5, 0], [0, 0], [1, 0]])
+        #expect(joined.last?.isCurveStep == [false, false, true])
+        // 開いた線の両端が内側でも繋がない
+        #expect(Path.joinedAcrossStart([head, tail], isClosed: false, startsInside: true, endsInside: true).count == 2)
+        // 始点が外側なら繋がない
+        #expect(Path.joinedAcrossStart([head, tail], isClosed: true, startsInside: false, endsInside: true).count == 2)
+    }
 }
 
 /// 切った線と、道の破線を描いた画素 (#3649・#2432 の条件 2)。

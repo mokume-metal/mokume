@@ -172,14 +172,17 @@ nonisolated extension Path {
     /// `shape` の縁の上に乗り、片の点は元の向きのまま並ぶ。閉じた部分道の始点が内側にあっても、始点の前後で
     /// 2 片に割れず 1 片で返る。**全部が内側にある閉じた部分道は、閉じたまま**返る (長さは元と同じ)。
     ///
-    /// - `shape` の縁の上に重なる線は、残るとも消えるとも決めない (``contains(_:)`` の辺の上と同じ)
-    /// - 全部が外側にある線と、空の `shape` は、空の道を返す。点が 2 つに満たない部分道と、数でない座標を持つ
-    ///   部分道は線にならないので入れない
-    /// - **結果は線として描く** (``SketchPart/noFill()`` を指定してから ``SketchPart/shape(_:_:_:)-(Path,_,_)``)。
-    ///   塗りを指定したまま描くと、3 点以上の片が閉じた形として細い欠片に塗られうる (``contains(_:)`` と同じく、
-    ///   開いた部分道を閉じた形として塗るため)
-    /// - 結果は ``Path/union(_:)`` と同じく CoreGraphics が計算する。同じ機械・同じ OS の版なら点が一致し、OS の
-    ///   更新で動きうる。元の頂点の近くの点は曲線が刻んだ点かどうかを引き継ぎ、縁で切ってできた端点は角になる
+    /// - `shape` の縁に接するだけの線 (長さ 0 の片) は残さない。縁の上をなぞる線は、``contains(_:)`` が辺の上の点に
+    ///   答えるのと同じく、辺によって残ったり消えたりする (どちらとも決めない)
+    /// - 全部が外側にある線と、空の `shape` は、空の道を返す。自分の部分道のうち、点が 2 つに満たないものと数でない
+    ///   座標を持つものは、線にならないので入れない。`shape` の部分道のうち、点が 3 つに満たないもの (面を持たない) と
+    ///   数でない座標を持つものは落ちる (``Path/union(_:)`` と同じ)。`shape` が有限の点だけなら、内側は
+    ///   ``contains(_:)`` と同じ
+    /// - **線として使うなら ``SketchPart/noFill()`` を指定してから** ``SketchPart/shape(_:_:_:)-(Path,_,_)`` で描く。
+    ///   塗りを指定したまま描くと、3 点以上の片は (開いた片も) 閉じた形として塗られ、全部が内側にあって閉じたまま
+    ///   返った部分道はその内側が全部塗られる (``contains(_:)`` と同じく、開いた部分道を閉じた形として塗るため)
+    /// - 計算は本体の中で行い、OS に依らない。元の頂点は曲線が刻んだ点かどうかを引き継ぎ、縁で切ってできた端点は
+    ///   角になる。手間は自分の辺の数と `shape` の辺の数の積に比例する
     ///
     /// 円の和でできた雲の中だけに斜線を引き、外側に破線の縁を回す例。
     ///
@@ -214,8 +217,152 @@ nonisolated extension Path {
     /// }
     // shot: 後で撮る
     public func clipped(to shape: Path) -> Path {
-        if subpaths.isEmpty || shape.subpaths.isEmpty { return Path() }
-        return Path(cgPath: linePath().lineIntersection(shape.cgPath(), using: .winding), inputs: [self], asLines: true)
+        // CoreGraphics の `lineIntersection` は使わない。開いた折れ線 (点 3 つ以上) で最後の辺を落とし、外側の片を
+        // 返すことがある (macOS 27.0.1 で確かめた)
+        let region = ClipRegion(shape)
+        guard !region.edges.isEmpty else { return Path() }
+        var result: [Subpath] = []
+        for subpath in subpaths where subpath.points.count >= 2 {
+            guard subpath.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
+            result += Self.clip(subpath, to: region)
+        }
+        return Path(subpaths: result)
+    }
+
+    /// ``clipped(to:)`` の相手。閉じた辺の並びとして持つ。
+    private struct ClipRegion {
+        /// 点が 3 つ以上で、全部が有限の部分道の辺 (閉じる辺を含む)。
+        var edges: [(from: SIMD2<Double>, to: SIMD2<Double>)] = []
+
+        init(_ path: Path) {
+            for subpath in path.subpaths where subpath.points.count >= 3 {
+                guard subpath.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
+                let points = subpath.points.map { SIMD2<Double>(Double($0.x), Double($0.y)) }
+                var previous = points[points.count - 1]
+                for current in points {
+                    edges.append((previous, current))
+                    previous = current
+                }
+            }
+        }
+
+        private static func cross(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double { a.x * b.y - a.y * b.x }
+
+        /// 線分 `from`→`to` が辺を横切る所の、線分の上の位置 (0 < t < 1)。平行な辺は数えない。
+        func crossings(from: SIMD2<Double>, to: SIMD2<Double>) -> [Double] {
+            let direction = to - from
+            let low = SIMD2(min(from.x, to.x), min(from.y, to.y))
+            let high = SIMD2(max(from.x, to.x), max(from.y, to.y))
+            var found: [Double] = []
+            for edge in edges {
+                guard max(edge.from.x, edge.to.x) >= low.x, min(edge.from.x, edge.to.x) <= high.x,
+                    max(edge.from.y, edge.to.y) >= low.y, min(edge.from.y, edge.to.y) <= high.y
+                else { continue }
+                let side = edge.to - edge.from
+                let denominator = Self.cross(direction, side)
+                guard denominator != 0 else { continue }
+                let offset = edge.from - from
+                let t = Self.cross(offset, side) / denominator
+                let u = Self.cross(offset, direction) / denominator
+                if t > 0, t < 1, u >= 0, u <= 1 { found.append(t) }
+            }
+            return found
+        }
+
+        /// ``Path/contains(_:)`` と同じ数え方の回り数。
+        func winding(_ point: SIMD2<Double>) -> Int {
+            var winding = 0
+            for (previous, current) in edges {
+                let side = (current.x - previous.x) * (point.y - previous.y) - (point.x - previous.x) * (current.y - previous.y)
+                if previous.y <= point.y {
+                    if current.y > point.y, side > 0 { winding += 1 }
+                } else if current.y <= point.y, side < 0 {
+                    winding -= 1
+                }
+            }
+            return winding
+        }
+    }
+
+    /// 部分道 1 つを切った片。
+    struct ClipPiece: Equatable {
+        var points: [SIMD2<Float>]
+        var isCurveStep: [Bool]
+    }
+
+    /// 閉じた部分道の始点が内側にあるとき、始点の前で終わる最後の片と、始点から始まる最初の片を 1 片に繋ぐ。
+    ///
+    /// 片は 1 つの部分道から出たものだけを渡す (別の部分道の片を繋がない)。開いた部分道、始点か終わりが外側の
+    /// 部分道、片が 1 つしか無い部分道は、そのまま返す。繋いだ片は最後に置く (始点より後の弧長から始まるため)。
+    static func joinedAcrossStart(
+        _ pieces: [ClipPiece], isClosed: Bool, startsInside: Bool, endsInside: Bool
+    ) -> [ClipPiece] {
+        guard isClosed, startsInside, endsInside, pieces.count >= 2, let first = pieces.first, let last = pieces.last
+        else { return pieces }
+        let joined = ClipPiece(
+            points: last.points + first.points.dropFirst(), isCurveStep: last.isCurveStep + first.isCurveStep.dropFirst())
+        return Array(pieces.dropFirst().dropLast()) + [joined]
+    }
+
+    /// 部分道 1 つを、辺ごとに相手の縁で区切り、区間の中点が内側の区間だけを残す。
+    private static func clip(_ subpath: Subpath, to region: ClipRegion) -> [Subpath] {
+        let points = subpath.points
+        let marks = subpath.isCurveStep
+        let count = points.count
+        var pieces: [ClipPiece] = []
+        var current: ClipPiece?
+        var startsInside: Bool?
+        var endsInside = false
+        var anyOutside = false
+        for index in 0..<(subpath.isClosed ? count : count - 1) {
+            let next = (index + 1) % count
+            let from = SIMD2<Double>(Double(points[index].x), Double(points[index].y))
+            let to = SIMD2<Double>(Double(points[next].x), Double(points[next].y))
+            guard from != to else { continue }
+            let cuts = [0] + region.crossings(from: from, to: to).sorted() + [1]
+            for step in 0..<(cuts.count - 1) {
+                let (t0, t1) = (cuts[step], cuts[step + 1])
+                guard t1 > t0 else { continue }
+                let inside = region.winding(from + (to - from) * ((t0 + t1) / 2)) != 0
+                if startsInside == nil { startsInside = inside }
+                endsInside = inside
+                if inside {
+                    if current == nil {
+                        current =
+                            t0 == 0
+                            ? ClipPiece(points: [points[index]], isCurveStep: [marks[index]])
+                            : ClipPiece(points: [Self.float(from + (to - from) * t0)], isCurveStep: [false])
+                    }
+                    // 内側の区間が続く間は、縁を横切った点 (回り数が 0 でないまま変わる所) を置かない
+                    if t1 == 1 {
+                        current?.points.append(points[next])
+                        current?.isCurveStep.append(marks[next])
+                    }
+                } else {
+                    anyOutside = true
+                    if var piece = current {
+                        if t0 > 0 {
+                            piece.points.append(Self.float(from + (to - from) * t0))
+                            piece.isCurveStep.append(false)
+                        }
+                        pieces.append(piece)
+                    }
+                    current = nil
+                }
+            }
+        }
+        if let piece = current { pieces.append(piece) }
+        // 全部が内側の閉じた部分道は、閉じたまま返す
+        if subpath.isClosed, !anyOutside, startsInside == true { return [subpath] }
+        return joinedAcrossStart(
+            pieces, isClosed: subpath.isClosed, startsInside: startsInside ?? false, endsInside: endsInside
+        )
+        .filter { piece in piece.points.contains { $0 != piece.points[0] } }  // 長さ 0 の片は残さない
+        .map { Subpath(points: $0.points, isClosed: false, isCurveStep: $0.isCurveStep) }
+    }
+
+    private static func float(_ point: SIMD2<Double>) -> SIMD2<Float> {
+        SIMD2<Float>(Float(point.x), Float(point.y))
     }
 
     private enum Operation {
@@ -249,18 +396,6 @@ nonisolated extension Path {
             guard subpath.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
             path.addLines(between: subpath.points.map { CGPoint(x: Double($0.x), y: Double($0.y)) })
             path.closeSubpath()
-        }
-        return path
-    }
-
-    /// 部分道を線として読んだ `CGPath` にする (``clipped(to:)`` の自分の側)。開いた部分道は閉じず、閉じた部分道は
-    /// 閉じる辺を含める。点が 2 つに満たない部分道と、数でない座標を持つ部分道は、線にならないので入れない。
-    private func linePath() -> CGPath {
-        let path = CGMutablePath()
-        for subpath in subpaths where subpath.points.count >= 2 {
-            guard subpath.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
-            path.addLines(between: subpath.points.map { CGPoint(x: Double($0.x), y: Double($0.y)) })
-            if subpath.isClosed { path.closeSubpath() }
         }
         return path
     }
@@ -353,32 +488,28 @@ nonisolated extension Path {
     /// - 始点へ戻る終点は落とす (閉じる辺が長さ 0 になるのを避ける)
     /// - 閉じた後に `moveTo` を挟まず線が来たら、CoreGraphics の規則どおり、閉じた部分道の始点から続ける
     /// - 点が 3 つに満たない部分道と、Float に収まらない座標を持つ部分道は入れない (入力側と同じ扱い)
-    ///
-    /// `asLines` が真なら、線を切った結果 (``clipped(to:)``) としてほどく。`closeSubpath` で閉じた部分道だけを
-    /// 閉じた部分道にし、ほかは開いた部分道のまま置く。開いた部分道は始点へ戻る終点も落とさず、2 点の片も入れる。
-    init(cgPath: CGPath, inputs: [Path], asLines: Bool = false) {
+    init(cgPath: CGPath, inputs: [Path]) {
         let table = StepTable(inputs)
         var subpaths: [Subpath] = []
         var current: [SIMD2<Double>] = []
         /// 点ごとに、曲線を刻んだ途中の点か。
         var forced: [Bool] = []
-        func finish(closed: Bool) {
+        func finish() {
             defer {
                 current = []
                 forced = []
             }
             var points = current.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
             guard points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return }
-            let isClosed = closed || !asLines
-            while isClosed, points.count > 1, points.last == points.first {
+            while points.count > 1, points.last == points.first {
                 points.removeLast()
                 forced.removeLast()
             }
-            guard points.count >= (asLines ? 2 : 3) else { return }
+            guard points.count >= 3 else { return }
             let steps = points.indices.map { index in
                 forced[index] || table.isStep(SIMD2<Double>(Double(points[index].x), Double(points[index].y)))
             }
-            subpaths.append(Subpath(points: points, isClosed: isClosed, isCurveStep: steps))
+            subpaths.append(Subpath(points: points, isClosed: true, isCurveStep: steps))
         }
         func point(_ p: CGPoint) -> SIMD2<Double> { SIMD2(Double(p.x), Double(p.y)) }
         func append(_ points: [SIMD2<Double>]) {
@@ -392,7 +523,7 @@ nonisolated extension Path {
             let item = element.pointee
             switch item.type {
             case .moveToPoint:
-                finish(closed: false)
+                finish()
                 current = [point(item.points[0])]
                 forced = [false]
             case .addLineToPoint:
@@ -411,7 +542,7 @@ nonisolated extension Path {
                 append(Self.flatten(from: from, point(item.points[0]), point(item.points[1]), to: point(item.points[2])))
             case .closeSubpath:
                 let start = current.first
-                finish(closed: true)
+                finish()
                 // 閉じた後の線は、閉じた部分道の始点から続く
                 if let start {
                     current = [start]
@@ -421,7 +552,7 @@ nonisolated extension Path {
                 break
             }
         }
-        finish(closed: false)
+        finish()
         self.init(subpaths: subpaths)
     }
 }
