@@ -53,7 +53,9 @@ nonisolated enum JSONValue: Equatable, Sendable {
 ///
 /// ## 読み方
 ///
-/// - 読み解くのは `JSONSerialization` で、その読み方に従う。文字は UTF-8 (呼ぶ側が
+/// - 読み解くのは `JSONSerialization` で、その読み方に従う。**数の値は読み込みの時点で桁が失われる
+///   ことがある** (17 桁前後の端数・2⁵³ を越える小数つきの綴り・39 桁以上の綴りの下位の桁。例は
+///   `JSONObject.getInt(_:)`)。正確な桁が要る整数は文字で書く。文字は UTF-8 (呼ぶ側が
 ///   ``TextFile/text(of:path:)`` で解いてから渡す)
 /// - 入れ子は、最上位の下に 512 段まで (`JSONSerialization` の上限)
 /// - `1e400`・`-1e400` のように `Double` に収まらない数は、符号によらず読めない。値が木に
