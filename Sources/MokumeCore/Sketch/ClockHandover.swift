@@ -55,51 +55,8 @@ final class ClockHandover {
         }
     }
 
-    /// 前の世代が書いた、作者の時計。
-    nonisolated struct Snapshot: Codable, Equatable, Sendable {
-        /// いまの書式の版。**読めない版は使わず**、読めなかったと言って 0 秒から始める。書式を変えるときは上げる。
-        static let currentVersion = 1
-
-        /// 書式の版。
-        var version: Int = Snapshot.currentVersion
-        /// 作者の時計の秒 (``FrameTiming/seconds``)。止めた・飛んだぶんを含む。
-        var seconds: Double
-        /// 止めているか (``SketchPart/pauseTime()``)。
-        var isHeld: Bool
-        /// 枚が止まっているか (``SketchPart/noLoop()`` で作者が止めた・外から止めた)。止まっている間、ウィンドウに出ているのは
-        /// ``seconds`` の枚で、時計は進んで見えない。
-        var isStill: Bool
-        /// 止めていない間に、実時間 1 秒で進む作者の時計の秒。実時間の時計は 1、フレームの時計は測った値
-        /// (重いフレームで 1 を下回る)。**まだ測れていなければ `nil`** で、外挿には使わない。
-        var rate: Double?
-        /// 書いた時刻 (`CACurrentMediaTime()`。端末の中のどのプロセスでも同じ時間軸)。
-        var at: Double
-        /// 書いたプロセスの番号。落ちて消えた世代の時間を足さないために、生きているかを見る。
-        var writer: Int32
-        /// 書いた世代 (``ClockHandover/generation``)。新しい世代の書いたファイルを、古い世代が上書きしない。
-        var generation: Double
-
-        /// 読める値か。壊れたファイルから非有限の秒を受け取ると、時計の原点が非有限になる。
-        var isUsable: Bool {
-            seconds.isFinite && at.isFinite && generation.isFinite && (rate.map { $0.isFinite && $0 >= 0 } ?? true)
-        }
-
-        /// 新しい世代の最初の枚 (時刻 `moment`) が始める、作者の時計の秒と、止めているか。
-        ///
-        /// - 止めていれば、止めた秒のまま
-        /// - 枚が止まっていれば (``isStill``)、ウィンドウに出ている枚の秒のまま。止まっていた間の時間は足さない
-        /// - 書き手がもう居なければ、書いた秒のまま (居ない間は進まない)。落ちた世代を、直した後に
-        ///   消えていた時間ぶん先から始めない
-        /// - 進み方がまだ測れていなければ (``rate`` が `nil`)、書いた秒のまま
-        /// - それ以外は、書いた後に流れた時間に ``rate`` を掛けたぶん進める。**前の世代が最後の枚を描いてから
-        ///   新しい世代が最初の枚を出すまで** (ビルドと起動) も、前の世代は回り続けているからである。時刻が
-        ///   戻っていれば (`moment` が書いた時刻より前) 進めない
-        func start(at moment: Double, writerIsAlive: Bool = true) -> (seconds: Double, isHeld: Bool) {
-            if isHeld { return (seconds, true) }
-            guard !isStill, writerIsAlive, let rate else { return (seconds, false) }
-            return (seconds + rate * max(0, moment - at), false)
-        }
-    }
+    /// 前の世代が書いた、作者の時計。置き場は ``ClockHandoverFile`` (欄を `WholeNumber` で包むため)。
+    typealias Snapshot = ClockHandoverFile.Snapshot
 
     /// 読んだ結果。
     nonisolated enum Reading: Equatable, Sendable {
@@ -215,7 +172,15 @@ final class ClockHandover {
         } catch {
             return .unusable(reason: Diagnostics.reason(error))
         }
-        struct Header: Decodable { var version: Int? }
+        struct Header: Decodable {
+            var version: Int?
+            private enum CodingKeys: String, CodingKey { case version }
+            // 版が無いのは読めて、桁の多い端数つきの数は `2.5` と同じに断る (#4015)
+            init(from decoder: any Decoder) throws {
+                version = try decoder.container(keyedBy: CodingKeys.self)
+                    .decodeWholeIfPresent(Int.self, forKey: .version)
+            }
+        }
         do {
             let header = try JSONDecoder().decode(Header.self, from: data)
             guard header.version == Snapshot.currentVersion else {
@@ -413,6 +378,59 @@ final class ClockHandover {
             }
             guard let descriptor, flock(descriptor, LOCK_EX) == 0 else { return nil }
             return descriptor
+        }
+    }
+}
+
+/// ``ClockHandover/Snapshot`` の置き場。
+///
+/// **包んだ欄 (`@WholeNumber`) を持つ型は、`nonisolated` を型に直に書けない** — 書くと、包みが作る格納の
+/// 欄にも `nonisolated` が掛かり、「変えられる格納の欄には付けられない」で組めない (Swift 6.4)。囲む
+/// 列挙を `nonisolated` にして、型はそれを受け継ぐ (``FrameListing/Entry`` と同じ形)。
+nonisolated enum ClockHandoverFile {
+    /// 前の世代が書いた、作者の時計。
+    struct Snapshot: Codable, Equatable, Sendable {
+        /// いまの書式の版。**読めない版は使わず**、読めなかったと言って 0 秒から始める。書式を変えるときは上げる。
+        static let currentVersion = 1
+
+        /// 書式の版。
+        @WholeNumber var version: Int = Snapshot.currentVersion
+        /// 作者の時計の秒 (``FrameTiming/seconds``)。止めた・飛んだぶんを含む。
+        var seconds: Double
+        /// 止めているか (``SketchPart/pauseTime()``)。
+        var isHeld: Bool
+        /// 枚が止まっているか (``SketchPart/noLoop()`` で作者が止めた・外から止めた)。止まっている間、ウィンドウに出ているのは
+        /// ``seconds`` の枚で、時計は進んで見えない。
+        var isStill: Bool
+        /// 止めていない間に、実時間 1 秒で進む作者の時計の秒。実時間の時計は 1、フレームの時計は測った値
+        /// (重いフレームで 1 を下回る)。**まだ測れていなければ `nil`** で、外挿には使わない。
+        var rate: Double?
+        /// 書いた時刻 (`CACurrentMediaTime()`。端末の中のどのプロセスでも同じ時間軸)。
+        var at: Double
+        /// 書いたプロセスの番号。落ちて消えた世代の時間を足さないために、生きているかを見る。
+        @WholeNumber var writer: Int32
+        /// 書いた世代 (``ClockHandover/generation``)。新しい世代の書いたファイルを、古い世代が上書きしない。
+        var generation: Double
+
+        /// 読める値か。壊れたファイルから非有限の秒を受け取ると、時計の原点が非有限になる。
+        var isUsable: Bool {
+            seconds.isFinite && at.isFinite && generation.isFinite && (rate.map { $0.isFinite && $0 >= 0 } ?? true)
+        }
+
+        /// 新しい世代の最初の枚 (時刻 `moment`) が始める、作者の時計の秒と、止めているか。
+        ///
+        /// - 止めていれば、止めた秒のまま
+        /// - 枚が止まっていれば (``isStill``)、ウィンドウに出ている枚の秒のまま。止まっていた間の時間は足さない
+        /// - 書き手がもう居なければ、書いた秒のまま (居ない間は進まない)。落ちた世代を、直した後に
+        ///   消えていた時間ぶん先から始めない
+        /// - 進み方がまだ測れていなければ (``rate`` が `nil`)、書いた秒のまま
+        /// - それ以外は、書いた後に流れた時間に ``rate`` を掛けたぶん進める。**前の世代が最後の枚を描いてから
+        ///   新しい世代が最初の枚を出すまで** (ビルドと起動) も、前の世代は回り続けているからである。時刻が
+        ///   戻っていれば (`moment` が書いた時刻より前) 進めない
+        func start(at moment: Double, writerIsAlive: Bool = true) -> (seconds: Double, isHeld: Bool) {
+            if isHeld { return (seconds, true) }
+            guard !isStill, writerIsAlive, let rate else { return (seconds, false) }
+            return (seconds + rate * max(0, moment - at), false)
         }
     }
 }

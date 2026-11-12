@@ -43,7 +43,7 @@ package nonisolated enum FrameListing {
     /// 目録の 1 件。
     package struct Entry: Codable, Equatable, Sendable {
         /// 約束の版。
-        package var schemaVersion: Int = FrameListing.schemaVersion
+        @WholeNumber package var schemaVersion: Int = FrameListing.schemaVersion
         /// 作品名。SwiftPM の product の名前 (実行ファイルの名前)。`.app` でもこの名前のまま。
         package var sketch: String
         /// ウィンドウ。作品名とは別の欄。
@@ -53,9 +53,9 @@ package nonisolated enum FrameListing {
         /// 一覧に見せる名前 (`SketchSettings.title`)。**識別には使わない。**
         package var title: String
         /// 名乗ったプロセス。`watch` では道具。
-        package var pid: Int32
+        @WholeNumber package var pid: Int32
         /// そのプロセスの起動の時刻 (1970 年からのマイクロ秒)。pid の使い回しを見分ける。
-        package var startedAt: Int64
+        @WholeNumber package var startedAt: Int64
         /// `bootstrap_look_up` で引く名前。
         package var serviceName: String
     }
@@ -149,8 +149,8 @@ package nonisolated enum FrameListing {
         startTime: (pid_t) -> Int64? = ProcessRecord.startTime(of:)
     ) -> [String] {
         struct Liveness: Decodable {
-            var pid: Int32
-            var startedAt: Int64
+            @WholeNumber var pid: Int32
+            @WholeNumber var startedAt: Int64
         }
         var removed: [String] = []
         for url in files(in: directory) {

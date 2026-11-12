@@ -99,46 +99,61 @@ extension KeyedDecodingContainer {
     /// `12345678901234567.5` を 12345678901234567 と読む。読む前に `Decimal` で読んで、整数かを 10 進の値で
     /// 決める (``WholeDecimal/integer(_:)``)。整数なら今までの読みに任せるので、整数の綴り (`3.0`・`1e3`) と
     /// 型の範囲の外の整数の扱いは変わらない。`Decimal` に読めない値 (`1e400`・文字列) も今までの読みに任せる。
-    nonisolated func decodeWhole<Integer: FixedWidthInteger & Decodable>(
+    ///
+    /// 合成の `Codable` の型の欄は、同じ読みを `WholeNumber` で付ける。
+    nonisolated func decodeWhole<Integer: FixedWidthInteger & Codable & Sendable>(
         _ type: Integer.Type, forKey key: Key
     ) throws -> Integer {
-        try refuseFraction(forKey: key)
-        return try decode(type, forKey: key)
+        try decode(WholeNumber<Integer>.self, forKey: key).wrappedValue
     }
 
     /// ``decodeWhole(_:forKey:)`` の、鍵が無い・`null` を `nil` と読む形。
-    nonisolated func decodeWholeIfPresent<Integer: FixedWidthInteger & Decodable>(
+    nonisolated func decodeWholeIfPresent<Integer: FixedWidthInteger & Codable & Sendable>(
         _ type: Integer.Type, forKey key: Key
     ) throws -> Integer? {
-        try refuseFraction(forKey: key)
-        return try decodeIfPresent(type, forKey: key)
+        try decodeIfPresent(WholeNumber<Integer>.self, forKey: key)?.wrappedValue
     }
 
     /// ``decodeWhole(_:forKey:)`` の、整数の配列を読む形。端数つきの数が 1 つでもあれば断る。
-    nonisolated func decodeWhole<Integer: FixedWidthInteger & Decodable>(
+    nonisolated func decodeWhole<Integer: FixedWidthInteger & Codable & Sendable>(
         _ type: [Integer].Type, forKey key: Key
     ) throws -> [Integer] {
-        if let numbers = try? decode([Decimal].self, forKey: key),
-            let fraction = numbers.first(where: { WholeDecimal.integer($0) == nil })
-        {
-            throw Self.notWhole(fraction, forKey: key, in: self)
+        try decode([WholeNumber<Integer>].self, forKey: key).map(\.wrappedValue)
+    }
+}
+
+/// 外から読む JSON の整数の欄。**読むときだけ、桁の多い端数つきの数も `2.5` と同じく断る**
+/// ([#4015](https://github.com/mokume-metal/mokume/issues/4015))。
+///
+/// `JSONDecoder` の整数への読みは、`2.5` を断るのに、`1.00000000000000000000001` を断らずに 1 と、
+/// `12345678901234567.5` を 12345678901234567 と読む。読む前に `Decimal` で読んで、整数かを 10 進の値で
+/// 決める (``WholeDecimal/integer(_:)``)。整数なら今までの読みに任せるので、整数の綴り (`3.0`・`1e3`) と
+/// 型の範囲の外の整数の扱いは変わらない。`Decimal` に読めない値 (`1e400`・文字列) も今までの読みに任せる。
+///
+/// **合成の `Codable` の型の整数の欄に付ける** (`@WholeNumber var pid: Int32`)。型ごとに `init(from:)` を
+/// 書き起こすと、欄を足したときに読み落としが生まれる。書くときは包まずに数のまま書くので、書き出す JSON の
+/// 形は変わらない。手で読む `init(from:)` は `KeyedDecodingContainer.decodeWhole(_:forKey:)` を使う。
+@propertyWrapper
+package nonisolated struct WholeNumber<Value: FixedWidthInteger & Codable & Sendable>: Codable, Hashable, Sendable {
+    package var wrappedValue: Value
+
+    package init(wrappedValue: Value) {
+        self.wrappedValue = wrappedValue
+    }
+
+    package init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        // `2.5` と同じく `DecodingError` で断る (最上位では `JSONDecoder` も `2.5` を `dataCorrupted` で断る)
+        if let number = try? container.decode(Decimal.self), WholeDecimal.integer(number) == nil {
+            throw DecodingError.dataCorruptedError(
+                in: container, debugDescription: "Number \(number) is not a whole number")
         }
-        return try decode(type, forKey: key)
+        wrappedValue = try container.decode(Value.self)
     }
 
-    private nonisolated func refuseFraction(forKey key: Key) throws {
-        guard let number = try? decodeIfPresent(Decimal.self, forKey: key),
-            WholeDecimal.integer(number) == nil
-        else { return }
-        throw Self.notWhole(number, forKey: key, in: self)
-    }
-
-    /// `2.5` と同じく `DecodingError` で断る (最上位では `JSONDecoder` も `2.5` を `dataCorrupted` で断る)。
-    private nonisolated static func notWhole(
-        _ number: Decimal, forKey key: Key, in container: Self
-    ) -> DecodingError {
-        DecodingError.dataCorruptedError(
-            forKey: key, in: container, debugDescription: "Number \(number) is not a whole number")
+    package func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(wrappedValue)
     }
 }
 

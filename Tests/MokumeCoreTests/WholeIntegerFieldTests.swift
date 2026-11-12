@@ -18,7 +18,15 @@ struct WholeIntegerFieldTests {
         "button", "button (input-request)", "code", "code (input-request)", "clickCount",
         "clickCount (input-request)", "serial", "serial (input-request)", "int の値",
         "目録の schemaVersion", "目録の ids", "目録の width", "目録の height", "目録の pid",
+        "一覧の schemaVersion", "一覧の pid", "一覧の startedAt", "生死の pid", "生死の startedAt",
+        "時計の版", "時計の版 (Snapshot)", "時計の writer",
     ]
+
+    /// `Int32`・`UInt32` で読む欄 (`4294967296` を範囲の外として断る)。
+    nonisolated static let narrowFields: Set = ["目録の ids", "目録の pid", "一覧の pid", "生死の pid", "時計の writer"]
+
+    /// 1 のほかを版の照合で断る欄 (`4294967296` の読みを比べようがない)。
+    nonisolated static let versionFields: Set = ["目録の schemaVersion", "時計の版"]
 
     /// 整数の欄が読む `Int`・`Int32`・`UInt32` のどれにも収まる、どの欄でも読める値 1 の、端数を持つ近傍。
     /// どれも `JSONDecoder` の整数への読みが、断らずに端数を捨てていた綴り (直す前の実測は #4015 の PR)。
@@ -48,7 +56,64 @@ struct WholeIntegerFieldTests {
         case "目録の width": manifest(width: spelling)
         case "目録の height": manifest(height: spelling)
         case "目録の pid": manifest(pid: spelling)
+        case "一覧の schemaVersion": listed(version: spelling)
+        case "一覧の pid": listed(pid: spelling)
+        case "一覧の startedAt": listed(startedAt: spelling)
+        case "生死の pid": swept(pid: spelling)
+        case "生死の startedAt": swept(startedAt: spelling)
+        case "時計の版": handedOver(version: spelling)
+        case "時計の版 (Snapshot)":
+            describe {
+                try JSONDecoder().decode(ClockHandover.Snapshot.self, from: Data(Self.snapshot(version: spelling).utf8))
+                    .version
+            }
+        case "時計の writer": handedOver(writer: spelling)
         default: "unknown field"
+        }
+    }
+
+    /// 名乗った送り手の目録 (`frame-listing`) の 1 件として読ませる。
+    private func listed(version: String = "1", pid: String = "7", startedAt: String = "5") -> String {
+        describe {
+            let json = #"{"schemaVersion":\#(version),"sketch":"s","window":"main","identity":"/a","title":"t","pid":\#(pid),"startedAt":\#(startedAt),"serviceName":"n"}"#
+            let entry = try JSONDecoder().decode(FrameListing.Entry.self, from: Data(json.utf8))
+            return "v\(entry.schemaVersion) pid=\(entry.pid) at=\(entry.startedAt)"
+        }
+    }
+
+    /// 死んだ項目の掃除 (``FrameListing/sweep(in:isAlive:startTime:)``) に読ませる。読めない項目は飛ばす。
+    /// pid のプロセスは生きていて、起動の時刻は 5 と答える (時刻が違えば使い回しとして消す)。
+    private func swept(pid: String = "7", startedAt: String = "5") -> String {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("whole-integer-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try #"{"pid":\#(pid),"startedAt":\#(startedAt)}"#.write(
+                to: directory.appendingPathComponent("n.json"), atomically: true, encoding: .utf8)
+        } catch { return "could not place: \(error)" }
+        var asked: [pid_t] = []
+        let removed = FrameListing.sweep(
+            in: directory, isAlive: { asked.append($0); return true }, startTime: { _ in 5 })
+        return asked.isEmpty ? "skipped" : "pid=\(asked) removed=\(removed)"
+    }
+
+    nonisolated private static func snapshot(version: String = "1", writer: String = "7") -> String {
+        #"{"version":\#(version),"seconds":1,"isHeld":false,"isStill":false,"at":1,"writer":\#(writer),"generation":1}"#
+    }
+
+    /// 前の世代が書いた時計 (``ClockHandover/read(path:)``) として読ませる。読めなければ使わない。
+    private func handedOver(version: String = "1", writer: String = "7") -> String {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("whole-integer-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            try Self.snapshot(version: version, writer: writer).write(to: url, atomically: true, encoding: .utf8)
+        } catch { return "could not place: \(error)" }
+        switch ClockHandover.read(path: url.path) {
+        case .absent: return "absent"
+        case .unusable: return "unusable"
+        case .found(let snapshot): return "v\(snapshot.version) writer=\(snapshot.writer)"
         }
     }
 
@@ -105,8 +170,31 @@ struct WholeIntegerFieldTests {
             #expect(read(field, spelling) == read(field, "2.5"), "\(spelling)")
         }
         // `Int` には収まり `Int32`・`UInt32` に収まらない整数は、欄の型のとおり (版は 1 のほかを断る欄なので見ない)
-        guard field != "目録の schemaVersion" else { return }
-        let narrow = field == "目録の ids" || field == "目録の pid"
+        guard !Self.versionFields.contains(field) else { return }
+        let narrow = Self.narrowFields.contains(field)
         #expect((read(field, "4294967296") == read(field, "2.5")) == narrow, "\(read(field, "4294967296"))")
+    }
+
+    /// 包んだ欄 (``WholeNumber``) は、書くときは包まずに数のまま書く。書き出す JSON の形と、読み戻した値の
+    /// 等しさは変わらない (`frame-listing` の Schema と読み手の約束)。
+    @Test("包んだ欄も、数のまま書いて同じ値に読み戻す")
+    func wrappedFieldsAreWrittenAsPlainNumbers() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        let entry = FrameListing.Entry(
+            sketch: "s", identity: "/a", title: "t", pid: 7, startedAt: 1_700_000_000_000_000, serviceName: "n")
+        let listed = String(decoding: try encoder.encode(entry), as: UTF8.self)
+        #expect(
+            listed
+                == #"{"identity":"\/a","pid":7,"schemaVersion":1,"serviceName":"n","sketch":"s","startedAt":1700000000000000,"title":"t","window":"main"}"#,
+            "\(listed)")
+        #expect(try JSONDecoder().decode(FrameListing.Entry.self, from: Data(listed.utf8)) == entry)
+
+        let snapshot = ClockHandover.Snapshot(
+            seconds: 1.5, isHeld: false, isStill: false, rate: nil, at: 2, writer: 42, generation: 3)
+        let written = String(decoding: try encoder.encode(snapshot), as: UTF8.self)
+        #expect(written.contains(#""version":1"#) && written.contains(#""writer":42"#), "\(written)")
+        #expect(try JSONDecoder().decode(ClockHandover.Snapshot.self, from: Data(written.utf8)) == snapshot)
     }
 }
