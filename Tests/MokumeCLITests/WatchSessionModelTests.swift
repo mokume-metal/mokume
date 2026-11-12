@@ -372,6 +372,8 @@ struct WatchSessionModelTests {
             [.save, .promoteWaiting, .audition, .overlap([.save, .leave, .audition]), .save, .leave],
             // 本番の版の作り直しの最中に入って出る (5)
             [.save, .promoteWaiting, .overlap([.audition, .leave])],
+            // 本番の版の作り直しの最中に入り、試聴の中で読んでから出る: 試聴の中で読んだ版は本番にならない (生成が見つけた)
+            [.save, .promoteWaiting, .overlap([.audition, .save, .leave])],
             // 試聴中に本番が落ちた後、試聴の版の作り直しの最中に出る (出る要求が本番を起こし直す)
             [.save, .promoteWaiting, .audition, .exitShown, .overlap([.save, .leave])],
         ])
