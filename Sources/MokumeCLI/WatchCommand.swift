@@ -884,8 +884,9 @@ enum WatchCommand {
             guard !session.stopRequested else { return true }
             report(outcome, holdingPrevious: session.keepsPreviousRunning, on: viewer)
             // **試聴の版を起こした回は、作品のウィンドウがまだ前の版であることを添える** (#3565)。「Rebuilt」だけだと、
-            // 両方のウィンドウが入れ替わったと読める
-            if session.isAuditioning, outcome.ok, outcome.launched { say(auditionStartedLine) }
+            // 両方のウィンドウが入れ替わったと読める。**試聴の版の記録で見る** — 試聴に入る前に読んだ版は、入った後に
+            // 起きても本番の版である (#3796)
+            if outcome.audition == true, outcome.ok, outcome.launched { say(auditionStartedLine) }
             // **差し替えで期限に掛かったことも名乗る。** 止め方は終わるときと同じ経路を
             // 通るので、保存のたびにも起こりうる (#732)
             switch session.lastStop {

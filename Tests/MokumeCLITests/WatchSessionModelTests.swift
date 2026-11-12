@@ -41,7 +41,8 @@ import mokume
 /// 7. 試聴 (#3565): **入る要求は、試聴に入っておらず本番が走っているときだけ受け、受けても何も起こさない**。
 ///    **入っている間の保存は本番の側を動かさない** (本番の子は入れ替わらず、生きている本番は 1 つも落ちない)。
 ///    **出る要求は、入っているときだけ受け、試聴の子を止め、本番の側を動かさない**。試聴の子が自分で終わっても
-///    本番の側は動かない
+///    本番の側は動かない。**保存の役は、見張りがその保存を読んだ時点で決まる** (#3796): 見張りが見る前の保存と要求が
+///    同じ拍に入ると、保存は要求の後に読まれる (入る要求なら試聴の版、出る要求なら本番の版)
 ///
 /// ## どこまで見て、どこで止めるか
 ///
@@ -65,6 +66,8 @@ struct WatchSessionModelTests {
         case leave
         /// 保存して、見張りがそれを見る前に試聴に入る要求を出す (#3794)。拍の中では要求が保存の検出より先に効く。
         case saveThenAudition
+        /// 保存して、見張りがそれを見る前に試聴を出る要求を出す (#3796)。保存は出た後に読まれるので、本番の版である。
+        case saveThenLeave
         /// 試聴の子が、自分から (終了コード 0 で) 終わる。
         case exitAudition
         /// 試聴の子が、最初の絵の前に失敗 (終了コード 3) で終わる。続けて 1 拍回る。
@@ -110,6 +113,7 @@ struct WatchSessionModelTests {
             case .audition: "audition"
             case .leave: "leave"
             case .saveThenAudition: "save+audition"
+            case .saveThenLeave: "save+leave"
             case .exitAudition: "exit(audition)"
             case .exitAuditionFailing: "exit(audition,failing)"
             case .promoteAudition: "promote(audition)"
@@ -144,7 +148,7 @@ struct WatchSessionModelTests {
         .exitWaiting, .exitWaitingFailing, .exitShown,
         .audition, .audition, .audition, .leave, .exitAudition, .exitAuditionFailing,
         .promoteAudition, .undeliverableAudition,
-        .saveThenAudition,
+        .saveThenAudition, .saveThenLeave,
     ]
 
     /// 列の長さ。縮めると `none` が並ぶので、実際の長さはこれ以下。
@@ -293,6 +297,32 @@ struct WatchSessionModelTests {
         ])
     @MainActor
     func unadoptedSourceColumnsKeepTheirPostconditions(_ ops: [Op]) async {
+        let outcome = await Driver.runCase(ops: ops, ends: false)
+        #expect(outcome == .pass, "\(outcome)")
+    }
+
+    /// 保存の役は、保存を読んだ時点で決まる (#3796)。**生成する検査の seed に頼らず、決定的に回す。** 見張りが見る前の
+    /// 保存と出る要求が同じ拍に入ると、保存は出た後に読まれて本番の版になる。出た直後の保存も本番の版。試聴の中で読んだ版は、
+    /// 出入りを繰り返しても本番の版にならない。
+    @Test(
+        "見ていない保存と同じ拍の出る要求・出た直後の保存・保存せずに出入りを繰り返す列は、事後条件を破らない (#3796)",
+        arguments: [
+            [Op.save, .audition, .save, .saveThenLeave],
+            [.save, .audition, .save, .saveThenLeave, .audition, .save, .leave],
+            [.save, .audition, .save, .leave, .save],
+            // 入っていないので出る要求は断られ、同じ拍の保存は普通の保存
+            [.save, .promoteWaiting, .saveThenLeave],
+            // 本番が乗り換えを待つ間 (試聴の保存は保留) に、見ていない保存と出る要求
+            [.save, .promoteWaiting, .audition, .save, .save, .saveThenLeave],
+            [.save, .audition, .save, .promoteWaiting, .saveThenLeave],
+            // 試聴中に本番が落ちた後 (出ると本番を起こし直す) の、見ていない保存と出る要求
+            [.save, .audition, .exitWaiting, .saveThenLeave],
+            // 保存せずに出入りを繰り返す
+            [.save, .promoteWaiting, .audition, .save, .leave, .audition, .leave, .beat],
+            [.save, .promoteWaiting, .audition, .save, .leave, .audition, .leave, .audition, .leave],
+        ])
+    @MainActor
+    func saveRoleColumnsKeepTheirPostconditions(_ ops: [Op]) async {
         let outcome = await Driver.runCase(ops: ops, ends: false)
         #expect(outcome == .pass, "\(outcome)")
     }
@@ -592,8 +622,8 @@ struct WatchSessionModelTests {
                 // 見張りが作り直しに取りかかる」までを 1 つとし、残った保存を次の操作の拍へ持ち越さない — 1 拍の中では
                 // 要求 (``WatchSession/answerRequests()``) が作り直し (``WatchSession/tick()``) より先に効くので、持ち越すと
                 // 次の操作 (入る・出る要求) の結果に保存の結果が混ざる (#3789)。保存を見る前の要求が同じ拍に入る重なりは、
-                // 入る要求について、保存と要求を 1 つにした操作 (``Op/saveThenAudition``) が生成する (#3794)。出る要求との
-                // 重なりは、まだ生成しない (#3796)。
+                // 保存と要求を 1 つにした操作 (入る要求は ``Op/saveThenAudition``・#3794、出る要求は ``Op/saveThenLeave``・
+                // #3796) が生成する。
                 // 模型では保存のたびに世代が変わるので、取りかからない拍は 1 つまで
                 if rebuilds == rebuildsBefore, !stopped {
                     startedByRebuild = await beat()
@@ -794,20 +824,32 @@ struct WatchSessionModelTests {
                 }
                 return nil
 
-            case .leave:
+            case .leave, .saveThenLeave:
                 guard !stopped else { return nil }
                 await settleUnseen()
                 let productionBefore = productionAlive()
+                let withSave = op == .saveThenLeave
+                let launchesBefore = gens.count
+                if withSave { placeUnseenSave() }
+                let placed = stamp
                 let (accepted, _) = try await ask("leave")
                 if accepted != auditioning {
                     return Violation(number: 7, text: "出る要求を\(accepted ? "受けた" : "断った") (試聴中 \(auditioning))")
                 }
-                guard accepted else { return nil }
-                auditioning = false
-                deferredStamp = nil
-                if !auditionAlive().isEmpty {
-                    return Violation(number: 7, text: "出る要求の後に、試聴の子が残る (\(name(auditionAlive())))")
+                if accepted {
+                    auditioning = false
+                    deferredStamp = nil
+                    if !auditionAlive().isEmpty {
+                        return Violation(number: 7, text: "出る要求の後に、試聴の子が残る (\(name(auditionAlive())))")
+                    }
                 }
+                // **同じ拍の保存は、要求の後に読まれる。** 保存の役は読んだ時点で決まる (#3796) ので、試聴を出た後
+                // (受けた・入っておらず断った) に読んだ保存は本番の版で、その版の本番の子が起きる。出る要求そのものは本番を
+                // 動かさないが、この操作では同じ拍の保存が本番を入れ替える
+                if withSave {
+                    return checkPlacedSaveStartedProduction(placed: placed, launchesBefore: launchesBefore)
+                }
+                guard accepted else { return nil }
                 // 本番が居ない回は、出た時点のソースで本番を起こし直す (守る相手が居ない)。居る回は動かさない
                 if !productionBefore.isEmpty, productionAlive() != productionBefore {
                     return Violation(number: 7, text: "出る要求で、本番の側が動いた (前 \(name(productionBefore)) → 後 \(name(productionAlive())))")

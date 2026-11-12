@@ -51,6 +51,23 @@ struct WatchAuditionTests {
             rebuildGate = nil
         }
 
+        /// 立てると、次の世代の読みは ``releaseStamp()`` まで戻らない (読みの最中の出来事を演じる・#3796)。
+        var holdStamp = false
+        private var stampGate: CheckedContinuation<Void, Never>?
+        /// 世代の読みが門で止まっているか。
+        var isStampHeld: Bool { stampGate != nil }
+
+        func waitForStampGate() async {
+            await withCheckedContinuation { stampGate = $0 }
+        }
+
+        /// 止めていた世代の読みを進める。
+        func releaseStamp() {
+            holdStamp = false
+            stampGate?.resume()
+            stampGate = nil
+        }
+
         /// 新しい本番の子を起こしたら、台が乗り換えた合図を送るか。
         var autoPromote = true
         /// 起こす子の台本 (`sh -c`)。
@@ -81,7 +98,13 @@ struct WatchAuditionTests {
                         return try harness.launch(executable)
                     },
                     now: { 0 },
-                    stamp: { _ in box.harness?.stamp }),
+                    stamp: { _ in
+                        // 読みの途中で止めておく。**読んだ値は、止める前に決まっている** (保存は読みより前に置いた)
+                        guard let harness = box.harness else { return nil }
+                        let stamp = harness.stamp
+                        if harness.holdStamp { await harness.waitForStampGate() }
+                        return stamp
+                    }),
                 stopTimeout: stopTimeout, finishTimeout: 0.5)
             session.overlapsGenerations = overlapsGenerations
             box.harness = self
@@ -132,6 +155,9 @@ struct WatchAuditionTests {
                     if let line { previewLines.append(line) }
                 })
         }
+
+        /// 保存を置くが、拍は回さない (見張りはまだ見ていない)。
+        func placeSave() { stampCount += 1 }
 
         /// 保存して、作り直しが通り、子が起きるまで 1 拍回す。
         @discardableResult
