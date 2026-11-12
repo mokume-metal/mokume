@@ -21,6 +21,8 @@ import simd
 /// - 2 値化のしきい値 (``threshold(level:)``) の `level` は 0…1 の明るさで、**無効の値を持たない** —
 ///   0 なら、明るさが 0 以上の画素 (不透明度が 0 でない画素のほとんど) が白になり、1 なら 1 の画素だけが
 ///   白になる。範囲の外は端へ締める
+/// - 段数 (``posterize(levels:)``) の `levels` は **2 未満が無効**で、上限は締めない
+/// - ``erode``・``dilate``・``opaque`` は数を持たず、無効の値も持たない
 ///
 /// ## 受け取れない数
 ///
@@ -34,7 +36,8 @@ import simd
 ///   範囲でも言う — 書いた値と違う値が効いたことを知る手段が、他に無いため
 ///
 /// **散文の約束にしていない。** 無効の値を持つ組み込みの効果すべてについて「無効の値なら絵が
-/// 1 ビットも変わらない」を検査が見ている (無効の値を持たない ``threshold(level:)`` を除く)。
+/// 1 ビットも変わらない」を検査が見ている (無効の値を持たない ``threshold(level:)``・``erode``・``dilate``・
+/// ``opaque`` を除く)。
 public enum Effect {
     /// ぼかす。`radius` は出す画素で、0 なら効かない。
     ///
@@ -75,6 +78,39 @@ public enum Effect {
     /// 近いほど暗く薄い画素** (たとえば不透明度 0.05 の `1 / 255` の灰) **は、半精度の丸めが幅を越えるので、
     /// ちょうどの値が白にならないことがある。**
     case threshold(level: Float)
+    /// 色の段数を減らす。**各チャンネルを `levels` 段にし、アルファは動かさない。** Processing の
+    /// `filter(POSTERIZE, levels)` に当たる。
+    ///
+    /// 段に切るのは、乗算を戻した表示の値 (``brightness(_:)`` と同じ sRGB の原色・エンコードした 0…1) で、
+    /// 最も近い 8 ビットの値へ丸めてから、Processing と同じ式で切る — 8 ビットの値 `v` を `floor(v × levels / 256)` 段目にし、段 `q` を
+    /// `floor(q × 255 / (levels − 1))` の 8 ビットの値で出す。だから 8 ビットの灰は Processing と同じ値になる
+    /// (`levels: 2` で 127 以下は黒、128 以上は白)。0…1 の外 (白を越える光・sRGB の外の色) は端の段へ入る。
+    ///
+    /// **`levels` が 2 未満 (0・1・負) なら効かない** — 絵は 1 ビットも変わらない (Processing は 2〜255 の外で
+    /// 投げる)。上限は締めない。256 以上でも段は 8 ビットの値で出す。不透明度 0 の画素はそのまま通す
+    /// (ほかの効果と同じく、入りに無い明るさを作らない・ADR-0011 決定 1)。
+    case posterize(levels: Int)
+    /// 暗いところを広げる (明るいところを縮める)。Processing の `filter(ERODE)` に当たる。
+    ///
+    /// 各画素を、自分と上下左右の 4 画素のうち**最も暗い画素で丸ごと置き換える** (成分ごとに最小を取らない)。
+    /// 縁の外は自分を読む。1 回で 1 画素ずつ進むので、強く掛けるなら並びに重ねる。画素は描く画素
+    /// (Processing の `pixelWidth` と同じ) で数える。
+    ///
+    /// 明るさの物差しは Processing と同じ輝度の加重 (0.30・0.59・0.11。8 ビットの 77・151・28) で、表示の値
+    /// (sRGB の原色・エンコードした値) を**乗算済みのまま**比べる。``threshold(level:)`` と ``Image/mask(_:)`` の
+    /// 物差し (3 成分の最大・``brightness(_:)``) とは別である — 赤 (1, 0, 0) と緑 (0, 1, 0) は、こちらでは緑が
+    /// 明るい。乗算済みのまま比べるので、**透明な画素は暗い側**になる (Processing は不透明度を見ず、透明な
+    /// 白も明るい)。同じ明るさなら、自分・左・右・上・下の順で先のものを残す (Processing と同じ)。
+    case erode
+    /// 明るいところを広げる。Processing の `filter(DILATE)` に当たる。各画素を、自分と上下左右の 4 画素のうち
+    /// **最も明るい画素で丸ごと置き換える**。明るさの物差し・縁・同じ明るさのときの順は ``erode`` と同じ。
+    case dilate
+    /// 不透明にする。**色を保ったまま、不透明度を 1 にする。** Processing の `filter(OPAQUE)` に当たる。
+    ///
+    /// 乗算を戻した色を不透明度 1 で置き直すので、半透明の赤は不透明の同じ赤になる。不透明度 0 の画素は
+    /// 色が残っていないので、黒の不透明になる (Processing は乗算していないので、透明な画素が持っていた色が
+    /// 出る)。
+    case opaque
     /// 利用者が書いた効果。
     case custom(EffectShader)
 
@@ -154,6 +190,15 @@ public enum Effect {
         case .threshold(let level):
             // 比べるのは線形へ戻した値 (エンコードは単調なので答えは変わらない)。0 以下は 0 のまま
             return [EffectPass(control: Self.control(kind: .threshold, TransferFunction.decode(level)))]
+        case .posterize(let levels):
+            // 段数は Float の枠へ入れる。2^24 を越える段数は丸まるが、段は 8 ビットで出すので絵は変わらない
+            return [EffectPass(control: Self.control(kind: .posterize, Float(levels)))]
+        case .erode:
+            return [EffectPass(control: Self.control(kind: .erode))]
+        case .dilate:
+            return [EffectPass(control: Self.control(kind: .dilate))]
+        case .opaque:
+            return [EffectPass(control: Self.control(kind: .opaque))]
         case .custom(let shader):
             return [EffectPass(control: Self.control(kind: .copy), shader: shader)]
         }
@@ -254,7 +299,8 @@ extension Effect {
         case .threshold(let level):
             guard level.isFinite else { return nil }
             return .threshold(level: Self.clampAmount(level))
-        case .custom:
+        case .posterize, .erode, .dilate, .opaque, .custom:
+            // 段数は整数で、数でない値を持たない。2 未満は断片が「効かない」で扱う
             return self
         }
     }
@@ -307,7 +353,7 @@ extension Effect {
                     warning: .roundedThresholdLevel, quantity: "the threshold level", range: "0 to 1",
                     passed: value, used: value < 0 ? 0 : 1)
             ]
-        case .adjust, .custom: return []
+        case .adjust, .posterize, .erode, .dilate, .opaque, .custom: return []
         }
     }
 
@@ -331,6 +377,10 @@ extension Effect {
         case .fringe: "fringe"
         case .adjust: "adjust"
         case .threshold: "threshold"
+        case .posterize: "posterize"
+        case .erode: "erode"
+        case .dilate: "dilate"
+        case .opaque: "opaque"
         case .custom: "custom"
         }
     }
@@ -425,6 +475,14 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
     case resize = 13
     /// 2 値化 (``Effect/threshold(level:)``)。
     case threshold = 14
+    /// 段数を減らす (``Effect/posterize(levels:)``)。
+    case posterize = 15
+    /// 最も暗い近傍で置き換える (``Effect/erode``)。
+    case erode = 16
+    /// 最も明るい近傍で置き換える (``Effect/dilate``)。
+    case dilate = 17
+    /// 不透明にする (``Effect/opaque``)。
+    case opaque = 18
 
     /// 断片へ渡す形。設定の枠が `Float` なので、そこへ入る形で名乗る。
     var value: Float { Float(rawValue) }
@@ -446,6 +504,10 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
         case .accumulate: "kEffectAccumulate"
         case .resize: "kEffectResize"
         case .threshold: "kEffectThreshold"
+        case .posterize: "kEffectPosterize"
+        case .erode: "kEffectErode"
+        case .dilate: "kEffectDilate"
+        case .opaque: "kEffectOpaque"
         }
     }
 }

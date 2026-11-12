@@ -462,14 +462,17 @@ struct FilterImmediateTests {
         }
     }
 
-    @Test("シェーダに写した P3 → sRGB の係数は、Swift の正本 (ColorPrimaries) と同じ")
-    func shaderMatrixMatchesTheSwiftOriginal() throws {
+    /// シェーダに写した原色の行列。`variable` は `dot(<variable>, float3(…))` の左の名前で、行列ごとに違う。
+    @Test(
+        "シェーダに写した原色の行列 (P3 → sRGB・sRGB → P3) は、Swift の正本 (ColorPrimaries) と同じ",
+        arguments: ["premultiplied", "straight"])
+    func shaderMatrixMatchesTheSwiftOriginal(variable: String) throws {
         let source = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/MokumeCore/Drawing/Shaders/Effects/Builtin.metal")
         let text = try String(contentsOf: source, encoding: .utf8)
         let pattern = try NSRegularExpression(
-            pattern: #"dot\(premultiplied, float3\(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\)\)"#)
+            pattern: #"dot\("# + variable + #", float3\(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\)\)"#)
         let range = NSRange(text.startIndex..., in: text)
         let rows = pattern.matches(in: text, range: range).map { match in
             (1...3).map { Double(text[Range(match.range(at: $0), in: text)!])! }
@@ -479,13 +482,14 @@ struct FilterImmediateTests {
         let columns = (0..<3).map { j -> SIMD3<Float> in
             var unit = SIMD3<Float>(0, 0, 0)
             unit[j] = 1
-            return ColorPrimaries.sRGB(fromWorking: unit)
+            return variable == "premultiplied"
+                ? ColorPrimaries.sRGB(fromWorking: unit) : ColorPrimaries.working(fromSRGB: unit)
         }
         for i in 0..<3 {
             for j in 0..<3 {
                 #expect(
                     abs(rows[i][j] - Double(columns[j][i])) < 1e-6,
-                    "行 \(i) の \(j) 番目: シェーダ \(rows[i][j]) 対 正本 \(columns[j][i])")
+                    "\(variable) の行 \(i) の \(j) 番目: シェーダ \(rows[i][j]) 対 正本 \(columns[j][i])")
             }
         }
     }
