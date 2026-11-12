@@ -164,6 +164,60 @@ nonisolated extension Path {
         return distance > 0 ? operated(with: smooth, .union) : operated(with: smooth, .subtracting)
     }
 
+    /// この道を線とみなし、`shape` の内側にある部分だけを残した道。ペンプロッタ風の斜線を形の中だけに引くのに使う。
+    ///
+    /// 自分の部分道は**線**として読む。開いた部分道は閉じず (2 点の線分も線)、閉じた部分道は閉じる辺も線に含める。
+    /// `shape` の内側は ``contains(_:)`` と同じ規則 (全部の部分道を 1 つの形とみなし、回り数が 0 でない所。開いた
+    /// 部分道も閉じた形として扱う) で決める。結果は、内側に残った片の並びで、**片は開いた部分道**になる。片の端点は
+    /// `shape` の縁の上に乗り、片の点は元の向きのまま並ぶ。閉じた部分道の始点が内側にあっても、始点の前後で
+    /// 2 片に割れず 1 片で返る。**全部が内側にある閉じた部分道は、閉じたまま**返る (長さは元と同じ)。
+    ///
+    /// - `shape` の縁の上に重なる線は、残るとも消えるとも決めない (``contains(_:)`` の辺の上と同じ)
+    /// - 全部が外側にある線と、空の `shape` は、空の道を返す。点が 2 つに満たない部分道と、数でない座標を持つ
+    ///   部分道は線にならないので入れない
+    /// - **結果は線として描く** (``SketchPart/noFill()`` を指定してから ``SketchPart/shape(_:_:_:)-(Path,_,_)``)。
+    ///   塗りを指定したまま描くと、3 点以上の片が閉じた形として細い欠片に塗られうる (``contains(_:)`` と同じく、
+    ///   開いた部分道を閉じた形として塗るため)
+    /// - 結果は ``Path/union(_:)`` と同じく CoreGraphics が計算する。同じ機械・同じ OS の版なら点が一致し、OS の
+    ///   更新で動きうる。元の頂点の近くの点は曲線が刻んだ点かどうかを引き継ぎ、縁で切ってできた端点は角になる
+    ///
+    /// 円の和でできた雲の中だけに斜線を引き、外側に破線の縁を回す例。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     let cloud = Path.union((0..<6).map { i in
+    ///         Path(Circle(center: [200 + Float(i) * 60, 300 + 30 * sin(Float(i) + time)], radius: 70))
+    ///     })
+    ///     background(18, 20, 26)
+    ///     noFill()
+    ///     stroke(240)
+    ///     strokeWeight(2)
+    ///     shape(cloud)                                   // 重なりの内側の線が消える
+    ///     let hatch = createPath {
+    ///         for x in stride(from: Float(-400), to: 1200, by: 8) {
+    ///             beginShape(); vertex(x, 0); vertex(x + 400, 600); endShape()
+    ///         }
+    ///     }
+    ///     stroke(240, 120)
+    ///     shape(hatch.clipped(to: cloud))                // 斜線を雲の中だけに
+    ///     stroke(255, 160, 60)
+    ///     strokeDash(10, 6)
+    ///     shape(cloud.offset(by: 14))                    // 外側に破線の縁 (strokeDash で引く)
+    ///     noStrokeDash()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 濃い下地に、6 つの円を合わせた雲の白い輪郭が 1 本あり、内側だけに斜線が引かれ、外側を橙の破線の縁が囲んでいる | size=800x600 -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 後で撮る
+    public func clipped(to shape: Path) -> Path {
+        if subpaths.isEmpty || shape.subpaths.isEmpty { return Path() }
+        return Path(cgPath: linePath().lineIntersection(shape.cgPath(), using: .winding), inputs: [self], asLines: true)
+    }
+
     private enum Operation {
         case union, subtracting, intersection
     }
@@ -195,6 +249,18 @@ nonisolated extension Path {
             guard subpath.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
             path.addLines(between: subpath.points.map { CGPoint(x: Double($0.x), y: Double($0.y)) })
             path.closeSubpath()
+        }
+        return path
+    }
+
+    /// 部分道を線として読んだ `CGPath` にする (``clipped(to:)`` の自分の側)。開いた部分道は閉じず、閉じた部分道は
+    /// 閉じる辺を含める。点が 2 つに満たない部分道と、数でない座標を持つ部分道は、線にならないので入れない。
+    private func linePath() -> CGPath {
+        let path = CGMutablePath()
+        for subpath in subpaths where subpath.points.count >= 2 {
+            guard subpath.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
+            path.addLines(between: subpath.points.map { CGPoint(x: Double($0.x), y: Double($0.y)) })
+            if subpath.isClosed { path.closeSubpath() }
         }
         return path
     }
@@ -287,28 +353,32 @@ nonisolated extension Path {
     /// - 始点へ戻る終点は落とす (閉じる辺が長さ 0 になるのを避ける)
     /// - 閉じた後に `moveTo` を挟まず線が来たら、CoreGraphics の規則どおり、閉じた部分道の始点から続ける
     /// - 点が 3 つに満たない部分道と、Float に収まらない座標を持つ部分道は入れない (入力側と同じ扱い)
-    init(cgPath: CGPath, inputs: [Path]) {
+    ///
+    /// `asLines` が真なら、線を切った結果 (``clipped(to:)``) としてほどく。`closeSubpath` で閉じた部分道だけを
+    /// 閉じた部分道にし、ほかは開いた部分道のまま置く。開いた部分道は始点へ戻る終点も落とさず、2 点の片も入れる。
+    init(cgPath: CGPath, inputs: [Path], asLines: Bool = false) {
         let table = StepTable(inputs)
         var subpaths: [Subpath] = []
         var current: [SIMD2<Double>] = []
         /// 点ごとに、曲線を刻んだ途中の点か。
         var forced: [Bool] = []
-        func finish() {
+        func finish(closed: Bool) {
             defer {
                 current = []
                 forced = []
             }
             var points = current.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
             guard points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return }
-            while points.count > 1, points.last == points.first {
+            let isClosed = closed || !asLines
+            while isClosed, points.count > 1, points.last == points.first {
                 points.removeLast()
                 forced.removeLast()
             }
-            guard points.count >= 3 else { return }
+            guard points.count >= (asLines ? 2 : 3) else { return }
             let steps = points.indices.map { index in
                 forced[index] || table.isStep(SIMD2<Double>(Double(points[index].x), Double(points[index].y)))
             }
-            subpaths.append(Subpath(points: points, isClosed: true, isCurveStep: steps))
+            subpaths.append(Subpath(points: points, isClosed: isClosed, isCurveStep: steps))
         }
         func point(_ p: CGPoint) -> SIMD2<Double> { SIMD2(Double(p.x), Double(p.y)) }
         func append(_ points: [SIMD2<Double>]) {
@@ -322,7 +392,7 @@ nonisolated extension Path {
             let item = element.pointee
             switch item.type {
             case .moveToPoint:
-                finish()
+                finish(closed: false)
                 current = [point(item.points[0])]
                 forced = [false]
             case .addLineToPoint:
@@ -341,7 +411,7 @@ nonisolated extension Path {
                 append(Self.flatten(from: from, point(item.points[0]), point(item.points[1]), to: point(item.points[2])))
             case .closeSubpath:
                 let start = current.first
-                finish()
+                finish(closed: true)
                 // 閉じた後の線は、閉じた部分道の始点から続く
                 if let start {
                     current = [start]
@@ -351,7 +421,7 @@ nonisolated extension Path {
                 break
             }
         }
-        finish()
+        finish(closed: false)
         self.init(subpaths: subpaths)
     }
 }
