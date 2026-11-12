@@ -558,7 +558,8 @@ package enum AtomicFile {
     ///
     /// 合図 0 は何も送らず、宛先が在るかだけを問う。他の利用者のプロセスは `EPERM` で
     /// 返るが、それも「居る」である。
-    nonisolated static func isRunning(_ pid: pid_t) -> Bool {
+    /// `mokume bundle` の一時の置き場の片付けも、同じ判定で持ち主の生死を引く (#3981)。
+    package nonisolated static func isRunning(_ pid: pid_t) -> Bool {
         // **宛先を確かめてから問う。** 0 以下は自分のプロセスグループや全体を指す
         guard pid > 0 else { return true }
         return kill(pid, 0) == 0 || errno != ESRCH

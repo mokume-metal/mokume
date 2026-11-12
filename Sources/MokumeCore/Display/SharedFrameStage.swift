@@ -1214,7 +1214,7 @@ extension SharedFrameStage: SettlementObserver {
 /// 乗り換えの合図が来ないので、知らせないと前の世代が残り、プレビューの「起こしている」が終わらない。
 /// **1 枚も焼かない形は含めない** — `setup()` が長いのと固まったのとは時計なしに見分けられず、
 /// 時計で見切らない (ADR-0032 決定 3)。
-public enum UndeliverableGeneration: Sendable, Equatable {
+package enum UndeliverableGeneration: Sendable, Equatable {
     /// 目録が読めない (版が違う・形が違う)。**台は理由と候補を端末へ名乗り済み** (#2889)。
     case unreadableManifest
     /// 目録がファイルとして読めない (権限・置き場がディレクトリ)。**台は理由を端末へ名乗り済み。** 版の形とは関係が無い。

@@ -69,6 +69,19 @@ final class JSONAndXML: Sketch {
         }
         sky = try loadXML(Self.data("constellation.xml"))
 
+        // 読めた街の気温を、空から作ったオブジェクトに書いて書き出す。絵には出さない。
+        // 普通のスケッチなら `saveJSONObject(summary, "out/temperatures.json")` と書く。参照スケッチは
+        // 検査からも走るので、リポジトリを汚さない一時ディレクトリへ書く
+        var summary = JSONObject()
+        for (name, temp) in zip(names, temps) {
+            if let temp { summary.setFloat(name, temp) }
+        }
+        try saveJSONObject(summary, Self.written)
+        // 読めた気温を、並んだ順の配列としても書き出す (普通のスケッチなら `saveJSONArray(list, "out/temperatures-list.json")`)
+        var list = JSONArray()
+        for temp in temps.compactMap({ $0 }) { list.append(temp) }
+        try saveJSONArray(list, Self.writtenList)
+
         // 同じ URL とファイルを、待たない口で読み直す。待つのは Task の仕事で、届くまでは
         // 下の draw() が「読み直している…」と出す
         // 都市ごとの失敗例と同期の星座は残し、追加の読み直しだけを失敗表示にする。
@@ -174,6 +187,14 @@ final class JSONAndXML: Sketch {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("data").appendingPathComponent(name).path
     }
+
+    /// 読めた街の気温を書き出す先。
+    private static let written = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mokume-reference-temperatures.json").path
+
+    /// 読めた気温の並びを書き出す先。
+    private static let writtenList = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mokume-reference-temperatures-list.json").path
 }
 
 /// `weather.example` への要求に、置いた応答を返す。**普通のスケッチには要らない** — 本物の

@@ -38,7 +38,10 @@ on:
   # 「誰も見ていない release の赤」は、版を出す前の release.yml の release-check が塞ぐ
   # (#2662。merge の前ではなくなった — 理由は release.yml の release-check)。
   # push の run の結果を読むもの (release・stall-watch・queue-sweep・バッジ) も無い。
-  # キャッシュ (#1715) の置き場に main の run が要ると分かったら、そのときに戻す。
+  # キャッシュ (#1715) の置き場に main の run が要ると分かった (#3885: ci-static の道具の cache は
+  # 既定ブランチに在って初めて PR の初回と merge_group の run から当たる)。ただしここへ push は戻さず、
+  # cache を温めるだけの別のワークフロー warm-tools-cache.yml が main への push で走る。ここに戻すと
+  # すべての job に push で走らない条件が要り、push の run が ci-gate・queue-sweep の見る run に混ざる。
 
 permissions:
   contents: read
@@ -137,6 +140,16 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bin"
           ln -s "$RUNNER_TEMP/ci-tools/bin/reuse" "$RUNNER_TEMP/ci-tools/bin/check-jsonschema" "$RUNNER_TEMP/bin/"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # actionlint と shellcheck は ubuntu-24.04 のイメージに無い / 版が違う (shellcheck 0.9.0。
+      # ピンは 0.11.0) ので、check-workflows.sh が GitHub Releases から認証なしで落とす。GitHub の
+      # 未認証の取得が劣化している間はここで ci-static が落ち続けた (#3885)。落とした道具を
+      # .build/tools に置いて持ち越し、当たった run は Releases に触れない。鍵は版と照合値を持つ
+      # check-workflows.sh の中身 (どちらを上げても鍵が変わる)。外れた run は今までどおり落として
+      # sha256 を照合する。cache は取り出すだけで、照合は外していない。GH_TOKEN は持ち込まない
+      - uses: actions/cache@v6
+        with:
+          path: .build/tools
+          key: workflow-lint-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/check-workflows.sh') }}
       - run: make ci-check
         env:
           CI_CHECK_HOST: ubuntu

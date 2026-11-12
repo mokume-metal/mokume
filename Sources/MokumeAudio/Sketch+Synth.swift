@@ -137,7 +137,7 @@ extension Sketch {
 
     // MARK: - 包絡
 
-    /// エンベロープ (音量の時間変化) を作る。適用するのは ``Env/play(_:_:_:_:_:)``。
+    /// エンベロープ (音量の時間変化) を作る。適用するのは ``Env/play(_:_:_:_:_:)-(SynthSource,_,_,_,_)`` (音声ファイルには ``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)``)。
     ///
     /// <!-- example: 文脈 var osc: SinOsc?; var env: Env? -->
     /// ```swift

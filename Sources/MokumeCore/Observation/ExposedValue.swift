@@ -16,7 +16,7 @@
 /// が見る**。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-public enum ExposedValue: Encodable, Equatable, Sendable {
+package enum ExposedValue: Encodable, Equatable, Sendable {
     case float(Double)
     case int(Int)
     case string(String)

@@ -503,7 +503,6 @@ def check_type_closure(symbols: list[dict], owned: set[str]) -> list[str]:
 # である。ここへ 1 行足すたびに判断が入るのが狙いで、書けるのは「その型でなければ表せない
 # 理由」に限る (「便利だから」は理由にならない)。
 FOREIGN_ALLOWLIST = {
-    "BundledShaders.location": "同梱の原文の在処。切り分けの口 (mokume doctor) が「どこから読んでいるか」を名乗るために要る — 読めるかどうかだけでは、配った形が成立しているかを分けられない (Shader.url と同じ理由)",
     "OutputFrame.texture": "毎フレーム絵を渡す出口へ、描画資源をそのまま手渡す一点 (ADR-0024 決定 8)。包むと受け取る側が取り出す口を別に求め、露出の点が増える",
     "PNGFile.write(_:to:)": "書き出し先の指定。ファイルの場所の正典は標準ライブラリの外にある",
     "RenderDevice.init(device:)": "既に持っている Metal の資源を持ち込む入口。意図して開けてある",
@@ -513,19 +512,6 @@ FOREIGN_ALLOWLIST = {
     "Shader.url": "読み込み元の在処。読んだファイルを指し直せる形で返す",
     "SketchPart.assetURL(_:)": "資材の在処を返す口。mokume が読まない形式を利用者や外のパッケージが読むのに、場所そのものを渡す (Shader.url と同じ理由)",
     "SketchView.body": "SwiftUI の `View` の要件そのもの。SwiftUI のアプリへ埋め込む口なので、`View` として並べるほかに表せない (ADR-0045 決定 11・#3511)",
-    "SketchRuntime.renderFrame(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
-    "WorkDirectory.base": "作業場所の在処。WorkDirectory は場所そのものを扱う型なので URL が本体",
-    "WorkDirectory.facet(_:)": "作業場所の下位を指す (WorkDirectory.base と同じ理由)",
-    "WorkDirectory.given": "環境から受け取った作業場所 (WorkDirectory.base と同じ理由)",
-    "WorkDirectory.given(environment:)": "環境から受け取った作業場所 (WorkDirectory.base と同じ理由)",
-    "WorkDirectory.root": "作業場所の根 (WorkDirectory.base と同じ理由)",
-    "WorkDirectory.root(under:)": "基準を外から渡す形の根 (WorkDirectory.base と同じ理由)",
-    "WorkDirectory.facet(_:under:)": "基準を外から渡す形の区画 (WorkDirectory.base と同じ理由)",
-    "WorkDirectory.requestURL(under:)": "区画の中の要求ファイルの在処。綴りを 1 箇所に保つには、場所を組んで返すしかない (WorkDirectory.base と同じ理由)",
-    "WorkDirectory.reportURL(under:)": "区画の中の応答ファイルの在処 (WorkDirectory.requestURL と同じ理由)",
-    "WorkDirectory.directoryExists(at:)": "見に行く場所の指定。返すのではなく受けるだけなので PNGFile.write(_:to:) と同じ向きで、在処の正典は標準ライブラリの外にある",
-    "SharedFrameWindow.init(gpu:facet:title:)": "見張っているスケッチ側の区画を指す。道具は自分の作業場所ではなくそこへ置くので、場所を渡す口が要る (WorkDirectory.facet と同じ理由)",
-    "SharedFramePreview.init(gpu:facet:params:title:)": "作品のウィンドウと同じ区画を独立に見るプレビューと、つまみの区画 (SharedFrameWindow.init と同じ理由)",
 }
 
 
@@ -1140,6 +1126,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "saveTable": (ASSEMBLY, "表を外へ書き出す。絵にもフレームの状態にも触れない"),
     "saveStrings": (ASSEMBLY, "文字列を外へ書き出す。絵にもフレームの状態にも触れない"),
     "saveBytes": (ASSEMBLY, "saveStrings と同じ理由"),
+    "saveJSONObject": (ASSEMBLY, "JSON のオブジェクトを外へ書き出す。絵にもフレームの状態にも触れない"),
+    "saveJSONArray": (ASSEMBLY, "saveJSONObject と同じ理由 (最上位が配列の JSON)"),
     "beginRecord": (ASSEMBLY, "save と同じ理由"),
     "attach": (ASSEMBLY, "走っているスケッチの差込口の並びを組み替える (plugins の実行中版)"),
     "detach": (ASSEMBLY, "attach と同じ理由"),

@@ -939,9 +939,11 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/loadJSONObject(_:)``
 - ``SketchPart/requestJSONObject(_:)``
 - ``SketchPart/parseJSONObject(_:)``
+- ``SketchPart/saveJSONObject(_:_:)``
 - ``SketchPart/loadJSONArray(_:)``
 - ``SketchPart/requestJSONArray(_:)``
 - ``SketchPart/parseJSONArray(_:)``
+- ``SketchPart/saveJSONArray(_:_:)``
 - ``SketchPart/loadXML(_:)``
 - ``SketchPart/requestXML(_:)``
 - ``JSONObject``
@@ -1187,6 +1189,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 ### ゲームを作る
 
 - ``Scene``
+- ``ArcadeBody``
 - ``Camera2D``
 
 ### 実行中に値を調整する
