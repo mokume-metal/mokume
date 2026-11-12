@@ -247,6 +247,15 @@ def owner(symbol: dict) -> str:
     return path[0] if len(path) > 1 else ""
 
 
+def owner_path(symbol: dict) -> str:
+    """持ち主の経路全体。入れ子の型のメンバは `PixelSurface.ColorTable` になる (#3674)。
+
+    最外の型のメンバでは `owner()` と同じ値、型そのものと最上位の宣言は空。`owner()` の戻り値は
+    変えない — 旧い読み手が資産を読めなくなる (版は上げない・ADR-0018 決定 5)。
+    """
+    return ".".join(symbol.get("pathComponents", [])[:-1])
+
+
 def layer(symbol: dict) -> str:
     """持ち主を層で読む。上の層の型 (ENTRY_TYPES) はどれも ENTRY_TYPE に畳む。"""
     name = owner(symbol)
@@ -337,13 +346,14 @@ def details(symbols: list[dict], version: str) -> dict:
     正典は `///` だけである。
 
     形は基底名ごとの配列で、同名の多重定義は同じ配列に並ぶ。型そのもの (トップレベル) は
-    持ち主が空の項になる。並びは (持ち主・引数の型・宣言) で決め、入力の順に依らない
+    持ち主が空の項になる。並びは (持ち主・持ち主の経路・引数の型・宣言) で決め、入力の順に依らない
     (`order` が一覧に対して担うのと同じ理由 — 版の間で diff したときのノイズを避ける)。
     """
     grouped: dict[str, list[dict]] = {}
-    for symbol in sorted(symbols, key=lambda s: (owner(s), *order(s), declaration(s))):
+    for symbol in sorted(symbols, key=lambda s: (owner(s), owner_path(s), *order(s), declaration(s))):
         grouped.setdefault(base_name(symbol), []).append(
-            {"owner": owner(symbol), "declaration": declaration(symbol), "doc": doc(symbol)})
+            {"owner": owner(symbol), "ownerPath": owner_path(symbol),
+             "declaration": declaration(symbol), "doc": doc(symbol)})
     return {"schemaVersion": DETAILS_SCHEMA_VERSION, "version": version, "symbols": grouped}
 
 

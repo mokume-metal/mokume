@@ -199,7 +199,7 @@ camera(eye: eyePosition, center: target, up: Vector3(0, 1, 0))  // ラベル付�
 
 **ラベル付きの形は、意味のまとまりごとに値型を取る** (`camera(eye: Vector3, center: Vector3, up: Vector3)`)。まとまりが型で表れ、規則 3 と [ADR-0045](0045-game-direction.md) 決定 5〜8 の値型と揃う。ラベルと引数の形は Swift API Design Guidelines に従う。
 
-**図形を描く口は、対応する図形の値型の `draw()` をラベル付きの形とみなし、関数は足さない。** 対象は `rect`→`Rect`・`ellipse`→`Ellipse`・`circle`→`Circle`・`box`→`Box`・`sphere`→`Sphere` で、`Rect(left: 24, top: 48, width: 40, height: 14).draw()` がすでに `rect(24, 48, 40, 14)` のラベル付きの形になっている。図形の値型を引数に取る口 (`rect(Rect)` など) は、ADR-0045 と次の 3 点でぶつかる:
+**図形を描く口は、対応する図形の値型の `draw()` をラベル付きの形とみなし、関数は足さない。** 値型が在る図形は `rect`→`Rect`・`circle`→`Circle` で、`Rect(left: 24, top: 48, width: 40, height: 14).draw()` がすでに `rect(24, 48, 40, 14)` のラベル付きの形になっている。**`ellipse` には、対応する `Ellipse` 型がまだ無く、ラベル付きの形を持たない (既知の欠け)。** `Ellipse` は [ADR-0045](0045-game-direction.md) のとおり、要る作例が来たときに入れる。それまでは、`ellipse(in: Rect)` のように型を足さずにラベルだけを付けた API も足さない ([#3939](https://github.com/mokume-metal/mokume/issues/3939))。`box`→`Box`・`sphere`→`Sphere` は、上の (i) (大きさの成分が共有された順で並ぶ) で対象外なので、値型が無くても欠けではない。図形の値型を引数に取る口 (`rect(Rect)` など) は、ADR-0045 と次の 3 点でぶつかる:
 
 - 値を描く口が `draw()` と `rect(_:)` の 2 つになる (ADR-0045 決定 6 は、描くのを `draw()` だけにした)
 - `rect()` は `rectMode` に従い、`Rect` は従わない (ADR-0045 決定 5)。従わせると、値に書いた位置に描かれず、当たり判定 (決定 7) とずれる。従わせないと、同じ `rect` が引数の型によって `rectMode` に従ったり従わなかったりする
