@@ -494,6 +494,8 @@ struct WatchSessionModelTests {
         private var heldFails = false
         /// プレビューへ出した行。
         private var previewLog: [String] = []
+        /// 作り直しの口が呼ばれたときの、ソースの世代 (呼ばれた順)。
+        private var rebuiltStamps: [String?] = []
         /// 受けた入る要求の回数。試聴の 1 回ごとの番号。
         private var auditionIndex = 0
         /// 出る要求を出した試聴の番号 (受けると見込んで、要求を置く前に控える)。
@@ -583,6 +585,7 @@ struct WatchSessionModelTests {
         /// 作り直しの口が呼ばれた。見張りは世代を取ってから作り直すので、作っているのはいまの世代の版である。
         private func noteRebuild() {
             rebuilds += 1
+            rebuiltStamps.append(stamp)
             if launchFails, let stamp { refusedStamps.insert(stamp) }
         }
 
@@ -1130,6 +1133,7 @@ struct WatchSessionModelTests {
             await settleUnseen()
             let launchesBefore = gens.count
             let linesBefore = previewLog.count
+            let rebuildsBefore = rebuiltStamps.count
             placeUnseenSave()
             noteRead(currentRole)
             let heldStamp = stamp
@@ -1289,18 +1293,27 @@ struct WatchSessionModelTests {
                 }
             }
             // 捨てた版があれば名乗り、無ければ名乗らない (本番の版にした版を「捨てた」と言わない)。門で止めた版と最後の版の
-            // どちらかが終わった試聴の版なら捨てる。途中の版は追い越されるだけで、名乗らない
-            let expectsDrop = isDropped(heldRole) || (last != heldStamp && isDropped(last.flatMap { stampRoles[$0] }))
+            // どちらかが終わった試聴の版なら捨てる。途中の版は追い越されるだけで、名乗らない。**同じ試聴の版を続けて捨てるとき
+            // は 1 行にまとめる** (門で止めた版を捨てるとき、同じ試聴で読んで控えた最後の版も一緒に捨てる)
+            let lastRole = last.flatMap { stampRoles[$0] }
+            let heldDropped = isDropped(heldRole)
+            let lastDropped = last != heldStamp && isDropped(lastRole)
+            let sameAudition = lastRole.map { effective($0) == effective(heldRole) } ?? false
+            let expectedDrops = (heldDropped ? 1 : 0) + (lastDropped && !(heldDropped && sameAudition) ? 1 : 0)
             let dropLines = previewLog[linesBefore...].filter {
                 $0 == WatchCommand.auditionDiscardedLine(productionRunning: true)
                     || $0 == WatchCommand.auditionDiscardedLine(productionRunning: false)
             }
-            if expectsDrop == dropLines.isEmpty {
+            if dropLines.count != expectedDrops {
                 return Violation(
                     number: 7,
-                    text: expectsDrop
-                        ? "終わった試聴の版を捨てたのに、捨てたことを名乗らない"
-                        : "捨てる版が無いのに、捨てたと名乗った (\(dropLines.count) 行)")
+                    text: "捨てたことを名乗った行が \(dropLines.count) 行 (規則では \(expectedDrops) 行。門で止めた版 \(heldStamp ?? "-") の役 \(heldRole)・最後の版 \(last ?? "-") の役 \(String(describing: lastRole)))")
+            }
+            // 同じ版を 2 度作り直さない (出る要求が引き継いだ版を、出た時点のソースとしてもう 1 度作らない)。重なりの中の
+            // 保存はどれも新しい中身か、作り直していない中身へ戻す保存なので、1 つの中身の作り直しは 1 度まで
+            let rebuilt = rebuiltStamps[rebuildsBefore...]
+            if let twice = Set(rebuilt.compactMap { $0 }).first(where: { stamp in rebuilt.filter { $0 == stamp }.count > 1 }) {
+                return Violation(number: 7, text: "同じ版 \(twice) を 2 度作り直した (作り直した順 \(rebuilt.map { $0 ?? "-" }))")
             }
             // 落ち着いた後の拍は何も起こさない (捨てた版を後から本番へ作り直さない)
             let settled = gens.count
