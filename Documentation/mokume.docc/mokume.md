@@ -780,6 +780,10 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/image(_:in:from:)-(Image,_,_)``
 - ``SketchPart/texture(_:)-c9g``
 - ``SketchPart/noTexture()``
+- ``SketchPart/textureMode(_:)``
+- ``SketchPart/textureWrap(_:)``
+- ``TextureMode``
+- ``TextureWrap``
 - ``Image``
 - ``ImageFailure``
 - ``DisplayImage``

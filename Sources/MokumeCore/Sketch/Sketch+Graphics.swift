@@ -829,6 +829,96 @@ extension SketchPart {
     // shot: 1 snippet=3d8912c0
     // shot: 2 snippet=cd9091a0 image=6f8d871270ab0592
     public func noTexture() { liveCanvas()?.noTexture() }
+
+    /// ``vertex(_:_:_:_:)`` の読み取り位置 `u`・`v` の単位を選ぶ。Processing の `textureMode()` に当たる。
+    ///
+    /// 既定の `.image` は貼る画像の画素で読み、`.normal` は画像の大きさによらず 0〜1 で読む。下の例は
+    /// 同じ 120 画素四方の画像を同じ四角に貼ったもので、左は `.normal` で `(0, 0)`〜`(1, 1)` と書いて画像の全体が、
+    /// 右は既定の `.image` のまま同じ数を書いたので左上の 1 画素が引き伸ばされて貼られる。
+    ///
+    /// <!-- example: 文脈 var tile: Image! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     tile = try createImage(120, 120)
+    ///     for y in 0..<120 {
+    ///         for x in 0..<120 {
+    ///             tile.set(x, y, .display(red: Float(x) / 119, green: 0.4, blue: Float(y) / 119))
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     texture(tile)
+    ///     for (left, mode) in [(40, TextureMode.normal), (240, .image)] {
+    ///         textureMode(mode)
+    ///         beginShape()
+    ///         vertex(left, 90, 0, 0)
+    ///         vertex(left + 120, 90, 1, 0)
+    ///         vertex(left + 120, 210, 1, 1)
+    ///         vertex(left, 210, 0, 1)
+    ///         endShape(.close)
+    ///     }
+    /// }
+    /// ```
+    /// <!-- shot: 同じ画像を貼った四角が 2 つ。左は赤と青の階調が四角いっぱいに広がり、右は 1 色に塗られている -->
+    /// <!-- /shot -->
+    ///
+    /// **単位は `vertex()` を呼んだ時点の設定で決まる** (Processing と同じ)。頂点を置いた後、`endShape()` の
+    /// 前に単位を戻しても、置いた頂点の読み方は変わらない。画像を貼っていない形では、どちらの単位でも書いた
+    /// 値がそのままシェーダの `in.uv` へ届く。組み込みの形 (`rect` など) が持つ読み取り位置には効かない。
+    ///
+    /// **描き方なのでフレームを越える** — ``texture(_:)-(Image)`` と同じく、一度書けば書き換えるまで続き、
+    /// ``push(fileID:line:)`` / ``pop(fileID:line:)`` で積める。
+    // shot: 後で撮る
+    public func textureMode(_ mode: TextureMode) { liveCanvas()?.textureMode(mode) }
+
+    /// 貼る画像の端の外の読み方を選ぶ。Processing の `textureWrap()` に当たる。
+    ///
+    /// 既定の `.clamp` は端の外を端の色で延ばし、`.repeat` は反対側から読んで画像を繰り返す。下の例は
+    /// 同じ画像を、読み取り位置の右端を画像の幅の 2 倍 (240) にして貼ったもので、左は既定の `.clamp` で
+    /// 右半分が画像の右端の色で延び、右は `.repeat` で画像が横に 2 回並ぶ。
+    ///
+    /// <!-- example: 文脈 var tile: Image! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     tile = try createImage(120, 120)
+    ///     for y in 0..<120 {
+    ///         for x in 0..<120 {
+    ///             tile.set(x, y, .display(red: Float(x) / 119, green: 0.4, blue: Float(y) / 119))
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     texture(tile)
+    ///     for (top, wrap) in [(20, TextureWrap.clamp), (160, .repeat)] {
+    ///         textureWrap(wrap)
+    ///         beginShape()
+    ///         vertex(40, top, 0, 0)
+    ///         vertex(360, top, 240, 0)
+    ///         vertex(360, top + 120, 240, 120)
+    ///         vertex(40, top + 120, 0, 120)
+    ///         endShape(.close)
+    ///     }
+    /// }
+    /// ```
+    /// <!-- shot: 横長の四角が上下に 2 つ。上は左半分に階調、右半分が右端の色で延び、下は同じ階調が横に 2 回並ぶ -->
+    /// <!-- /shot -->
+    ///
+    /// **塗りを置いた時点の設定で読む** — 同じ画像を、繰り返す形と延ばす形に並べて貼れる。内側の読み方
+    /// (画素の間を直線で補う) は変えないので、`.repeat` では画像の縁の画素が反対側の縁と混ざる (Processing と
+    /// 同じ)。
+    ///
+    /// **効くのは組み込みの塗りが貼る画像を読むときだけ。** ``shader(_:)`` の断片が `mokume_sample` で読む面は、
+    /// `.repeat` の下でも端の色で延ばしたまま読む (断片の読み方は組み込みと揃えてあるが、これだけが例外)。
+    ///
+    /// **描き方なのでフレームを越え**、``push(fileID:line:)`` / ``pop(fileID:line:)`` で積める。
+    // shot: 後で撮る
+    public func textureWrap(_ wrap: TextureWrap) { liveCanvas()?.textureWrap(wrap) }
 }
 
 extension SketchRuntime {

@@ -163,6 +163,14 @@ extension Canvas {
 
     public func noTexture() { style.picture = nil }
 
+    /// `vertex(x, y, u, v)` の `u`・`v` の単位を選ぶ。**呼んだ後の `vertex()` から効く** — 置いた頂点は
+    /// 置いた時点の単位で読んだまま変わらない (#3717)。
+    public func textureMode(_ mode: TextureMode) { style.textureMode = mode }
+
+    /// 貼る絵の端の外の読み方を選ぶ。**呼んだ後に置く塗りから効く** (#3717)。効くのは組み込みの塗りが
+    /// 貼る絵を読むときだけで、断片の `mokume_sample` は端の色で延ばしたまま。
+    public func textureWrap(_ wrap: TextureWrap) { style.textureWrap = wrap }
+
     // MARK: - 置く
 
     /// この描き場所を読む絵として渡す値。**大きさは座標の大きさ**で、画素数ではない ([#3453])。

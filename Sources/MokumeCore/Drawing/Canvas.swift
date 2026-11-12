@@ -2782,6 +2782,10 @@ public final class Canvas {
         ///
         /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
         var picture: Picture?
+        /// 書いた読み取り位置の単位 (``Canvas/textureMode(_:)``)。**`vertex()` を呼んだ時点の値で読む** (#3717)。
+        var textureMode = TextureMode.image
+        /// 貼る絵の端の外の読み方 (``Canvas/textureWrap(_:)``)。**塗りを置いた時点の値で読む** (#3717)。
+        var textureWrap = TextureWrap.clamp
         /// いま効いている材質。**フレームを越えない** ([ADR-0021] 決定 4)。
         ///
         /// それでも積む。**フレームを越えないことと、積めることは別の話である** —
@@ -3011,8 +3015,9 @@ public final class Canvas {
         }
         self.blendModeBuffer = modeBuffer
 
-        let glyphPageBuffer = try gpu.makeReadableBuffer(byteCount: 2 * Self.blendModeStride)
-        for flag: UInt32 in [0, 1] {
+        // 面の読み方の印 (``HeldTexture/readingFlag``): 0 は端を延ばす面、1 は字の焼き場、2 は端の外を繰り返す面
+        let glyphPageBuffer = try gpu.makeReadableBuffer(byteCount: 3 * Self.blendModeStride)
+        for flag: UInt32 in [0, 1, 2] {
             glyphPageBuffer.contents()
                 .advanced(by: Int(flag) * Self.blendModeStride)
                 .assumingMemoryBound(to: UInt32.self)
@@ -3137,7 +3142,10 @@ public final class Canvas {
             return false
         }
         picture.prepare()
-        useTexture(picture.held)
+        var held = picture.held
+        // 端の外を繰り返すのは、利用者が貼った絵だけ (白い 1×1 はどこを読んでも白で、列を割らない)
+        held.repeats = style.picture != nil && style.textureWrap == .repeat
+        useTexture(held)
         return true
     }
 
@@ -5907,11 +5915,12 @@ public final class Canvas {
                 {
                     argumentTable.setTexture(
                         run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
-                    bind(
-                        glyphPageBuffer.gpuAddress
-                            + UInt64((run.texture.isGlyphPage ? 1 : 0) * Self.blendModeStride),
-                        ShapePipeline.glyphPageBufferIndex)
                 }
+                // 読み方の印は面と別に束ねる — 同じ面でも、繰り返して読む列と延ばして読む列がある (#3717)。
+                // 同じ番地なら束ね直さない (`bind`)
+                bind(
+                    glyphPageBuffer.gpuAddress + UInt64(run.texture.readingFlag * Self.blendModeStride),
+                    ShapePipeline.glyphPageBufferIndex)
                 // **必ず何かを束ねる。** 渡されていない列には 1 個の 0 を束ねる —
                 // 束ねずに走らせると、読んだ断片が絵の乱れではなく異常終了になる
                 bind(

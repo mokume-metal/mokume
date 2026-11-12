@@ -112,5 +112,19 @@ final class TexturedSurfaces: Sketch {
         fill(242, 102, 115)
         rect(520, 40, 150, 110)
         fill(255, 255, 255)
+
+        // 読み取り位置を 0〜1 で書き (`.normal`)、端の外を繰り返す (`.repeat`) と、2 まで書いた
+        // 四角に絵が 2×2 で並ぶ。どちらも描き方なので、`push` の外へは持ち越さない
+        push {
+            texture(grain)
+            textureMode(.normal)
+            textureWrap(.repeat)
+            beginShape()
+            vertex(700, 40, 0, 0)
+            vertex(920, 40, 2, 0)
+            vertex(920, 150, 2, 2)
+            vertex(700, 150, 0, 2)
+            endShape(.close)
+        }
     }
 }

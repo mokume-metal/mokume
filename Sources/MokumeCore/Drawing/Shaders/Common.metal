@@ -318,12 +318,25 @@ static inline float3 mokume_shade(
 constexpr sampler kGlyphSampler(
     coord::normalized, filter::linear, address::clamp_to_edge);
 
+/// `textureWrap(.repeat)` の下で置いた塗りが、貼る絵を読む読み方 (#3717)。内側の読み方 (線形) は
+/// ``kGlyphSampler`` と同じで、端の外だけが反対側から読む。
+constexpr sampler kTextureRepeatSampler(
+    coord::normalized, filter::linear, address::repeat);
+
+/// 列が `buffer(3)` で渡す、面の読み方の印 (`HeldTexture.readingFlag`)。0 は端を延ばして読む面。
+constant uint kTextureGlyphPage = 1;
+constant uint kTextureRepeats = 2;
+
 /// 利用者が渡した面の読み取り方。**組み込みが `texel` を読むのと同じ規則**にしてある —
 /// 同じ絵を貼ったのに、断片から読むと縁や滑らかさが違う、が起きない。
+///
+/// **例外: `textureWrap(.repeat)` はここに効かない** (#3717 の決定)。組み込みの塗りは端の外を繰り返して
+/// 読むが、断片の ``mokume_sample`` は端の色で延ばしたまま読む。断片にも要る作例が来たら決め直す。
 constexpr sampler kSurfaceSampler(
     coord::normalized, filter::linear, address::clamp_to_edge);
 
-/// 渡した面から読む。位置は 0…1。
+/// 渡した面から読む。位置は 0…1。**端の外は端の色で延ばす** — `textureWrap(.repeat)` の下でも
+/// 繰り返さない (組み込みの塗りだけに効く・#3717)。
 ///
 /// ```metal
 /// float4 paint(Fragment in, Values values, Surfaces surfaces) {
@@ -661,11 +674,12 @@ float4 paint(Fragment in, Values values);
     device const float *numbers [[buffer(11)]], \
     texture2d<float> source_texture [[texture(0)]], \
     depth2d<float> shadow_texture [[texture(1)]], \
+    constant uint &textureReading [[buffer(3)]], \
     bool isFrontFacing [[front_facing]]
 
 #define MOKUME_SHAPE_ARGS \
     in, uniforms, values, lighting, lights, material, surroundings, numbers, \
-    source_texture, shadow_texture, isFrontFacing
+    source_texture, shadow_texture, textureReading, isFrontFacing
 
 /// この列の頂点が光と周囲を受けうるか。**頂点関数ごとに決まる** ([#1778])。
 ///
@@ -699,6 +713,7 @@ static inline float4 mokume_shapeColor(
     device const float *numbers,
     texture2d<float> source_texture,
     depth2d<float> shadow_texture,
+    uint textureReading,
     bool isFrontFacing
 #ifdef MOKUME_SURFACES
     , Surfaces surfaces
@@ -743,7 +758,11 @@ static inline float4 mokume_shapeColor(
             lighting.viewer, in.color, material, surroundings, shadow_texture, uniforms);
         f.color = float4(lit, in.color.a);
     }
-    f.texel = source_texture.sample(kGlyphSampler, in.uv);
+    // **端の外を繰り返して読むのは、`textureWrap(.repeat)` の下で置いた塗りの列だけ** (印 2・#3717)。
+    // 字の焼き場 (印 1) と端を延ばす面 (印 0) は今までどおり
+    f.texel = textureReading == kTextureRepeats
+        ? source_texture.sample(kTextureRepeatSampler, in.uv)
+        : source_texture.sample(kGlyphSampler, in.uv);
     f.shapePosition = in.shapePosition;
     // **長さがあるときだけ揃える。** 向きを持たない頂点 (立体の線と点) と平面は 0 で、
     // そのまま正規化すると 0 が数でない値に化ける
@@ -781,7 +800,6 @@ fragment float4 mokume_fragmentMain(
     MOKUME_SURFACE_PARAMS
     MOKUME_SHAPE_PARAMS,
     constant uint &mode [[buffer(2)]],
-    constant uint &readsGlyphPage [[buffer(3)]],
     float4 destination [[color(0)]])
 {
     // **置き換える列のうち、被覆が 1 未満になりうる列だけがここへ来る** — 細い線を広げた頂点を持つ列
@@ -792,7 +810,7 @@ fragment float4 mokume_fragmentMain(
     // 被覆 1 の画素はそのまま置き換える (`mokume_fragmentReplace` と同じ)
     if (mode == kReplace) {
         float coverage = in.coverage;
-        if (readsGlyphPage != 0) {
+        if (textureReading == kTextureGlyphPage) {
             float glyph = source_texture.sample(kGlyphSampler, in.uv).a;
             if (glyph <= 0.0) {
                 discard_fragment();
@@ -852,10 +870,9 @@ fragment float4 mokume_fragmentDirect(
 /// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
 fragment float4 mokume_fragmentReplace(
     MOKUME_SURFACE_PARAMS
-    MOKUME_SHAPE_PARAMS,
-    constant uint &readsGlyphPage [[buffer(3)]])
+    MOKUME_SHAPE_PARAMS)
 {
-    if (readsGlyphPage != 0 && source_texture.sample(kGlyphSampler, in.uv).a <= 0.0) {
+    if (textureReading == kTextureGlyphPage && source_texture.sample(kGlyphSampler, in.uv).a <= 0.0) {
         discard_fragment();
         return float4(0.0);
     }
