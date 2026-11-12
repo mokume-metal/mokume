@@ -31,7 +31,7 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 
 | Feature | API | 件数 |
 | --- | --- | --- |
-| [#3473] `SoundFile` の再生速度と定位 (既存の Issue。意味は決定済みで、型を `Feature` に替えてラベルを付ければ着手できる。`pan` と `rate` は別の PR でよい) | `SoundFile.rate()`・`pan()`・`AudioSample.rate()`・`pan()` | 4 |
+| [#3473] `SoundFile` の再生速度と定位 (既存の Issue。意味は決定済みで、型を `Feature` に替えてラベルを付ければ着手できる。`pan` と `rate` は別の PR でよい。`SoundFile.pan()` は入れた。区分は `rate` を入れてから 4 件まとめて直す) | `SoundFile.rate()`・`pan()`・`AudioSample.rate()`・`pan()` | 4 |
 | [#3705] `SoundFile` のチャンネルの数とサンプルの数 (入れた。`SoundFile` の 2 件は「SoundFile と AudioSample」の節で同等、`AudioSample` の 2 件は型が無いので作例待ちに揃えた) | `SoundFile.channels()`・`frames()`・`AudioSample.channels()`・`frames()` | 4 |
 | [#3706] `BandPass` を Q で決める (入れた。行は「エフェクト」の節で同等) | `BandPass.res()` | 1 |
 | [#3718] `BrownNoise` (入れた。行は「ノイズ」の節で同等) | `BrownNoise` (クラス)・`amp()`・`pan()`・`play()`・`set()`・`stop()` | 6 |
@@ -135,7 +135,7 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 | `AudioSample.sampleRate()` | `SoundFile.sampleRate` | 同等 | ファイルのサンプルレート (Hz)。設定はできない | PR [#2200] |
 | `AudioSample.stop()` | `SoundFile.stop()` | 同等 | 止めて先頭へ戻す | PR [#2200] |
 | `SoundFile.isPlaying()` | `SoundFile.isPlaying` | 同等 | プロパティ。値はそのフレームの開始時点のもの | PR [#2200] |
-| `SoundFile`・`AudioSample` の `rate()`・`pan()` (2 つ × 2 = 4 件) | — | 入れる | 再生速度 (リサンプリングでピッチも変わる) と定位。意味は [#3473] の本文で決まっていて (再生速度は 0 以上・位置はファイルの秒のまま・解析は鳴った音・定位は合成音と同じ API の形)、選択が分かれる点は残っていない。実装は 4 つの進め方 (固定の時計のフレーム・実時間・直接鳴らす経路・エフェクトを通した経路) すべてに入れる必要があり重いが、それは Feature の中で分ける (`pan` と `rate` は別の PR でよい)。基準 2〜5 を満たす (リサンプリングは AVFAudio だけで書ける) | [#3473]・[#2464] |
+| `SoundFile`・`AudioSample` の `rate()`・`pan()` (2 つ × 2 = 4 件) | `SoundFile.pan(_:)` (定位だけ入れた) | 入れる | `pan(_:)` は入れた: モノラルは中央で左右とも 1 倍の、左右を合わせた大きさが変わらない定位 (端で片側が √2 倍)、ステレオは反対側だけを下げるバランス。解析は定位を掛ける前の音で、エフェクトに通したファイルはエフェクトの出口で中央。再生速度 (リサンプリングでピッチも変わる) と定位。意味は [#3473] の本文で決まっていて (再生速度は 0 以上・位置はファイルの秒のまま・解析は鳴った音・定位は合成音と同じ API の形)、選択が分かれる点は残っていない。実装は 4 つの進め方 (固定の時計のフレーム・実時間・直接鳴らす経路・エフェクトを通した経路) すべてに入れる必要があり重いが、それは Feature の中で分ける (`pan` と `rate` は別の PR でよい)。基準 2〜5 を満たす (リサンプリングは AVFAudio だけで書ける) | [#3473]・[#2464] |
 | `SoundFile.channels()`・`frames()` (2 件) | `SoundFile.channels`・`SoundFile.frames` | 同等 | チャンネルの数とサンプルの数を読むプロパティ。`channels` は 3 チャンネル以上でも 2 に減らさず数をそのまま返す (解析の値はチャンネルを平均したものだが、この数は平均する前)。`frames` は読み込んだサンプルの数そのもので、`duration * sampleRate` の近似ではない (単精度の丸め誤差で長いファイルのサンプルの数が合わない)。取り外した後も取り付け直した後も同じ値 | [#3705]・[#3969] |
 | `AudioSample.channels()`・`frames()` (2 件) | — | 作例待ち | 読み取りの意味は `SoundFile` の行と同じだが、`AudioSample` の型が無い (上の `AudioSample` (クラス) の行が作例待ち)。型を追加するときに、`SoundFile` と同じプロパティを持たせる | [#3705] |
 | `SoundFile`・`AudioSample` の `cue()` (2 件) | `SoundFile.jump(_:)` (止まっている間) | 持たない | 止まっている間の `jump(_:)` が、次の `play()` の位置を決める。リファレンスの `cue()` は `play()` の位置にだけ効き `loop()` には効かないが、mokume の位置は両方に効く | [#2464] |
