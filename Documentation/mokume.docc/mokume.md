@@ -470,7 +470,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 | --- | --- | --- |
 | `saveFrame("f-####.png")` | ``SketchPart/beginRecord(_:)`` と ``SketchPart/endRecord()`` | 録画する範囲を 2 つで挟む。`####` はフレーム番号ではなく、録画の中の通し番号 (0 から) |
 | p5 `deltaTime` (ミリ秒) | ``SketchPart/deltaTime`` (秒) | ミリ秒を前提にした係数を 1000 倍する (`x += 0.2 * deltaTime` → `x += 200 * deltaTime`) |
-| Processing `clip(a, b, c, d)` (数を `imageMode` で読む) | ``SketchPart/clip(_:_:_:_:)`` (数を ``SketchPart/rectMode(_:)`` で読む) | 既定 (どちらも `.corner`) は同じ矩形。Processing で `imageMode(CENTER)` と組み合わせていたなら、角を渡す `clip(x - w / 2, y - h / 2, w, h)` と書く (`rectMode(.center)` を合わせると `rect`・`text` などの箱の読み方も変わる。`imageMode(.center)` だけを移植しても `clip` は左上から読む)。いまの変換の下で読むことと、負の幅・高さを裏返して読むことは Processing と同じ。回転・剪断の下では、回した・傾けた矩形そのもので切り抜く (形の切り抜き ``SketchPart/clip(_:)`` と同じステンシルを使い、警告は出さない) |
+| Processing `clip(a, b, c, d)` (数を `imageMode` で読む) | ``SketchPart/clip(_:_:_:_:)`` (数を ``SketchPart/rectMode(_:)`` で読む) | 既定 (どちらも `.corner`) は同じ矩形。Processing で `imageMode(CENTER)` と組み合わせていたなら、角を渡す `clip(x - w / 2, y - h / 2, w, h)` と書く (`rectMode(.center)` を合わせると `rect`・`text` などの箱の読み方も変わる。`imageMode(.center)` だけを移植しても `clip` は左上から読む)。いまの変換の下で読むことと、負の幅・高さを裏返して読むことは Processing と同じ。回転・剪断の下では、回した・傾けた矩形そのもので切り抜く (形の切り抜き ``SketchPart/clip(_:)-(()->Void)`` と同じステンシルを使い、警告は出さない) |
 | p5.js 2D の `background(0, 20)` (前の絵に薄く重ねて残像になる) | ``SketchPart/background(_:_:)`` (キャンバスを置き換える) | 残像にならない。薄い四角を `rect` で重ねて作る (作り方は ``SketchPart/background(_:_:)`` の例) |
 | `setup()` で書いた `translate`・`rotate`・視点 (以降の `draw()` にも効く) | シーンの記述 (``SketchPart/translate(_:_:)`` など) はフレームを越えない | `setup()` の変換は、その後に `setup()` で描いたものへだけ効き (描いた時点で適用される)、`setup()` を抜けると戻る。`draw()` で描くものの変換は `draw()` の中で書く。視点・光は `setup()` で書くと警告して無視する。1 枚だけ描くなら `setup()` で描くか、`draw()` で描いて ``SketchPart/noLoop()`` で止める ([状態の寿命](#状態の寿命)) |
 | p5 `movedX` (最新の 1 件) | ``SketchPart/movedX`` (フレームの合計) | `draw()` で読む。1 件ぶんは ``Sketch/mouseMoved(deltaX:deltaY:)`` の引数で受け取る |
@@ -607,6 +607,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/strokeCap(_:)``
 - ``SketchPart/strokeJoin(_:)``
 - ``SketchPart/strokeDash(_:_:)``
+- ``SketchPart/strokeDash(length:gap:)``
 - ``SketchPart/noStrokeDash()``
 - ``StrokeCap``
 - ``StrokeJoin``
@@ -621,6 +622,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/ellipse(_:_:_:_:)``
 - ``SketchPart/arc(_:_:_:_:_:_:)``
 - ``SketchPart/arc(_:_:_:_:_:_:_:)``
+- ``SketchPart/arc(in:start:stop:)``
+- ``SketchPart/arc(in:start:stop:mode:)``
 - ``ArcMode``
 - ``SketchPart/triangle(_:_:_:_:_:_:)``
 - ``SketchPart/quad(_:_:_:_:_:_:_:_:)``
@@ -726,12 +729,14 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 ### 切り抜く
 
 - ``SketchPart/clip(_:_:_:_:)``
+- ``SketchPart/clip(_:)-(Rect)``
 - ``SketchPart/noClip()``
 
 ### 文字を描く
 
 - ``SketchPart/text(_:_:_:)``
 - ``SketchPart/text(_:_:_:_:_:)``
+- ``SketchPart/text(_:in:)``
 - ``SketchPart/textSize(_:)``
 - ``SketchPart/textFont(_:)-(String)``
 - ``SketchPart/textFont(_:)-(Font)``
