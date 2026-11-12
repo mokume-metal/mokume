@@ -152,6 +152,31 @@ struct VectorFigurePortsTests {
                 $0.vertex(Vector3(7, 5, 9), uv: Vector2(1, 1))
                 $0.endShape()
             } == 1)
+        // 奥行きを持つ曲線 (#3712)。1 本の曲線も、曲線を混ぜた形も、立体として 1 つ数える
+        #expect(try handled(canvas) { $0.bezier(0, 0, 0, 10, 0, -5, 20, 10, -5, 30, 10, 0) } == 1)
+        #expect(
+            try handled(canvas) {
+                $0.bezier(from: Vector3(0, 0, 0), control1: Vector3(10, 0, -5), control2: Vector3(20, 10, -5), to: Vector3(30, 10, 0))
+            } == 1)
+        #expect(try handled(canvas) { $0.curve(0, 10, 0, 10, 0, -5, 20, 10, -5, 30, 0, 0) } == 1)
+        #expect(
+            try handled(canvas) {
+                $0.curve(from: Vector3(10, 0, -5), control1: Vector3(0, 10, 0), control2: Vector3(30, 0, 0), to: Vector3(20, 10, -5))
+            } == 1)
+        #expect(
+            try handled(canvas) {
+                $0.beginShape()
+                $0.vertex(0, 0)
+                $0.bezierVertex(15, 30, -5, 5, 30, -5, 0, 20, 0)
+                $0.quadraticVertex(-5, 10, 5, 0, 0, 0)
+                $0.bezierVertex(control1: Vector3(5, -10, 1), control2: Vector3(15, -10, 1), to: Vector3(20, 0, 0))
+                $0.quadraticVertex(control: Vector3(10, 10, 2), to: Vector3(0, 0, 0))
+                $0.curveVertex(0, 0, 0)
+                $0.curveVertex(0, 0, 0)
+                $0.curveVertex(10, 10, -3)
+                $0.curveVertex(20, 0, 0)
+                $0.endShape(.close)
+            } == 1)
         #expect(try handled(canvas) { $0.box(10) } == 1)
         #expect(try handled(canvas) { $0.box(10, 20, 30) } == 1)
         #expect(try handled(canvas) { $0.sphere(10) } == 1)
