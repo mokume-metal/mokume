@@ -221,6 +221,36 @@ struct ComputeTests {
         #expect(abs(written(image, atColumn: 30) - 30.0 / 31) < 0.01)
     }
 
+    /// 1 次元の組の幅の約束 ([#3902])。断片が `[[dispatch_threads_per_threadgroup]]` と `[[threads_per_threadgroup]]` を書き出し、要素数によらず 32 が読める。端数の最後の組だけ、後者は端数の数になる。
+    ///
+    /// [#3902]: https://github.com/mokume-metal/mokume/issues/3902
+    @Test("1 次元の compute の組の幅は、要素数によらず 32 で、断片から読める (端数の最後の組を除く)", arguments: [1, 31, 32, 33, 1000])
+    func oneDimensionalThreadgroupIsThirtyTwoWide(_ count: Int) throws {
+        let canvas = try makeCanvas()
+        let width = try canvas.makeNumbers(count: count)
+        let actual = try canvas.makeNumbers(count: count)
+        let probe = try canvas.makeComputation(
+            """
+            kernel void probe(device float *out [[buffer(0)]],
+                              device float *actual [[buffer(1)]],
+                              uint id [[thread_position_in_grid]],
+                              uint size [[dispatch_threads_per_threadgroup]],
+                              uint own [[threads_per_threadgroup]])
+            {
+                out[id] = float(size);
+                actual[id] = float(own);
+            }
+            """, name: "probe")
+        try canvas.draw {
+            canvas.compute(probe, over: count, writes: [width, actual])
+        }
+        #expect(canvas.read(width) == [Float](repeating: 32, count: count))
+        // 最後の組だけが端数の数になり、割り切れるなら全部 32
+        let tail = count % 32
+        let expected = (0..<count).map { $0 >= count - tail && tail > 0 ? Float(tail) : 32 }
+        #expect(canvas.read(actual) == expected)
+    }
+
     @Test("渡した値が計算に届く")
     func carriesTheValuesIntoTheComputation() throws {
         let canvas = try makeCanvas()
