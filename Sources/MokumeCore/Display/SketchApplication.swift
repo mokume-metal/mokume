@@ -1028,11 +1028,19 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **ウィンドウの見え方に縛られない** — 画面への差し出しはウィンドウが見えない間 (最小化・被覆・別の Space) は
     /// 休むが (``FramePresenter/shouldPresent(windowIsVisible:hasPresented:)``)、受け手へは書く。マッパーの裏に作品の
-    /// ウィンドウを隠すのは普通の使い方である (ADR-0049 決定 4)。受け手が居なければ何もしない。
+    /// ウィンドウを隠すのは普通の使い方である (ADR-0049 決定 4)。
+    ///
+    /// **受け手が居なくても、描く解像度だけは送り手に覚えさせる** ([#3946]・[#3949])。送り手は大きさが変わったときに
+    /// 目録を書き換えるので、ここで伝えないと、受け手が 0 人の間の大きさの変更が目録に届かない。大きさが前と同じなら
+    /// 何もしない (整数の比較 2 つ) ので、受け手が居ないフレームの費用は増えない。写しも面の確保も、受け手が居るときだけ。
     ///
     /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
+    /// [#3946]: https://github.com/mokume-metal/mokume/issues/3946
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
     private func deliverToReceivers() throws(RenderFailure) {
-        guard let sender = frameAnnouncement?.sender, sender.receiverCount > 0 else { return }
+        guard let sender = frameAnnouncement?.sender else { return }
+        sender.resize(width: runtime.target.width, height: runtime.target.height)
+        guard sender.receiverCount > 0 else { return }
         try sender.deliver(
             width: runtime.target.width, height: runtime.target.height,
             frameCount: Int64(runtime.frameNumbers.frameCount), hostTime: mach_absolute_time()

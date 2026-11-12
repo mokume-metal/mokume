@@ -60,7 +60,8 @@ package nonisolated enum FrameListing {
         package var serviceName: String
         /// 受け付ける面の幅と高さ (ピクセル。描く解像度)。**任意の欄で、版は上げない** ([#3949])。受け手は一覧を選んだ
         /// 時点でこの大きさの面を用意できる。描く解像度が変わったら送り手が書き換える (``FrameAnnouncement/recordSize(width:height:)``)。
-        /// 寸法を載せない旧い送り手の項目では `nil` で、そのような項目も同じ版として読む。
+        /// 寸法を載せない旧い送り手の項目では `nil` で、そのような項目も同じ版として読む。**Schema が断る大きさ (片方だけ・
+        /// 0 以下・整数でない値) は、項目ごと捨てずに大きさの無い項目として読む** (`init(from:)`)。
         ///
         /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
         @WholeNumberIfPresent package var width: Int? = nil
@@ -178,6 +179,41 @@ package nonisolated enum FrameListing {
         return names.sorted()
             .filter { $0.hasSuffix(".json") && !$0.hasPrefix(".") }
             .map { directory.appendingPathComponent($0) }
+    }
+}
+
+extension FrameListing.Entry {
+    /// 読む。大きさ以外の欄は合成の `Codable` と同じに読む (欠けた・形の違う欄があれば断る)。
+    ///
+    /// **幅と高さは、揃って 1 以上の整数のときだけ読む** ([#3949])。それ以外 (片方だけ・0 以下・小数・真偽値・文字列) は、
+    /// Schema (`dependentRequired`・`minimum: 1`・`integer`) が断る形で、**大きさの無い項目として読む** — 寸法を載せない
+    /// 旧い送り手と同じ扱いに倒す。項目ごと捨てると、名前は正しいのに一覧から消え、大きさを別に知っている受け手も
+    /// 繋げなくなる。必須の欄 (`pid` など) の整数でない値は今までどおり断る (``WholeNumber``)。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    package nonisolated init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        _schemaVersion = try container.decode(WholeNumber<Int>.self, forKey: .schemaVersion)
+        sketch = try container.decode(String.self, forKey: .sketch)
+        window = try container.decode(String.self, forKey: .window)
+        identity = try container.decode(String.self, forKey: .identity)
+        title = try container.decode(String.self, forKey: .title)
+        _pid = try container.decode(WholeNumber<Int32>.self, forKey: .pid)
+        _startedAt = try container.decode(WholeNumber<Int64>.self, forKey: .startedAt)
+        serviceName = try container.decode(String.self, forKey: .serviceName)
+        let size = FrameListing.listedSize(
+            width: try? container.decodeWholeIfPresent(Int.self, forKey: .width),
+            height: try? container.decodeWholeIfPresent(Int.self, forKey: .height))
+        width = size?.width
+        height = size?.height
+    }
+}
+
+extension FrameListing {
+    /// 目録の大きさとして使える組か。**揃って 1 以上のときだけ**返す (Schema の `dependentRequired` と `minimum: 1`)。
+    nonisolated static func listedSize(width: Int?, height: Int?) -> (width: Int, height: Int)? {
+        guard let width, let height, width >= 1, height >= 1 else { return nil }
+        return (width, height)
     }
 }
 

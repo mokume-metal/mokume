@@ -123,7 +123,7 @@ struct FrameListingTests {
         #expect(old["width"] == nil && old["height"] == nil, "大きさの無い項目に鍵を書いた: \(old)")
     }
 
-    @Test("大きさの無い旧い項目も同じ版として読め、整数でない大きさの項目は読めない項目として飛ばす")
+    @Test("大きさの無い旧い項目も同じ版として読め、大きさの載った項目は大きさごと読む")
     func olderEntriesStillRead() throws {
         let directory = try TestScratch.directory("mokume-frames")
         let base = """
@@ -132,8 +132,6 @@ struct FrameListingTests {
             """
         try Data("{\(base), \"serviceName\": \"org.mokume.frames.1.a.main\"}".utf8)
             .write(to: directory.appendingPathComponent("org.mokume.frames.1.a.main.json"))
-        try Data("{\(base), \"serviceName\": \"org.mokume.frames.1.b.main\", \"width\": 2.5, \"height\": 8}".utf8)
-            .write(to: directory.appendingPathComponent("org.mokume.frames.1.b.main.json"))
         try Data("{\(base), \"serviceName\": \"org.mokume.frames.1.c.main\", \"width\": 16, \"height\": 8}".utf8)
             .write(to: directory.appendingPathComponent("org.mokume.frames.1.c.main.json"))
         let entries = FrameListing.entries(in: directory)
@@ -141,6 +139,45 @@ struct FrameListingTests {
         #expect(entries.map(\.width) == [nil, 16])
         #expect(entries.map(\.height) == [nil, 8])
         #expect(entries.allSatisfy { $0.schemaVersion == 1 })
+    }
+
+    /// **Schema が断る大きさは、項目ごと捨てずに大きさの無い項目として読む** (#3949)。Schema の `dependentRequired`
+    /// (片方だけ)・`minimum: 1` (0・負)・`integer` (小数・桁の多い端数・真偽値・文字列) の代表例。旧い送り手の項目と同じに
+    /// 扱うので、名前で繋げ、大きさは別に知っていれば使える。
+    @Test(
+        "Schema が断る大きさの項目は、大きさの無い項目として読む",
+        arguments: [
+            "\"width\": 16", "\"height\": 8", "\"width\": 0, \"height\": 8", "\"width\": 16, \"height\": 0",
+            "\"width\": -16, \"height\": 8", "\"width\": 16, \"height\": -1", "\"width\": 2.5, \"height\": 8",
+            "\"width\": 1.00000000000000000000001, \"height\": 8", "\"width\": true, \"height\": 8",
+            "\"width\": \"16\", \"height\": 8", "\"width\": null, \"height\": 8",
+        ])
+    func sizesTheSchemaRefusesReadAsUnsized(_ size: String) throws {
+        let json = """
+            {"schemaVersion": 1, "sketch": "S", "window": "main", "identity": "/s", "title": "S", "pid": 1,
+             "startedAt": 1, "serviceName": "org.mokume.frames.1.a.main", \(size)}
+            """
+        let entry = try JSONDecoder().decode(FrameListing.Entry.self, from: Data(json.utf8))
+        #expect(entry.width == nil && entry.height == nil, "\(size) を大きさとして読んだ: \(entry)")
+        #expect(entry.serviceName == "org.mokume.frames.1.a.main")
+    }
+
+    /// 大きさの読みを緩めても、必須の欄の整数でない値は今までどおり断る (#4015)。境界の 1×1 は大きさとして読む。
+    @Test("1×1 は大きさとして読み、必須の欄の整数でない値は断る")
+    func theSmallestSizeReadsAndRequiredFieldsStayStrict() throws {
+        func entry(_ fields: String) throws -> FrameListing.Entry {
+            try JSONDecoder().decode(
+                FrameListing.Entry.self,
+                from: Data(
+                    """
+                    {"schemaVersion": 1, "sketch": "S", "window": "main", "identity": "/s", "title": "S",
+                     "serviceName": "org.mokume.frames.1.a.main", \(fields)}
+                    """.utf8))
+        }
+        let smallest = try entry("\"pid\": 1, \"startedAt\": 1, \"width\": 1, \"height\": 1")
+        #expect([smallest.width, smallest.height] == [1, 1])
+        #expect(throws: (any Error).self) { try entry("\"pid\": 1.5, \"startedAt\": 1, \"width\": 16, \"height\": 8") }
+        #expect(throws: (any Error).self) { try entry("\"startedAt\": 1, \"width\": 16, \"height\": 8") }
     }
 
     /// **名乗れない環境では名乗らずに走り続け、診断に 1 行だけ出す** (App Sandbox を付けた `.app` など)。登録が

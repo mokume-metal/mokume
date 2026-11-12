@@ -130,6 +130,25 @@ struct FrameShareLaunchTests {
         #expect(FrameListing.entries(in: directory).isEmpty, "終わったのに目録に残っている")
     }
 
+    /// **差し替えない既定の名乗りの口が、渡された幅と高さを最初の 1 件に載せる** ([#3949])。他の検査は名乗りの口を
+    /// 差し替えるので、既定の閉包が大きさを落としても気付かない。既定の置き場は検査のプロセスごとの一時の置き場である
+    /// (``FrameListing/directory``)。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("既定の名乗りの口は、渡された幅と高さを目録の最初の 1 件に載せる")
+    func theDefaultListingCarriesTheSize() throws {
+        let application = try SketchApplication(sketch: Titled(), gpu: RenderDevice())
+        application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
+        application.announce = { _ in }
+        let announcement = try #require(application.listFrames("Titled work", 173, 97), "既定の口で名乗れない")
+        defer { announcement.withdraw() }
+        #expect([announcement.entry.width, announcement.entry.height] == [173, 97])
+        let written = FrameListing.entries(in: announcement.directory)
+            .filter { $0.serviceName == announcement.entry.serviceName }
+        #expect(written.map { [$0.width, $0.height] } == [[173, 97]], "既定の名乗りが大きさを載せない: \(written)")
+        #expect(written.map(\.title) == ["Titled work"])
+    }
+
     /// **受け手へは、ウィンドウの見え方に縛られずに書く** ([#3920])。画面への差し出しはウィンドウが見えない間は休むが、
     /// マッパーの裏に作品のウィンドウを隠すのは普通の使い方である (ADR-0049 決定 4)。受け手は目録の名前を本物の
     /// `bootstrap_look_up` で引いて繋ぐ。
@@ -180,6 +199,74 @@ struct FrameShareLaunchTests {
         }
         #expect(counts.count >= 3, "見えないウィンドウの間、受け手へ書いていない")
         #expect(counts == counts.sorted() && Set(counts).count == counts.count, "番号が進んでいない: \(counts)")
+    }
+
+    /// **受け手が 0 人の間も、フレームごとの入口が送り手に描く解像度を覚えさせ、目録の大きさを合わせる** ([#3946]・
+    /// [#3949])。入口は受け手 0 人なら写しへ進まずに戻るが、その手前で大きさだけは伝える。送り手が知る大きさを描く
+    /// 解像度からずらして (起動後に大きさが変わった回の代わり)、**実際の駆動** (``SketchApplication/displayLinkFired()``)
+    /// で戻ることを見る。そのあと作品を知らない別のプロセスの受け手が、目録だけで 1 度で受け入れられる。
+    ///
+    /// [#3946]: https://github.com/mokume-metal/mokume/issues/3946
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("受け手が居ない間も、フレームごとに描く解像度を送り手と目録へ伝え、初めての受け手が目録だけで 1 度で繋がる")
+    func theOwnWindowPathKeepsTheListedSizeWithoutReceivers() throws {
+        try #require(FrameReceiverProcess.executable != nil, "組んだ frame-receiver が要る")
+        let directory = try TestScratch.directory("mokume-frames")
+        let missing = TestScratch.path("mokume-viewport", isDirectory: true)
+        let gpu = try RenderDevice()
+        let application = try SketchApplication(sketch: Titled(), gpu: gpu)
+        application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
+        application.announce = { _ in }
+        application.listensForReceivers = false
+        application.listFrames = { title, width, height in
+            FrameAnnouncement.announce(
+                sketch: "Titled", identity: "/work/Titled", title: title, width: width, height: height, in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") })
+        }
+        application.resolveOutlet(at: missing, owner: nil)
+        application.didFinishLaunching()
+        defer {
+            application.window?.close()
+            application.willTerminate()
+        }
+        let sender = try #require(application.frameAnnouncement?.sender, "送り手を起こしていない")
+        sender.warn = { _ in }
+        let drawing = [sender.width, sender.height]
+        func listed() -> [[Int?]] { FrameListing.entries(in: directory).map { [$0.width, $0.height] } }
+
+        // 送り手の大きさを描く解像度からずらす。受け手 0 人なので、覚えて目録を書き換えるだけ
+        sender.resize(width: drawing[0] + 5, height: drawing[1] + 3)
+        try #require(listed() == [[drawing[0] + 5, drawing[1] + 3]], "検査の前提: 目録がずれていない: \(listed())")
+        try #require(sender.receiverCount == 0)
+
+        // 受け手 0 人のまま、実際の駆動でフレームを進める (期限つき)
+        let deadline = Date().addingTimeInterval(10)
+        while [sender.width, sender.height] != drawing, Date() < deadline {
+            application.displayLinkFired()
+            _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+            usleep(2_000)
+        }
+        #expect([sender.width, sender.height] == drawing, "受け手 0 人の間、送り手が描く解像度を覚えない")
+        #expect(listed() == [drawing.map(Optional.some)], "目録の大きさが描く解像度に戻らない: \(listed())")
+        #expect(sender.receiverCount == 0)
+
+        // 作品を知らない受け手が、目録だけで 1 度で受け入れられて絵を受ける
+        let entry = try #require(FrameListing.entries(in: directory).first)
+        let file = FrameListing.url(for: entry.serviceName, in: directory)
+        let receiver = try FrameReceiverProcess(arguments: ["--listing", file.path, "--exit-after", "2"])
+        let received = receiver.wait(
+            upTo: 20,
+            doing: {
+                sender.drain()
+                application.displayLinkFired()
+                _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+            }
+        ) { receiver.events(named: "frame").count >= 2 || !receiver.process.isRunning }
+        func size(_ event: [String: Any]?) -> [Int?]? { event.map { [$0["width"] as? Int, $0["height"] as? Int] } }
+        #expect(receiver.events(named: "refused").isEmpty, "1 度で繋がらなかった: \(receiver.events)")
+        #expect(size(receiver.events(named: "accepted").first) == drawing, "\(receiver.events)")
+        #expect(received && receiver.events(named: "frame").count >= 2, "絵が届かない: \(receiver.events)")
+        _ = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
     }
 
     @Test("共有面へ差し出す見張りの子は名乗らず、作品名と題を面に載せる")

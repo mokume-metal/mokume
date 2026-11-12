@@ -46,11 +46,20 @@ func readListing(at path: String) -> (service: String, width: Int?, height: Int?
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
         object["schemaVersion"] as? Int == 1, let service = object["serviceName"] as? String
     else { return nil }
-    // 幅と高さは揃っていて 1 以上のときだけ使う (片方だけなら無いのと同じ)
-    guard let width = object["width"] as? Int, let height = object["height"] as? Int, width > 0, height > 0 else {
+    // 幅と高さは揃っていて 1 以上の整数のときだけ使う (片方だけ・それ以外の値なら無いのと同じ)
+    guard let width = pixels(object["width"]), let height = pixels(object["height"]) else {
         return (service, nil, nil)
     }
     return (service, width, height)
+}
+
+/// 大きさの欄を読む。**1 以上の整数だけ** — `JSONSerialization` の `true` は `as? Int` で 1 と読めてしまうので、真偽値を
+/// 先に除く。小数・文字列・0 以下も大きさとして受けない。
+func pixels(_ value: Any?) -> Int? {
+    guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), let whole = value as? Int,
+        whole >= 1
+    else { return nil }
+    return whole
 }
 
 let listingPath = argument("--listing")
