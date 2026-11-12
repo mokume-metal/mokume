@@ -209,6 +209,24 @@ struct SVGCompositeGroupTests {
         #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil, "単位にできた")
     }
 
+    @Test("入れ子の記録の混ぜ方 (add) も、引き継いだ単位には効かない (元の範囲の blend で置く)")
+    func nestedRecordingBlendModeDoesNotSplitTheShape() throws {
+        let canvas = try makeCanvas()
+        let read = try drawing(Self.groupBesideAPlainRect)
+        try canvas.draw {
+            let logo = canvas.shape(of: read, readFrom: "composite.svg")
+            let nested = canvas.createShape {
+                canvas.blendMode(.add)
+                canvas.shape(logo)
+            }
+            canvas.background(LinearRGBA.linear(red: 0.2, green: 0.2, blue: 0.2))
+            canvas.shape(nested)
+        }
+        let image = try canvas.output.encodeForDisplay()
+        #expect(sameColor(image, (30, 30), (200, 40)), "単位: \(image[30, 30]) / 単位にしない矩形: \(image[200, 40])")
+        #expect(sameColor(image, (80, 80), (30, 30)), "重なり: \(image[80, 80]) / 単独: \(image[30, 30])")
+    }
+
     /// 赤を返す断片。置く側に当てても、記録した塗りで描く形には効かない。
     private static let red = "float4 paint(Fragment in, Values values) { return float4(1, 0, 0, 1); }"
 
