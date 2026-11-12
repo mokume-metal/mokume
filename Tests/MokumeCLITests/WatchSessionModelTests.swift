@@ -61,16 +61,29 @@ struct WatchSessionModelTests {
     nonisolated enum Step: Sendable, Equatable, CustomStringConvertible {
         /// 保存して、見張りがそれを読む 1 拍を回す (作り直しの最中なので取りかからない)。
         case save
+        /// 中身を 1 つ前の保存の中身へ戻して保存し、読む 1 拍を回す (#3796 の 2 回目の反証 6・7)。作り直しの最中に重ねた
+        /// 保存が 2 つ以上あるときだけ演じる (作り直している版・本番の版へ戻す形は ``WatchAuditionRefutationTests`` が見る)。
+        case revert
         /// 試聴に入る要求。
         case audition
         /// 試聴を出る要求。
         case leave
+        /// プレビューを本番へ戻せない形で、試聴を出る要求 (出た時点のソースを本番に作り直す・#3796 の 2 回目の反証 7)。
+        case leaveStuck
+        /// 作品のウィンドウに映っている本番の子が自分で終わり、1 拍回す (#3796 の 2 回目の反証 3・7)。
+        case exitShown
+        /// 終われと言われ、作り直しを止めて終える (最後にだけ置く・#3796 の 2 回目の反証 7)。
+        case stop
 
         var description: String {
             switch self {
             case .save: "save"
+            case .revert: "revert"
             case .audition: "audition"
             case .leave: "leave"
+            case .leaveStuck: "leave(stuck)"
+            case .exitShown: "exit(shown)"
+            case .stop: "stop"
             }
         }
     }
@@ -87,8 +100,10 @@ struct WatchSessionModelTests {
         /// 保存して、見張りがそれを見る前に試聴を出る要求を出す (#3796)。保存は出た後に読まれるので、本番の版である。
         case saveThenLeave
         /// 保存して、その作り直しを門で止め、止めている間に `Step` の出来事を順に起こしてから門を開ける (#3796 の反証)。
-        /// 作り直しの最中に読んだ保存・出入りを、保存の役の規則 (その世代を最初に読んだ時点の役) で見る。
+        /// 作り直しの最中に読んだ保存・出入りを、保存の役の規則 (その保存を拾った読みを始めた時点の役) で見る。
         case overlap([Step])
+        /// ``overlap(_:)`` と同じだが、門で止めた作り直しは通らない (#3796 の 2 回目の反証 3・7)。
+        case overlapFailing([Step])
         /// 試聴の子が、自分から (終了コード 0 で) 終わる。
         case exitAudition
         /// 試聴の子が、最初の絵の前に失敗 (終了コード 3) で終わる。続けて 1 拍回る。
@@ -136,6 +151,7 @@ struct WatchSessionModelTests {
             case .saveThenAudition: "save+audition"
             case .saveThenLeave: "save+leave"
             case .overlap(let steps): "overlap(\(steps.map(\.description).joined(separator: ",")))"
+            case .overlapFailing(let steps): "overlap(failing;\(steps.map(\.description).joined(separator: ",")))"
             case .exitAudition: "exit(audition)"
             case .exitAuditionFailing: "exit(audition,failing)"
             case .promoteAudition: "promote(audition)"
@@ -173,6 +189,9 @@ struct WatchSessionModelTests {
         .saveThenAudition, .saveThenLeave,
         .overlap([.leave]), .overlap([.audition]), .overlap([.save, .leave]), .overlap([.save, .audition]),
         .overlap([.leave, .audition]), .overlap([.save, .save, .leave]), .overlap([.audition, .save, .leave]),
+        .overlap([.save, .leaveStuck]), .overlap([.save, .save, .leave, .revert]), .overlap([.audition, .exitShown, .save, .leave]),
+        .overlap([.save, .stop]), .overlapFailing([.audition, .save, .leave]), .overlapFailing([.save, .leaveStuck]),
+        .overlapFailing([.audition, .exitShown, .save, .leave]),
     ]
 
     /// 列の長さ。縮めると `none` が並ぶので、実際の長さはこれ以下。
@@ -376,6 +395,23 @@ struct WatchSessionModelTests {
             [.save, .promoteWaiting, .overlap([.audition, .save, .leave])],
             // 試聴中に本番が落ちた後、試聴の版の作り直しの最中に出る (出る要求が本番を起こし直す)
             [.save, .promoteWaiting, .audition, .exitShown, .overlap([.save, .leave])],
+            // 2 回目の反証 1: 出た時点のソースを本番に作り直す出方は、進行中の試聴の版を引き継ぎ、捨てたと名乗らない
+            [.save, .promoteWaiting, .audition, .exitShown, .overlap([.leave])],
+            [.save, .promoteWaiting, .audition, .save, .overlap([.leaveStuck])],
+            [.save, .promoteWaiting, .audition, .overlap([.save, .leaveStuck])],
+            // 2 回目の反証 3: 本番の版の作り直しの最中に出て、その作り直しが通らない (本番が居る・試聴の間に落ちた)
+            [.save, .promoteWaiting, .overlapFailing([.audition, .save, .leave])],
+            [.save, .promoteWaiting, .overlapFailing([.audition, .exitShown, .save, .leave])],
+            [.save, .promoteWaiting, .overlap([.audition, .exitShown, .save, .leave])],
+            // 試聴の版の作り直しが通らない
+            [.save, .promoteWaiting, .audition, .overlapFailing([.save, .leaveStuck])],
+            [.save, .promoteWaiting, .audition, .overlapFailing([.leave])],
+            // 2 回目の反証 6: 作り直しの最中に試聴の中で X・Y を読み、出た後に X へ戻す (戻した保存は出た後の読みの役)
+            [.save, .promoteWaiting, .audition, .overlap([.save, .save, .leave, .revert])],
+            [.save, .promoteWaiting, .audition, .overlap([.save, .save, .revert])],
+            // 重なりの中の終わり (Ctrl-C)
+            [.save, .promoteWaiting, .audition, .overlap([.save, .stop])],
+            [.save, .promoteWaiting, .overlap([.audition, .save, .stop])],
         ])
     @MainActor
     func overlappingBuildColumnsKeepTheSaveRole(_ ops: [Op]) async {
@@ -435,22 +471,33 @@ struct WatchSessionModelTests {
         private var stopped = false
         private var history: [String] = []
 
-        /// 保存の役 (#3796)。**模型は規則から直に書く: その世代を見張りが最初に読んだ時点の、模型の側の試聴の状態。**
-        /// 見張りの内部の変数は写さない。
+        /// 保存の役 (#3796)。**模型は規則から直に書く: その保存を拾った見張りの読みを始めた時点の、模型の側の試聴の状態。**
+        /// 見張りの内部の変数は写さない。役は保存ごと — 前の中身へ戻した保存も、戻した保存を読んだ時点の役で上書きする。
         enum Role: Equatable {
             case production
             /// 何回目の試聴の中で読んだか (``auditionIndex``)。
             case audition(Int)
         }
-        /// 世代ごとの役。模型が「見張りがこの世代を最初に読む」と分かる時点で控える (``noteRead(_:)``)。
+        /// 中身ごとの、最後の保存の役。模型が「見張りがこの保存を読む」と分かる時点で控える (``noteRead(_:)``)。
         private var stampRoles: [String: Role] = [:]
+        /// 起こした子ごとの、起こした時点の役。
+        private var launchRoles: [Int: Role] = [:]
+        /// 規則に反して起こした子 (役を控えていない版・試聴の中で読んだ版を本番の子に)。どの操作の後も見る (事後条件 7)。
+        private var launchViolation: String?
+        /// 出る要求が「出た時点のソースを本番に作り直す」と決めた試聴の番号のうち、最も新しいもの (模型の側の規則)。
+        /// **この番号までの試聴で読んだ版は、本番の版として起きてよい** — 本番が居ない・プレビューを戻せない出方 (#3565 の例外)。
+        /// 本番の版の作り直しの最中に出た試聴は、その作り直しが済んで本番が走っていなければここへ足す (#3796 の 2 回目の反証 3)。
+        private var sourceRebuildThrough = 0
+        /// 本番の版の作り直しの最中に出た試聴の番号 (模型の側)。
+        private var leftWhileBuilding: Int?
+        /// 立てると、門で止めた作り直しは通らない (``Op/overlapFailing(_:)``)。
+        private var heldFails = false
+        /// プレビューへ出した行。
+        private var previewLog: [String] = []
         /// 受けた入る要求の回数。試聴の 1 回ごとの番号。
         private var auditionIndex = 0
         /// 出る要求を出した試聴の番号 (受けると見込んで、要求を置く前に控える)。
         private var endedAuditions: Set<Int> = []
-        /// 出る要求の時点で本番が居なかったか (``Op/overlap(_:)`` の中)。出る要求は出た時点のソースで本番を起こすので、
-        /// 試聴の中で読んだ版でも本番として起きてよい (#3565 の例外)。
-        private var sourceRestarts = false
         /// 立てると、次の作り直しは ``releaseRebuild()`` まで終わらない。
         private var holdRebuild = false
         private var rebuildGate: CheckedContinuation<Void, Never>?
@@ -458,6 +505,12 @@ struct WatchSessionModelTests {
         private var heldBeatDone = false
 
         private var currentRole: Role { auditioning ? .audition(auditionIndex) : .production }
+
+        /// 役 `role` の版を、いまどう扱うか (規則): 出る要求が本番の版へ寄せた試聴の版は本番。
+        private func effective(_ role: Role) -> Role {
+            if case .audition(let index) = role, index <= sourceRebuildThrough { return .production }
+            return role
+        }
 
         /// 見張りがいまの世代を最初に読むのは、役 `role` の時点である。
         private func noteRead(_ role: Role) {
@@ -484,9 +537,11 @@ struct WatchSessionModelTests {
                 hooks: WatchSession.Hooks(
                     rebuild: { directory in
                         box.driver?.noteRebuild()
-                        // 作り直しの途中で止めておく (作り直しの最中の出来事を演じる・``Op/overlap(_:)``)
+                        // 作り直しの途中で止めておく (作り直しの最中の出来事を演じる・``Op/overlap(_:)``)。止めた作り直しを
+                        // 通らなくするかは門の後で読む
+                        let held = box.driver?.holdRebuild ?? false
                         await box.driver?.waitForRebuildGate()
-                        let status = box.driver?.buildStatus ?? 0
+                        let status: Int32 = held && box.driver?.heldFails == true ? 1 : box.driver?.buildStatus ?? 0
                         return RunCommand.Rebuilt(
                             status: status, output: "", executable: status == 0 ? URL(fileURLWithPath: "/bin/sh") : nil,
                             binPath: directory, product: "sketch")
@@ -514,7 +569,16 @@ struct WatchSessionModelTests {
 
         final class Box { weak var driver: Driver? }
 
-        private var stamp: String? { stampCount == 0 ? nil : "s\(stampCount)" }
+        /// 立てると、ソースの中身をこの世代にする (前の中身へ戻した保存・``Step/revert``)。新しい保存で下りる。
+        private var stampOverride: String?
+
+        private var stamp: String? { stampOverride ?? (stampCount == 0 ? nil : "s\(stampCount)") }
+
+        /// 中身を変える (新しい世代)。
+        private func changeSource() {
+            stampCount += 1
+            stampOverride = nil
+        }
 
         /// 作り直しの口が呼ばれた。見張りは世代を取ってから作り直すので、作っているのはいまの世代の版である。
         private func noteRebuild() {
@@ -537,15 +601,31 @@ struct WatchSessionModelTests {
             } catch {
                 throw .cannotLaunch(tool: "sh", place: "", reason: "\(error)")
             }
-            // **試聴の子かは、その版の役で決める** (#3796)。試聴の中で最初に読んだ版で、その試聴がまだ続いていれば試聴の子。
+            // **試聴の子かは、その版の役で決める** (#3796)。試聴の中で読んだ版で、その試聴がまだ続いていれば試聴の子。
             // 試聴の子は、本番の乗り換えが決着してから起こされる (保存の拍とは限らない)。出た試聴の版が起きるのは、出る要求が
-            // 本番を起こし直す回 (本番が居ない・#3565) だけで、それは本番の子である
-            let isAudition: Bool
-            switch stamp.flatMap({ stampRoles[$0] }) {
-            case .audition(let index)?: isAudition = !endedAuditions.contains(index)
-            case .production?: isAudition = false
-            case nil: isAudition = session.isAuditioning
+            // 本番を起こし直す回 (本番が居ない・プレビューを戻せない・#3565) だけで、それは本番の子である。**役は模型が控えた
+            // ものだけを使う** — 控えていない版 (最初の 1 回の `nil` を除く) を起こしたら、それ自体を破れとして名乗る
+            let role: Role
+            if let stamp {
+                if let noted = stampRoles[stamp] {
+                    role = noted
+                } else {
+                    role = .production
+                    launchViolation = launchViolation ?? "模型が役を控えていない版 \(stamp) を起こした"
+                }
+            } else {
+                role = .production
             }
+            let isAudition: Bool
+            switch role {
+            case .audition(let index): isAudition = !endedAuditions.contains(index)
+            case .production: isAudition = false
+            }
+            // 試聴の中で読んだ版を本番の子にしてよいのは、出る要求が本番の版へ寄せた試聴の版だけ
+            if !isAudition, case .audition = effective(role) {
+                launchViolation = launchViolation ?? "試聴の中で読んだ \(stamp ?? "-") (役 \(role)) を、本番の子として起こした"
+            }
+            launchRoles[gens.count] = role
             if isAudition { auditionGens.insert(gens.count) }
             // **本番の子は、どの口で起こしても、起こした時点から乗り換えを待つ** (``WatchSession`` は新しい子を起こすたびに
             // 待ち印を立てる)。保存だけでなく、試聴を出る要求が本番を起こし直す回 (本番が居ない・#3565) や、
@@ -585,7 +665,9 @@ struct WatchSessionModelTests {
         @discardableResult
         private func beat() async -> Set<Int> {
             let auditionsBefore = auditionGens
-            await WatchCommand.step(session, stopped: { false }, preview: { _, _ in })
+            await WatchCommand.step(session, stopped: { false }, preview: { [self] line, _ in
+                if let line { previewLog.append(line) }
+            })
             unseen = []
             unseenAudition = []
             let started = auditionGens.subtracting(auditionsBefore)
@@ -710,7 +792,7 @@ struct WatchSessionModelTests {
 
             case .save, .saveBuildFail, .saveLaunchFail:
                 guard !stopped else { return nil }
-                stampCount += 1
+                changeSource()
                 // 要求の無い拍で読むので、いまの役
                 noteRead(currentRole)
                 buildStatus = op == .saveBuildFail ? 1 : 0
@@ -946,7 +1028,11 @@ struct WatchSessionModelTests {
                     // 同じ拍の要求の後に読むので、出た後の本番の役
                     noteRead(.production)
                 }
-                if auditioning { endedAuditions.insert(auditionIndex) }
+                if auditioning {
+                    endedAuditions.insert(auditionIndex)
+                    // 本番が居なければ、出た時点のソースを本番に作り直す (この試聴の版は本番の子として起きてよい)
+                    if productionBefore.isEmpty { sourceRebuildThrough = auditionIndex }
+                }
                 let placed = stamp
                 let (accepted, _) = try await ask("leave")
                 if accepted != auditioning {
@@ -974,6 +1060,9 @@ struct WatchSessionModelTests {
 
             case .overlap(let steps):
                 return try await overlap(steps)
+
+            case .overlapFailing(let steps):
+                return try await overlap(steps, heldFails: true)
 
             case .exitAudition:
                 guard let target = auditionAlive().first else { return nil }
@@ -1014,6 +1103,7 @@ struct WatchSessionModelTests {
                 return nil
 
             case .stop:
+                guard !stopped else { return nil }
                 stopped = true
                 deferredStamp = nil
                 session.noteStopRequested()
@@ -1022,22 +1112,34 @@ struct WatchSessionModelTests {
             }
         }
 
+        /// 門で止まらなかったこと。期限で門を開け、止めた拍を畳んでから投げる。
+        struct GateTimeout: Error, CustomStringConvertible {
+            let description: String
+        }
+
         /// 保存して、その作り直しを門で止め、止めている間に `steps` を起こしてから門を開ける (#3796 の反証)。
         ///
-        /// **期待は規則から書く: 保存の役は、その世代を見張りが最初に読んだ時点の試聴の状態。** 読んだ版は、役が本番なら
+        /// **期待は規則から書く: 保存の役は、その保存を拾った見張りの読みを始めた時点の試聴の状態。** 読んだ版は、役が本番なら
         /// 本番の子として、役の試聴が続いていれば試聴の子として起き (本番が乗り換えを待つ間は保留にあり得る)、役の試聴が
-        /// 終わっていれば起きない (出る要求が本番を起こし直す回を除く)。作り直しの最中に重ねた保存のうち、最後の版だけが
-        /// 作り直される (途中の版は追い越される)。
-        private func overlap(_ steps: [Step]) async throws -> Violation? {
+        /// 終わっていれば起きない。ただし出る要求が「出た時点のソースを本番に作り直す」と決めた試聴 (本番が居ない・プレビューを
+        /// 戻せない) の版は、本番の子として起きる (``sourceRebuildThrough``)。本番の版の作り直しの最中に出た試聴の版は、その
+        /// 作り直しが済んで本番が走っていなければ同じ扱い。作り直しの最中に重ねた保存のうち、最後の版だけが作り直される
+        /// (途中の版は追い越される)。**捨てた版があれば、捨てたことを名乗り、無ければ名乗らない。**
+        private func overlap(_ steps: [Step], heldFails: Bool = false) async throws -> Violation? {
             guard !stopped else { return nil }
             await settleUnseen()
             let launchesBefore = gens.count
-            sourceRestarts = false
+            let linesBefore = previewLog.count
             placeUnseenSave()
             noteRead(currentRole)
+            let heldStamp = stamp
+            let heldRole = currentRole
             var placed = [stamp]
             holdRebuild = true
-            // 門で止まるまで拍を回す。保留していた試聴の子を起こした拍は作り直しに取りかからないので、2 拍まで
+            self.heldFails = heldFails
+            defer { self.heldFails = false }
+            // 門で止まるまで拍を回す。保留していた試聴の子を起こした拍は作り直しに取りかからないので、2 拍まで。
+            // **待つ側が期限を持つ** — 越えたら門を開け、止めた拍を畳んでから投げる
             var held: Task<Void, Never>?
             for _ in 0..<2 where rebuildGate == nil {
                 heldBeatDone = false
@@ -1045,8 +1147,16 @@ struct WatchSessionModelTests {
                     _ = await beat()
                     heldBeatDone = true
                 }
-                for _ in 0..<200 where rebuildGate == nil && !heldBeatDone { await Task.yield() }
                 held = beating
+                let deadline = Date().addingTimeInterval(5)
+                while rebuildGate == nil && !heldBeatDone && Date() < deadline {
+                    try? await Task.sleep(for: .milliseconds(1))
+                }
+                if rebuildGate == nil && !heldBeatDone {
+                    releaseRebuild()
+                    await beating.value
+                    throw GateTimeout(description: "作り直しが期限 (5 秒) までに門に着かない")
+                }
                 if rebuildGate == nil { await beating.value }
             }
             guard rebuildGate != nil, let held else {
@@ -1062,6 +1172,13 @@ struct WatchSessionModelTests {
                     noteRead(currentRole)
                     placed.append(stamp)
                     await beat()
+                case .revert:
+                    // 作り直しの最中に重ねた保存の 1 つ前の中身へ戻す。戻した保存の役は、それを読んだ時点の役 (保存ごと)
+                    guard placed.count >= 3, let back = placed[placed.count - 2] else { continue }
+                    stampOverride = back
+                    noteRead(currentRole)
+                    placed.append(back)
+                    await beat()
                 case .audition:
                     let wasAuditioning = auditioning
                     let (accepted, _) = try await ask("audition")
@@ -1073,26 +1190,58 @@ struct WatchSessionModelTests {
                         auditionIndex += 1
                         deferredStamp = nil
                     }
-                case .leave:
+                case .leave, .leaveStuck:
                     let wasAuditioning = auditioning
                     let productionBefore = productionAlive()
-                    if auditioning { endedAuditions.insert(auditionIndex) }
+                    if auditioning {
+                        endedAuditions.insert(auditionIndex)
+                        // 出方 (規則): 門で止めた作り直しの版が本番の版なら、それが本番になり、この試聴の版は作り直しが済んで
+                        // から決まる。そうでなく本番が居ない・プレビューを戻せないなら、出た時点のソースを本番に作り直す
+                        if effective(heldRole) == .production {
+                            leftWhileBuilding = max(leftWhileBuilding ?? 0, auditionIndex)
+                        } else if productionBefore.isEmpty || step == .leaveStuck {
+                            sourceRebuildThrough = auditionIndex
+                        }
+                    }
+                    if step == .leaveStuck { session.returnsPreviewToGeneration = { _ in false } }
                     let (accepted, _) = try await ask("leave")
+                    session.returnsPreviewToGeneration = { _ in true }
                     if accepted != wasAuditioning {
                         return Violation(number: 7, text: "出る要求を\(accepted ? "受けた" : "断った") (試聴中 \(wasAuditioning))")
                     }
                     if accepted {
                         auditioning = false
                         deferredStamp = nil
-                        if productionBefore.isEmpty { sourceRestarts = true }
                     }
+                case .exitShown:
+                    let candidates = (shown.map { [$0] } ?? []) + productionAlive().sorted().reversed()
+                    guard let target = candidates.first(where: { isAlive($0) && !auditionGens.contains($0) }) else {
+                        continue
+                    }
+                    finish(target, line: "bye")
+                    unseen.insert(target)
+                    await beat()
+                case .stop:
+                    // 終われと言われた口 (``WatchCommand``) と同じ順: 作り直しを止め、子を畳む。止めた作り直しは門を開けると戻る
+                    stopped = true
+                    deferredStamp = nil
+                    session.noteStopRequested()
+                    _ = await session.stopRebuilding()
+                    await session.end()
+                    releaseRebuild()
+                    await held.value
+                    return nil
                 }
             }
             releaseRebuild()
             await held.value
+            // 本番の版の作り直しの最中に出た試聴の版は、作り直しが済んで本番が走っていなければ本番の版として起きる (規則)
+            if let left = leftWhileBuilding {
+                leftWhileBuilding = nil
+                if productionAlive().isEmpty { sourceRebuildThrough = max(sourceRebuildThrough, left) }
+            }
             for _ in 0..<2 { await beat() }
             let launched = Set(launchesBefore..<gens.count)
-            func role(_ index: Int) -> Role? { launchStamps[index].flatMap { stampRoles[$0] } }
             func label(_ index: Int) -> String { "G\(index)=\(launchStamps[index] ?? "-")" }
             for index in launched.sorted() {
                 // 見張りの役 (作品のウィンドウが採らない試聴の子か) と、規則の役が一致する
@@ -1100,34 +1249,58 @@ struct WatchSessionModelTests {
                 if sessionSaysAudition != auditionGens.contains(index) {
                     return Violation(
                         number: 7,
-                        text: "\(label(index)) を、規則では\(auditionGens.contains(index) ? "試聴" : "本番")の版なのに\(sessionSaysAudition ? "試聴" : "本番")の子として起こした (役 \(String(describing: role(index))))")
-                }
-                // 試聴の中で読んだ版は、本番の子にならない (出る要求が本番を起こし直す回を除く)
-                if !auditionGens.contains(index), case .audition = role(index), !sourceRestarts {
-                    return Violation(number: 7, text: "試聴の中で読んだ \(label(index)) が、本番の子として起きた")
+                        text: "\(label(index)) を、規則では\(auditionGens.contains(index) ? "試聴" : "本番")の版なのに\(sessionSaysAudition ? "試聴" : "本番")の子として起こした (役 \(String(describing: launchRoles[index])))")
                 }
             }
+            let currentAudition = auditioning ? auditionIndex : nil
+            /// 役 `role` の版は、終わった試聴の版として捨てられる (規則)。
+            func isDropped(_ role: Role?) -> Bool {
+                if let role, case .audition(let index) = effective(role), index != currentAudition { return true }
+                return false
+            }
             // 最後の版の行き先
-            if let last = placed.last ?? nil, let lastRole = stampRoles[last] {
+            let last = placed.last ?? nil
+            if let last, let lastRole = stampRoles[last] {
                 let ofLast = launched.filter { launchStamps[$0] == last }
-                switch lastRole {
-                case .production:
-                    if ofLast.isEmpty || ofLast.contains(where: { auditionGens.contains($0) }) {
-                        return Violation(number: 7, text: "本番のまま読んだ \(last) の本番の子が起きない (起きた子 \(launched.sorted().map(label)))")
+                if heldFails && last == heldStamp {
+                    // 門で止めた版が通らなかったなら、その版の子は起きない
+                    if !ofLast.isEmpty {
+                        return Violation(number: 5, text: "通らなかった \(last) の子が起きた (\(ofLast.sorted().map(label)))")
                     }
-                case .audition(let index) where auditioning && index == auditionIndex:
-                    if ofLast.isEmpty {
-                        // 本番が乗り換えを待つ間は保留にあり得る
-                        if session.waitingGeneration == nil {
-                            return Violation(number: 7, text: "試聴の中で読んだ \(last) の試聴の子が起きない (起きた子 \(launched.sorted().map(label)))")
+                } else {
+                    switch effective(lastRole) {
+                    case .production:
+                        if ofLast.isEmpty || ofLast.contains(where: { auditionGens.contains($0) }) {
+                            return Violation(number: 7, text: "本番の版の \(last) の本番の子が起きない (起きた子 \(launched.sorted().map(label)))")
                         }
-                        deferredStamp = last
-                    }
-                case .audition:
-                    if !ofLast.isEmpty, !sourceRestarts {
-                        return Violation(number: 7, text: "終わった試聴の中で読んだ \(last) の子が起きた (\(ofLast.sorted().map(label)))")
+                    case .audition(let index) where index == currentAudition:
+                        if ofLast.isEmpty {
+                            // 本番が乗り換えを待つ間は保留にあり得る
+                            if session.waitingGeneration == nil {
+                                return Violation(number: 7, text: "試聴の中で読んだ \(last) の試聴の子が起きない (起きた子 \(launched.sorted().map(label)))")
+                            }
+                            deferredStamp = last
+                        }
+                    case .audition:
+                        if !ofLast.isEmpty {
+                            return Violation(number: 7, text: "終わった試聴の中で読んだ \(last) の子が起きた (\(ofLast.sorted().map(label)))")
+                        }
                     }
                 }
+            }
+            // 捨てた版があれば名乗り、無ければ名乗らない (本番の版にした版を「捨てた」と言わない)。門で止めた版と最後の版の
+            // どちらかが終わった試聴の版なら捨てる。途中の版は追い越されるだけで、名乗らない
+            let expectsDrop = isDropped(heldRole) || (last != heldStamp && isDropped(last.flatMap { stampRoles[$0] }))
+            let dropLines = previewLog[linesBefore...].filter {
+                $0 == WatchCommand.auditionDiscardedLine(productionRunning: true)
+                    || $0 == WatchCommand.auditionDiscardedLine(productionRunning: false)
+            }
+            if expectsDrop == dropLines.isEmpty {
+                return Violation(
+                    number: 7,
+                    text: expectsDrop
+                        ? "終わった試聴の版を捨てたのに、捨てたことを名乗らない"
+                        : "捨てる版が無いのに、捨てたと名乗った (\(dropLines.count) 行)")
             }
             // 落ち着いた後の拍は何も起こさない (捨てた版を後から本番へ作り直さない)
             let settled = gens.count
@@ -1141,7 +1314,7 @@ struct WatchSessionModelTests {
 
         /// 作り直しが通り子を起こせる保存を置くが、拍は回さない (見張りはまだ見ていない)。
         private func placeUnseenSave() {
-            stampCount += 1
+            changeSource()
             buildStatus = 0
             launchFails = false
         }
@@ -1161,6 +1334,8 @@ struct WatchSessionModelTests {
         // MARK: 事後条件 (どの操作の後も)
 
         private func checkAfter() -> Violation? {
+            // 7. 起こした子の役は規則どおり (``launch(_:stamp:)`` が控える)
+            if let launchViolation { return Violation(number: 7, text: launchViolation) }
             let living = alive()
             // 1. 生きている子は、本番の側が 2 つまで (2 つなら一方は乗り換えを待っている)・試聴の側が 1 つまで。
             //    乗り換えを待つ世代が無ければ、全体で 2 つまで
@@ -1271,7 +1446,7 @@ struct WatchSessionModelTests {
         func checkNoLaunchAfterStop() async -> Violation? {
             guard stopped else { return nil }
             let before = launches
-            stampCount += 1
+            changeSource()
             await session.tick()
             return launches == before ? nil : Violation(number: 6, text: "終えた後の保存で launch が呼ばれた")
         }
