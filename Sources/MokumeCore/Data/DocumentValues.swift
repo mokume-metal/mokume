@@ -25,6 +25,8 @@ enum DocumentValues {
         case notABoolean(key: String)
         /// JSON のキーの値が、配列でない。
         case notAnArray(key: String)
+        /// JSON のキーへ NaN か無限を書こうとした (書かない)。**キーごとに数える。**
+        case notFinite(key: String)
         /// JSON の配列から、範囲の外の番号か種類の違う要素を取り出した。**番号ごとではなく、口の
         /// 名前と事情の組ごと**に 1 度だけ言う (番号で数えると、配列の大きさだけ控えが増える)。
         case arrayElement(call: String, problem: ArrayProblem)

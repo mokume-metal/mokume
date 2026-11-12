@@ -47,6 +47,19 @@ struct SaveFormatNoticeTests {
         #expect(!FrameRecorder.isPNG("a.png.jpg") && !FrameRecorder.isPNG("a.png/b"))
     }
 
+    /// 断る文面が案内する名前 ([#3961])。拡張子を `.png` に替え、番号の場所や途中のフォルダの `.` は替えない。
+    ///
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
+    @Test("断る文面が案内する .png の名前", arguments: [
+        ("out/f-####.jpg", "out/f-####.png"), ("frame", "frame.png"), ("frame.png.jpg", "frame.png"),
+        ("out.d/f-##", "out.d/f-##.png"), ("f.####", "f.####.png"), (".hidden", ".hidden.png"),
+        ("/a/frame.TIF", "/a/frame.png"), ("out/f-####.", "out/f-####.png"), ("frame.", "frame.png"),
+    ])
+    func theSuggestedNameEndsInPNG(given: String, suggested: String) {
+        #expect(FrameRecorder.pngName(for: given) == suggested)
+        #expect(FrameRecorder.isPNG(FrameRecorder.pngName(for: given)))
+    }
+
     @Test("save(\"x.jpg\") は積んだうえで 1 度だけ知らせ、同じ名前で 2 回呼んでも 1 度")
     func aShotWithAnotherExtensionIsNamedOnce() {
         let recorder = FrameRecorder()
@@ -223,6 +236,55 @@ struct SaveFormatWriteTests {
                 }
                 #expect(!FileManager.default.fileExists(atPath: path), "\(name) が作られた")
             }
+        }
+    }
+
+    /// `renderFrame(to:)` も PNG だけを書くので、`.png` で終わらない URL は書かずに投げる ([#3961])。描く前に断るので、
+    /// フレームも進まない。理由はこの API が PNG を書くことと、受ける名前 (`frame.png`) を名指す。
+    ///
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
+    @Test("renderFrame(to:) は .png で終わらない URL を、描かず書かずに投げ、受ける名前を名指す")
+    func renderFrameRefusesANameThatIsNotPNG() throws {
+        try withTemporaryDirectory("mokume-render-frame-jpg") { directory in
+            let runtime = try SketchRuntime(sketch: Saving(), gpu: try RenderDevice())
+            defer { runtime.closePlugins() }
+            let cases = [
+                ("frame.jpg", "frame.png"), ("frame", "frame.png"), ("frame.TIF", "frame.png"),
+                ("frame.png.jpg", "frame.png"),
+            ]
+            for (name, suggested) in cases {
+                let url = directory.appendingPathComponent(name)
+                do {
+                    try runtime.renderFrame(to: url)
+                    Issue.record("\(name) へ書けてしまった")
+                } catch let failure as ImageFailure {
+                    guard case .unwritable(let thrownPath, let reason) = failure else {
+                        Issue.record("別の失敗: \(failure)")
+                        continue
+                    }
+                    #expect(thrownPath == url.path)
+                    #expect(reason.contains("renderFrame(to:)") && reason.contains("PNG"), "\(reason)")
+                    #expect(reason.contains(suggested), "\(reason)")
+                } catch {
+                    Issue.record("ImageFailure ではない失敗: \(error)")
+                }
+                #expect(!FileManager.default.fileExists(atPath: url.path), "\(name) が作られた")
+            }
+            #expect(runtime.frameCount == 0, "断った回にフレームを進めた")
+            // `.png`・`.PNG` は今のとおり書く
+            for name in ["a.png", "b.PNG"] {
+                let url = directory.appendingPathComponent(name)
+                try runtime.renderFrame(to: url)
+                #expect(try leadingBytes(of: url.path) == pngSignature, "\(name)")
+            }
+            // 断った後に正しい名前で書いた絵は、最初から正しい名前で書いた絵と同じ (断りは時計にも絵にも触れない)
+            let fresh = try SketchRuntime(sketch: Saving(), gpu: try RenderDevice())
+            defer { fresh.closePlugins() }
+            let first = directory.appendingPathComponent("fresh.png")
+            try fresh.renderFrame(to: first)
+            #expect(
+                try Data(contentsOf: directory.appendingPathComponent("a.png")) == Data(contentsOf: first),
+                "断った後の最初の絵が、最初から書いた絵と違う")
         }
     }
 

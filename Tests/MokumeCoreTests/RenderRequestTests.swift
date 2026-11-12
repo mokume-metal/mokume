@@ -158,6 +158,35 @@ nonisolated struct RenderRequestTests {
         }
     }
 
+    /// 道具を通らずに置いた頼み (環境変数 `MOKUME_RENDER`) も、`.png` で終わらない連番は組まず、子は道具の `--out` と
+    /// 同じ理由で断る ([#3961])。`.mov` で終わる綴りは番号の場所を持っても動画のまま。
+    ///
+    /// [#3961]: https://github.com/mokume-metal/mokume/issues/3961
+    @Test("環境変数の頼みも、.png で終わらない連番は組まず、同じ理由で断る")
+    @MainActor
+    func aRequestForASeriesNotEndingInPNGIsRefusedFromTheEnvironment() {
+        let key = StartupReads.render.key
+        for destination in ["/tmp/f-####.jpg", "/tmp/f-##.gif", "/tmp/f-##.mp4", "/tmp/f-##"] {
+            #expect(RenderRequest(frameRate: 10, frameCount: 2, destination: destination) == nil, "\(destination)")
+            let value = "10:2:\(destination)"
+            #expect(throws: RenderFailure.unreadableRenderRequest(value: value)) {
+                try RenderRequest.startup(environment: [key: value])
+            }
+            let text = startupFailureText(.unreadableRenderRequest(value: value))
+            #expect(text.contains("written as PNG pictures"), "\(text)")
+            #expect(text.contains("as in \(FrameRecorder.pngName(for: destination))"), "\(text)")
+        }
+        // 動画の名前の案内は、.gif と .mp4 の連番に添える
+        #expect(RenderRequest.seriesNotPNGReason(destination: "out/f-##.gif")?.contains("out/movie.gif") == true)
+        #expect(RenderRequest.seriesNotPNGReason(destination: "out/f-##.mp4")?.contains("out/movie.mp4") == true)
+        #expect(RenderRequest.seriesNotPNGReason(destination: "out/f-##.jpg")?.contains("movie") == false)
+        // 受けるもの: .png・.PNG の連番、番号の場所を持つ .mov・.MOV (動画)
+        for destination in ["/tmp/f-##.png", "/tmp/f-##.PNG", "/tmp/f-##.mov", "/tmp/f-##.MOV"] {
+            #expect(RenderRequest(frameRate: 10, frameCount: 2, destination: destination) != nil, "\(destination)")
+            #expect(RenderRequest.seriesNotPNGReason(destination: destination) == nil, "\(destination)")
+        }
+    }
+
     /// 起動の行が出す文面に、読めなかった値と、直し方が載る。
     @Test("断った起動の文面は、読めなかった値と環境変数の名前を名乗る")
     @MainActor
