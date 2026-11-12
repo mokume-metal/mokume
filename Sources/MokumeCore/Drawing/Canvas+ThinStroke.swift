@@ -958,18 +958,34 @@ extension Canvas {
     /// 保持した形の控えとほかの形の畳みの鍵は 2x2 そのもの (``thinVertices(_:placedBy:cache:stroke:)``・
     /// ``thinStrokeLinear(form:)``)。
     ///
-    /// 単精度の丸めで、同じ大きさの回転どうしでも `DᵀD` の最下位の桁は揺れる (0.25 と
-    /// 0.24999999 のように指数をまたぐこともある)。鍵は大きさ (対角の和) の対数と、和で割った
-    /// 3 成分を、それぞれ 1/4096 の刻みに丸めて揃える (相対 2⁻¹² ほどの違いは同じ形として扱う)。
+    /// 鍵は大きさ (対角の和) の対数と、和で割った 3 成分で、**丸めずに持つ**。単精度の丸めで、同じ大きさの回転どうしでも
+    /// `DᵀD` の最下位の桁は揺れる (0.25 と 0.24999999 のように指数をまたぐこともある) ので、比べる側
+    /// (``sameRotationFreeKey(_:_:)``) が各成分の差を ``rotationFreeKeyTolerance`` まで同じとみなす。
+    ///
+    /// **格子に丸めて揃えない** (#3932)。丸めると、揺れが格子の境目 (刻みの半分) の両側に落ちた置き場所は、向きだけが
+    /// 違っても別の鍵になる。細かさ 69/128・回転の内側の縦の倍率 0.711 の楕円で、大きさの対数 (4096 倍) が
+    /// -4886.5 と -4886.4995 に分かれ、2 つ目が畳まれずに直に組まれた。
     static func rotationFreeKey(_ linear: simd_float2x2) -> SIMD4<Float> {
         let gram = linear.transpose * linear
         let trace = gram.columns.0.x + gram.columns.1.y
         guard trace > 0, trace.isFinite else { return SIMD4(repeating: 0) }
-        func coarse(_ value: Float) -> Float { (value * 4096).rounded() / 4096 }
         return SIMD4(
-            coarse(RuntimeMath.log2(trace)), coarse(gram.columns.0.x / trace), coarse(gram.columns.1.x / trace),
-            coarse(gram.columns.1.y / trace))
+            RuntimeMath.log2(trace), gram.columns.0.x / trace, gram.columns.1.x / trace, gram.columns.1.y / trace)
     }
+
+    /// 回転に依らない鍵 (``rotationFreeKey(_:)``) の 2 つが、同じ形を表すか。各成分の差が ``rotationFreeKeyTolerance``
+    /// 以下なら同じとみなす。
+    ///
+    /// **推移的ではない** (a と b、b と c が近くても、a と c は離れうる)。畳みは開いている雛形の鍵 (1 つ目の置き場所)
+    /// とだけ比べる (``draw(folding:at:outline:)``) ので、近い置き場所が続いても雛形の鍵からずれは積み重ならない。
+    static func sameRotationFreeKey(_ lhs: SIMD4<Float>, _ rhs: SIMD4<Float>) -> Bool {
+        all(abs(lhs - rhs) .<= SIMD4(repeating: rotationFreeKeyTolerance))
+    }
+
+    /// 回転に依らない鍵の成分の差を、同じ形とみなす幅 (2⁻¹²)。大きさの対数では相対 2⁻¹² · ln 2 ≈ 0.017%、和で割った成分
+    /// (0〜1) では 2⁻¹² ≈ 0.024% にあたる。回転だけが違う置き場所の単精度の揺れ (成分で 10⁻⁶ ほど) より十分に広く、
+    /// 太さや形の取り違えが見える違い (0.1% 以上) より十分に狭い。#3932 の前に格子に丸めていた刻みと同じ大きさ。
+    static let rotationFreeKeyTolerance: Float = 1.0 / 4096
 
     private func buildThinVertices(
         _ recipe: ThinStrokeRecipe, placedBy combined: simd_float4x4
