@@ -552,6 +552,7 @@ struct WatchAuditionRefutationTests {
         let production = try #require(await harness.save())  // s1
         _ = try await harness.ask("audition")
         _ = try #require(await harness.save())  // s2 (試聴の子)
+        let linesBefore = harness.previewLines.count
         let building = try await holdBuild(harness)  // s3 (試聴の版) を作り直している
         harness.placeSave()  // s4
         await harness.beat()  // s4 を試聴の中で読む (作り直しの最中なので取りかからない)
@@ -575,6 +576,12 @@ struct WatchAuditionRefutationTests {
         #expect(session.child === production && production.isRunning, "試聴の中で読んだ版が本番に入れ替わった")
         #expect(harness.alive() == [production])
         #expect(session.lastStamp == "s1")
+        // 捨てたことは 1 度にまとめて名乗る (s3 を捨てるとき、同じ試聴で読んで控えた s4 も一緒に捨てる)。起こした試聴の子を
+        // 出る要求が止めた回は、出る行が名乗るので、捨てた行は出ない
+        let dropped = harness.previewLines[linesBefore...].filter {
+            $0 == WatchCommand.auditionDiscardedLine(productionRunning: true)
+        }
+        #expect(dropped.count == (moment == .afterSecondStarts ? 0 : 1), "捨てた行の数: \(dropped.count)")
         let record = try buildRecord(harness)
         #expect(record["stamp"] as? String == "s1" && record["audition"] == nil, "区画 build の記録が本番の版でない: \(record)")
         // 中身を変えれば、本番の版として作り直す
