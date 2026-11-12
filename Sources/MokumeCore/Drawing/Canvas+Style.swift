@@ -61,16 +61,27 @@ extension Canvas {
     //
     // [#1641]: https://github.com/mokume-metal/mokume/issues/1641
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        placeClip(a.asFloat, b.asFloat, c.asFloat, d.asFloat, boxMode: nil)
+    }
+
+    /// 矩形の切り抜きを `Rect` で決める。``rectMode(_:)`` が既定 (`.corner`) のときの
+    /// ``clip(_:_:_:_:)`` に `rect` の左上と幅・高さを渡すのと同じ。**``rectMode(_:)`` に従わない** —
+    /// `Rect` は左上で置く値なので、値のとおり左上から読む (#3784)。
+    public func clip(_ rect: Rect) {
+        placeClip(rect.left, rect.top, rect.width, rect.height, boxMode: .corner)
+    }
+
+    /// 矩形の切り抜きを置く。`boxMode` が `nil` なら 4 つの数を ``rectMode(_:)`` で読む。
+    private func placeClip(_ a: Float, _ b: Float, _ c: Float, _ d: Float, boxMode: ShapeMode?) {
         // **切り抜きはフレームを越えない** (ADR-0021 決定 4)。描画先の座標で効き、形に焼き付か
         // ないので、形の組み立ての中ではフレームの中でも断る (同 決定 4 の追補・#1529)。値の
         // 検めより先に断る。形の切り抜きの閉包の中では、閉包の中だと分かる文面で言う
         if clipRecorder != nil { return refuseInsideClip(.nested) }
         guard admits(.clip) else { return }
-        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         // 数でない値・無限は、収めた先が決まらない。切り抜きを触らずに返す
         // (ADR-0020 決定 5 の「安全な既定へ倒す」・他の入口と同じ倒し方)
         guard a.isFinite, b.isFinite, c.isFinite, d.isFinite else { return warnBadClipOnce() }
-        let box = Self.resolveBox(a, b, c, d, mode: style.rectMode)
+        let box = Self.resolveBox(a, b, c, d, mode: boxMode ?? style.rectMode)
         // **矩形は呼んだ時点の変換で面へ写す** ([#2721])。手本 (Processing) の既定の描き手は、切り抜きを
         // 今の変換の下の座標で読む。面に沿わない変換 (回転・剪断) は、写した 4 つの角を囲む面に沿った矩形を
         // scissor に置き、回した矩形そのものを型板の 1 段に置く ([#2431])。角を取って最小・最大を取るので、幅や高さが負の
@@ -728,6 +739,11 @@ extension Canvas {
         }
         // 間隔が 0 なら途切れない。実線と同じ指定なので、刻まない
         style.strokeDash = gap == 0 ? nil : StrokeDash(length: length, gap: gap)
+    }
+
+    /// 線を破線にする。``strokeDash(_:_:)`` に同じ値を同じ順で渡すのと同じ (#3786)。
+    public func strokeDash(length: some ScalarConvertible, gap: some ScalarConvertible) {
+        strokeDash(length, gap)
     }
 
     public func noStrokeDash() { style.strokeDash = nil }
