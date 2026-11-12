@@ -28,7 +28,8 @@
   緩むと例の無い口が黙って増える。「後で撮る」の印 (鍵を持たない人用) の扱いもここで固定する
 
 - **前後の木の描き比べ** (#1986) — 画素の数え方・両方の木に在る絵だけを比べること・
-  名指しの形・警告だけで止めないこと。**実装だけが変わって絵が古くなっても機械が何も
+  名指しの形・警告だけで止めないこと・head のハッシュが記録の `image=` と一致した絵だけを
+  名指しから外すこと (#3445。一致しない・`image=` の無い絵は残す)。**実装だけが変わって絵が古くなっても機械が何も
   言わない**のが、これを足した理由で、ここが緩むと無言に戻る
 
 - **動く絵が動いているか** (#2117) — 全フレームが同じ絵の動きを名指しして、上げる前に
@@ -694,6 +695,38 @@ class DriftTest(unittest.TestCase):
         # 1 本目 (円 160) は両方に在り、2 本目 (円 80 → 90) は head にしか無い
         self.assertEqual(compared, 1)
         self.assertEqual(asked, [self.shots[0].name])
+
+    # ---- 撮り直し済みの絵は名指しから外す (#3445)
+
+    def changed_shot(self, record_image):
+        """base と head で画素が違う絵。head の記録の `image=` だけを差し替える。"""
+        shot = dataclasses.replace(self.shots[0], record_image=record_image)
+        self.put(shot, grey_rows(), grey_rows(changed={(1, 1): (128, 130, 128, 255)}))
+        return shot
+
+    def named(self, shot):
+        return [d.shot.name for d in shots.compare_trees([shot], [shot], self.base_out, self.head_out)[1]]
+
+    def test_head_のハッシュが記録の_image_と同じ絵は名指ししない(self):
+        """#3869 と同じ形: 区間で撮り直し済みで、head の描画が記録と一致している。"""
+        shot = self.changed_shot(None)
+        digest = shots.image_hash(self.head_out, shot)
+        self.assertIsNotNone(digest)
+        self.assertEqual(self.named(dataclasses.replace(shot, record_image=digest)), [])
+
+    def test_image_の無い古い記録の絵は名指しに残る(self):
+        shot = self.changed_shot(None)
+        self.assertEqual(self.named(shot), [shot.name])
+
+    def test_ハッシュが一致しない絵は名指しに残る(self):
+        shot = self.changed_shot("0" * 16)
+        self.assertEqual(self.named(shot), [shot.name])
+
+    def test_head_の絵が読めなければ名指しに残る(self):
+        shot = self.changed_shot("0" * 16)
+        digest = shots.image_hash(self.head_out, shot)
+        with mock.patch.object(shots, "image_hash", return_value=None):
+            self.assertEqual(self.named(dataclasses.replace(shot, record_image=digest)), [shot.name])
 
     # ---- 言い方
 

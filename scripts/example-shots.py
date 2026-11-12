@@ -136,10 +136,13 @@ Issue にする)。render-pr が見送られた PR の分も区間の差に入�
 
 - **止めない。** 撮り直して書き戻すには Gyazo の鍵が要るが、専用機は secrets を持たない
   (ADR-0019 決定 7)。止めると、Gyazo が止まったときに描画 PR が全部止まる
-- **ここ (実装の変化を名指しする側) は、記録の画素のハッシュを使わない。** 撮るのは
-  メンテナの手元 (別の OS) で、照合するのは専用機になり、OS の版の違いが誤報になる。
-  **比べる 2 枚は同じ機械・同じ OS で、いま描く**。記録の `image=` (下の「撮り直しで URL を
-  動かさない」) は撮り直しの側だけが読む — 外れても上げ直すだけで、誤報にならない
+- **ここ (実装の変化を名指しする側) は、記録の画素のハッシュを、一致したときだけ名指しから
+  外すのに使う** (#3445)。撮るのはメンテナの手元 (別の OS) で、照合するのは専用機になり、
+  OS の版の違いでハッシュが合わないことがある — そのときは名指しに残るだけで、誤報の向きは
+  変わらない。**比べる 2 枚は同じ機械・同じ OS で、いま描く** (名指しの根拠は今までどおりこの
+  比べ)。head で描いた画素のハッシュが head の記録の `image=` と同じ絵は、区間のどこかで撮り
+  直し済み (#3869) として外す。`image=` の無い古い記録・読めない絵・一致しない絵は外さない。
+  記録の `image=` (下の「撮り直しで URL を動かさない」) の主な読み手は撮り直しの側
 - **比べるのは画素で、PNG のバイトではない。** バイトだけが違う絵 (#1454 の
   `shadows(_:)`) は、画素が同じなら言わない。画素が違うなら、違う数と最大の差を添える。
   閾値は置いていない (同じ木を 2 回描いて差が出ないことは確かめてある・#1986)
@@ -1593,8 +1596,25 @@ def compare_trees(
     """
     in_base = {shot.name for shot in base_shots}
     both = [shot for shot in head_shots if shot.name in in_base]
-    drifts = [drift for shot in both if (drift := measure(base_out, head_out, shot))]
+    drifts = [
+        drift
+        for shot in both
+        if (drift := measure(base_out, head_out, shot)) and not redrawn(head_out, shot)
+    ]
     return len(both), drifts
+
+
+def redrawn(head_out: pathlib.Path, shot: Shot) -> bool:
+    """head で描いた画素のハッシュが、head の記録の `image=` と同じか (#3445)。
+
+    同じなら、区間のどこかで撮り直し済みで、説明文の絵はもう head の描画と一致している —
+    名指しは偽陽性 (#3869)。**一致したときだけ True。** `image=` の無い古い記録・読めない絵
+    (`image_hash` が None)・一致しない絵 (OS の差を含む) は False で、名指しに残る。
+    外れる側に倒れるので、誤報の向きは変わらず、見逃しは作らない。
+    """
+    if shot.record_image is None:
+        return False
+    return image_hash(head_out, shot) == shot.record_image
 
 
 def _escape_data(text: str) -> str:
