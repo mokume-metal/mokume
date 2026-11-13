@@ -471,7 +471,9 @@ struct ObservationKeepTests {
     }
 
     /// 反証 3: 在るかを確かめてから移すまでの間に `<id>` を置かれても、置かれたものを置き換えない (`RENAME_EXCL`)。
-    @Test("確かめた後に同じ名前の空のフォルダを置かれても、置き換えずに書き途中のまま残す")
+    /// 2 回目の反証 6: 断られた書き途中はその場で片付け、理由を「既に在る」と名乗る (残すと、次に同じ id を頼んでも
+    /// 完成品が在るかの確かめで先に断るので、片付けまで進まず溜まる)。
+    @Test("確かめた後に同じ名前の空のフォルダを置かれても、置き換えず、書き途中を片付けて既に在ると名乗る")
     func aFolderPlacedJustBeforeTheMoveIsNotReplaced() throws {
         let place = try place()
         let (runtime, observer) = try makeRuntime(place)
@@ -483,10 +485,11 @@ struct ObservationKeepTests {
         try request(#"{"id":"a1","keep":true}"#, in: place)
         let report = try advance(runtime, untilReportOf: "a1", in: place)
         #expect(report["kept"] == nil)
-        #expect(
-            (report["warnings"] as? [String])?.contains { $0.contains("left unfinished") } == true, "\(report)")
+        let warnings = report["warnings"] as? [String] ?? []
+        #expect(warnings.contains { $0.contains("not kept") && $0.contains("already exists") }, "\(warnings)")
+        #expect(!warnings.contains { $0.contains("left unfinished") }, "\(warnings)")
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty, "置かれたフォルダを置き換えた")
-        #expect(partials(in: place) == ["a1.\(getpid()).partial"])
+        #expect(partials(in: place).isEmpty, "断られた書き途中が残っている")
     }
 
     /// 反証 1: 大文字小文字だけが違う名前は、大文字小文字を区別しないボリューム (macOS の既定) では同じ名前になる。

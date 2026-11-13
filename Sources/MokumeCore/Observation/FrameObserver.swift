@@ -305,7 +305,9 @@ final class FrameObserver {
     ///   中身は `unlink(2)` で 1 つずつ外し、最後に空のフォルダを `rmdir(2)` する — 名前の形だけで選ぶと、たまたま
     ///   同じ形の名前のフォルダが中身ごと消える (記録の [#3943] と同じ理由)。生きている他の実行の書き途中には触れない
     /// - **完成の名前への移しは、既に在れば失敗する改名** (`renamex_np` の `RENAME_EXCL`)。既に在る `<id>` は、空の
-    ///   フォルダでも、大文字小文字だけが違う名前 (大文字小文字を区別しないボリューム) でも、上書きも削除もしない
+    ///   フォルダでも、大文字小文字だけが違う名前 (大文字小文字を区別しないボリューム) でも、上書きも削除もしない。
+    ///   書いている間に置かれて改名が断られたら、自分の書き途中をその場で片付けて名乗る。**`RENAME_EXCL` を持たない
+    ///   ボリュームでは、確かめてから移すまでの間に置かれた空のフォルダは置き換わりうる** (``placeExclusively(_:at:)``)
     /// - **置き場 (`.mokume/kept`) がシンボリックリンク・ファイルなら、たどらず消さず、持ち出さない**
     ///
     /// どれも「消さない・上書きしない・理由を名乗る」の側に倒す。
@@ -345,7 +347,19 @@ final class FrameObserver {
             try Self.synchronize(catalogue)
             if keepFault == .rename { throw POSIXError(.EIO) }
             keepWillPlace?()
+        } catch {
+            return refused(
+                "writing \(partial.path) failed, so it is left unfinished: \(Diagnostics.reason(error))")
+        }
+        do {
             try Self.placeExclusively(partial, at: destination)
+        } catch let error as POSIXError where error.code == .EEXIST {
+            // 書いている間に `<id>` を置かれた。置かれたものは上書きせず、自分の書き途中はその場で片付ける — 残すと、
+            // 次に同じ id を頼んでも完成品が在るかの確かめで先に断るので、片付けまで進まず溜まる
+            Self.discardPartial(partial)
+            return refused(
+                "\(destination.path) already exists (it was placed while the shot was being written), "
+                    + "and it is not overwritten")
         } catch {
             return refused(
                 "writing \(partial.path) failed, so it is left unfinished: \(Diagnostics.reason(error))")
@@ -391,6 +405,8 @@ final class FrameObserver {
         for entry in (try? FileManager.default.contentsOfDirectory(atPath: kept.path)) ?? []
         where ReplayClaim.isPartial(entry, of: id) {
             let digits = entry.dropFirst(prefix.count).dropLast(keptPartialSuffix.count)
+            // pid が使い回されて別のプロセスが持っていると、死んだ回の書き途中でも残り続ける (記録の ``ReplayClaim`` と
+            // 同じ限界で、消さない側に倒れる。新しい持ち出しは自分の pid の名前で書くので失敗はしない)
             guard let writer = pid_t(digits), writer == me || !AtomicFile.isRunning(writer) else { continue }
             discardPartial(kept.appendingPathComponent(entry, isDirectory: true))
         }
@@ -414,7 +430,8 @@ final class FrameObserver {
 
     /// `from` を `to` へ移す。**行き先に在れば断る** (`renamex_np` の `RENAME_EXCL`)。ボリュームが `RENAME_EXCL` を
     /// 持たなければ、在るかを確かめてからの素の `rename(2)` に倒す (`mokume bundle` の置き方と同じ。確かめてから
-    /// 移すまでの間は守らない)。
+    /// 移すまでの間は守らない — その間に置かれた空のフォルダは、`rename(2)` が置き換える)。在って断ったときは
+    /// `EEXIST` を投げる。
     private static func placeExclusively(_ from: URL, at to: URL) throws {
         if renamex_np(from.path, to.path, UInt32(RENAME_EXCL)) == 0 { return }
         let code = errno
