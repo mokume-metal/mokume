@@ -60,7 +60,7 @@ name: Render
 # **定期の検査 (scheduled-*) は、専用機のジョブと起票のジョブで権限を分ける** (#1983)。
 #   - scheduled-debug / scheduled-release / scheduled-drift — 専用機。contents: read・秘密なしのまま
 #   - scheduled-report — GitHub ホスト。**issues: write を持つのは、これと
-#     render-environment-report (下) の 2 つだけ**で、専用機のジョブの結論と記録の artifact を
+#     render-environment-report・render-notice-report (下) の 3 つだけ**で、専用機のジョブの結論と記録の artifact を
 #     読むだけ (ruleset-drift.yml と同じ形)
 #
 # **例の絵の前後の比較は、定期の run でも走る** (#2706・scheduled-drift)。render-pr の名指しは
@@ -176,6 +176,9 @@ jobs:
     # 前検査で落ちたときの理由。render-environment-report が読む (#2588)
     outputs:
       preflight-reason: ${{ steps.preflight.outputs.reason }}
+      # 置き場の外の重い負荷の注意 (赤にはしない・#3633)。名前 (| 区切り) と詳細の 1 行
+      preflight-notice: ${{ steps.preflight.outputs.notice }}
+      preflight-notice-detail: ${{ steps.preflight.outputs.notice-detail }}
     steps:
       - uses: actions/checkout@v7
       # 検査を走らせられる環境かを先に数秒で見る (#2588)。表の GUI セッションが替わると
@@ -243,6 +246,60 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REASON: ${{ needs.render.outputs.preflight-reason }}
         run: bash scripts/report-runner-environment.sh "$REASON"
+
+  # 前検査が置き場の外の重い負荷を注意で名乗った回の、続いた回数の数え (#3633)。注意は赤にしない
+  # ので render は緑のまま (success) 来る。**数えと書き込みは別の job** — 数えは前の run の記録を
+  # 読む (actions: read・checks: read) だけで、書き込み (render-notice-report・issues: write) は
+  # 記録を読む権限を持たない (actions: read を持つのは読むだけの job、の決まりを崩さない)。
+  # 数えは前の run の annotation から読み戻すので、状態を置く場所は無い
+  render-notice-count:
+    needs: render
+    if: ${{ !cancelled() && contains(fromJSON('["success", "failure"]'), needs.render.result) && needs.render.outputs.preflight-notice != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout
+      actions: read # 前の run の render の job を引く
+      checks: read # 前の run の annotation (注意の名前) を読む
+    outputs:
+      due: ${{ steps.count.outputs.due }}
+      unreadable: ${{ steps.count.outputs.unreadable }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: count
+        # 名前は環境変数で渡す (引数だと `-` で始まるプロセス名を選択肢と読む・#3633 の反証)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTICE: ${{ needs.render.outputs.preflight-notice }}
+        run: bash scripts/count-runner-notice.sh
+
+  # 同じプロセス名の注意が N 回以上続いた回に、注意の Issue へ続き 1 つにつき 1 度だけ追記する (#3633)。
+  # 「既に書いたか」は注意の Issue の印から読む (scripts/report-runner-notice.sh の冒頭)。
+  # 赤の回の Issue (render-environment-report) とは題も本文も別。
+  # **concurrency で直列にする**: runner 2 本の並行で、同じ続きを数えた 2 本が互いの印を見落とさない
+  # ように。待たせるだけで、走っている job は切らない。render の job と workflow 全体には掛けない。
+  # 待ちに 2 本目が来ると先の待ちは GitHub に打ち切られるが、後の 1 本も同じ続きを数えていれば
+  # (印が無いので) 書く。ちょうど N 回で終わる続きの書き込みが打ち切られると、その名前は書かれない
+  # (既知の限界。書き込みは数秒で、その間に別の 2 本が終わったときだけ。render の結論は変わらない)
+  render-notice-report:
+    needs: [render, render-notice-count]
+    if: ${{ !cancelled() && needs.render-notice-count.outputs.due != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: render-notice-report
+      cancel-in-progress: false
+    permissions:
+      contents: read # checkout
+      issues: write # 注意の起票・追記 (#3633)
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          DUE: ${{ needs.render-notice-count.outputs.due }}
+          DETAIL: ${{ needs.render.outputs.preflight-notice-detail }}
+          UNREADABLE: ${{ needs.render-notice-count.outputs.unreadable }}
+        run: bash scripts/report-runner-notice.sh
 
   render-pr:
     needs: render-turn
