@@ -134,8 +134,8 @@ struct WatchRebuildRestartTests {
         #expect(record["requested"] as? String == "rebuild")
     }
 
-    @Test("読みの最中に頼んだ作り直しは、その読みが拾った保存より後の出来事で、頼みを読んだ時点の役で作り直す")
-    func aRebuildAskedDuringAReadOvertakesTheSaveItPicksUp() async throws {
+    @Test("読みの最中に試聴へ入って頼んだ作り直しは、その読みが拾った本番の保存を消さず、本番・試聴の順に 2 回作り直す")
+    func aRebuildAskedDuringAReadKeepsTheSaveItPicksUp() async throws {
         let harness = try Harness()
         let production = try #require(await harness.save())
         // 本番のまま保存 s2 を読み始め、その読みの最中に試聴へ入ってから作り直しを頼む
@@ -144,15 +144,189 @@ struct WatchRebuildRestartTests {
         #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
         harness.releaseStamp()
         await reading.value
-        // 頼みが後なので、s2 は頼みを読んだ時点の役 (試聴) で 1 回作り直す。本番は動かない
-        let started = try #require(harness.gens.last)
-        #expect(started !== production)
-        #expect(harness.session.isAuditionGeneration(pid: started.processIdentifier))
-        #expect(harness.session.child === production && production.isRunning)
+        // 読みを始めたのは入る前なので s2 は本番の版 (#3796)。頼みは試聴の中なので、続けて試聴の版を 1 回 (役の違う項目は
+        // 互いを消さない・反証 1)
+        let productionS2 = try #require(harness.session.child)
+        #expect(productionS2 !== production)
+        await harness.session.generationPromoted(pid: productionS2.processIdentifier)
+        for _ in 0..<2 { await harness.beat() }
+        let audition = try #require(harness.session.auditionChild)
+        #expect(harness.session.isAuditionGeneration(pid: audition.processIdentifier))
+        #expect(harness.session.child === productionS2 && productionS2.isRunning)
+        #expect(harness.events == ["build", "launch", "build", "launch", "build", "launch"])
         let record = try statusObject(harness)
         #expect(record["audition"] as? Bool == true)
         #expect(record["requested"] as? String == "rebuild")
         #expect(record["stamp"] as? String == "s2")
+    }
+
+    // MARK: - 役ごと・頼みごとの控え (反証 1・2・3)
+
+    @Test("本番の作り直しの最中に読んだ本番の保存は、その後に試聴で頼んだ作り直しに役を奪われない (反証 1)")
+    func aProductionSaveIsNotTakenOverByALaterAuditionRebuild() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        let building = try await harness.holdBuild()  // s2 (本番)
+        harness.placeSave()
+        await harness.beat()  // s3 を本番の役で読む
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        harness.releaseRebuild()
+        await building.value
+        // s3 は本番の版として作られ、本番の子になる。頼みは試聴の版として、その後に作られる (本番が乗り換えを待つ間は保留)
+        for _ in 0..<2 { await harness.beat() }
+        #expect(harness.rebuilds == 4, "s1・s2・s3 (本番)・s3 (試聴の頼み)")
+        let productionS3 = try #require(harness.session.child)
+        await harness.session.generationPromoted(pid: productionS3.processIdentifier)
+        await harness.beat()
+        let audition = try #require(harness.session.auditionChild)
+        #expect(audition !== productionS3 && audition.isRunning)
+        #expect(try statusObject(harness)["requested"] as? String == "rebuild")
+        let report = try await harness.ask("leave")
+        #expect((report["production"] as? [String: Any])?["stamp"] as? String == "s3", "\(report)")
+        #expect(productionS3.isRunning)
+    }
+
+    @Test("試聴で読んだ保存を控えたまま本番の作り直しの最中に出て、本番で頼んだ作り直しは、捨てたことを名乗ってから作る (反証 1 の逆)")
+    func anAuditionSaveIsDroppedWithANoticeBeforeTheProductionRebuild() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        let building = try await harness.holdBuild()  // s2 (本番)
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        harness.placeSave()
+        await harness.beat()  // s3 を試聴の役で読む
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        harness.releaseRebuild()
+        await building.value
+        for _ in 0..<3 { await harness.beat() }
+        let dropped = try #require(harness.previewLines.firstIndex(of: WatchCommand.auditionDiscardedLine(productionRunning: true)))
+        #expect(harness.rebuilds == 3, "s1・s2・頼まれた本番の作り直し")
+        #expect(try statusObject(harness)["requested"] as? String == "rebuild")
+        #expect(try statusObject(harness)["audition"] == nil)
+        #expect(dropped < harness.previewLines.count)
+    }
+
+    @Test("本番で頼んだ作り直しを控えている間に、試聴の中の保存が中身を変えたら、頼みは捨てて名乗り、本番には出さない (反証 2・Q1 の B)")
+    func aProductionRebuildIsDroppedWithANoticeWhenAnAuditionSaveChangesTheSource() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        let building = try await harness.holdBuild()  // s2 (本番)
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        harness.placeSave()
+        await harness.beat()  // s3 を試聴の役で読む
+        #expect(harness.previewLines.last == WatchSession.rebuildDroppedLine(audition: false))
+        harness.releaseRebuild()
+        await building.value
+        let productionS2 = try #require(harness.session.child)
+        await harness.session.generationPromoted(pid: productionS2.processIdentifier)
+        for _ in 0..<2 { await harness.beat() }
+        #expect(harness.session.child === productionS2, "試聴の中で保存した版が本番に出た")
+        #expect(harness.rebuilds == 3, "s1・s2・s3 (試聴)")
+        #expect(try statusObject(harness)["audition"] as? Bool == true)
+    }
+
+    @Test("作り直しの最中に頼んだ作り直しと起こし直しは、頼んだ順に行う (反証 3)", arguments: [true, false])
+    func rebuildAndRestartRunInTheOrderAsked(rebuildFirst: Bool) async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        let building = try await harness.holdBuild()  // s2
+        for action in rebuildFirst ? ["rebuild", "restart"] : ["restart", "rebuild"] {
+            #expect(try await harness.ask(action)["accepted"] as? Bool == true)
+        }
+        harness.releaseRebuild()
+        await building.value
+        for _ in 0..<3 { await harness.beat() }
+        // s1 (build・launch)・s2 (build・launch) の後
+        let after = Array(harness.events.dropFirst(4))
+        #expect(after == (rebuildFirst ? ["build", "launch", "launch"] : ["launch", "build", "launch"]), "\(harness.events)")
+    }
+
+    // MARK: - 置き場の版 (反証 7)
+
+    @Test("作り直しが通らなかった後は、置き場の版が分からないので、起こし直しを notBuilt で断る (反証 7)")
+    func aRestartAfterAFailedBuildIsDeclinedWithNotBuilt() async throws {
+        let harness = try Harness()
+        let running = try #require(await harness.save())
+        harness.buildFails = true
+        await harness.save()
+        harness.buildFails = false
+        let report = try await harness.ask("restart")
+        #expect(report["accepted"] as? Bool == false)
+        #expect(report["reason"] as? String == "notBuilt")
+        #expect(harness.gens.count == 1 && running.isRunning)
+    }
+
+    // MARK: - 起こし直した子が最初の絵の前に落ちる (反証 6)
+
+    @Test("起こし直した子が最初の絵の前に落ちたら、記録を書き換えず、起こし直しの失敗と名乗り、時計の場所を戻す (反証 6・5)")
+    func aRestartedChildFailingBeforeItsFirstFrameKeepsTheRecord() async throws {
+        let harness = try Harness()
+        let first = try #require(await harness.save())
+        harness.session.generationShown(pid: first.processIdentifier)
+        let recordBefore = try status(harness)
+        #expect(try await harness.ask("restart")["accepted"] as? Bool == true)
+        let restarted = try #require(harness.gens.last)
+        #expect(restarted !== first)
+        harness.tell(restarted, "fail")
+        await harness.beat()
+        #expect(try status(harness) == recordBefore, "起こし直した子の失敗で、作り直しの記録を書き換えた")
+        let line = try #require(harness.previewLines.last)
+        #expect(line.hasPrefix("Could not restart it: "), "\(line)")
+        #expect(!harness.previewLines.contains { $0.hasPrefix("Rebuilt, but could not start") })
+        #expect(harness.session.child === first && first.isRunning, "前の版が走り続ける")
+        // 次の保存の子は、起こし直す前の時計の場所を受ける
+        try #require(await harness.save())
+        #expect(harness.clocks == [0, 1, 0])
+    }
+
+    // MARK: - 時計の場所 (反証 4・5)
+
+    @Test("試聴で起こし直して出た後の本番の保存は、本番の時計の場所を受ける (反証 4 (a))")
+    func aProductionSaveAfterAnAuditionRestartReadsTheProductionClock() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        try #require(await harness.save())
+        #expect(try await harness.ask("restart")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        try #require(await harness.save())
+        #expect(harness.clocks == [0, 0, 1, 0], "本番 s1・試聴 s2・起こし直した試聴・本番 s3")
+    }
+
+    @Test("試聴中に本番を起こし直した後の試聴の作り直しは、試聴の子の時計の場所を受ける (反証 4 (b))")
+    func anAuditionBuildAfterAProductionRestartReadsTheAuditionClock() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        // 本番の作り直しの最中に本番で起こし直しを頼み、済む前に試聴へ入る (起こし直しは本番の子に当たる)
+        let building = try await harness.holdBuild()
+        #expect(try await harness.ask("restart")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        harness.releaseRebuild()
+        await building.value
+        await harness.beat()
+        let restarted = try #require(harness.session.child)
+        await harness.session.generationPromoted(pid: restarted.processIdentifier)
+        try #require(await harness.save())
+        // 本番 s1・本番 s2・起こし直した本番・試聴 s3
+        #expect(harness.clocks == [0, 0, 1, 0], "\(harness.clocks)")
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        // 出た後の本番の保存は、起こし直した本番の場所
+        try #require(await harness.save())
+        #expect(harness.clocks.last == 1)
+    }
+
+    @Test("起こせなかった起こし直しの後の保存は、前と同じ時計の場所を受ける (反証 5)")
+    func aSaveAfterAFailedRestartKeepsTheClock() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        harness.launchFails = true
+        #expect(try await harness.ask("restart")["accepted"] as? Bool == true)
+        #expect(harness.previewLines.last?.hasPrefix("Could not restart it: ") == true)
+        harness.launchFails = false
+        try #require(await harness.save())
+        #expect(harness.clocks == [0, 0])
     }
 
     // MARK: - 起こし直す (完了条件 2・3)
@@ -171,7 +345,7 @@ struct WatchRebuildRestartTests {
         #expect(restarted !== first)
         #expect(harness.session.child === restarted)
         #expect(try status(harness) == recordBefore, "起こし直しで記録を書いた")
-        #expect(harness.clockRenewals == 1)
+        #expect(harness.clocks == [0, 1], "起こし直した子だけが新しい時計の場所を受ける")
         #expect(harness.previewLines.last == WatchSession.restartLine(.restarted(audition: false)))
         // 新しい子が映ったら、前の子は畳まれる
         await harness.session.generationPromoted(pid: restarted.processIdentifier)
@@ -197,7 +371,7 @@ struct WatchRebuildRestartTests {
         #expect(harness.session.auditionChild === restarted)
         #expect(harness.session.previewFollowing == restarted.processIdentifier)
         #expect(harness.session.child === production && production.isRunning)
-        #expect(harness.clockRenewals == 1)
+        #expect(harness.clocks == [0, 0, 1], "試聴の子は本番の場所を共有し、起こし直した試聴の子だけが新しい場所")
         #expect(harness.previewLines.last == WatchSession.restartLine(.restarted(audition: true)))
     }
 
@@ -233,7 +407,7 @@ struct WatchRebuildRestartTests {
         #expect(report["reason"] as? String == "notBuilt")
         #expect(harness.gens.count == launched)
         #expect(harness.session.child === production && production.isRunning)
-        #expect(harness.clockRenewals == 0)
+        #expect(harness.clocks.allSatisfy { $0 == 0 })
         #expect(harness.previewLines.last == WatchSession.restartLine(.declined(.notBuilt)))
         // 作り直す要求なら、いまのソースで本番を作り直せる
         #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
@@ -275,22 +449,23 @@ struct WatchRebuildRestartTests {
         #expect(harness.gens.count == launched)
         #expect(harness.session.child === production && production.isRunning)
         #expect(harness.previewLines.contains(WatchSession.restartLine(.dropped)))
-        #expect(harness.clockRenewals == 0)
+        #expect(harness.clocks.allSatisfy { $0 == 0 })
     }
 
     // MARK: - 時計の場所 (完了条件 2 の `--keep-time`)
 
-    @Test("時計を渡す場所は、替えるたびに同じディレクトリの別の名前になり、旗の無い見張りでは替えない")
-    func theClockPlaceRenewsWithinItsDirectory() {
+    @Test("時計を渡す場所は、番号ごとに同じディレクトリの別の名前になり、旗の無い見張りでは渡さない")
+    func theClockPlaceNamesEachIndexWithinItsDirectory() {
         let place = WatchSession.Hooks.ClockPlace("/tmp/mokume-keep-time-1/clock")
         #expect(place.path == "/tmp/mokume-keep-time-1/clock")
-        place.renew()
-        let first = place.path
-        place.renew()
-        #expect(first == "/tmp/mokume-keep-time-1/clock-1")
+        place.select(1)
+        #expect(place.path == "/tmp/mokume-keep-time-1/clock-1")
+        place.select(2)
         #expect(place.path == "/tmp/mokume-keep-time-1/clock-2")
+        place.select(0)
+        #expect(place.path == "/tmp/mokume-keep-time-1/clock")
         let none = WatchSession.Hooks.ClockPlace(nil)
-        none.renew()
+        none.select(1)
         #expect(none.path == nil)
     }
 }

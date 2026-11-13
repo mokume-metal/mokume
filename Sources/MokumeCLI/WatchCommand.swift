@@ -179,7 +179,9 @@ enum WatchCommand {
         // 二か所で別のことを言う形にはならない (#705 の未決だったところ)
         var viewer: Viewer?
         session.willRebuild = { initial in
-            let line = initial ? startingLine : rebuildingLine
+            // 頼まれた作り直しは、頼まれて作り直していると言う (#3428)。保存による作り直しの行は変えない
+            let line =
+                initial ? startingLine : session.rebuildingRequested ? requestedRebuildingLine : rebuildingLine
             say(line)
             // **作り直しが始まったら、前の子の 1 枚目を待たない。** 遅れて来た合図がこの行を畳む
             viewer?.firstFrame.settle()
@@ -822,7 +824,15 @@ enum WatchCommand {
         // **書き残した入力の続きを、管に空きができたら書き切る** (`WatchSession.send(_:)`)
         session.flushPendingInput()
         if let departure = session.departed() {
-            if departure.failedToStart, let report = departure.report {
+            if departure.failedToStart, let reason = departure.restartFailure {
+                // **起こし直した子が最初の絵の前に落ちた回は、起こし直しの失敗として名乗る** (#3428)。記録は書いていない
+                // (作り直していない)。前の版を残せなかった回だけ畳む
+                if !departure.keptPrevious { await retire(after: session) }
+                let line = WatchSession.restartLine(.failed(reason))
+                say(line)
+                viewer?.firstFrame.settle()
+                showInPreview(line, false)
+            } else if departure.failedToStart, let report = departure.report {
                 // **最初の絵を出す前に失敗で終わった子は、起こせなかった回である** (#3172)。作り直しが通らなかった
                 // 回と同じ言葉で言う。前の版を残せた回は、そのまま走らせ続ける — 畳むのは、残せなかった回だけ
                 if !departure.keptPrevious { await retire(after: session) }
@@ -846,8 +856,10 @@ enum WatchCommand {
         // 名乗るだけで、作品のウィンドウは本番の版のまま回り続け、プレビューは最後の絵のまま残る
         if let departure = session.auditionDeparted() {
             let lines =
-                departure.failedToStart && departure.report != nil
-                ? failedStartLines(departure) : [auditionDepartedLine(departure)]
+                departure.failedToStart && departure.restartFailure != nil
+                ? [WatchSession.restartLine(.failed(departure.restartFailure ?? ""))]
+                : departure.failedToStart && departure.report != nil
+                    ? failedStartLines(departure) : [auditionDepartedLine(departure)]
             for line in lines { say(line) }
             viewer?.firstFrame.settle()
             if departure.failedToStart, let report = departure.report {
@@ -907,12 +919,34 @@ enum WatchCommand {
             viewer?.firstFrame.settle()
             showInPreview(line, false)
         }
+        // **後から役の違う保存が中身を変えたので捨てた作り直す要求は名乗る** (#3428)。受けた頼みを黙って消さない
+        for audition in session.takeDroppedRebuilds() where !session.stopRequested {
+            let line = WatchSession.rebuildDroppedLine(audition: audition)
+            say(line)
+            viewer?.firstFrame.settle()
+            showInPreview(line, false)
+        }
         // **起こし直す要求を行った・行えなかった回は名乗る** (#3428)。拍の頭で行うので、上の結果とは別に見る
-        if let restart = session.takeRestart(), !session.stopRequested {
+        let restarts = session.takeRestarts()
+        for restart in restarts where !session.stopRequested {
             let line = WatchSession.restartLine(restart)
             say(line)
             viewer?.firstFrame.settle()
             showInPreview(line, false)
+        }
+        // 起こし直しで子を止めるのに期限が掛かったことも名乗る (作り直しの差し替えと同じ・#732)
+        let stoppedForRestart = restarts.contains {
+            switch $0 {
+            case .restarted, .failed: true
+            case .dropped, .declined: false
+            }
+        }
+        if stoppedForRestart, !session.stopRequested {
+            switch session.lastStop {
+            case .killed: say(killedLine)
+            case .abandoned(let pid): say(abandonedLine(pid: pid))
+            default: break
+            }
         }
         return true
     }
@@ -1334,6 +1368,10 @@ enum WatchCommand {
 
     /// 変化を見つけて作り直すときの行。
     static let rebuildingLine = "Change spotted — rebuilding…"
+
+    /// 作り直す要求 (`rebuild`) で作り直すときの行 ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。保存で気付いた
+    /// 回の行 (``rebuildingLine``) と言い分ける — 中身を変えていないのに「変化を見つけた」と言わない。
+    static let requestedRebuildingLine = "Rebuild asked for — rebuilding…"
 
     /// 見張りが自分の行を書く。
     ///

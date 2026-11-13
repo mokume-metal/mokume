@@ -66,13 +66,12 @@ final class WatchSession {
         /// 側と同じ 1 つを使う ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
         /// 既定は「何も走っていない」 — 替え玉の作り直しは子を起こさない。
         var stopRebuild: () -> Process? = { nil }
-        /// 作り直しをまたいで作者の時計を渡すファイル (`--keep-time`) を、次に起こす子から新しい場所へ替える
-        /// ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+        /// 次に起こす子へ渡す、作者の時計のファイル (`--keep-time`) の場所を番号で選ぶ
+        /// ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。`0` は旗の場所、`n` は同じディレクトリの `<旗の場所>-n`。
         ///
-        /// **起こし直しは時刻を 0 から始める** (`--keep-time` で起こした見張りでも)。前の世代は止め終えるまで古い場所へ
-        /// 書き続けるので、ファイルを消すだけでは、消した後に前の世代が書いた秒を新しい子が読む。場所ごと替えれば競らない。
-        /// 後の作り直しは新しい場所を渡す (起こし直した子の時計を運ぶ)。旗の無い見張りでは何もしない。
-        var renewClock: () -> Void = {}
+        /// **どの子にどの番号を渡すかは ``WatchSession`` が決める** (本番と試聴の場所・起こし直し)。起こす口 (``launch``) の
+        /// 直前に呼ぶ。旗の無い見張りでは何もしない。
+        var selectClock: (Int) -> Void = { _ in }
 
         /// 呼ばれ方から、導き手ごと組む。
         ///
@@ -112,7 +111,7 @@ final class WatchSession {
         ) -> Hooks {
             // 起こした子の数。**作り直しは記録の切れ目**で、世代ごとに別の行き先を渡す (#3570)
             let generations = recording.map { RecordGenerations(destination: $0) }
-            // 時計を渡す場所。起こし直しのたびに新しい場所へ替える (``renewClock``・#3428)
+            // 時計を渡す場所。起こす子ごとに見張りが選ぶ (``selectClock``・#3428)
             let clock = ClockPlace(keepTime)
             return Hooks(
                 rebuild: { directory throws(CommandFailure) in
@@ -190,16 +189,15 @@ final class WatchSession {
                     }.value
                 },
                 stopRebuild: { running.stop() },
-                renewClock: { clock.renew() })
+                selectClock: { clock.select($0) })
         }
 
-        /// 作者の時計を渡すファイルの、いまの場所 (``renewClock``)。
+        /// 作者の時計を渡すファイルの、次に起こす子へ渡す場所 (``selectClock``)。
         ///
         /// **同じディレクトリの中で名前を替える** (`clock` → `clock-1` → `clock-2` …)。見張りが終わるときは
         /// ディレクトリごと消す (``WatchCommand/removeKeepTimeFiles(_:)``) ので、替えた場所も置いていかない。
         final class ClockPlace {
             private let original: String?
-            private var renewals = 0
             /// 次に起こす子へ渡す場所。旗の無い見張りでは `nil`。
             private(set) var path: String?
 
@@ -208,10 +206,9 @@ final class WatchSession {
                 self.path = path
             }
 
-            func renew() {
-                guard let original else { return }
-                renewals += 1
-                path = original + "-\(renewals)"
+            /// 番号 `index` の場所を選ぶ。`0` は旗の場所。
+            func select(_ index: Int) {
+                path = original.map { index == 0 ? $0 : $0 + "-\(index)" }
             }
         }
     }
@@ -258,6 +255,10 @@ final class WatchSession {
         /// 起動できなかった回の記録 (`failedToStart` のときだけ)。**区画に書いたのと同じもの**で、端末とプレビューの
         /// 言葉はここから組む。手前に作り直しの失敗の記録が挟まっていたときは書かないが、言葉の材料としては持つ。
         var report: BuildReport?
+        /// 起こし直す要求 (`restart`) で起こした子が最初の絵の前に終わった回の理由 (`failedToStart` のときだけ・
+        /// [#3428](https://github.com/mokume-metal/mokume/issues/3428))。**この回は記録を書かない** (``report`` は `nil`) —
+        /// 作り直していないので、区画 `build` の記録は前の作り直しのものである。端末とプレビューは起こし直しの失敗として名乗る。
+        var restartFailure: String?
     }
 
     /// 止まるのを待つ上限 (秒)。
@@ -429,7 +430,8 @@ final class WatchSession {
     /// (同じ版を 2 度作り直さない・#3796)。
     private var rebuildingStamp: String?
     /// 進行中の作り直しが、作り直す要求 (`rebuild`) で起きたか ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
-    private var rebuildingRequested = false
+    /// 口の側が、作り直しの始まりの行 (``willRebuild``) を頼まれた作り直しの言葉にするのに読む。
+    private(set) var rebuildingRequested = false
 
     /// 出る要求が「出た時点のソースを本番に作り直す」と決めた試聴の番号のうち、最も新しいもの (``Left/rebuilds``・
     /// ``Left/starts``)。**この番号までの試聴で読んだ版は、本番の版として作る** — 進行中の作り直しは本番の版として引き継ぎ、
@@ -662,118 +664,164 @@ final class WatchSession {
     ///
     /// **保存の役 (本番の版か試聴の版か) は、その保存を拾った読みを始めた時点で決める** ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
     /// 読みの最中・作り直しの最中に試聴を出入りしても、役は変わらない (``readingRole``)。作り直しの最中に読んだ保存は、
-    /// 取りかかれないので役を控え (``heldRead``)、作り直しが済んだ後の拍が控えた役のまま取りかかる。控えた役の試聴が
+    /// 取りかかれないので役を控え (``pending``)、作り直しが済んだ後の拍が控えた役のまま取りかかる。控えた役の試聴が
     /// もう終わっていれば、その版は捨てて名乗る (本番にしない・``discardAudition()``)。ただし出る要求が本番の版へ寄せた
     /// 試聴の版は、本番の版として取りかかる (``effectiveRole(_:)``)。
     ///
-    /// **作り直す要求 (`rebuild`) は「中身の変わらない保存」として同じ経路に乗る** ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
-    /// 役は頼みを読んだ時点の ``readingRole`` で、中身が変わっていなくても 1 回作り直す。控えは 1 枠で、後から読んだもの
-    /// (中身を変えた保存か、頼み) が前のものを置き換える — 保存の時刻はそれを拾った読みを始めた時点、頼みの時刻は頼みを
-    /// 読んだ時点で比べる。**起こし直す要求 (`restart`) は拍の頭で行う** (作り直しの最中なら済んでから・``performRestart(_:)``)。
+    /// **作り直す要求 (`rebuild`)・起こし直す要求 (`restart`) も、同じ控えの列に頼みを読んだ順で並ぶ** ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+    /// 役は頼みを読んだ時点の ``readingRole``。控えは読んだ・頼みを読んだ順に 1 拍に 1 つずつ行い、**役の違う項目は互いを
+    /// 消さない** (``Pending``)。起こし直しは読みより先に行う (作り直しの最中なら済んでから・``performRestart(_:)``)。
     @discardableResult
     func tick() async -> BuildReport? {
         guard !isStamping else { return nil }
-        // **起こし直しは、作り直し・起こし直しの最中でなければ、読みより先に行う** (#3428)。1 拍に 1 つ
-        if let restart = pendingRestart, !isRebuilding, !isRestarting {
-            pendingRestart = nil
-            await performRestart(restart)
-            return nil
-        }
-        let role = readingRole
-        readCount += 1
-        let read = readCount
-        let stamp = await takeStamp()
-        guard !stopRequested else { return nil }
-        // **作り直す要求を、この読みが拾った保存と並べる** (#3428)。読みを始めた後に読んだ頼みは、この読みが拾った保存より
-        // 後なので、保存を追い越す。読みを始める前に読んだ頼みは、この読みが中身の変わった保存を拾えば、保存に追い越される
-        if let request = requestedRebuild {
-            requestedRebuild = nil
-            let changed = stamp != lastStamp && stamp != unadoptedStamp && stamp != heldRead?.stamp
-            if request.readsBefore >= read || !changed {
-                heldRead = HeldRead(stamp: stamp, role: request.role, requested: true)
-            } else {
-                heldRead = HeldRead(stamp: stamp, role: role)
+        if !isRebuilding, !isRestarting {
+            // **試聴の中で頼んだ起こし直しの試聴が終わっていれば、捨てて名乗る** (#3428 の決定 2)。行う順を待たない
+            dropEndedRestarts()
+            // **控えの先頭が起こし直しなら、読みより先に行う** (#3428)。1 拍に 1 つ。試聴の子を起こす起こし直しは、本番が
+            // 乗り換えを待つ間は待つ (作り直しと同じ門・``isProductionSettling``)。待つ間も後ろの項目に追い越させない
+            if let first = pending.first, first.kind == .restart, first.role == nil || !isProductionSettling {
+                pending.removeFirst()
+                await performRestart(first)
+                return nil
             }
         }
-        // **頼まれた作り直しは、中身が変わっていなくても取りかかる** — 下の「変わっていない」の見方を通さない
-        let asked = heldRead.map { $0.requested && $0.stamp == stamp } ?? false
-        // **試聴を出た時点のソースは、本番の版へ作り直さない** (``restoreProductionRecord()``)。出た後のソースの
-        // 世代は、本番の版と違う (試聴の版のまま) が、出る要求は本番を動かさない。ソースが変わっても、印を下ろすのは
-        // 作り直しに取りかかるとき (下) か、本番の版へ戻したときである — 試聴の版を、取りかかる前に捨てると決めたら、
-        // その版へ印を寄せる (#3796)
-        // **控えた版・作り直している版 (または本番の版) へ戻ったら、控えた読みは捨てる** — 戻った先は取りかかる必要が無く、
-        // 後でまた変えた中身は、その時の読みが役を決める
-        if !asked, let held = unadoptedStamp {
+        let role = readingRole
+        let order = nextOrder()
+        let stamp = await takeStamp()
+        guard !stopRequested else { return nil }
+        noteRead(stamp, role: role, order: order)
+        // 作り直し・起こし直しの最中は控えたまま (#3428)
+        guard !isRebuilding, !isRestarting else { return nil }
+        dropEndedRestarts()
+        // **試聴の中で読んだ版・頼んだ作り直しの試聴が、取りかかる前に終わった。** その版は捨てて名乗り、控えを寄せる — 次の拍が
+        // 本番へ作り直さない。出る要求が本番の版へ寄せた試聴の版は、本番の版として取りかかる (``effectiveRole(_:)``)
+        if pending.contains(where: { $0.kind != .restart && hasEnded($0.role) }) {
+            return discardAudition()
+        }
+        guard let first = pending.first, first.kind != .restart else { return nil }
+        // **続けて並ぶ同じ役の作り直し (保存・作り直す要求) は、1 回にまとめる** — 置き場の中身は 1 つなので、続けて作っても同じ版
+        // になる。どれか 1 つでも頼みなら、記録は頼まれた作り直しと名乗る
+        let group = pending.prefix(while: {
+            $0.kind != .restart && effectiveRole($0.role) == effectiveRole(first.role)
+        })
+        let requested = group.contains { $0.kind == .rebuild }
+        pending.removeFirst(group.count)
+        unadoptedStamp = nil
+        if noticedAt == nil { noticedAt = hooks.now() }
+        return await rebuildAndReplace(stamp: stamp, audition: first.role, requested: requested)
+    }
+
+    /// 世代を読んだ結果を、控えの列に写す。
+    ///
+    /// - 出た時点のソースのまま (``unadoptedStamp``)・最後に作り直した版 (``lastStamp``) へ戻ったら、控えた保存は捨てる (#3796)
+    /// - 中身が変わったら、その保存を拾った読みの役で控える。**前の保存には役を問わず代わる** — 置き場の中身は 1 つしか無く、
+    ///   前の中身はもう作れない (#3796 の 1 枠)。同じ中身が続く間は、それを拾った読みの役を保つ
+    /// - **その保存より前に頼んだ、役の違う作り直しは、捨てて名乗る** (#3428)。行えば、別の役で保存した中身をその役に出す —
+    ///   本番で頼んだ作り直しが、試聴の中で保存した版を作品のウィンドウに出す。終わった試聴の頼みは、ここでは捨てない
+    ///   (``discardAudition()`` が名乗る)
+    private func noteRead(_ stamp: String?, role: Int?, order: Int) {
+        if let held = unadoptedStamp {
             if stamp == held {
-                heldRead = nil
-                return nil
+                removeSave()
+                return
             }
             if stamp == lastStamp { unadoptedStamp = nil }
         }
-        guard asked || stamp != lastStamp else {
-            heldRead = nil
-            return nil
+        guard stamp != lastStamp else {
+            removeSave()
+            return
         }
         if noticedAt == nil { noticedAt = hooks.now() }
-        // **同じ中身が続く間は、それを拾った読みの役を保つ。** 中身がさらに変わったら、その保存を拾った読みの役に替える
-        // (役は保存ごと。前の中身へ戻した保存も、戻した保存を拾った読みが役を決める)
-        if heldRead?.stamp != stamp { heldRead = HeldRead(stamp: stamp, role: role) }
-        // 起こし直しの最中も、作り直しの最中と同じく控える (#3428)
-        guard !isRebuilding, !isRestarting else { return nil }
-        let held = heldRead ?? HeldRead(stamp: stamp, role: role)
-        heldRead = nil
-        // **試聴の中で読んだ版の試聴が、取りかかる前に終わった。** その版は捨てて名乗り、控えを寄せる — 次の拍が本番へ
-        // 作り直さない。出る要求が本番の版へ寄せた試聴の版は、本番の版として取りかかる (``effectiveRole(_:)``)
-        if let readRole = effectiveRole(held.role), readRole != readingRole {
-            unadoptedStamp = stamp
-            noticedAt = nil
-            return discardAudition()
+        if case .save(let held)? = pending.first(where: \.isSave)?.kind, held == stamp { return }
+        removeSave()
+        let saveRole = effectiveRole(role)
+        let superseded = pending.filter {
+            $0.kind == .rebuild && $0.order < order && !hasEnded($0.role)
+                && effectiveRole($0.role) != saveRole
         }
-        unadoptedStamp = nil
-        return await rebuildAndReplace(stamp: stamp, audition: held.role, requested: held.requested)
+        if !superseded.isEmpty {
+            pending.removeAll { item in superseded.contains { $0.order == item.order } }
+            droppedRebuilds.append(contentsOf: superseded.map { $0.role != nil })
+        }
+        let index = pending.firstIndex { $0.order > order } ?? pending.endIndex
+        pending.insert(Pending(kind: .save(stamp), role: role, order: order), at: index)
     }
 
-    /// 作り直しの最中に読んだ保存 — 世代と、それを拾った読みの役 (``readingRole``)。作り直しの最中に読んだ保存の役を、
-    /// 取りかかるまで控える ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
+    /// 控えた保存を捨てる (名乗らない — 戻った先は取りかかる必要が無い)。
+    private func removeSave() {
+        pending.removeAll(where: \.isSave)
+    }
+
+    /// 役 `role` の項目の試聴が、もう終わったか。本番の項目・出る要求が本番の版へ寄せた試聴の項目は終わらない。
+    private func hasEnded(_ role: Int?) -> Bool {
+        effectiveRole(role).map { $0 != readingRole } ?? false
+    }
+
+    /// 試聴の中で頼んだ起こし直しのうち、その試聴が終わったものを捨てて名乗る (#3428 の決定 2)。
+    private func dropEndedRestarts() {
+        guard pending.contains(where: { $0.kind == .restart && $0.role.map { $0 != readingRole } == true })
+        else { return }
+        pending.removeAll { $0.kind == .restart && $0.role.map { $0 != readingRole } == true }
+        restartOutcomes.append(.dropped)
+    }
+
+    /// 控えの列の通し番号を 1 つ進める。世代の読みを始めた時点と、要求を読んだ時点が同じ並びに入る。
+    private func nextOrder() -> Int {
+        orderCount += 1
+        return orderCount
+    }
+
+    /// まだ取りかかっていない出来事 — 控えの列の 1 項目 ([#3796](https://github.com/mokume-metal/mokume/issues/3796)・
+    /// [#3428](https://github.com/mokume-metal/mokume/issues/3428))。
     ///
-    /// 作り直す要求 (`rebuild`) もここに控える (`requested`・[#3428](https://github.com/mokume-metal/mokume/issues/3428))。
-    /// 控えは 1 枠なので、作り直しの最中に何度頼んでも、済んだ後の作り直しは 1 回である。
-    private struct HeldRead {
-        let stamp: String?
+    /// | 種類 | 役 | 捨てる時 |
+    /// | --- | --- | --- |
+    /// | 保存 (中身の変わった読み) | 拾った読みを始めた時点 | より新しい中身の保存 (役を問わず)・前の版へ戻した・その試聴が終わった (名乗る) |
+    /// | 作り直す要求 | 頼みを読んだ時点 | その試聴が終わった (名乗る)・後から役の違う保存が中身を変えた (名乗る) |
+    /// | 起こし直す要求 | 頼みを読んだ時点 | その試聴が終わった (名乗る)・行う時点で断る理由がある (名乗る) |
+    ///
+    /// **受けた頼みは黙って消えない。** 役の違う項目は互いを消さない (本番で読んだ保存の後に試聴で頼んだ作り直しは、本番の作り直しと
+    /// 試聴の作り直しの 2 回)。同じ役の中では、後から来た保存が前の保存に代わり、続けて頼んだ同じ頼みは 1 つにまとめる。
+    private struct Pending {
+        enum Kind: Equatable {
+            /// 中身の変わった読み。世代を持つ。
+            case save(String?)
+            case rebuild
+            case restart
+        }
+        let kind: Kind
         let role: Int?
-        var requested = false
-    }
-    private var heldRead: HeldRead?
+        /// 読みを始めた・頼みを読んだ通し番号 (``nextOrder()``)。列はこの順に並ぶ。
+        let order: Int
 
-    /// 世代の読みを始めた回数。作り直す要求と、読みが拾った保存の前後を比べる (#3428)。
-    private var readCount = 0
-
-    /// 読んだが、まだ拍が取りかかっていない作り直す要求 ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
-    private struct RebuildRequest {
-        /// 頼みを読んだ時点の役 (``readingRole``)。
-        let role: Int?
-        /// 頼みを読んだ時点までに始めた世代の読みの数 (``readCount``)。これより後に始めた読みが拾った保存は、頼みより後。
-        let readsBefore: Int
+        var isSave: Bool {
+            if case .save = kind { return true }
+            return false
+        }
     }
-    private var requestedRebuild: RebuildRequest?
-
-    /// 受けたが、まだ行っていない起こし直す要求 — 頼みを読んだ時点の役 (``readingRole``・[#3428](https://github.com/mokume-metal/mokume/issues/3428))。
-    /// 控えは 1 枠。
-    private struct RestartRequest {
-        let role: Int?
-    }
-    private var pendingRestart: RestartRequest?
+    private var pending: [Pending] = []
+    private var orderCount = 0
 
     /// 起こし直している最中か。**作り直しと重ねない** — 拍は読んだ保存を控え (``tick()``)、保留した試聴の子も起こさない。
     /// ``isRebuilding`` とは別の印にする — 出る要求はあれを「作り直しの最中に出た」 (``Left/building``) と読む。
     private var isRestarting = false
 
     /// 置き場に在る実行ファイルと、それを建てた作り直しの版 (ソースの世代) ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+    /// **分かっていなければ `nil`** で、起こし直す要求は ``WatchReport/Reason/notBuilt`` で断る。
     ///
     /// **本番の版も試聴の版も同じ置き場の同じ実行ファイルへ組む** ので、起こし直せるのは、最後に通った作り直しの版の子だけ
-    /// である。作り直しを始めると外し (置き場を書き換えている最中)、通って実行ファイルがあればその版を置き、通らなければ
-    /// 前の値へ戻す (通らなかった作り直しは置き場の実行ファイルを書き換えない — 組み立てで止まれば繋ぎに進まない)。
-    /// 捨てた試聴の版の作り直しも、通れば置き場を書き換えるので、その版を置く。
+    /// である。分かっているのは、最後の作り直しが通って実行ファイルがあり、その後に疑いが無いときだけ:
+    ///
+    /// | 出来事 | 置き場の版 |
+    /// | --- | --- |
+    /// | 見張りの起動の直後 (まだ作り直していない)・作り直しを始めた | 不明 |
+    /// | 通って実行ファイルがある (捨てる試聴の版でも) | その版 |
+    /// | 通らなかった・途中で止めた・実行ファイルが無い / 起こせない成果物 | 不明 |
+    /// | 起こすときに実行ファイルが消えていた | 不明 |
+    /// | 起こし直し (作り直さない) | そのまま |
+    ///
+    /// **通らなかった作り直しの後も不明にする** — SwiftPM は資材の束をコンパイルと別に組むので、コンパイルや繋ぎで止まっても
+    /// 置き場は新しくなりうる。前の値へ戻すと、古い実行ファイルと新しい資材の組み合わせを、名乗った版として起こす。
     private var built: (stamp: String?, executable: URL)?
 
     /// 最初の 1 回。変化を待たずに作って走らせる。
@@ -1048,6 +1096,11 @@ final class WatchSession {
         }
         departure.failedToStart = true
         departure.keptPrevious = restorePreviousGeneration(afterLosing: gone)
+        // **起こし直した子は、記録を書き換えない** (#3428 の決定 3)。作り直していないので、区画の記録は前の作り直しのもの
+        if let reason = restartFailed(gone, departure, note: note) {
+            departure.restartFailure = reason
+            return departure
+        }
         departure.report = recordFailedStart(of: gone, departure, note: note)
         return departure
     }
@@ -1137,16 +1190,7 @@ final class WatchSession {
     private func recordFailedStart(
         of gone: Process, _ departure: Departure, note: String?, forAudition: Bool = false
     ) -> BuildReport {
-        var reason = Self.failedStartReason(
-            tool: launchedTool ?? context.product ?? "sketch", place: directory.path,
-            departure: departure)
-        // **子の言葉の頭の行には、見分ける頭を付ける** — MCP サーバは、この行が有るときだけ「子自身の言葉」を案内する。
-        // 理由が改行で始まる子の言葉でも、頭の 1 行は最初の空でない行である
-        if let head = note?.split(whereSeparator: \.isNewline)
-            .map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty })
-        {
-            reason += "\n" + BuildReport.sketchReportedPrefix + head
-        }
+        let reason = failedStartText(departure, note: note)
         let account = note.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
         guard let last = forAudition ? lastReport : (isAuditioning ? productionReport : lastReport),
             last.ok, last.launched
@@ -1168,6 +1212,21 @@ final class WatchSession {
                 buildOutput: account.isEmpty ? last.output : account + "\n\n" + last.output,
                 stamp: last.stamp, configuration: last.configuration, timings: timings),
             audition: forAudition, requested: last.requested != nil)
+    }
+
+    /// 最初の絵の前に終わった子の理由の文 (``recordFailedStart(of:_:note:forAudition:)``・起こし直しの失敗の名乗り)。
+    private func failedStartText(_ departure: Departure, note: String?) -> String {
+        var reason = Self.failedStartReason(
+            tool: launchedTool ?? context.product ?? "sketch", place: directory.path,
+            departure: departure)
+        // **子の言葉の頭の行には、見分ける頭を付ける** — MCP サーバは、この行が有るときだけ「子自身の言葉」を案内する。
+        // 理由が改行で始まる子の言葉でも、頭の 1 行は最初の空でない行である
+        if let head = note?.split(whereSeparator: \.isNewline)
+            .map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty })
+        {
+            reason += "\n" + BuildReport.sketchReportedPrefix + head
+        }
+        return reason
     }
 
     /// 終わった子が自分で置いた、起動できなかった理由を読んで消す
@@ -1709,8 +1768,7 @@ final class WatchSession {
         rebuildStartedAt = buildStarted
         let rebuilt: RunCommand.Rebuilt
         isBuilding = true
-        // **置き場の実行ファイルは、作り直している間は誰の版とも言えない** (#3428)。通らなければ前の値へ戻す
-        let builtBefore = built
+        // **置き場の実行ファイルは、作り直している間は誰の版とも言えない** (#3428)。通らなければ不明のまま (``built``)
         built = nil
         do throws(CommandFailure) {
             rebuilt = try await hooks.rebuild(directory)
@@ -1724,11 +1782,10 @@ final class WatchSession {
         }
         let buildMs = (hooks.now() - buildStarted) * 1000
         isBuilding = false
-        // 通ったなら、置き場の実行ファイルはこの版である — 捨てる試聴の版でも (起こし直す要求が見る・#3428)
-        if rebuilt.status == 0 {
+        // 通ったなら、置き場の実行ファイルはこの版である — 捨てる試聴の版でも (起こし直す要求が見る・#3428)。通らなかった・
+        // 途中で止めた回は不明のまま — 資材の束は組み立てと別に組まれるので、置き場は書き換わっているかもしれない
+        if rebuilt.status == 0, stoppedReport == nil, rebuildStop == nil {
             built = rebuilt.executable.map { (stamp, $0) }
-        } else {
-            built = builtBefore
         }
 
         // **止めている最中なら、止め終えてから見る。** 止めた子は終了コードを持って戻るので、
@@ -1835,7 +1892,7 @@ final class WatchSession {
             }
         }
 
-        guard let swap = await swapProduction(executable: executable, stamp: stamp) else {
+        guard let swap = await swapProduction(executable: executable, stamp: stamp, clock: productionClock) else {
             return interruptedWhileStopping(notStarted: notStartedForStopping) ?? notStartedForStopping()
         }
         let relaunchStarted = swap.relaunchStarted
@@ -1867,9 +1924,10 @@ final class WatchSession {
     /// (``performRestart(_:)``) が同じ手順を通る** — 前の世代を重ねる・起こせなかったら前の役へ戻す・台へ伝える、の規律を
     /// 2 か所に分けない。
     ///
+    /// - Parameter clock: 新しい子へ渡す時計の場所の番号 (``Hooks/selectClock``)。
     /// - Returns: 差し替えた結果。**前の子を止めている間に、作り直しを止める・見張りを終える頼みが来たら `nil`**
     ///   (起こさずに抜ける・``interruptedWhileStopping(notStarted:)``)。
-    private func swapProduction(executable: URL, stamp: String?) async -> ProductionSwap? {
+    private func swapProduction(executable: URL, stamp: String?, clock: Int) async -> ProductionSwap? {
         let relaunchStarted = hooks.now()
         // **起こせなかった回に、前の世代を元の役へ戻すための控え。** 重ねる見張りは、起こす前に
         // 走っている世代を `outgoing` へ回す (下)。その乗り換えの待ち印もここで控える
@@ -1921,12 +1979,14 @@ final class WatchSession {
         stageSilentPIDs.formIntersection(live)
         launchedTool = executable.lastPathComponent
         var launchFailure: CommandFailure?
+        hooks.selectClock(clock)
         do throws(CommandFailure) {
             child = try hooks.launch(
                 executable, directory, stamp, reportsRate ? configurationName : nil)
         } catch {
             child = nil
             launchFailure = error
+            forgetBuiltIfVanished(error)
         }
         noteLaunched(child, stamp: stamp)
         // **試聴に入っていない通常の差し替えは、試聴の覚えを捨てる** (#3565)。子の番号は使い回されるので、
@@ -1968,7 +2028,12 @@ final class WatchSession {
             measuresFirstFrame: measuresFirstFrame)
     }
 
-    /// 本番の子を差し替えた結果 (``swapProduction(executable:stamp:)``)。
+    /// 起こすときに実行ファイルが消えていたら、置き場の版を不明にする (``built``・#3428)。置き場が外から書き換えられた疑いがある。
+    private func forgetBuiltIfVanished(_ failure: CommandFailure) {
+        if case .executableVanished = failure { built = nil }
+    }
+
+    /// 本番の子を差し替えた結果 (``swapProduction(executable:stamp:clock:)``)。
     private struct ProductionSwap {
         /// 差し替えを始めた時刻。
         let relaunchStarted: Double
@@ -1987,12 +2052,15 @@ final class WatchSession {
     /// 「作り直している」で止まってプレビューは回る印のまま残り、取りかかる前に捨てた回は、試聴の中で保存した版が黙って
     /// 消える。
     ///
-    /// 同じ試聴の中で作り直しの最中に読んで控えた版 (``heldRead``) も、ここで一緒に捨てる — 次の拍が同じ判断で捨てるので、
-    /// 名乗りを 1 行にまとめる。控え (``unadoptedStamp``) はその版へ寄せ、次の拍が本番へ作り直さない。
+    /// 終わった試聴の中で読んで控えた版と頼んだ作り直し (``pending``) も、ここで一緒に捨てる — 次の拍が同じ判断で捨てるので、
+    /// 名乗りを 1 行にまとめる。控え (``unadoptedStamp``) は捨てた保存の版へ寄せ、次の拍が本番へ作り直さない。
     private func discardAudition() -> BuildReport? {
-        if let pending = heldRead, let role = effectiveRole(pending.role), role != readingRole {
-            unadoptedStamp = pending.stamp
-            heldRead = nil
+        let ended = { [self] (item: Pending) in item.kind != .restart && hasEnded(item.role) }
+        if case .save(let stamp)? = pending.first(where: { ended($0) && $0.isSave })?.kind {
+            unadoptedStamp = stamp
+        }
+        if pending.contains(where: ended) {
+            pending.removeAll(where: ended)
             noticedAt = nil
         }
         discardedAudition = DiscardedAudition(productionRunning: production != nil)
@@ -2137,6 +2205,7 @@ final class WatchSession {
     private func noteLaunched(_ process: Process?, stamp: String?) {
         let live = Set([child, outgoing, auditionChild].compactMap { $0?.processIdentifier })
         launchStamps = launchStamps.filter { live.contains($0.key) }
+        restartedChildren = restartedChildren.filter { live.contains($0.key) }
         guard let process else { return }
         launchStamps[process.processIdentifier] = stamp
     }
@@ -2192,6 +2261,8 @@ final class WatchSession {
         previewFollowing = nil
         auditionIsUnidentified = false
         pendingAudition = nil
+        // 次の試聴の子は、また本番の時計を引き継ぐ (``auditionClock``・#3428)
+        auditionClock = nil
         // **先にプレビューを戻す。** 試聴の子を止める待ちの間に、止まる子の最後の絵を映し続けない。本番が
         // 消えていれば戻り先が無く、プレビューは試聴の子の最後の絵のまま残る
         let hasProduction = [child, outgoing].contains { $0?.isRunning == true }
@@ -2250,12 +2321,13 @@ final class WatchSession {
 
     /// 作り直す要求 ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。**いつも受ける。**
     ///
-    /// 頼みは「中身の変わらない保存」として、次の拍の読みと並べる (``tick()``)。役は頼みを読んだ時点の ``readingRole`` で、
-    /// 保存と同じ規則 ([#3796](https://github.com/mokume-metal/mokume/issues/3796)) に従う — 試聴の中で頼めば試聴の版で、
-    /// 最中に出れば捨てて名乗る。本番で頼めば、最中に入っても本番の版。作り直しの最中に頼んだら、済んだ後に 1 回だけ作り直す
-    /// (控えは 1 枠)。
+    /// 頼みは控えの列 (``pending``) に、頼みを読んだ順と役 (``readingRole``) で並ぶ。保存と同じ規則
+    /// ([#3796](https://github.com/mokume-metal/mokume/issues/3796)) に従う — 試聴の中で頼めば試聴の版で、最中に出れば捨てて
+    /// 名乗る。本番で頼めば、最中に入っても本番の版。作り直しの最中に続けて頼んだら、済んだ後に 1 回だけ作り直す。
     private func askRebuild(_ request: WatchRequest) -> WatchReport {
-        requestedRebuild = RebuildRequest(role: readingRole, readsBefore: readCount)
+        let role = readingRole
+        if let last = pending.last, last.kind == .rebuild, last.role == role { return acceptance(request) }
+        pending.append(Pending(kind: .rebuild, role: role, order: nextOrder()))
         return acceptance(request)
     }
 
@@ -2263,17 +2335,20 @@ final class WatchSession {
     ///
     /// **作り直さずに、いまの版を最初から起こし直す。** 当たる子は頼みを読んだ時点の試聴の状態で決める — 試聴中なら試聴の子、
     /// そうでなければ本番の子。当たる子が居なければ ``WatchReport/Reason/noTarget``、置き場の最後に通った作り直しの版が
-    /// 当たる子の版でなければ ``WatchReport/Reason/notBuilt`` で断り、何もしない。**作り直し・起こし直しの最中は、済んでから
-    /// 決める** (受けて控え、できなければ端末とプレビューで名乗る)。行うのは拍の頭である (``performRestart(_:)``)。
+    /// 当たる子の版でなければ ``WatchReport/Reason/notBuilt`` で断り、何もしない。**作り直し・起こし直し・読みの最中か、
+    /// 前に控えた項目があれば、その順を待って決める** (受けて控え、できなければ端末とプレビューで名乗る)。行うのは拍の頭である
+    /// (``performRestart(_:)``)。
     private func askRestart(_ request: WatchRequest, into answered: inout Answered) -> WatchReport {
         let role = readingRole
-        if !isRebuilding, !isRestarting, let reason = restartRefusal(for: role) {
+        if !isRebuilding, !isRestarting, !isStamping, pending.isEmpty, let reason = restartRefusal(for: role) {
             let line = Self.restartLine(.declined(reason))
             answered.lines = [line]
             answered.notice = line
             return refusal(id: request.id, action: request.action, reason)
         }
-        pendingRestart = RestartRequest(role: role)
+        // 続けて頼んだ同じ役の起こし直しは 1 つ
+        if let last = pending.last, last.kind == .restart, last.role == role { return acceptance(request) }
+        pending.append(Pending(kind: .restart, role: role, order: nextOrder()))
         return acceptance(request)
     }
 
@@ -2296,19 +2371,25 @@ final class WatchSession {
     ///
     /// 試聴の中で頼んだ起こし直しの試聴が終わっていれば (出た・入り直した。役は生の番号で比べる)、捨てて名乗る。本番で
     /// 頼んだ起こし直しは、その後に試聴に入っても本番の子へ当てる。当たる子が居ない・版の組み上がりが無いと分かったら、
-    /// 何もせずに名乗る。**記録は書かない** — 作り直しではない。時計は新しい場所へ替えて、0 から始める (``Hooks/renewClock``)。
-    private func performRestart(_ restart: RestartRequest) async {
+    /// 何もせずに名乗る。**記録は書かない** — 作り直しではない。
+    ///
+    /// **時計は、起こした子だけを 0 から始める** (``productionClock``・``auditionClock``)。新しい場所の番号を渡し、子が起きて
+    /// から、その役の場所をそれに替える。起こせなかったら替えない。
+    private func performRestart(_ restart: Pending) async {
+        // 前の拍の止め方を持ち越さない (止めた結果は口の側が名乗る)
+        lastStop = nil
         if let role = restart.role, role != readingRole {
-            restartOutcome = .dropped
+            restartOutcomes.append(.dropped)
             return
         }
         if let reason = restartRefusal(for: restart.role) {
-            restartOutcome = .declined(reason)
+            restartOutcomes.append(.declined(reason))
             return
         }
         guard let built else { return }
         isRestarting = true
         defer { isRestarting = false }
+        let fresh = nextClock()
         if let role = restart.role {
             let previous = auditionChild
             if let stopped = await retireAudition() { lastStop = stopped }
@@ -2317,23 +2398,93 @@ final class WatchSession {
             guard !stopRequested else { return }
             // 止めている間に出た (出る要求は答えの中で、この待ちの間に来うる)
             guard role == readingRole else {
-                restartOutcome = .dropped
+                restartOutcomes.append(.dropped)
                 return
             }
-            hooks.renewClock()
-            let failure = startAuditionChild(executable: built.executable, stamp: built.stamp)
-            restartOutcome = failure.map { .failed($0.message) } ?? .restarted(audition: true)
+            if let failure = startAuditionChild(executable: built.executable, stamp: built.stamp, clock: fresh) {
+                restartOutcomes.append(.failed(failure.message))
+                return
+            }
+            if let started = auditionChild {
+                restartedChildren[started.processIdentifier] = RestartedChild(
+                    audition: true, clock: fresh, previousClock: auditionClock)
+            }
+            auditionClock = fresh
+            restartOutcomes.append(.restarted(audition: true))
         } else {
-            // 起こし直した子の絵は、作り直しの記録の測定に足さない (記録を書かない回)
+            // 起こし直した子の絵は、作り直しの記録の測定に足さない (記録を書かない回)。直前の作り直しの子がまだ 1 枚目を
+            // 出していなければ、その記録の `firstFrameMs` は空のまま残る — 測っていた子を、1 枚目の前に別の子へ差し替えた
+            // (``generationPromoted(pid:)`` の「測らない回」)
             firstFrameSince = nil
-            hooks.renewClock()
-            guard let swap = await swapProduction(executable: built.executable, stamp: built.stamp)
+            guard
+                let swap = await swapProduction(
+                    executable: built.executable, stamp: built.stamp, clock: fresh)
             else { return }
-            restartOutcome = swap.launchFailure.map { .failed($0.message) } ?? .restarted(audition: false)
+            if let failure = swap.launchFailure {
+                restartOutcomes.append(.failed(failure.message))
+                return
+            }
+            if let started = child {
+                restartedChildren[started.processIdentifier] = RestartedChild(
+                    audition: false, clock: fresh, previousClock: productionClock)
+            }
+            // **試聴の子は、本番の起こし直しの前の場所を書き続ける** — 次の試聴の作り直しが、本番の 0 からの時計を読まない
+            if isAuditioning, auditionClock == nil { auditionClock = productionClock }
+            productionClock = fresh
+            restartOutcomes.append(.restarted(audition: false))
         }
     }
 
-    /// 起こし直す要求の結末 (``takeRestart()``)。口の側が名乗る文を選ぶ材料。
+    // MARK: 時計の場所 (`--keep-time`・#3428)
+    //
+    // | 出来事 | 本番の場所 | 試聴の場所 | 起こす子が受ける |
+    // | --- | --- | --- | --- |
+    // | 見張りの起動 | 0 | 本番と同じ | 本番の場所 |
+    // | 保存・作り直す要求の子 | そのまま | そのまま | その役の場所 |
+    // | 試聴に入る・出る | そのまま | 本番と同じ | — |
+    // | 試聴の起こし直し: 子が起きた | そのまま | 新しい番号 | 新しい番号 |
+    // | 本番の起こし直し: 子が起きた | 新しい番号 | 試聴中で本番と同じなら、前の本番の場所に留める | 新しい番号 |
+    // | 起こし直しで起こせなかった | そのまま | そのまま | — |
+    // | 起こし直した子が最初の絵の前に落ちた | その役なら前へ戻す | その役なら前へ戻す | — |
+    //
+    // 起こし直さない限り、本番の子と試聴の子は 1 つの場所を共有する (#3565 からの約束: 試聴の子が消えた後は本番が書き戻す・
+    // `ClockHandover`)。
+
+    /// 本番の子へ渡す時計の場所の番号 (``Hooks/selectClock``)。
+    private var productionClock = 0
+    /// 試聴の子へ渡す時計の場所の番号。`nil` なら本番と同じ場所。
+    private var auditionClock: Int?
+    /// 使った時計の場所の番号の最大。起こし直すたびに新しい番号を使う (起こせなかった回の番号も使い捨て)。
+    private var clockCount = 0
+
+    private func nextClock() -> Int {
+        clockCount += 1
+        return clockCount
+    }
+
+    /// 起こし直す要求で起こした子 — 最初の絵の前に落ちたら、記録を書かずに起こし直しの失敗として名乗り、時計の場所を戻す。
+    private struct RestartedChild {
+        let audition: Bool
+        /// 起こした子に渡した場所の番号。
+        let clock: Int
+        /// 起こす前の、その役の場所の番号。
+        let previousClock: Int?
+    }
+    private var restartedChildren: [Int32: RestartedChild] = [:]
+
+    /// 起こし直した子が最初の絵の前に落ちたなら、その役の時計の場所を戻し、名乗る理由を返す (``Departure/restartFailure``)。
+    /// 起こし直した子でなければ `nil`。
+    private func restartFailed(_ gone: Process, _ departure: Departure, note: String?) -> String? {
+        guard let restarted = restartedChildren.removeValue(forKey: gone.processIdentifier) else { return nil }
+        if restarted.audition {
+            if auditionClock == restarted.clock { auditionClock = restarted.previousClock }
+        } else if productionClock == restarted.clock {
+            productionClock = restarted.previousClock ?? 0
+        }
+        return failedStartText(departure, note: note)
+    }
+
+    /// 起こし直す要求の結末 (``takeRestarts()``)。口の側が名乗る文を選ぶ材料。
     enum RestartOutcome: Equatable {
         /// 起こし直した。`audition` は試聴の子か。
         case restarted(audition: Bool)
@@ -2345,13 +2496,31 @@ final class WatchSession {
         case declined(WatchReport.Reason)
     }
 
-    /// 起こし直す要求を行ったか・行えなかったか。**読むと下りる** — 口の側 (``WatchCommand/step(_:viewer:stopped:preview:)``)
-    /// が 1 度だけ名乗る。
-    func takeRestart() -> RestartOutcome? {
-        defer { restartOutcome = nil }
-        return restartOutcome
+    /// 起こし直す要求を行った・行えなかった結末。**読むと下りる** — 口の側 (``WatchCommand/step(_:viewer:stopped:preview:)``)
+    /// が 1 度ずつ名乗る。
+    func takeRestarts() -> [RestartOutcome] {
+        defer { restartOutcomes = [] }
+        return restartOutcomes
     }
-    private var restartOutcome: RestartOutcome?
+    private var restartOutcomes: [RestartOutcome] = []
+
+    /// 後から役の違う保存が中身を変えたので捨てた作り直す要求 (``noteRead(_:role:order:)``)。値は試聴の中で頼んだか。
+    /// **読むと下りる** — 口の側が 1 度ずつ名乗る。
+    func takeDroppedRebuilds() -> [Bool] {
+        defer { droppedRebuilds = [] }
+        return droppedRebuilds
+    }
+    private var droppedRebuilds: [Bool] = []
+
+    /// 捨てた作り直す要求を名乗る行 (``takeDroppedRebuilds()``)。
+    static func rebuildDroppedLine(audition: Bool) -> String {
+        audition
+            ? "Dropped the rebuild asked for during the audition — a save for the work's window changed the "
+                + "source before it could start. Ask for rebuild again to build what is saved now"
+            : "Dropped the rebuild asked for the work's window — a save during the audition changed the source "
+                + "before it could start, so the work's window keeps the version it has. Ask for rebuild again "
+                + "after leaving the audition"
+    }
 
     /// 起こし直す要求の結末を名乗る行。断った応答の行 (``answerRequests()``) と同じ文を使う。
     static func restartLine(_ outcome: RestartOutcome) -> String {
@@ -2505,7 +2674,8 @@ final class WatchSession {
         executable: URL, stamp: String?, buildOutput: String, detectMs: Double?, buildMs: Double,
         relaunchStarted: Double, requested: Bool
     ) -> BuildReport {
-        let launchFailure = startAuditionChild(executable: executable, stamp: stamp)
+        let launchFailure = startAuditionChild(
+            executable: executable, stamp: stamp, clock: auditionClock ?? productionClock)
         let timings = BuildReport.Timings(
             detectMs: detectMs, buildMs: buildMs, relaunchMs: (hooks.now() - relaunchStarted) * 1000)
         let report: BuildReport =
@@ -2523,8 +2693,9 @@ final class WatchSession {
 
     /// 試聴の子を起こす手順 (記録は書かない)。作り直しの後 (``launchAudition``) と起こし直し (``performRestart(_:)``) が通る。
     ///
+    /// - Parameter clock: 子へ渡す時計の場所の番号 (``Hooks/selectClock``)。
     /// - Returns: 起こせなかった理由。起こせたら `nil`。
-    private func startAuditionChild(executable: URL, stamp: String?) -> CommandFailure? {
+    private func startAuditionChild(executable: URL, stamp: String?, clock: Int) -> CommandFailure? {
         // 乗り換えを待つ本番の倒れた知らせの目印は残す (``sweepFellBackMarkers(keeping:)`` が試聴の子のぶんも残す)
         sweepFellBackMarkers(keeping: awaitingPromotion ? child?.processIdentifier : nil)
         prepareStartFailureNotes()
@@ -2533,12 +2704,14 @@ final class WatchSession {
         stageSilentPIDs.formIntersection(live)
         launchedTool = executable.lastPathComponent
         var launchFailure: CommandFailure?
+        hooks.selectClock(clock)
         do throws(CommandFailure) {
             auditionChild = try hooks.launch(
                 executable, directory, stamp, reportsRate ? configurationName : nil)
         } catch {
             auditionChild = nil
             launchFailure = error
+            forgetBuiltIfVanished(error)
         }
         hasNamedAuditionDeparture = false
         unblockWriting(to: auditionChild)
@@ -2603,6 +2776,11 @@ final class WatchSession {
         guard note != nil || (!drewFirstFrame && failed) else { return departure }
         departure.failedToStart = true
         departure.keptPrevious = production != nil
+        // 起こし直した試聴の子は、記録を書き換えない (#3428 の決定 3・``departed()`` と同じ)
+        if let reason = restartFailed(gone, departure, note: note) {
+            departure.restartFailure = reason
+            return departure
+        }
         departure.report = recordFailedStart(of: gone, departure, note: note, forAudition: true)
         return departure
     }

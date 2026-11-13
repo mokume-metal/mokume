@@ -190,6 +190,8 @@ struct BuildReport: Encodable, Equatable {
         if let relaunch = timings.relaunchMs { parts.append("relaunch_ms=\(round(relaunch))") }
         parts.append("configuration=\(configuration)")
         if let stamp { parts.append("stamp=\(stamp)") }
+        // **頼まれた作り直しは、そう名乗る** (#3428)。保存による回の行は変えない
+        if let requested { parts.append("requested=\(requested.rawValue)") }
         // **起こせなかった回を「作り直した」で終わらせない。** そこが最も分かりにくい
         // 壊れ方 (絵が止まっているのに成功と出る) だからである (#1066)
         //
