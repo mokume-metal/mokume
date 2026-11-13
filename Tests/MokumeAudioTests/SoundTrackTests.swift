@@ -256,7 +256,7 @@ struct SoundTrackTests {
         #expect(heard.right[24_240...].allSatisfy { $0 == 0 })
     }
 
-    @Test("毎フレーム定位を変える同じ操作の列で 2 回書くと、音声トラックの標本が全部一致する")
+    @Test("毎フレーム速さと定位を変える同じ操作の列で 2 回書くと、音声トラックの標本が全部一致する")
     func movingPanIsRepeatable() async throws {
         let mono = try writeChannelsWAV([Array(repeating: Self.shaped, count: 4).flatMap { $0 }], sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: mono) }
@@ -265,6 +265,8 @@ struct SoundTrackTests {
                 mono,
                 draw: { sound, frame in
                     sound.pan(Float(frame % 9) / 4 - 1)
+                    // 遅く・速く (係数を掛けて読む)・止める、を毎フレーム変える
+                    sound.rate([0.5, 1.75, 1, 0, 2.5, 0.8][frame % 6])
                 })
         }
         let first = try await once()
@@ -272,6 +274,76 @@ struct SoundTrackTests {
         try #require(first.left.count == 48_000)
         #expect(first.left == second.left && first.right == second.right)
         #expect(first.left != first.right, "定位が左右に効いている")
+        // フレーム 3 (3 % 6) の速さ 0 は、ウィンドウ 2 (標本 1600 から) を無音にする
+        #expect(first.left[1600..<2400].allSatisfy { $0 == 0 }, "速さ 0 のウィンドウは無音")
+        #expect(first.left[800..<1600].contains { $0 != 0 })
+    }
+
+    // MARK: - 速さ (#3473)
+
+    @Test("1 kHz の正弦を rate(2) で書くと、読み戻した音声トラックは 2 kHz (0.25 秒で零点 1000 回) で、同じフレームの spectrum の山も 2 kHz の帯")
+    func rateTwoDoublesThePitchInTheTrack() async throws {
+        let sine = (0..<96_000).map { Float(0.5 * sin(2 * Double.pi * 1000 * Double($0) / 48_000)) }
+        let wav = try writeChannelsWAV([sine], sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: wav) }
+        var band = -1
+        let heard = try await recordOnce(
+            wav, adjust: { $0.rate(2) },
+            draw: { sound, frame in
+                guard frame == 20 else { return }
+                let spectrum = sound.spectrum
+                band = spectrum.indices.max { spectrum[$0] < spectrum[$1] } ?? -1
+            })
+        try #require(heard.left.count == 48_000)
+        let quarter = heard.left[12_000..<24_000]
+        // 2 kHz は低域通過の通過帯域 (切れ目は約 11 kHz) で、大きさはそのまま
+        #expect(abs((quarter.map { abs($0) }.max() ?? 0) - 0.5) < 0.01)
+        let crossings = zip(quarter, quarter.dropFirst()).filter { ($0 < 0) != ($1 < 0) }.count
+        #expect(abs(crossings - 1000) <= 2, "零点 \(crossings) 回")
+        // 帯 k の中心は k × 48000 ÷ 1024 Hz。2 kHz は 42.7
+        #expect([42, 43].contains(band), "帯 \(band)")
+    }
+
+    @Test("速さを変えながら録りを途中で始め・止めても、音声ファイルの位置と解析の値は、録らない回と全フレームで一致する")
+    func switchingToTheTrackKeepsTheRate() throws {
+        let wav = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: wav) }
+
+        func run(recording: Bool) throws -> [[Float]] {
+            let url = temporaryMovie()
+            defer { try? FileManager.default.removeItem(at: url) }
+            var sound: SoundFile?
+            var seen: [[Float]] = []
+            SoundSketch.onSetup = { sketch in
+                sound = try sketch.loadSound(wav.path)
+                sound?.loop()
+                // 0.7 倍は位置が小数になる (録りへ移すとき、小数の位置から続く)
+                sound?.rate(0.7)
+            }
+            SoundSketch.onDraw = { sketch in
+                if let sound {
+                    seen.append([Float(sound.samplePosition), sound.level, sound.peak, sound.rms] + sound.spectrum)
+                }
+                if recording, sketch.frameCount == 11 { sketch.beginRecord(url.path) }
+                if recording, sketch.frameCount == 31 { sketch.endRecord() }
+                if sketch.frameCount == 15 { sound?.rate(1.9) }
+                if sketch.frameCount == 20 { sound?.jump(0.2) }
+                if sketch.frameCount == 25 { sound?.rate(0.35) }
+                if sketch.frameCount == 40 { sound?.rate(1.3) }
+            }
+            let runtime = try SketchRuntime(
+                sketch: SoundSketch(), gpu: try RenderDevice(), clock: .frameIndex(frameRate: 60))
+            for _ in 0..<50 { try runtime.advance() }
+            runtime.closePlugins()
+            return seen
+        }
+        let plain = try run(recording: false)
+        let recorded = try run(recording: true)
+        #expect(plain.count == 50 && recorded.count == 50)
+        for (index, pair) in zip(plain, recorded).enumerated() {
+            #expect(pair.0 == pair.1, "frame \(index)")
+        }
+        #expect(Set(plain.map { $0[0] }).count > 30)
     }
 
     /// エフェクトへ通したファイルの定位は、エフェクトの出口で中央 (合成した音の `pan(_:)` と同じ)。
