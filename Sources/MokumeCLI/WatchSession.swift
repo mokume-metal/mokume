@@ -495,7 +495,8 @@ final class WatchSession {
     /// **「絵を出す前に終わった」の根拠はこれである。** 乗り換えの合図 (``hasSeenPromotion``) は使えない —
     /// 出している世代が無い台は 1 枚目を待たずに乗り換えるので、最初の世代の合図は「目録が読めた」で、
     /// `setup()` の前に来る。起こした世代が生きている間だけ覚える (``generationShown(pid:)``・
-    /// ``launchChild(_:)``)。
+    /// ``rebuildAndReplace(stamp:audition:initial:)``・
+    /// ``launchAudition(executable:stamp:buildOutput:detectMs:buildMs:relaunchStarted:)``)。
     private var shownPIDs: Set<Int32> = []
     /// 道具のウィンドウが知らせてくれない世代として扱った子の番号 ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
     /// 自分のウィンドウへ倒れたと知らされた子 (``retireAfterFallback()``) と、道具のウィンドウが絵を受け取れないと知らされた子

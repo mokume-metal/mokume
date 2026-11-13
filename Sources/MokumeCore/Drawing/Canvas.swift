@@ -6398,7 +6398,8 @@ public final class Canvas {
 
             writeValues(of: batch, into: values.contents().advanced(by: offset))
         }
-        // 形の切り抜きの層を描く区画 (``clipLayerFrameIndex``)。輪郭も細い塗りも持たない平面の三角形として描く
+        // 形の切り抜きの層を描く区画。列の区画の後ろ (添字 `batches.count`) に置き、``encodeBatches(into:prepared:)``
+        // の `drawClipLayer` が読む。輪郭も細い塗りも持たない平面の三角形として描く
         var clipLayerFrame = FlatFrame(
             projection: jittered(projection, drawingInFrame: drawingInFrame),
             strokeStart: UInt32.max, strokeShift: solidStrokeShift,
