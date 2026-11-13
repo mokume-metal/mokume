@@ -411,7 +411,8 @@ extension Canvas {
         // 勾配の断片は、値をいまの勾配から出す (``gradientValues``)
         Shape.Paint(
             shader: currentShader, values: gradientValues ?? currentShader?.packedValues ?? [],
-            surfaces: snapshotSurfaces(), numbers: currentNumbers)
+            surfaces: snapshotSurfaces(), numbers: currentNumbers,
+            namedNumbers: currentShader?.orderedNumbers ?? [])
     }
 
     /// いま列を閉じたら、その列が持つ塗り。

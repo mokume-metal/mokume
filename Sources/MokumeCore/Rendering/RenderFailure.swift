@@ -391,7 +391,7 @@ extension RenderFailure: CustomStringConvertible {
             Cannot build the shader: \(name)
             \(reason)
             Fix what the reason above points at — in the fragment you wrote, or, where it names
-            values: or surfaces:, in the names you pass from Swift.
+            values:, surfaces: or numbers:, in the names you pass from Swift.
             """
         case .shaderCompilerUnavailable:
             """

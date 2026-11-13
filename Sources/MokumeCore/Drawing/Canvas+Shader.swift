@@ -11,18 +11,19 @@ extension Canvas {
     /// 断片を読み込む。
     public func loadShader(
         _ path: String, values: [String: ShaderValue] = [:],
-        surfaces: [String: ShaderSurface] = [:]
+        surfaces: [String: ShaderSurface] = [:], numbers: [String: Numbers] = [:]
     ) throws(ShaderFailure) -> Shader {
         let (url, body, name) = try ShaderSource.read(at: path)
 
         try Self.checkValuesFit(values, path: path)
         try Self.checkSurfacesFit(surfaces, path: path)
+        try Self.checkNumbersFit(numbers, path: path)
 
         let shader: Shader
         do {
             shader = try Shader(
                 name: name, url: url, body: body, values: values, surfaces: surfaces,
-                gpu: gpu, pipeline: pipeline)
+                numbers: numbers, gpu: gpu, pipeline: pipeline)
         } catch {
             throw .notCompilable(path: path, reason: "\(error)")
         }
@@ -33,16 +34,17 @@ extension Canvas {
     /// 文字列から作る。
     public func makeShader(
         _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
-        surfaces: [String: ShaderSurface] = [:]
+        surfaces: [String: ShaderSurface] = [:], numbers: [String: Numbers] = [:]
     ) throws(ShaderFailure) -> Shader {
         try Self.checkValuesFit(values, path: name)
         try Self.checkSurfacesFit(surfaces, path: name)
+        try Self.checkNumbersFit(numbers, path: name)
 
         let shader: Shader
         do {
             shader = try Shader(
                 name: name, url: nil, body: body, values: values, surfaces: surfaces,
-                gpu: gpu, pipeline: pipeline)
+                numbers: numbers, gpu: gpu, pipeline: pipeline)
         } catch {
             throw .notCompilable(path: name, reason: "\(error)")
         }
@@ -81,6 +83,16 @@ extension Canvas {
         guard surfaces.count > ShapePipeline.surfaceCapacity else { return }
         throw .tooManySurfaces(
             path: path, count: surfaces.count, capacity: ShapePipeline.surfaceCapacity)
+    }
+
+    /// 名前で渡す数の並びが口の数に収まるかを見る ([#3576](https://github.com/mokume-metal/mokume/issues/3576))。
+    /// 面と同じ理由で、ここで断る。
+    private static func checkNumbersFit(
+        _ numbers: [String: Numbers], path: String
+    ) throws(ShaderFailure) {
+        guard numbers.count > ShapePipeline.namedNumbersCapacity else { return }
+        throw .tooManyNumbers(
+            path: path, count: numbers.count, capacity: ShapePipeline.namedNumbersCapacity)
     }
 
     /// これから描くものを、この断片で塗る。**溜めている列をその場で閉じる。**

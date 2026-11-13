@@ -352,11 +352,17 @@ class 本物の木(unittest.TestCase):
             self.assertNotRegex(source, r'"(?:assets|data)/', entry.spelling)
 
     def test_断片を読む_loadShader_の例が資材ごと入る(self):
-        """#3836 の完了条件 1。`waves.metal` を添えた例が一覧に並ぶ。"""
-        shaders = [e for e in self.entries if e.heading == "loadShader(_:values:surfaces:)"]
-        self.assertEqual(len(shaders), 1, [e.spelling for e in shaders])
-        self.assertEqual([name for name, _ in shaders[0].assets], ["assets/waves.metal"])
+        """#3836 の完了条件 1。`waves.metal` を添えた例が一覧に並ぶ。
+
+        名前で並びを渡す例 (#3576 の `levels.metal`) も、断片ごと並ぶ。
+        """
+        shaders = [e for e in self.entries if e.heading == "loadShader(_:values:surfaces:numbers:)"]
+        self.assertEqual(
+            [[name for name, _ in e.assets] for e in shaders],
+            [["assets/waves.metal"], ["assets/levels.metal"]],
+            [e.spelling for e in shaders])
         self.assertIn("float4 paint(Fragment in, Values values)", shaders[0].assets[0][1])
+        self.assertIn("float4 paint(Fragment in, Values values, Numbers numbers)", shaders[1].assets[0][1])
 
     def test_全部の例が_main_と差し込み口を持つ(self):
         for entry in self.entries:
