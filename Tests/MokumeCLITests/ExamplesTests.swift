@@ -569,10 +569,18 @@ struct EveryBundledExampleBuildsTests {
             }
             #expect(!text.contains("\"assets/") && !text.contains("\"data/"), "\(entry.spelling) が資材を読む")
         }
-        // #3836 の作例: 断片を読む例は、断片ごと引ける
-        let shader = try catalogue.select("loadShader")
+        // #3836 の作例: 断片を読む例は、断片ごと引ける。loadShader は例が複数あるので (#3576 で並びの例を
+        // 足した)、短い名前では決まらない
+        #expect(throws: CommandFailure.self) { try catalogue.select("loadShader") }
+        let shader = try catalogue.select("loadShader(_:values:surfaces:numbers:)#1")
         #expect(shader.assets.map(\.path) == ["waves.metal"])
         #expect(shader.assets.first?.contents.contains("float4 paint(Fragment in, Values values)") == true)
         #expect(shader.source.contains("\"assets/waves.metal\""))
+        // 名前で並びを渡す例 (#3576) も、断片ごと引ける
+        let named = try catalogue.select("loadShader(_:values:surfaces:numbers:)#2")
+        #expect(named.assets.map(\.path) == ["levels.metal"])
+        #expect(
+            named.assets.first?.contents.contains("float4 paint(Fragment in, Values values, Numbers numbers)") == true)
+        #expect(named.source.contains("\"assets/levels.metal\""))
     }
 }

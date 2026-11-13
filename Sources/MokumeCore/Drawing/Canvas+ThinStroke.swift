@@ -958,18 +958,58 @@ extension Canvas {
     /// 保持した形の控えとほかの形の畳みの鍵は 2x2 そのもの (``thinVertices(_:placedBy:cache:stroke:)``・
     /// ``thinStrokeLinear(form:)``)。
     ///
-    /// 単精度の丸めで、同じ大きさの回転どうしでも `DᵀD` の最下位の桁は揺れる (0.25 と
-    /// 0.24999999 のように指数をまたぐこともある)。鍵は大きさ (対角の和) の対数と、和で割った
-    /// 3 成分を、それぞれ 1/4096 の刻みに丸めて揃える (相対 2⁻¹² ほどの違いは同じ形として扱う)。
+    /// 鍵は `DᵀD` の 3 成分 `(g₀₀, g₀₁, g₁₁, 0)` で、**丸めずに持つ**。単精度の丸めで、同じ大きさの回転どうしでも
+    /// `DᵀD` の最下位の桁は揺れる (0.25 と 0.24999999 のように指数をまたぐこともある) ので、比べる側
+    /// (``sameRotationFreeKey(_:_:)``) が、形自身の座標のどの向きの長さも相対 ``rotationFreeKeyTolerance`` の内側で
+    /// 一致する置き場所を同じとみなす。対角の和が 0 以下・有限でない 2x2 は 0 の鍵にする。
+    ///
+    /// **格子に丸めて揃えない** (#3932)。丸めると、揺れが格子の境目 (刻みの半分) の両側に落ちた置き場所は、向きだけが
+    /// 違っても別の鍵になる。細かさ 69/128・回転の内側の縦の倍率 0.711 の楕円で、大きさの対数 (4096 倍) が
+    /// -4886.5 と -4886.4995 に分かれ、2 つ目が畳まれずに直に組まれた。
     static func rotationFreeKey(_ linear: simd_float2x2) -> SIMD4<Float> {
         let gram = linear.transpose * linear
         let trace = gram.columns.0.x + gram.columns.1.y
         guard trace > 0, trace.isFinite else { return SIMD4(repeating: 0) }
-        func coarse(_ value: Float) -> Float { (value * 4096).rounded() / 4096 }
-        return SIMD4(
-            coarse(RuntimeMath.log2(trace)), coarse(gram.columns.0.x / trace), coarse(gram.columns.1.x / trace),
-            coarse(gram.columns.1.y / trace))
+        return SIMD4(gram.columns.0.x, gram.columns.1.x, gram.columns.1.y, 0)
     }
+
+    /// 回転に依らない鍵 (``rotationFreeKey(_:)``) の 2 つが、同じ形を表すか。
+    ///
+    /// **形自身の座標のどの向きでも、描く画素での長さの比が相対 ``rotationFreeKeyTolerance`` (ε) の内側にあれば同じ**
+    /// とみなす。2 つの置き場所の 2x2 を D₁・D₂ とすると、向き v の長さの比の 2 乗 `|D₂v|² / |D₁v|²` の最大と最小は、
+    /// `det(G₂ − λG₁) = 0` の 2 つの根 λ (G = DᵀD) である。両方が `[(1+ε)⁻², (1+ε)²]` に入れば同じとする。
+    /// 比は縦横比にも大きさにも依らない相対の量なので、潰した変換 (縦の倍率 0.01) でも、縦の倍率の 0.1% の違いを見分ける
+    /// (#3932 の反証。成分ごとの絶対の差で比べると、`g₁₁ / trace` が 0 に近く、縦の倍率が数十 % 違っても同じになった)。
+    ///
+    /// 潰れた 2x2 (`det G ≤ 0`) と有限でない鍵は、比が決まらないのでビット列で比べる。
+    ///
+    /// **推移的ではない** (a と b、b と c が近くても、a と c は離れうる)。畳みは開いている雛形の鍵 (1 つ目の置き場所)
+    /// とだけ比べる (``draw(folding:at:outline:)``) ので、近い置き場所が続いても雛形の鍵からずれは積み重ならない。
+    static func sameRotationFreeKey(_ lhs: SIMD4<Float>, _ rhs: SIMD4<Float>) -> Bool {
+        let (a00, a01, a11) = (Double(lhs.x), Double(lhs.y), Double(lhs.z))
+        let (b00, b01, b11) = (Double(rhs.x), Double(rhs.y), Double(rhs.z))
+        let (lhsArea, rhsArea) = (a00 * a11 - a01 * a01, b00 * b11 - b01 * b01)
+        guard lhsArea > 0, rhsArea > 0, lhsArea.isFinite, rhsArea.isFinite else { return lhs == rhs }
+        // λ² · det G₁ − (a₀₀b₁₁ + a₁₁b₀₀ − 2a₀₁b₀₁) · λ + det G₂ = 0 の根。相加平均 mean と積 product から、大きい根を
+        // 出し、小さい根は積を割って出す (2 つが近いときに引き算で桁を落とさない)
+        let mean = (a00 * b11 + a11 * b00 - 2 * a01 * b01) / (2 * lhsArea)
+        let product = rhsArea / lhsArea
+        let largest = mean + max(mean * mean - product, 0).squareRoot()
+        guard largest > 0, largest.isFinite else { return false }
+        let smallest = product / largest
+        let bound = (1 + Double(rotationFreeKeyTolerance)) * (1 + Double(rotationFreeKeyTolerance))
+        return largest <= bound && smallest * bound >= 1
+    }
+
+    /// 回転に依らない鍵で、同じ形とみなす長さの比の幅 (相対 ε = 2⁻¹² ≈ 0.024%・``sameRotationFreeKey(_:_:)``)。
+    ///
+    /// - 広さの下限: 回転だけが違う置き場所の単精度の揺れは、`DᵀD` の成分で相対 10⁻⁷ ほど (長さの比で 10⁻⁷ ほど)。
+    ///   幅はその 2000 倍ほどある
+    /// - 狭さの上限: 畳んだ 2 つ目は、1 つ目の 2x2 で組んだ雛形を自分の 2x2 で置く。形自身の座標で決めた帯の幅は、
+    ///   描く画素で長さの比 (1 ± ε) 倍になる。細い帯は描く画素で幅 2 未満に広げるので、帯の幅と縁の位置のずれは
+    ///   描く画素で 2ε ≈ 0.0005 画素未満、光の量のずれは相対 ε ≈ 0.024% 未満である。量の検査の許容 (±25%・
+    ///   `DensityInvarianceTests`) の 1/1000、出す画素の 1 段 (1/255 ≈ 0.39%) の 1/16 にあたる
+    static let rotationFreeKeyTolerance: Float = 1.0 / 4096
 
     private func buildThinVertices(
         _ recipe: ThinStrokeRecipe, placedBy combined: simd_float4x4

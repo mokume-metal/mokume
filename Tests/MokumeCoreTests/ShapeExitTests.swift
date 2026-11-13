@@ -402,6 +402,7 @@ extension ShapeExit {
             // 実行の記録 (#3570)。入力・つまみ・観測を写して残す係で、形に焼き付く値を生まない
             "replay": recording,
             "pendingOutletFrames": recording, "warnedEncodeFailed": recording, "capture": recording, "settling": observation,
+            "drawnState": "描き終えたフレームの、絵と @Param の書き込みの番号の控え (#2618)。観測の持ち出しが読み、形に焼き付く値を生まない",
             "frameDrawnAfter": recording, "readyOutletFrames": recording,
             "isHandingOverOutletFrames": recording, "outletJudgedThrough": recording,
             "outletHeldDrop": recording, "outletFramesDropped": recording,

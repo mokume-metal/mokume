@@ -171,6 +171,17 @@ final class ShapePipeline {
     static let thinFillBufferIndex = 13
     /// 細い塗りの雛形の、置き場所ごとの記述の先頭と数を渡す口の番号 (シェーダ側の `buffer(14)`・#2208)。
     static let thinFillSpanBufferIndex = 14
+    /// 利用者が名前で宣言した数の並びを渡す口の、最初の番号 (シェーダ側の `buffer(15)` から・#3576)。
+    static let namedNumbersBufferIndex = 15
+    /// 1 つの断片へ名前で渡せる数の並びの本数。**上限の正典はここ 1 か所**で、原稿を組み立てる側
+    /// (`ShaderSource`)・入口 (`Common.metal`)・断る側 (`Canvas.loadShader`) がこれを見る (面の
+    /// ``surfaceCapacity`` と同じ形・#3576)。
+    ///
+    /// 口は使う本数によらず全部が束ねられ、**空きの口には 1 個の 0 を束ねる**。断片が読めるのは宣言した
+    /// 名前 (`numbers.<名前>`) だけなので、空きの口が読まれることは無い。束ねるのは面の口と同じ作りに
+    /// 揃えるためである。macOS 27 の手元では、空きの口を束ねなくても `MTL_DEBUG_LAYER=1`・
+    /// `MTL_SHADER_VALIDATION=1` のどちらの検証層も名指さなかった (#3576 の反証)。
+    static let namedNumbersCapacity = 4
     /// 読む面を渡す口の番号 (シェーダ側の `texture(0)`)。
     static let textureIndex = 0
     /// 焼き付けた影を渡す口の番号 (シェーダ側の `texture(1)`)。
@@ -187,7 +198,7 @@ final class ShapePipeline {
 
     /// 引数のテーブルに束ねられる置き場の数。上の口の番号はすべてこれより小さい
     /// (`ShaderInterfaceTests` が、入口の関数が宣言する番号と突き合わせる)。
-    static let bufferBindCount = 15
+    static let bufferBindCount = namedNumbersBufferIndex + namedNumbersCapacity
     /// 引数のテーブルに束ねられる面の数。利用者の面の口が最後に並ぶ。
     static let textureBindCount = surfaceTextureIndex + surfaceCapacity
 

@@ -13,9 +13,9 @@ import Foundation
 ///
 /// ## 並び
 ///
-/// 値の宣言 → 面の宣言 → 共通部分 → 断片。共通部分が値と面の型を使い、断片が共通部分の
-/// 型を使うので、この順序でしか組み立てられない。区切りはそれぞれ頭で名前を名乗る
-/// (``assemble(prelude:values:surfaces:body:)``)。
+/// 値の宣言 → 面の宣言 → 並びの宣言 → 共通部分 → 断片。共通部分が値と面と並びの型を使い、断片が
+/// 共通部分の型を使うので、この順序でしか組み立てられない。区切りはそれぞれ頭で名前を名乗る
+/// (``assemble(prelude:values:surfaces:numbers:body:)``)。
 enum ShaderSource {
     /// 断片をファイルから読む。**塗り・効果・計算で 1 つ** ([#895])。
     ///
@@ -70,8 +70,8 @@ enum ShaderSource {
         return body
     }
 
-    /// `values:`・`surfaces:` の名前が、断片の中で `values.<名前>`・`surfaces.<名前>` と書ける字の並びか
-    /// ([#2783])。
+    /// `values:`・`surfaces:`・`numbers:` の名前が、断片の中で `values.<名前>`・`surfaces.<名前>`・
+    /// `numbers.<名前>` と書ける字の並びか ([#2783])。
     ///
     /// 受けるのは、文字か `_` で始まり、文字・数字・`_` が続く空でない名前。**ASCII の外の文字も
     /// 受ける** — Metal は `波` を識別子として通すので、ASCII に絞ると今組める名前を断る。判定は
@@ -88,7 +88,7 @@ enum ShaderSource {
         return name.unicodeScalars.dropFirst().allSatisfy { $0.properties.isXIDContinue }
     }
 
-    /// `values:`・`surfaces:` の名前のうち、字の並びが書けないものを名指しする理由 ([#2783])。
+    /// `values:`・`surfaces:`・`numbers:` の名前のうち、字の並びが書けないものを名指しする理由 ([#2783])。
     /// 1 つも無ければ `nil`。
     ///
     /// **組み立てに任せない。** 名前は宣言 (`declaration(of:)`) へそのまま書かれるので、
@@ -101,11 +101,13 @@ enum ShaderSource {
     ///
     /// [#2783]: https://github.com/mokume-metal/mokume/issues/2783
     static func unusableNames(
-        values: [String: ShaderValue], surfaces: [String: ShaderSurface] = [:], in fragment: String
+        values: [String: ShaderValue], surfaces: [String: ShaderSurface] = [:],
+        numbers: [String] = [], in fragment: String
     ) -> String? {
         let unusable =
             values.keys.filter { !isUsableName($0) }.sorted().map { ("values:", "values", $0) }
             + surfaces.keys.filter { !isUsableName($0) }.sorted().map { ("surfaces:", "surfaces", $0) }
+            + numbers.filter { !isUsableName($0) }.sorted().map { ("numbers:", "numbers", $0) }
         guard !unusable.isEmpty else { return nil }
         return unusable.map { argument, prefix, name in
             "\(oneLine(fragment)): error: the name \(name.debugDescription) in \(argument) cannot be "
@@ -132,7 +134,7 @@ enum ShaderSource {
     /// 値の名前と、その形。
     ///
     /// 名前は**断片の中でそのまま書ける識別子**になる (字の並びは組み立ての前に
-    /// ``unusableNames(values:surfaces:in:)`` が検め、Metal で使えない名前は ``DeclaredNames`` が
+    /// ``unusableNames(values:surfaces:numbers:in:)`` が検め、Metal で使えない名前は ``DeclaredNames`` が
     /// 言い直す)。並べる順は名前順に固定する
     /// (辞書の順序に依らせると、同じ断片が実行のたびに別の原稿になる)。
     static func declaration(of values: [String: ShaderValue]) -> String {
@@ -229,6 +231,46 @@ enum ShaderSource {
         return lines.map(\.text).joined(separator: "\n") + "\n"
     }
 
+    /// 名前で読む数の並びの宣言の行 ([#3576])。1 本も無ければ空。
+    ///
+    /// 形は面の宣言と同じで、名前順に口が割り当たり、口は使う本数によらず
+    /// ``ShapePipeline/namedNumbersCapacity`` 個ぶん受け取る。前置きは共通部分より前に出るが、`device` は
+    /// 名前空間の外の語なので裸で書ける。
+    ///
+    /// [#3576]: https://github.com/mokume-metal/mokume/issues/3576
+    static func declarationLines(ofNumbers numbers: [String]) -> [DeclarationLine] {
+        let names = numbers.sorted()
+        guard !names.isEmpty else { return [] }
+        let slots = (0..<ShapePipeline.namedNumbersCapacity)
+            .map { "device const float *n\($0)" }.joined(separator: ", ")
+        var lines: [DeclarationLine] = [
+            ("#define MOKUME_NUMBERS \(names.count)", nil), ("struct Numbers {", nil),
+        ]
+        lines += names.map { ("    device const float *\($0);", $0) }
+        lines += [
+            ("};", nil), ("static inline Numbers mokume_numbers(\(slots)) {", nil),
+            ("    Numbers numbers;", nil),
+        ]
+        lines += names.enumerated().map { ("    numbers.\($0.element) = n\($0.offset);", $0.element) }
+        lines += [("    return numbers;", nil), ("}", nil)]
+        return lines
+    }
+
+    /// 名前で読む数の並びの名前と、断片からの受け取り方 ([#3576])。
+    ///
+    /// 名前は断片の中で `numbers.<名前>[i]` として書ける。並べる順と口の割り当ては名前順に固定する
+    /// (面と同じ理由)。**1 本も無ければ 1 バイトも出さない** — 並びを宣言しない断片には、並びの宣言も
+    /// 入口の引数も足されない (面の宣言と同じ約束・[#407])。共通部分 (`Common.metal`) には並びの分岐が
+    /// 足されたので、組み上がる原稿の全体まで前と同じなのではない。既存の断片の絵は変わらない。
+    ///
+    /// [#407]: https://github.com/mokume-metal/mokume/issues/407
+    /// [#3576]: https://github.com/mokume-metal/mokume/issues/3576
+    static func declaration(ofNumbers numbers: [String]) -> String {
+        let lines = declarationLines(ofNumbers: numbers)
+        guard !lines.isEmpty else { return "" }
+        return lines.map(\.text).joined(separator: "\n") + "\n"
+    }
+
     /// 本体が渡された名前から作った宣言の、行ごとの名前。組み立ての誤りが宣言を指したら、その名前を
     /// Swift の引数として名指す ([#2783] の反証)。
     ///
@@ -236,7 +278,8 @@ enum ShaderSource {
     /// `float half;` になる)、前置きのマクロ (`MOKUME_SURFACES`)。**表は持たない。** 予約語・型・
     /// マクロは Metal と前置きの版で増えるので、表はいずれ食い違う。代わりに組み立ての誤りを読む:
     ///
-    /// - 誤り (error) が `mokume/Values:<行>` か `mokume/Surfaces:<行>` を指したら、その行に書いた名前
+    /// - 誤り (error) が `mokume/Values:<行>`・`mokume/Surfaces:<行>`・`mokume/Numbers:<行>` を指したら、
+    ///   その行に書いた名前
     /// - `note: expanded from macro '<名前>'` の名前が渡した名前なら、その名前 (前置きのマクロと同じ
     ///   名前の値を断片で読むと、誤りは書いた断片の行に出て、マクロの知らせが添う)
     ///
@@ -249,8 +292,11 @@ enum ShaderSource {
         let valueLines: [Int: String]
         /// `mokume/Surfaces` の行 (1 から) ごとの名前。
         let surfaceLines: [Int: String]
+        /// `mokume/Numbers` の行 (1 から) ごとの名前 (#3576)。
+        var numberLines: [Int: String] = [:]
         let values: Set<String>
         let surfaces: Set<String>
+        var numbers: Set<String> = []
 
         /// 理由を、名指しの行を先頭に足した形で返す。宣言の名前に当たらなければそのまま返す。
         func restating(_ reason: String, in fragment: String) -> String {
@@ -265,9 +311,12 @@ enum ShaderSource {
                     note("values:", valueLines[row])
                 } else if let row = Self.row(of: line, in: "mokume/Surfaces") {
                     note("surfaces:", surfaceLines[row])
+                } else if let row = Self.row(of: line, in: "mokume/Numbers") {
+                    note("numbers:", numberLines[row])
                 } else if let macro = Self.expandedMacro(in: line) {
                     if values.contains(macro) { note("values:", macro) }
                     if surfaces.contains(macro) { note("surfaces:", macro) }
+                    if numbers.contains(macro) { note("numbers:", macro) }
                 }
             }
             guard !named.isEmpty else { return reason }
@@ -297,7 +346,7 @@ enum ShaderSource {
 
     /// ``DeclaredNames`` を、宣言と同じ行の並び (`declarationLines(of:)`) から作る。
     static func declaredNames(
-        values: [String: ShaderValue], surfaces: [String: ShaderSurface] = [:]
+        values: [String: ShaderValue], surfaces: [String: ShaderSurface] = [:], numbers: [String] = []
     ) -> DeclaredNames {
         func rows(_ lines: [DeclarationLine]) -> [Int: String] {
             var rows: [Int: String] = [:]
@@ -307,11 +356,12 @@ enum ShaderSource {
         return DeclaredNames(
             valueLines: rows(declarationLines(of: values)),
             surfaceLines: rows(declarationLines(of: surfaces)),
-            values: Set(values.keys), surfaces: Set(surfaces.keys))
+            numberLines: rows(declarationLines(ofNumbers: numbers)),
+            values: Set(values.keys), surfaces: Set(surfaces.keys), numbers: Set(numbers))
     }
 
     /// 原稿の 1 区切りと、その名前。組み立てた原稿の中で、区切りの頭の `#line` がこの名前と
-    /// 1 行目を名乗る (``assemble(prelude:values:surfaces:body:)``)。
+    /// 1 行目を名乗る (``assemble(prelude:values:surfaces:numbers:body:)``)。
     struct Part: Equatable, Sendable {
         /// 組み立ての誤りが、区切りの中の行に添えて名乗る名前。
         var name: String
@@ -343,13 +393,18 @@ enum ShaderSource {
     /// [#2457]: https://github.com/mokume-metal/mokume/issues/2457
     static func assemble(
         prelude: [Part], values: [String: ShaderValue],
-        surfaces: [String: ShaderSurface] = [:], body: Part
+        surfaces: [String: ShaderSurface] = [:], numbers: [String] = [], body: Part
     ) -> String {
         var parts = [Part(name: "mokume/Values", text: declaration(of: values))]
         // 面が無ければ、名乗りごと 1 バイトも出さない (面の宣言の約束・#407)
         let surfaceDeclaration = declaration(of: surfaces)
         if !surfaceDeclaration.isEmpty {
             parts.append(Part(name: "mokume/Surfaces", text: surfaceDeclaration))
+        }
+        // 名前で読む並びも同じ約束 (#3576)
+        let numberDeclaration = declaration(ofNumbers: numbers)
+        if !numberDeclaration.isEmpty {
+            parts.append(Part(name: "mokume/Numbers", text: numberDeclaration))
         }
         parts += prelude
         parts.append(body)

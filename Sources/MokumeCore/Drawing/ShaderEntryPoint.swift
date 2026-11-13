@@ -40,31 +40,55 @@ nonisolated struct ShaderEntryPoint: Sendable {
     /// 形を言った後に足す、直し方の手がかり (文の頭の `. ` から)。
     let hint: String
     /// この入口の断片で、`unknown type name '<型>'` と出たら入口の取り違えと読む型と、その言い直し。
-    /// 面を渡さない塗りの `Surfaces` だけが持つ。
-    let missingType: (name: String, restatement: String)?
+    /// 面を渡さない塗りの `Surfaces` と、並びを名前で渡さない塗りの `Numbers` だけが持つ。
+    let missingTypes: [(name: String, restatement: String)]
 
-    /// 塗りの入口。**`surfaces:` の有無で引数の数が変わる** (前置きの `#ifdef MOKUME_SURFACES`)。
-    static func paint(surfaces: Bool) -> Self {
-        let twoArguments = "float4 paint(Fragment in, Values values)"
+    /// 塗りの入口。**`surfaces:`・`numbers:` の有無で引数の数が変わる** (前置きの
+    /// `#ifdef MOKUME_SURFACES`・`#ifdef MOKUME_NUMBERS`)。両方なら面・並びの順に受け取る (#3576)。
+    static func paint(surfaces: Bool, numbers: Bool = false) -> Self {
+        // 記号は引数の型の名前を順に並べたもの (Itanium の名前の符号化)
+        var parameters = ["Fragment in", "Values values"]
+        var symbol = "_Z5paint8Fragment6Values"
         if surfaces {
-            return Self(
-                symbol: "_Z5paint8Fragment6Values8Surfaces",
-                signature: "float4 paint(Fragment in, Values values, Surfaces surfaces)",
-                hint: ". It was made with surfaces:, so paint takes them as its third parameter",
-                missingType: nil)
+            parameters.append("Surfaces surfaces")
+            symbol += "8Surfaces"
         }
-        return Self(
-            symbol: "_Z5paint8Fragment6Values",
-            signature: twoArguments,
-            hint: ". Check its name and parameters (only a fragment made with surfaces: takes "
-                + "Surfaces surfaces as the third)",
-            // 面を渡さなければ `Surfaces` の型そのものが無いので、3 引数で書くとリンクの前の
-            // 組み立てで落ちる
-            missingType: (
+        if numbers {
+            parameters.append("Numbers numbers")
+            symbol += "7Numbers"
+        }
+        let signature = "float4 paint(\(parameters.joined(separator: ", ")))"
+        let hint: String
+        switch (surfaces, numbers) {
+        case (true, true):
+            hint = ". It was made with surfaces: and numbers:, so paint takes them as its third and "
+                + "fourth parameters"
+        case (true, false):
+            hint = ". It was made with surfaces:, so paint takes them as its third parameter"
+        case (false, true):
+            hint = ". It was made with numbers:, so paint takes them as its third parameter"
+        case (false, false):
+            hint = ". Check its name and parameters (only a fragment made with surfaces: takes "
+                + "Surfaces surfaces, and only one made with numbers: takes Numbers numbers)"
+        }
+        // 渡さなければ `Surfaces`・`Numbers` の型そのものが無いので、引数を足して書くとリンクの前の
+        // 組み立てで落ちる
+        var missingTypes: [(name: String, restatement: String)] = []
+        if !surfaces {
+            missingTypes.append((
                 "Surfaces",
                 "Surfaces exists only in a fragment made with surfaces:, so without them the entry "
-                    + "point is \(twoArguments)"
+                    + "point is \(signature)"
             ))
+        }
+        if !numbers {
+            missingTypes.append((
+                "Numbers",
+                "Numbers exists only in a fragment made with numbers:, so without them the entry "
+                    + "point is \(signature)"
+            ))
+        }
+        return Self(symbol: symbol, signature: signature, hint: hint, missingTypes: missingTypes)
     }
 
     /// 効果の入口。
@@ -72,7 +96,7 @@ nonisolated struct ShaderEntryPoint: Sendable {
         symbol: "_Z6effect5Pixel6Values",
         signature: "float4 effect(Pixel in, Values values)",
         hint: ". Check its name and parameters",
-        missingType: nil)
+        missingTypes: [])
 
     /// 理由を、言い直しの 1 行を先頭に足した形で返す。入口の取り違えと読めなければそのまま返す。
     ///
@@ -87,7 +111,8 @@ nonisolated struct ShaderEntryPoint: Sendable {
         if reason.contains("Undefined symbol"), reason.contains("'\(symbol)'") {
             return "\(fragment): error: the fragment does not define its entry point \(signature)\(hint)"
         }
-        if let missingType, reason.contains("error: unknown type name '\(missingType.name)'") {
+        for missingType in missingTypes
+        where reason.contains("error: unknown type name '\(missingType.name)'") {
             return "\(fragment): error: \(missingType.restatement)"
         }
         return nil

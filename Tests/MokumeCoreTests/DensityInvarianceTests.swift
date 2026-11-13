@@ -419,12 +419,24 @@ struct DensityInvarianceTests {
                 canvas.shader(try Self.plainShader(canvas))
                 canvas.strokeJoin(pose.join)
                 let size = pose.size
+                let before = canvas.flatInstances.count
+                var kinds: [FrameKind] = []
                 for (anchor, turn) in [(SIMD2<Float>(64, 64 + offset - 400), Float(0)), (SIMD2(64, 64 + offset), angle)] {
                     canvas.pushMatrix()
                     canvas.translate(anchor.x, anchor.y)
                     canvas.rotate(turn)
+                    kinds.append(
+                        FrameKind(
+                            canvas.drawnLinear(canvas.flatTransform.matrix), weight: weight, size: size, join: pose.join))
                     canvas.rect(-size.x / 2, -size.y / 2, size.x, size.y)
                     canvas.popMatrix()
+                }
+                // 2 つ目が 1 つ目の雛形に畳まれていなければ、この口は畳んだ雛形を見ていない。鍵の丸めの境目をまたぐ
+                // 置き方も畳まれる (#3932)。畳みを求めるのは、2 つとも額縁で組める細い矩形か、2 つとも細くない矩形のときだけ
+                // (``FrameKind``)。境目の帯の中は求めない
+                let placed = canvas.flatInstances.count - before
+                if placed < 2, kinds[0] == kinds[1], kinds[0] != .undecided {
+                    throw NotFolded(description: "矩形の輪郭の 2 つ目が雛形に畳まれていない (置き場所 \(placed)): \(pose)")
                 }
             case .diagonalFoldedRing:
                 // 1 つ目は面の外へ `first` の向きで置き、見るのは雛形から回して置いた 2 つ目である (``diagonalFoldedRect``
@@ -433,21 +445,19 @@ struct DensityInvarianceTests {
                 let ring = pose.ringShape
                 canvas.shader(try Self.plainShader(canvas))
                 let before = canvas.flatInstances.count
-                var keys: [SIMD4<Float>] = []
                 for (anchor, turn) in [(SIMD2<Float>(64, 64 + offset - 400), ring.first), (SIMD2(64, 64 + offset), angle)] {
                     canvas.pushMatrix()
                     canvas.translate(anchor.x, anchor.y)
                     canvas.rotate(turn)
                     canvas.scale(1, ring.squash)
-                    keys.append(Canvas.rotationFreeKey(canvas.drawnLinear(canvas.flatTransform.matrix)))
                     canvas.ellipse(0, 0, ring.width, ring.height)
                     canvas.popMatrix()
                 }
                 // 2 つ目が 1 つ目の雛形に畳まれていなければ、この口は畳んだ雛形を見ていない (置き方の作り損ない)。
-                // 鍵の丸めの境目をまたいで 2 つの鍵が分かれた置き方だけは、畳まれず直に描かれる (正しい絵のまま)
+                // 鍵の丸めの境目をまたぐ置き方も畳まれる (#3932)
                 let placed = canvas.flatInstances.count - before
-                if placed < 2, keys[0] == keys[1] {
-                    throw RingNotFolded(description: "丸い周の 2 つ目が雛形に畳まれていない (置き場所 \(placed)): \(pose)")
+                if placed < 2 {
+                    throw NotFolded(description: "丸い周の 2 つ目が雛形に畳まれていない (置き場所 \(placed)): \(pose)")
                 }
             case .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 // 帯の中心を (64, 64 + ずらし) に置き、`angle` だけ回す (``diagonalLine`` と同じ置き方)
@@ -628,7 +638,7 @@ struct DensityInvarianceTests {
 
         /// 色をそのまま返す断片。三角形の経路へ落とすためだけに使う。
         @MainActor
-        private static func plainShader(_ canvas: Canvas) throws -> Shader {
+        static func plainShader(_ canvas: Canvas) throws -> Shader {
             try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
         }
     }
@@ -718,8 +728,44 @@ struct DensityInvarianceTests {
         }
     }
 
-    /// 丸い周の口の 2 つ目が、1 つ目の雛形に畳まれなかった (#3863)。置き方を境目の内側に作り損ねている。
-    nonisolated struct RingNotFolded: Error, CustomStringConvertible {
+    /// 矩形の輪郭の口 (``Amount/diagonalFoldedRect``) の置き場所が、回転をまたいで畳まれるはずの種類か (#3932 の反証)。
+    /// **実装の判定 (`Canvas.framesThinRect`・`Canvas.thinnestDrawnWeight`) を呼ばずに、検査の側の式で決める** — 呼ぶと
+    /// 期待が実装の写しになり、実装が誤って「額縁で組めない」と答える範囲が広がっても検査は何も求めない。
+    ///
+    /// 描く画素の 2x2 が相似 (2 つの列の長さが相対 10⁻³ の内で等しく、直交) なときだけ決める。描く画素での太さ (太さ ×
+    /// 列の長さ) が 1 − 10⁻³ 以下で、角が丸くなく、短い辺が描く画素で 4 (1 + 10⁻³) 以上なら額縁で組む細い矩形、
+    /// 1 + 10⁻³ 以上なら細くない矩形。どちらの境目からも相対 10⁻³ の帯の中 (実装の 1 − 10⁻⁴ の丸め・細さを測る 2 つの式の
+    /// ulp の食い違い・``frameBoundaryRect``) は決めない。
+    enum FrameKind: Equatable {
+        case framedThin
+        case notThin
+        case undecided
+
+        init(_ drawn: simd_float2x2, weight: Float, size: SIMD2<Float>, join: StrokeJoin) {
+            let margin: Float = 1e-3
+            let (first, second) = (drawn.columns.0, drawn.columns.1)
+            let (lengthX, lengthY) = (simd_length(first), simd_length(second))
+            let scale = (lengthX * lengthY).squareRoot()
+            guard scale > 0, scale.isFinite, abs(lengthX - lengthY) <= margin * scale,
+                abs(simd_dot(first, second)) <= margin * scale * scale
+            else {
+                self = .undecided
+                return
+            }
+            let drawnWeight = weight * scale
+            if drawnWeight >= 1 + margin {
+                self = .notThin
+            } else if drawnWeight <= 1 - margin, join != .round, min(size.x, size.y) * scale >= 4 * (1 + margin) {
+                self = .framedThin
+            } else {
+                self = .undecided
+            }
+        }
+    }
+
+    /// 丸い周の口 (#3863) と矩形の輪郭の口 (#3733) の 2 つ目が、1 つ目の雛形に畳まれなかった。置き方を畳む境目の内側に
+    /// 作り損ねたか、回転だけが違う置き場所の鍵が分かれた (#3932)。
+    nonisolated struct NotFolded: Error, CustomStringConvertible {
         let description: String
     }
 
@@ -775,7 +821,9 @@ struct DensityInvarianceTests {
     ///   落ちうるので、0.02 だけ内側から始める
     /// - 縦横比: 0.502 から 1。同じ理由で 0.002 だけ内側から
     /// - 縦の倍率: 回転の内側に掛ける (``Amount/diagonalFoldedRing``)。0.5 から 1。描く画素で最も細い帯は太さ × 細かさ ×
-    ///   倍率で、0.07 を割る置き方は見ない (``measurement(_:_:)``)
+    ///   倍率で、0.07 を割る置き方は見ない (``measurement(_:_:)``)。**小さい倍率 (0.01〜0.25) は生成で振らず、固定の例で
+    ///   見る** (``squashedRingPoses``・鍵の検査 `rotationFreeKeyIgnoresOnlyTurns`)。0.01 まで振ると約束の外で飛ばす置き方が
+    ///   約 1/3 に増え、見る件数が減るうえ、飛ばしすぎを止める門に seed しだいで掛かる (#3932 の 2 回目の反証)
     /// - 1 つ目の向き: `[0, π/2)`
     static let ringAxes: [ProbeAxis] = [
         ProbeAxis("ringMinor", 0..<1, simplest: 0),
@@ -1029,6 +1077,128 @@ struct DensityInvarianceTests {
             if case .fail(let text) = try Self.measure(mouth, pose) { broken.append("\(pose): \(text)") }
         }
         #expect(broken.isEmpty, "\(mouth.rawValue): \(broken.joined(separator: " / "))")
+    }
+
+    /// 固定の例: #3932 の鍵の丸めの境目。**PR #3931 の生成の検査が見つけた置き方 (細かさ 69/128 ≈ 0.539・回転の内側の縦の
+    /// 倍率 ≈ 0.711) で、1 つ目を回さず、2 つ目を 1.279272 だけ回す。** 鍵を 1/4096 の格子に丸めていた頃は、大きさの対数
+    /// (4096 倍) が 1 つ目で -4886.5、2 つ目で -4886.4995 と格子の境目の両側に落ち、2 つ目が畳まれずに直に組まれた
+    /// (``NotFolded``)。縦の倍率は、1 つ目の対数がちょうど境目に来るよう二分法で選んだ値である。
+    nonisolated static let roundingBoundaryRing = Pose(
+        weight: 1, density: 69.0 / 128, offset: .zero, angle: 1.279272, squash: 1,
+        ring: Pose.Ring(minor: 20, aspect: 0.8, squash: 0.7107762, first: 0))
+
+    /// 固定の例: 回転の内側の縦の倍率が小さい細い丸い周 (#3932 の 2 回目の反証)。生成の範囲 (0.5〜1・``ringAxes``) の外の
+    /// 0.1 と 0.25 で、約束の内 (描く画素で太さ × 細かさ < 1、最も細い帯 = 太さ × 細かさ × 倍率 ≥ 0.07) に入る
+    /// 太さ 0.9・細かさ 1 で置く。2 つ目は 1 つ目の雛形に畳まれ (``NotFolded`` を投げない)、光の量は約束どおりに出る。
+    /// 0.01 は約束の内に入る太さが描く画素で 1 を越えるので、鍵の検査 (`rotationFreeKeyIgnoresOnlyTurns`・
+    /// `squashedRingsOfDifferentShapeDoNotFold`) だけで見る。
+    nonisolated static let squashedRingPoses: [Pose] = [Float(0.1), 0.25].map {
+        Pose(
+            weight: 0.9, density: 1, offset: SIMD2(0.3, 0.7), angle: 0.7, squash: 1,
+            ring: Pose.Ring(minor: 20, aspect: 0.8, squash: $0, first: 0.3))
+    }
+
+    @Test("固定の例: 縦の倍率が小さい細い丸い周も、回して置くと 1 つの雛形に畳まれ、約束どおりの光の量で出る (#3932)")
+    func squashedRingsFoldAndKeepTheirWeight() throws {
+        for pose in Self.squashedRingPoses {
+            #expect(try Self.measure(.diagonalFoldedRing, pose) == .pass, "\(pose)")
+        }
+    }
+
+    @Test("固定の例: 鍵の丸めの境目をまたぐ向きに置いた細い丸い周も、1 つの雛形に畳まれる (#3932)")
+    func ringAcrossTheRoundingBoundaryFolds() throws {
+        let pose = Self.roundingBoundaryRing
+        #expect(try Self.measure(.diagonalFoldedRing, pose) == .pass, "\(pose)")
+    }
+
+    /// 回転だけが違う置き場所の畳みの鍵 (#3932)。``roundingBoundaryRing`` と同じ細かさで、回転の内側の縦の倍率 s を
+    /// 0.01 から 1 まで 6 通りに振る。各 s で 2 つ目の向きを `[0, π/2)` に 256 通り振り、どの向きも 1 つ目と同じ鍵になる
+    /// (完了条件 1)。
+    ///
+    /// 大きさ・縦の倍率を、同じ形とみなす幅 ε (``Canvas/rotationFreeKeyTolerance``) の 1.5 倍だけ変えた置き場所は別の鍵、
+    /// 0.5 倍だけ変えた置き場所は同じ鍵になる (完了条件 2)。幅の 1.5 倍で見るので、幅を 2 倍に広げると赤になる。
+    /// s = 0.01 は、成分ごとの絶対の差で比べていた頃に縦の倍率が数十 % 違っても同じ鍵になった所 (#3932 の反証) で、
+    /// 格子に丸めていた頃も s∈[0.0092, 0.011) が同じ升に入っていた。
+    @Test(
+        "回転だけが違う置き場所は向きによらず同じ畳みの鍵になり、大きさ・縦横比が幅の外で違えば別の鍵のまま (#3932)",
+        arguments: [Float(0.01), 0.1, 0.25, 0.5, 0.7107762, 1])
+    func rotationFreeKeyIgnoresOnlyTurns(_ squash: Float) throws {
+        let canvas = try Self.makeCanvas(density: Self.roundingBoundaryRing.density)
+        // 幅は実装の定数を読まず、注釈が根拠を書いた値 (2⁻¹²) で持つ。定数を読むと、幅を広げても緑のまま
+        let tolerance: Float = 1.0 / 4096
+        try Self.draw(on: canvas) {
+            @MainActor func fold(turn: Float, scale: Float = 1, squash: Float) -> Canvas.ThinFold {
+                canvas.pushMatrix()
+                canvas.rotate(turn)
+                canvas.scale(scale, scale * squash)
+                let drawn = canvas.drawnLinear(canvas.flatTransform.matrix)
+                canvas.popMatrix()
+                return Canvas.ThinFold(key: Canvas.rotationFreeKey(drawn), linear: .zero, widensAcrossTheLine: true)
+            }
+            let first = fold(turn: 0, squash: squash)
+            let split = (0..<256).map { Float($0) * .pi / 512 }.filter { fold(turn: $0, squash: squash) != first }
+            #expect(split.isEmpty, "縦の倍率 \(squash): 1 つ目と鍵が分かれた向き: \(split)")
+            let (outside, inside) = (1 + 1.5 * tolerance, 1 + 0.5 * tolerance)
+            #expect(fold(turn: 1.279272, scale: outside, squash: squash) != first, "縦の倍率 \(squash): 大きさを 1.5ε 変えても同じ鍵")
+            #expect(fold(turn: 1.279272, squash: squash * outside) != first, "縦の倍率 \(squash): 縦の倍率を 1.5ε 変えても同じ鍵")
+            #expect(fold(turn: 1.279272, scale: inside, squash: squash) == first, "縦の倍率 \(squash): 大きさを 0.5ε 変えると別の鍵")
+            #expect(fold(turn: 1.279272, squash: squash * inside) == first, "縦の倍率 \(squash): 縦の倍率を 0.5ε 変えると別の鍵")
+        }
+    }
+
+    /// 固定の例: 矩形の輪郭の口の、細いかの境目 (#3932 の反証)。**細かさ 0.5・太さ 1.9997998 (描く画素で 1 − 10⁻⁴ の
+    /// すぐ下) の 40×20 の矩形を、1 つ目は回さず、2 つ目を 0.5292233 だけ回す。** 2 つ目は、最小の特異値で測ると
+    /// 細くない (``Canvas/thinnestDrawnWeight(_:by:)`` が 1 に丸める) のに、行列式の平方根で測ると額縁で組める
+    /// (``Canvas/framesThinRect(width:height:weight:join:drawn:)``)。鍵は 1 つ目が回転に依らない部分、2 つ目が無しに
+    /// 分かれ、畳まれないのが実装どおりである。口の畳みの判定はこの置き方で畳みを求めない (求めると誤って赤になる)。
+    nonisolated static let frameBoundaryRect = Pose(
+        weight: 1.9997998, density: 0.5, offset: .zero, angle: 0.5292233, squash: 1)
+
+    @Test("固定の例: 細いかの境目で 2 つ目だけ細くない矩形の輪郭は、畳まれなくても誤って赤にしない (#3932)")
+    func rectOnTheThinBoundaryIsNotRequiredToFold() throws {
+        let pose = Self.frameBoundaryRect
+        #expect(try Self.measure(.diagonalFoldedRect, pose) == .pass, "\(pose)")
+    }
+
+    /// 潰れた・有限でない 2x2 の回転に依らない鍵 (#3932)。対角の和が 0 以下・有限でない 2x2 は 0 の鍵、潰れた 2x2
+    /// (行列式 0) は数でない値を持たず、比が決まらないのでビット列で比べる。
+    @Test("潰れた・有限でない 2x2 の畳みの鍵は 0 か有限の値で、潰れた鍵はビット列で比べる (#3932)")
+    func rotationFreeKeyOfCollapsedLinear() {
+        let zero = SIMD4<Float>(repeating: 0)
+        #expect(Canvas.rotationFreeKey(simd_float2x2(0)) == zero)
+        #expect(Canvas.rotationFreeKey(simd_float2x2(diagonal: SIMD2(.infinity, 1))) == zero)
+        #expect(Canvas.rotationFreeKey(simd_float2x2(diagonal: SIMD2(.nan, 1))) == zero)
+        let flat = Canvas.rotationFreeKey(simd_float2x2(diagonal: SIMD2(1, 0)))
+        #expect(flat == SIMD4(1, 0, 0, 0))
+        #expect(Canvas.sameRotationFreeKey(flat, flat))
+        #expect(!Canvas.sameRotationFreeKey(flat, Canvas.rotationFreeKey(simd_float2x2(diagonal: SIMD2(1.0001, 0)))))
+        #expect(!Canvas.sameRotationFreeKey(flat, Canvas.rotationFreeKey(simd_float2x2(diagonal: SIMD2(1, 0.001)))))
+        #expect(Canvas.sameRotationFreeKey(zero, zero))
+    }
+
+    /// 固定の例: #3932 の反証。**`ellipse(0, 0, 20, 2000)` を `scale(1, 0.01)` と `scale(1, 0.015)` で置く。** 描く画素では
+    /// どちらも細い丸い周 (20×20 と 20×30) で、回転だけでは移り合わない。成分ごとの絶対の差で鍵を比べていた頃は同じ
+    /// 雛形に畳まれ、2 つ目の上下の帯が 1 つ目の 2x2 で広げた幅 (直に描いた絵の 1.5 倍) で出た。
+    @Test("固定の例: 潰した変換で縦の倍率だけが違う細い丸い周は、同じ雛形に畳まれない (#3932)")
+    func squashedRingsOfDifferentShapeDoNotFold() throws {
+        let canvas = try Self.makeCanvas(density: 1)
+        var placed = -1
+        try Self.draw(on: canvas) {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.shader(try Amount.plainShader(canvas))
+            let before = canvas.flatInstances.count
+            for (y, squash) in [(Float(64 - 400), Float(0.01)), (64, 0.015)] {
+                canvas.pushMatrix()
+                canvas.translate(64, y)
+                canvas.scale(1, squash)
+                canvas.ellipse(0, 0, 20, 2000)
+                canvas.popMatrix()
+            }
+            placed = canvas.flatInstances.count - before
+        }
+        #expect(placed < 2, "縦の倍率 0.015 の周が 0.01 の雛形に畳まれた (置き場所 \(placed))")
     }
 
     /// 丸い端の保持した形の、置き場所の位相をまたいだ控えの使い回し (#3864) で試す形。

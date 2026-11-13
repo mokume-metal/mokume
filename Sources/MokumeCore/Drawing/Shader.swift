@@ -7,7 +7,7 @@ import MokumeDiagnostics
 
 /// 利用者が書いた塗り。
 ///
-/// 使い方は ``SketchPart/loadShader(_:values:surfaces:)`` にある。
+/// 使い方は ``SketchPart/loadShader(_:values:surfaces:numbers:)`` にある。
 public final class Shader {
     /// 断片・値・保存の拾い直しを持つ骨。**3 者で 1 つ** (``ShaderBox``)。
     private let box: ShaderBox
@@ -63,6 +63,19 @@ public final class Shader {
         surfaces.sorted { $0.key < $1.key }.map(\.value)
     }
 
+    /// いま名前で渡している数の並び ([#3576])。**名前ごとに口を 1 つ使う** (面と同じ)。
+    ///
+    /// 面と同じく、名前は作るときに決まり、並びだけを後から差し替える。
+    ///
+    /// [#3576]: https://github.com/mokume-metal/mokume/issues/3576
+    private(set) var numbers: [String: Numbers]
+
+    /// 口へ束ねる順に並べた並び。**原稿が宣言した並びと同じ (名前順)** — 食い違うと、断片が
+    /// `numbers.field` と書いたところへ別の並びが届く。
+    var orderedNumbers: [Numbers] {
+        numbers.sorted { $0.key < $1.key }.map(\.value)
+    }
+
     /// いま描くのに使うパイプライン。差し替えに失敗しても**前のものが残る**。
     private(set) var states: ShapePipeline.BlendStates
 
@@ -94,12 +107,13 @@ public final class Shader {
 
     init(
         name: String, url: URL?, body: String, values: [String: ShaderValue],
-        surfaces: [String: ShaderSurface] = [:],
+        surfaces: [String: ShaderSurface] = [:], numbers: [String: Numbers] = [:],
         gpu: RenderDevice, pipeline: ShapePipeline
     ) throws(RenderFailure) {
         self.name = name
         self.surfaces = surfaces
         self.drawnSurfaces = Self.drawn(in: surfaces)
+        self.numbers = numbers
         self.gpu = gpu
         self.pipeline = pipeline
         self.box = ShaderBox(
@@ -107,7 +121,8 @@ public final class Shader {
             label: "shader", valuesHint: "loadShader's values")
 
         let library = try gpu.shaders.makeShapeLibrary(
-            named: name, body: body, bodyName: box.bodyName, values: values, surfaces: surfaces)
+            named: name, body: body, bodyName: box.bodyName, values: values, surfaces: surfaces,
+            numbers: Array(numbers.keys))
         self.library = library
         self.states = try pipeline.makeStates(
             fragmentLibrary: library, label: "mokume.shader.\(name)")
@@ -156,6 +171,27 @@ public final class Shader {
         surfaces[name] = surface
     }
 
+    /// 名前で渡す数の並びを差し替える ([#3576])。
+    ///
+    /// **宣言していない名前は受け付けない** — 並びの宣言も断片と一緒に組み上がるので、後から名前を
+    /// 増やすと組み直しになる (面と同じ規則)。差し替える前に置いた図形は、前の並びを読む。
+    /// 保持した形 (`createShape`) は、置いた時点ではなく**記録した時点の並び**を読む (面・値と同じ)。
+    ///
+    /// [#3576]: https://github.com/mokume-metal/mokume/issues/3576
+    public func set(_ name: String, _ numbers: Numbers) {
+        guard let current = self.numbers[name] else {
+            Diagnostics.warn(
+                "shader: \"\(name)\" was never declared in numbers:, so it cannot be passed. "
+                    + "Write it in loadShader's numbers "
+                    + "(what is there now: \(self.numbers.keys.sorted().joined(separator: ", ")))")
+            return
+        }
+        // 同じ並びの渡し直しでは、列を閉じない
+        guard current !== numbers else { return }
+        paintWillChange()
+        self.numbers[name] = numbers
+    }
+
     /// この塗りを当てた面を覚える。**同じ面は 1 度だけ。** 覚えるついでに、死んだ面を落とす。
     func note(usedBy canvas: Canvas) {
         guard !users.contains(where: { $0.canvas === canvas }) else { return }
@@ -182,7 +218,7 @@ public final class Shader {
             prepare: { (body: String) throws(RenderFailure) -> BuildJob<Rebuilt> in
                 let library = try gpu.shaders.shapeLibraryJob(
                     named: name, body: body, bodyName: box.bodyName, values: values,
-                    surfaces: surfaces)
+                    surfaces: surfaces, numbers: Array(numbers.keys))
                 let flat = pipeline.statesJob(label: "mokume.shader.\(name)")
                 let solid = pipeline.statesJob(
                     label: "mokume.shader.\(name).solid",
