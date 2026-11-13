@@ -788,6 +788,95 @@ struct SolidShaderTests {
         #expect(red == 0, "まとめ描きで世界の位置が画素の位置と食い違う画素が \(red) ある")
     }
 
+    @Test("視点を決めて空間に置いた平面の図形でも、世界の位置は 0")
+    func flatShapesInSpaceCarryNoWorldPosition() throws {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let probe = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                return dot(in.worldPosition, in.worldPosition) > 0.0
+                    ? float4(1.0, 0.0, 0.0, 1.0) : float4(0.0, 1.0, 0.0, 1.0);
+            }
+            """)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(probe)
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            // 視点を回り込ませ、平面を奥行きのある向きへ倒す — 平面の頂点段が世界の位置を書けば外れる
+            canvas.camera(
+                64 + Self.fittingDistance * sin(0.5), 30,
+                Self.fittingDistance * cos(0.5), 64, 64, 0, 0, 1, 0)
+            canvas.translate(64, 64, 10)
+            canvas.rotateX(0.7)
+            canvas.rect(-30, -30, 60, 60)
+        }
+        let (green, red) = Self.greenAndRed(try canvas.target.encodeForDisplay())
+        #expect(green > 800, "空間に置いた平面が塗られていない: 緑 \(green) 画素")
+        #expect(red == 0, "空間に置いた平面に世界の位置が入っている画素が \(red) ある")
+    }
+
+    @Test("立体の線の世界の位置は、線の芯から線の太さの程度の内に在る (芯そのものではない)")
+    func solidStrokeWorldPositionStaysNearTheCore() throws {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        // 芯は世界の y = 64・z = 0 の線分 (x は 30…138 だが画面に入るのは 30…128)。芯からの距離が太さの
+        // 2 倍 (values.reach) より遠ければ赤。広げた帯の上の位置なので、芯との距離は 0 にはならない — 太さ 8
+        // の帯で y は芯から 4 の内、目の側へ寄せた z は約 8.5 だった (2026-11-13 の実測)。寄せる量は 1 画素の
+        // 世界での長さで決まり、視点と倍率で動くので、ここでは芯からの「太さの程度」だけを固定する
+        let probe = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                float2 offset = in.worldPosition.yz - float2(64.0, 0.0);
+                return length(offset) < values.reach && in.worldPosition.x > 28.0
+                    ? float4(0.0, 1.0, 0.0, 1.0) : float4(1.0, 0.0, 0.0, 1.0);
+            }
+            """,
+            values: ["reach": 16])
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.stroke(.linear(red: 1, green: 1, blue: 1))
+            canvas.strokeWeight(8)
+            canvas.shader(probe)
+            // **変換を通して置く** — 形自身の座標 (書いた座標) を渡していれば、x がずれて赤くなる
+            canvas.push()
+            canvas.translate(20, 0, 0)
+            canvas.beginShape(.lines)
+            canvas.vertex(10, 64, 0)
+            canvas.vertex(118, 64, 0)
+            canvas.endShape()
+            canvas.pop()
+        }
+        let image = try canvas.target.encodeForDisplay()
+        let (green, red) = Self.greenAndRed(image)
+        #expect(image[40, 64].green > 200 && image[40, 64].red < 40, "線の世界の位置が芯から離れている")
+        #expect(green > 400, "線が塗られていない: 緑 \(green) 画素")
+        #expect(red == 0, "線の世界の位置が芯から太さより離れた画素が \(red) ある")
+    }
+
+    @Test("noLights() の下でも、周囲を置いた立体では baseColor は color (周囲を通した色) と違う")
+    func surroundingsAloneSeparateTheBaseColor() throws {
+        let canvas = try makeCanvas()
+        let probe = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                return all(in.baseColor == in.color)
+                    ? float4(1.0, 0.0, 0.0, 1.0) : float4(0.0, 1.0, 0.0, 1.0);
+            }
+            """)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noLights()
+            canvas.surroundings(.sky)
+            canvas.noStroke()
+            canvas.fill(.linear(red: 0.8, green: 0.5, blue: 0.2))
+            canvas.shader(probe)
+            canvas.translate(32, 32, 0)
+            canvas.sphere(24)
+        }
+        let pixel = try canvas.target.encodeForDisplay()[32, 32]
+        #expect(pixel.green > 200 && pixel.red < 40, "周囲を置いた立体で baseColor が color と同じ (周囲を通した後の色が入っている)")
+    }
+
     /// 球 1 つと、まとめ描きの箱 2 つ (置き場所ごとに違う色) を置いた絵。
     private func litScene(lit: Bool, paint body: String?) throws -> DisplayImage {
         let canvas = try makeCanvas(width: 128, height: 128)

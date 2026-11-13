@@ -236,7 +236,21 @@ struct OutputScaleTests {
     /// (``SolidShaderTests/worldMatchesScreen``)。`worldPosition` に倍率が掛かっていれば、倍率 2・3 で外れる。
     @Test("断片の worldPosition は、倍率 2・3 の下でも座標のまま (光とトゥーンの段がずれない)", arguments: [1, 2, 3])
     func worldPositionIgnoresTheScale(_ factor: Int) throws {
-        let canvas = try Self.makeCanvas(scale: factor)
+        try Self.expectWorldPositionInCoordinates(
+            on: try Self.makeCanvas(scale: factor), area: 3000 * factor * factor, label: "倍率 \(factor)")
+    }
+
+    /// 細かさも倍率と同じく描く画素だけを変えるので、`worldPosition` は座標のまま。細かさは 1 以下に
+    /// 限られる (`invalidPixelDensity`) ので、描く画素 1 つが座標の 2 になる 0.5 で見る — 倍率と逆向きに
+    /// `unitsPerDrawnPixel` が 1 から外れる。
+    @Test("断片の worldPosition は、細かさ 0.5 の下でも座標のまま")
+    func worldPositionIgnoresTheDensity() throws {
+        try Self.expectWorldPositionInCoordinates(
+            on: try Self.makeCanvas(scale: 1, density: 0.5), area: 3000, label: "細かさ 0.5")
+    }
+
+    /// 回した平らな面を断片 ``SolidShaderTests/worldMatchesScreen`` で塗り、緑が `area` を超え赤が 0 か。
+    private static func expectWorldPositionInCoordinates(on canvas: Canvas, area: Int, label: String) throws {
         let probe = try canvas.makeShader(SolidShaderTests.worldMatchesScreen)
         try Self.draw(on: canvas) {
             canvas.background(0)
@@ -258,8 +272,8 @@ struct OutputScaleTests {
             }
         }
         // 面は 60×60 の座標 = 倍率 N で (60N)² 画素。縁を除いても大半は緑
-        #expect(green > 3000 * factor * factor, "倍率 \(factor) の面が塗られていない: 緑 \(green) 画素")
-        #expect(red == 0, "倍率 \(factor) で worldPosition が座標と食い違う画素が \(red) ある")
+        #expect(green > area, "\(label) の面が塗られていない: 緑 \(green) 画素")
+        #expect(red == 0, "\(label) で worldPosition が座標と食い違う画素が \(red) ある")
     }
 
     // MARK: - 字
