@@ -241,9 +241,8 @@ extension Canvas {
     ///
     /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
     var allocatedBytes: Int {
-        var bytes = output.texture.allocatedSize + output.depthTexture.allocatedSize
-        if target !== output { bytes += target.texture.allocatedSize + target.depthTexture.allocatedSize }
-        return bytes + atlas.texture.allocatedSize + frameRing.bufferBytes
+        let drawn = target === output ? 0 : target.allocatedBytes
+        return output.allocatedBytes + drawn + atlas.texture.allocatedSize + frameRing.bufferBytes
     }
 
     /// 閉じた中間面を、不透明度を掛けて、この面へ画像として置く。置き先は箱の位置で、変換は掛けない
