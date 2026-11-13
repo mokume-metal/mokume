@@ -222,6 +222,11 @@
         }
       }
     },
+    "kept": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Where the image and the conditions of its frame were kept, relative to this reply (`../kept/<id>`, a folder holding `kept.json` as in `kept-frame.schema.json` and the image). Present only when the request asked for keep and the folder was put in place. Omitted when keep was not asked for — such a reply is exactly what it was before keep existed — and when it was asked for but nothing was kept, with the reason in warnings."
+    },
     "appliedTime": {
       "type": "number",
       "minimum": 0,

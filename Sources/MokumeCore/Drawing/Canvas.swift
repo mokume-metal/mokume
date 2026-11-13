@@ -428,9 +428,15 @@ public final class Canvas {
         /// ``Canvas/foldsThinRingAcrossTurns(_:drawn:)`` だけが立てる。真なら ``key`` は回転に依らない部分。
         var widensAcrossTheLine = false
 
+        /// 回転に依らない部分を入れた鍵 (``widensInVertexStage``・``widensAcrossTheLine``) は、単精度の揺れの幅まで同じと
+        /// みなして比べる (``Canvas/sameRotationFreeKey(_:_:)``・#3932)。2x2 そのものの鍵はビット列で比べる。
         static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.key == rhs.key && lhs.widensInVertexStage == rhs.widensInVertexStage
-                && lhs.widensAcrossTheLine == rhs.widensAcrossTheLine
+            guard lhs.widensInVertexStage == rhs.widensInVertexStage, lhs.widensAcrossTheLine == rhs.widensAcrossTheLine
+            else { return false }
+            if lhs.widensInVertexStage || lhs.widensAcrossTheLine {
+                return Canvas.sameRotationFreeKey(lhs.key, rhs.key)
+            }
+            return lhs.key == rhs.key
         }
     }
 
@@ -5134,6 +5140,8 @@ public final class Canvas {
         let startsFrame = passesThisFrame == 0 && drawsInFrame
         let restoresCarry = carriesPictureBeforeEffects && startsFrame && pendingBackground == nil
         let changesTarget = hasPendingDrawing || target.hasPendingPixelWrites || restoresCarry
+        // 描く先を変える描き切りを数える (観測の持ち出しが、描いた後に絵が変わったかを見る・#2618)
+        if changesTarget { target.noteContentWritten() }
         // **GPU に頼む仕事が 1 つも無い描き切りか** ([#2787])。そうなら描く先の絵は 1 画素も変わらないので、
         // 置いた側への写させも、パスも投入も要らない
         let skipsThisFlush = skipsFlush(mirroringPixels: mirroringPixels, changesTarget: changesTarget)
@@ -5971,6 +5979,14 @@ public final class Canvas {
                 bind(
                     (run.paint.numbers ?? emptyNumbers).storage.gpuAddress,
                     ShapePipeline.numbersBufferIndex)
+                // 名前で宣言した数の並び (#3576)。**口は毎回すべて束ねる** — 渡していない口には 1 個の 0 を
+                // 束ねる。空きの口は断片から読めない (宣言した名前しか書けない) ので、面の口と作りを揃えるため
+                // (``ShapePipeline/namedNumbersCapacity``)
+                for slot in 0..<ShapePipeline.namedNumbersCapacity {
+                    let numbers =
+                        slot < run.paint.namedNumbers.count ? run.paint.namedNumbers[slot] : emptyNumbers
+                    bind(numbers.storage.gpuAddress, ShapePipeline.namedNumbersBufferIndex + slot)
+                }
                 // 利用者が宣言した面。**口は毎回すべて束ねる** — 渡していない口には
                 // 読む面を束ねる。束ねずに走らせると、宣言より多く読んだ断片が
                 // 絵の乱れではなく異常終了になる (数の並びと同じ扱い)

@@ -519,7 +519,15 @@ package final class SketchRuntime {
     /// 書き込みが走っている最中に絵を消すと、古い絵と新しい目録が組になる。
     ///
     /// [#2381]: https://github.com/mokume-metal/mokume/issues/2381
-    private var settling: ObservationReport?
+    private var settling: Settling?
+    /// 最後に描き終えたフレームの番号と、その `draw()` の終わりの書き込みの番号 ([#2618])。**観測が有効なときだけ
+    /// 控える。** 持ち出し (``ObservationRequest/keep``) が、撮る時点の番号と比べて、絵を描いた後に絵か `@Param` の
+    /// 値が動いたか (外から止めている間につまみを動かした・止めている間の入力のコールバックが描いた) を見る。
+    /// **控えるのは整数だけで、値は読まない** — 値を読むのは持ち出しを頼まれた観測のときだけである。描けなかった
+    /// フレームでは `nil` に戻し、持ち出しはその後の絵を持ち出さない。
+    ///
+    /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
+    private var drawnState: DrawnState?
     /// メニューバーで名乗る係。**組み立てのときには何も出さない** — 出すのは
     /// ``SketchPresence/grace`` 秒ぶん進み続けてからである。
     private lazy var presence = SketchPresence(source: self)
@@ -1199,6 +1207,8 @@ package final class SketchRuntime {
         // 描けたのは、描く手順を最後まで通ったときだけ。落ちた枚は `drew: false` で、画素のハッシュは取らない
         var replayDrew = false
         defer { endReplayStep(drew: replayDrew, drawFailed: !replayDrew) }
+        // 描き終えるまでは、どの `draw()` の終わりも控えていない (#2618)
+        drawnState = nil
         beginFrame()
         if !deliveredInput { collectInput() }
         canvas.time = timing.time
@@ -1263,6 +1273,35 @@ package final class SketchRuntime {
             }
         }
         replayDrew = true
+        noteDrawnState()
+    }
+
+    /// `draw()` の終わりの、絵と `@Param` の書き込みの番号 ([#2618])。
+    ///
+    /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
+    private struct DrawnState {
+        /// 描き終えたフレームの番号。
+        let frame: Int
+        /// `@Param` の値が変わった回数 (``ParamRegistry/changeCount``)。
+        let paramChanges: UInt64
+        /// 描く先の中身を書き換えた回数 (``RenderTarget/contentWrites``)。
+        let pictureWrites: UInt64
+    }
+
+    /// 描き終えたフレームの、書き込みの番号を控える ([#2618])。観測が有効でなければ控えない。**値は読まない** —
+    /// 要求の無いフレームの費用は、整数を宣言の数だけ足すことと、構造体を 1 つ置くことだけである。
+    ///
+    /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
+    private func noteDrawnState() {
+        guard observer != nil else { return }
+        drawnState = DrawnState(
+            frame: timing.frameCount, paramChanges: paramRegistry.changeCount,
+            pictureWrites: canvas.target.contentWrites)
+    }
+
+    /// いまの `@Param` の値 (宣言した順)。
+    private func currentParamValues() -> [NamedParamValue] {
+        paramRegistry.declarations.map { NamedParamValue(name: $0.name, value: $0.value) }
     }
 
     // MARK: - 記録 ([#3570])
@@ -2566,12 +2605,19 @@ package final class SketchRuntime {
         if let drawFailure {
             finish(
                 id: request.id, through: observer, frames: [], complete: false,
-                warnings: limits.warnings + ["Drawing this frame failed: \(drawFailure)"])
+                warnings: limits.warnings + ["Drawing this frame failed: \(drawFailure)"]
+                    + Self.notKept(request.keep, "drawing this frame failed"))
             return
+        }
+        // **持ち出すのは 1 枚の要求だけ** (#2618)。列は撮るが持ち出さず、そのことを名乗る
+        var warnings = limits.warnings
+        if request.keep, limits.count > 1 {
+            warnings.append(
+                "The shots were not kept: keep takes a single shot, and this request takes \(limits.count)")
         }
         capture = FrameCapture(
             id: request.id, scale: limits.scale, count: limits.count, every: limits.every,
-            warnings: limits.warnings, appliedTime: appliedTime)
+            warnings: warnings, appliedTime: appliedTime, keep: request.keep && limits.count == 1)
         continueCapture(through: observer, drawFailure: nil)
     }
 
@@ -2588,7 +2634,8 @@ package final class SketchRuntime {
             capture = nil
             finishCapture(
                 id: pending.id, through: observer, frames: pending.frames, complete: false,
-                warnings: pending.warnings + ["Drawing this frame failed: \(drawFailure)"])
+                warnings: pending.warnings + ["Drawing this frame failed: \(drawFailure)"]
+                    + Self.notKept(pending.keep, "drawing this frame failed"))
             return
         }
 
@@ -2614,20 +2661,31 @@ package final class SketchRuntime {
             // [#2381]: https://github.com/mokume-metal/mokume/issues/2381
             let stats = FrameStats.summarize(image)
             let name = observer.enqueueFrame(image, at: pending.frames.count)
-            pending.frames.append(
-                ObservationReport.CapturedFrame(
-                    image: name,
-                    frame: timing.frameCount,
-                    time: Double(timing.time),
-                    stats: stats,
-                    values: exposedValues.isEmpty ? nil : exposedValues))
+            let shot = ObservationReport.CapturedFrame(
+                image: name,
+                frame: timing.frameCount,
+                time: Double(timing.time),
+                stats: stats,
+                values: exposedValues.isEmpty ? nil : exposedValues)
+            pending.frames.append(shot)
+            // 持ち出す組の条件は、**撮ったその時点で**組む (決着を待つ間に進んだ値を載せない・#2618)。絵が描いた
+            // フレームのものでなくなっていれば、持ち出さずに名乗る
+            if pending.keep {
+                switch keptManifest(for: pending.id, shot: shot) {
+                case .manifest(let manifest): pending.kept = manifest
+                case .refused(let reason):
+                    pending.keep = false
+                    pending.warnings += Self.notKept(true, reason)
+                }
+            }
         } catch {
             // 採れなくても黙らない。読み手が「まだか / 失敗か / 死んだか」を
             // 区別できるようにするため (ADR-0018 決定 3)
             capture = nil
             finishCapture(
                 id: pending.id, through: observer, frames: pending.frames, complete: false,
-                warnings: pending.warnings + ["Could not take the image: \(error)"])
+                warnings: pending.warnings + ["Could not take the image: \(error)"]
+                    + Self.notKept(pending.keep, "the image could not be taken"))
             return
         }
 
@@ -2638,7 +2696,8 @@ package final class SketchRuntime {
             finishCapture(
                 id: pending.id, through: observer, frames: pending.frames, complete: true,
                 warnings: pending.warnings + canvas.shaderFailures
-                    + Self.repetitionWarnings(pending.frames), appliedTime: pending.appliedTime)
+                    + Self.repetitionWarnings(pending.frames), appliedTime: pending.appliedTime,
+                keep: pending.kept)
             return
         }
         pending.wait = pending.every - 1
@@ -2655,15 +2714,15 @@ package final class SketchRuntime {
     private func finishCapture(
         id: String, through observer: FrameObserver,
         frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String],
-        appliedTime: Float? = nil
+        appliedTime: Float? = nil, keep: KeptFrame? = nil
     ) {
         let snapshot = report(
             id: id, frames: frames, complete: complete, warnings: warnings, appliedTime: appliedTime)
         guard observer.hasPendingWrites else {
-            observer.finish(snapshot)
+            observer.finish(Self.keeping(keep, of: snapshot, through: observer))
             return
         }
-        settling = snapshot
+        settling = Settling(report: snapshot, keep: keep)
         // 裏で続けない観測は、撮り終えたフレームのうちに決着まで待つ (``FrameObserver/writesInBackground``)
         if !observer.writesInBackground { settleObservation(.block, through: observer) }
     }
@@ -2677,16 +2736,102 @@ package final class SketchRuntime {
     /// - Returns: 決着したか (待っているものが無い・書いた)。``Patience/peek`` なら、まだなら `false`。
     @discardableResult
     private func settleObservation(_ patience: Patience, through observer: FrameObserver) -> Bool {
-        guard let snapshot = settling else { return true }
+        guard let pending = settling else { return true }
         guard let settlement = observer.settleWrites(patience) else { return false }
         settling = nil
         switch settlement {
         case .written:
-            observer.finish(snapshot)
+            observer.finish(Self.keeping(pending.keep, of: pending.report, through: observer))
         case .failed(let index, let reason):
-            observer.finish(snapshot.truncated(after: index, because: reason))
+            // 区画に絵が揃わなかったので、持ち出すものも無い。打ち切りの警告に加えて、持ち出さなかったと名乗る
+            let truncated = pending.report.truncated(after: index, because: reason)
+            observer.finish(
+                pending.keep == nil
+                    ? truncated
+                    : truncated.keeping(
+                        at: nil, warning: FrameObserver.notKeptPrefix + "the image could not be written"))
         }
         return true
+    }
+
+    /// 撮り終えて、書き込みの決着を待っている目録と、持ち出す組の目録。
+    private struct Settling {
+        let report: ObservationReport
+        let keep: KeptFrame?
+    }
+
+    /// 区画に絵が揃った後で、頼まれていれば組を持ち出し、その決着を目録に載せる ([#2618])。
+    ///
+    /// **呼ぶのは区画の書き込みが全部決着した後、目録を書く前。** 持ち出せなかったら、理由を警告に載せて `kept` を
+    /// 落とす。観測そのものは撮れているので、目録の他の中身は変えない。
+    ///
+    /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
+    private static func keeping(
+        _ keep: KeptFrame?, of report: ObservationReport, through observer: FrameObserver
+    ) -> ObservationReport {
+        guard let keep else { return report }
+        guard let image = report.image else {
+            return report.keeping(at: nil, warning: FrameObserver.notKeptPrefix + "the image was not taken")
+        }
+        let outcome = observer.keep(keep, image: image)
+        return report.keeping(at: outcome.kept, warning: outcome.warning)
+    }
+
+    /// 持ち出しを頼んだのに持ち出さなかったときの警告 (頼んでいなければ空)。
+    private static func notKept(_ asked: Bool, _ reason: String) -> [String] {
+        asked ? [FrameObserver.notKeptPrefix + reason] : []
+    }
+
+    /// 持ち出す組の目録を組めたか。
+    private enum KeptManifest {
+        case manifest(KeptFrame)
+        /// 持ち出さない理由。
+        case refused(String)
+    }
+
+    /// 撮った 1 枚から、持ち出す組の目録を組む ([#2618])。
+    ///
+    /// **絵と値が、撮った枚のフレームの `draw()` の終わりのままかを、書き込みの番号で見る** (``DrawnState``):
+    ///
+    /// - **撮った枚のフレームの `draw()` の終わりを控えていなければ持ち出さない** (控えが無い・控えたフレームが撮った枚の
+    ///   フレームと違う)。描き切りが投げたフレームの後に止まると、絵は途中まで描いた絵か前のフレームの絵で、そのフレームの
+    ///   絵とは言えない。絵が書き換えられたときと同じく、組を作らずに理由を名乗る
+    /// - **絵が書き換えられていれば持ち出さない** (止めている間の入力のコールバックが描いた・画素を書いた)。絵は
+    ///   そのフレームの絵ではないので、目録の `frame`・`time`・`values` がどれもその絵を言わない。目録の形 (2026-11-13 の
+    ///   決定 2) はそれらを不明と書く欄を持たないので、組を作らずに理由を名乗る。`draw()` の外で描いた絵には結び付ける
+    ///   フレームの条件が無いので、持ち出すには `redraw()` で描き直してから頼む
+    /// - **`@Param` の値が動いていれば** (外から止めている間につまみを動かした・コールバックが書き換えた)、古い絵に新しい
+    ///   値を結び付けず、分からないと名乗る。動いていなければ、いまの値が `draw()` の終わりの値である
+    ///
+    /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
+    private func keptManifest(for id: String, shot: ObservationReport.CapturedFrame) -> KeptManifest {
+        guard let drawn = drawnState, drawn.frame == shot.frame else {
+            return .refused(
+                "the end of the draw() of frame \(shot.frame) was not seen (for example, drawing that frame failed), "
+                    + "so this picture is not known to be that frame's picture")
+        }
+        guard drawn.pictureWrites == canvas.target.contentWrites else {
+            return .refused(
+                "the picture was changed after frame \(shot.frame) was drawn (drawn or written while stopped), "
+                    + "so the conditions of that frame do not describe it; "
+                    + "ask again after redraw() has drawn it again, or on a later frame")
+        }
+        var params: KeptFrame.Params?
+        var reason: String?
+        if drawn.paramChanges == paramRegistry.changeCount {
+            params = KeptFrame.Params(values: currentParamValues())
+        } else {
+            reason = "The knob values changed after frame \(shot.frame) was drawn, "
+                + "so the values this picture was drawn with are not known"
+        }
+        return .manifest(
+            KeptFrame(
+                id: id, image: FrameObserver.keptImageName, frame: shot.frame, time: shot.time,
+                clock: KeptFrame.KeptClock(clock),
+                size: ObservationReport.Size(width: target.width, height: target.height),
+                stamp: SourceStamp.current, values: shot.values ?? [:], params: params,
+                paramsUnknownReason: reason,
+                record: recordingStatus.map { KeptFrame.Record(id: $0.id, frame: shot.frame) }))
     }
 
     /// 目録を書いて、この要求を終える。
@@ -2781,6 +2926,10 @@ package final class SketchRuntime {
         /// 目録に載せることわり。切り詰めたことなど、撮り始める前に決まるもの。
         var warnings: [String]
         var appliedTime: Float?
+        /// 撮った 1 枚を持ち出すか (1 枚の要求で `keep` を頼んだときだけ・#2618)。
+        var keep = false
+        /// 持ち出す組の目録。撮った時点で組む。
+        var kept: KeptFrame?
         /// ここまでに撮れた絵。
         var frames: [ObservationReport.CapturedFrame] = []
         /// 次に撮るまで残っているフレーム数。0 ならこのフレームで撮る。

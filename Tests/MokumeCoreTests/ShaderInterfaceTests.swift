@@ -94,6 +94,31 @@ struct ShaderInterfaceTests {
             ])
     }
 
+    @Test("名前で並びを宣言した断片は、並びの口を上限の数だけ、Swift 側と同じ番号で受け取る")
+    func namedNumbersAgreeWithSwift() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 8, height: 8)
+        let canvas = try Canvas(target: target, gpu: gpu)
+        // 面と並びの宣言の原稿を組むのに要るのは名前だけで、中身は読まない。面と一緒に宣言して、
+        // 面の口と並びの口が同じ入口に並んでもずれないことを見る
+        let image = try canvas.createImage(1, 1)
+        let library = try gpu.shaders.makeShapeLibrary(
+            named: "numbers",
+            body: """
+                float4 paint(Fragment in, Values values, Surfaces surfaces, Numbers numbers) {
+                    return float4(numbers.probe[0]) * mokume_sample(surfaces.tone, in.place);
+                }
+                """,
+            surfaces: ["tone": .image(image)], numbers: ["probe"])
+
+        check(
+            library, entries: Self.shapeFragmentEntries(surfaces: true, numbers: true),
+            limits: [
+                .buffer: ShapePipeline.bufferBindCount,
+                .texture: ShapePipeline.textureBindCount,
+            ])
+    }
+
     /// 光の有無 (`kShapeLitValue`・#1778) も同じ一覧で見る — 番号がずれると、組む側が
     /// 渡した値が別の定数に効き、断片は渡し忘れた扱い (`true`) で組まれて速さだけを失う。
     @Test("図形の特化の番号が、Swift 側と一致する")
@@ -348,7 +373,7 @@ struct ShaderInterfaceTests {
     }
 
     /// 三角形の経路の断片 3 本。**利用者の断片のライブラリにも入る**入口である。
-    static func shapeFragmentEntries(surfaces: Bool) -> [Entry] {
+    static func shapeFragmentEntries(surfaces: Bool, numbers: Bool = false) -> [Entry] {
         var common: [Port] = [
             .buffer("uniforms", ShapePipeline.uniformsBufferIndex, .layout(Self.uniforms)),
             .buffer("values", ShapePipeline.valuesBufferIndex, .indexOnly),
@@ -367,6 +392,14 @@ struct ShaderInterfaceTests {
             // 口の数は宣言した枚数によらず上限ぶん。**数が食い違えば名前の集合が食い違う**
             common += (0..<ShapePipeline.surfaceCapacity).map {
                 .texture("user_surface_\($0)", ShapePipeline.surfaceTextureIndex + $0)
+            }
+        }
+        if numbers {
+            // 名前で読む並びの口も、宣言した本数によらず上限ぶん (#3576)
+            common += (0..<ShapePipeline.namedNumbersCapacity).map {
+                .buffer(
+                    "user_numbers_\($0)", ShapePipeline.namedNumbersBufferIndex + $0,
+                    .scalar(Float.self))
             }
         }
         return [

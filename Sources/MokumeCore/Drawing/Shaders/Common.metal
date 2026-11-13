@@ -430,6 +430,9 @@ struct Fragment {
     /// **渡していなければ 1 個の 0 を指す。** 何も指さない状態にすると、渡し忘れた
     /// 断片が絵の乱れではなく異常終了として出る。範囲は書いた側が知っているので、
     /// ここでは長さを配らない。
+    ///
+    /// 読めるのは 1 本だけである。何本も読むなら、作る口の `numbers:` で名前を付けて渡し、
+    /// 入口の `Numbers numbers` から `numbers.<名前>[i]` で読む (#3576)。
     device const float *numbers;
 };
 
@@ -634,9 +637,17 @@ static inline float4 mokume_composite(float4 source, float4 destination, uint mo
 /// **面を宣言した断片だけ、受け取るものが 1 つ増える。** 宣言していない断片は今までの
 /// 2 引数のままで、組み上がる原稿も 1 バイト変わらない ([#407])。
 ///
+/// **名前で数の並びを宣言した断片も、同じ形で `Numbers numbers` を受け取る** ([#3576])。面と並びの
+/// 両方を宣言した断片は、面・並びの順に 4 引数で受け取る。
+///
 /// [#407]: https://github.com/mokume-metal/mokume/issues/407
-#ifdef MOKUME_SURFACES
+/// [#3576]: https://github.com/mokume-metal/mokume/issues/3576
+#if defined(MOKUME_SURFACES) && defined(MOKUME_NUMBERS)
+float4 paint(Fragment in, Values values, Surfaces surfaces, Numbers numbers);
+#elif defined(MOKUME_SURFACES)
 float4 paint(Fragment in, Values values, Surfaces surfaces);
+#elif defined(MOKUME_NUMBERS)
+float4 paint(Fragment in, Values values, Numbers numbers);
 #else
 float4 paint(Fragment in, Values values);
 #endif
@@ -661,6 +672,21 @@ float4 paint(Fragment in, Values values);
 #else
 #define MOKUME_SURFACE_PARAMS
 #define MOKUME_SURFACE_ARGS
+#endif
+
+#ifdef MOKUME_NUMBERS
+// 利用者が名前で宣言した数の並び (#3576)。**口の数は宣言した本数によらず固定**で、余りには
+// 1 個の 0 が束ねてある (面と同じく、何も束ねない口を作らないため)
+#define MOKUME_NUMBERS_PARAMS \
+    device const float *user_numbers_0 [[buffer(15)]], \
+    device const float *user_numbers_1 [[buffer(16)]], \
+    device const float *user_numbers_2 [[buffer(17)]], \
+    device const float *user_numbers_3 [[buffer(18)]],
+#define MOKUME_NUMBERS_ARGS \
+    , mokume_numbers(user_numbers_0, user_numbers_1, user_numbers_2, user_numbers_3)
+#else
+#define MOKUME_NUMBERS_PARAMS
+#define MOKUME_NUMBERS_ARGS
 #endif
 
 #define MOKUME_SHAPE_PARAMS \
@@ -717,6 +743,9 @@ static inline float4 mokume_shapeColor(
     bool isFrontFacing
 #ifdef MOKUME_SURFACES
     , Surfaces surfaces
+#endif
+#ifdef MOKUME_NUMBERS
+    , Numbers namedNumbers
 #endif
 ) {
     // **形から求めた向きだけは、どちらの側から見ても光を受ける。** 裏を向いている面
@@ -785,8 +814,12 @@ static inline float4 mokume_shapeColor(
 
     // **被覆は断片の後で掛ける** (#1637)。乗算済みの色なので、全成分に掛ければ画素の
     // 一部だけを覆った色になる
-#ifdef MOKUME_SURFACES
+#if defined(MOKUME_SURFACES) && defined(MOKUME_NUMBERS)
+    return paint(f, values, surfaces, namedNumbers) * in.coverage;
+#elif defined(MOKUME_SURFACES)
     return paint(f, values, surfaces) * in.coverage;
+#elif defined(MOKUME_NUMBERS)
+    return paint(f, values, namedNumbers) * in.coverage;
 #else
     return paint(f, values) * in.coverage;
 #endif
@@ -798,6 +831,7 @@ static inline float4 mokume_shapeColor(
 /// (一覧は `ShapePipeline.BlendStates` の doc)。
 fragment float4 mokume_fragmentMain(
     MOKUME_SURFACE_PARAMS
+    MOKUME_NUMBERS_PARAMS
     MOKUME_SHAPE_PARAMS,
     constant uint &mode [[buffer(2)]],
     float4 destination [[color(0)]])
@@ -818,11 +852,11 @@ fragment float4 mokume_fragmentMain(
             }
             coverage *= glyph;
         }
-        float4 color = mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
+        float4 color = mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS MOKUME_NUMBERS_ARGS);
         return coverage < 1.0 ? color + destination * (1.0 - coverage) : color;
     }
     return mokume_composite(
-        mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS), destination, mode);
+        mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS MOKUME_NUMBERS_ARGS), destination, mode);
 }
 
 /// 画素を描く入口。**下地を読まない。**
@@ -836,9 +870,10 @@ fragment float4 mokume_fragmentMain(
 /// [#758]: https://github.com/mokume-metal/mokume/issues/758
 fragment float4 mokume_fragmentDirect(
     MOKUME_SURFACE_PARAMS
+    MOKUME_NUMBERS_PARAMS
     MOKUME_SHAPE_PARAMS)
 {
-    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
+    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS MOKUME_NUMBERS_ARGS);
 }
 
 /// 画素を描く入口 (置き換える列)。**下地を読まないが、字形の外の余白は捨てる。**
@@ -870,11 +905,12 @@ fragment float4 mokume_fragmentDirect(
 /// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
 fragment float4 mokume_fragmentReplace(
     MOKUME_SURFACE_PARAMS
+    MOKUME_NUMBERS_PARAMS
     MOKUME_SHAPE_PARAMS)
 {
     if (textureReading == kTextureGlyphPage && source_texture.sample(kGlyphSampler, in.uv).a <= 0.0) {
         discard_fragment();
         return float4(0.0);
     }
-    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
+    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS MOKUME_NUMBERS_ARGS);
 }

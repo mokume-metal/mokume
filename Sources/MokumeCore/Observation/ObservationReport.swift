@@ -85,6 +85,10 @@ package struct ObservationReport: Encodable, Equatable, Sendable {
     public let frames: [CapturedFrame]
     /// 指定を適用して撮れた秒。時刻指定の成功時だけ在る。目録の時刻と照合する。
     public let appliedTime: Double?
+    /// 持ち出した組 (``ObservationRequest/keep``) の置き場。**この応答からの相対** (`../kept/<id>`)。持ち出しを
+    /// 頼まなかった・持ち出せなかったときは `nil` で、鍵ごと落ちる — 頼まなかった応答は持ち出しを知らない版と
+    /// 1 バイトも変わらない ([#2618](https://github.com/mokume-metal/mokume/issues/2618))。
+    public let kept: String?
 
     init(
         id: String,
@@ -99,7 +103,8 @@ package struct ObservationReport: Encodable, Equatable, Sendable {
         inputs: [SourceReport]? = nil,
         stamp: String? = nil,
         frames: [CapturedFrame] = [],
-        appliedTime: Double? = nil
+        appliedTime: Double? = nil,
+        kept: String? = nil
     ) {
         self.id = id
         self.image = image
@@ -114,6 +119,15 @@ package struct ObservationReport: Encodable, Equatable, Sendable {
         self.stamp = stamp
         self.frames = frames
         self.appliedTime = appliedTime
+        self.kept = kept
+    }
+
+    /// 持ち出しの決着を載せた姿。置けたなら ``kept`` に置き場を、置けなかった・断ったなら理由を警告の末尾に足す。
+    func keeping(at kept: String?, warning: String?) -> ObservationReport {
+        ObservationReport(
+            id: id, image: image, frame: frame, time: time, size: size,
+            warnings: warnings + [warning].compactMap { $0 }, stats: stats, load: load, values: values,
+            inputs: inputs, stamp: stamp, frames: frames, appliedTime: appliedTime, kept: kept)
     }
 
     /// 書き込みが `count` 枚目で転んだと分かった後の姿。**目録はその枚の手前で終える** (絵は揃っていない・
