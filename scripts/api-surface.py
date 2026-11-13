@@ -792,6 +792,13 @@ def check_sketch_coverage(
     API の呼び出しまでは数えられない。数えたいなら API を呼ぶスケッチを別に置く (宣言した型の中
     だけを外す読みは、型の波括弧の対応まで読むことになるので採らなかった)。
 
+    **残る近似** (#4052。誤りは「呼ばれていない」と名指しする向きで、見逃す向きではない):
+    (i) ファイル単位で外すので、入れ子の型の中だけの自前の関数でも、そのファイルの素の呼び出しは
+    全部数えない。(ii) 別のファイルの最上位の `func` は見ない (いまの最上位の func は
+    `main.swift` の `exitReporting` だけ)。(iii) 性質の口には効かない (スケッチの func 名と
+    `Sketch` の公開の性質の名前の重なりは 0 件)。(iv) 宣言の読みはバッククォートの名前
+    (``func `numbers`(``) も受けるが、呼び出しの側は `` `numbers`( `` を読まない。
+
     **数えないもの (代償)**: 関数を値として渡す形 (`values.map(phase)`) は呼び出しの形ではない
     ので数えない。示したいなら `phase(period: …)` と呼ぶ。多重定義は基底名に畳むので、片方の
     引数の形だけが呼ばれていても通る ([#3035](https://github.com/mokume-metal/mokume/issues/3035))。
@@ -801,7 +808,7 @@ def check_sketch_coverage(
     files = [sources] if isinstance(sources, str) else list(sources)
     codes = [blank_comments(source, strings=True) for source in files]
     # ファイルごとに、自前に宣言した関数の名前 (`func name`。型の中の static・private も含む)
-    declared = [set(re.findall(r"\bfunc\s+(\w+)", code)) for code in codes]
+    declared = [set(re.findall(r"\bfunc\s+`?(\w+)", code)) for code in codes]
     # 基底名 → (口の種類, 最後の引数が閉包の宣言があるか)
     flags: dict[str, dict[str, bool]] = {}
     for member in symbols:

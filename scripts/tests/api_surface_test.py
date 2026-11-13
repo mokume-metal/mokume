@@ -776,7 +776,12 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
         for source in [
             "private static func numbers(_ v: SIMD3<Float>) -> [Float] { [v.x] }\nlet a = numbers(v)",
             "func numbers(_ v: Int) {}\nnumbers(3)\nself.numbers(4)",
+            # **近似を固定する例**: Swift の名前の解き方では S の外の素の `numbers(2)` は
+            # `S.numbers` に解けない。#4052 の完了条件 1 が代償として認めた「ファイル単位で外す」形で、
+            # 入れ子の型の中だけの宣言でも、そのファイルの素の呼び出しは数えない
             "struct S { static func numbers(_ v: Int) {} }\nlet a = S.numbers(1)\nnumbers(2)",
+            # 宣言の名前のバッククォート (呼び出しの側 `numbers`( はもともと数えない)
+            "func `numbers`(_ v: Int) {}\nnumbers(1)",
         ]:
             with self.subTest(source=source):
                 problems = api.check_sketch_coverage(symbols, source, {})
