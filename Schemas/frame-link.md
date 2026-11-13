@@ -34,26 +34,27 @@ The sketch sends `accepted` and `refused` with a timeout of zero, once, like eve
 
 Send one `connect` at a time from a port: do not send another from the same port until its answer came. Then any `accepted` or `refused` on that port answers the `connect` you are waiting on. (`refused` does not say which `connect` it answers, so two outstanding ones cannot be told apart.) If `resized` comes while you wait, make surfaces of the new size and send `connect` with them once the answer came.
 
-Wait for the answer up to a deadline that you choose, counted from when you sent `connect`, on a clock that does not jump (`mach_absolute_time` or `DispatchTime`, not the wall clock). One second or more is recommended; the heavier the sketch, the later its answers. mokume's own test receiver waits one second. While you wait, do not count `frame` messages and do not return their surfaces. A `frame` that comes before the answer was sent before the sketch read your `connect`, about surfaces it lets go of when it accepts you; if the answer was lost, it is about a connection you are about to leave. Only `frame` messages that come after your latest `accepted` and carry its receiver id are for the surfaces you sent.
+Your own messages can be dropped too. The sketch's port queues only a couple of messages; when the sketch is busy, it fills and `mach_msg` reports `MACH_SEND_TIMED_OUT` at once. A `connect` you could not send gets no answer, and you know that when you send it: wait a moment (mokume's test receiver waits 50 milliseconds) and send it again from the same port, without waiting for an answer.
+
+Wait for the answer up to a deadline that you choose, counted from when the `connect` was sent, on a clock that does not jump (`mach_absolute_time` or `DispatchTime`, not the wall clock). One second or more is recommended; the heavier the sketch, the later its answers. Make each deadline longer than the one before when they pass in a row, for example twice as long: a sketch that is busy for longer than your first deadline still gets the chance to answer a later attempt. mokume's test receiver waits one second, then two, then four, and gives up when the third passes.
+
+While you wait, do not count `frame` messages and do not return their surfaces. A `frame` that comes before the answer is about surfaces of the connection you are leaving: the sketch sent it before it read your `connect`, or after an answer you lost. Nothing has to be returned for them: an `accepted` makes the sketch let go of the earlier surfaces, and a port you give up on takes them with it (below). Only `frame` messages that come after your latest `accepted` and carry its receiver id are for the surfaces you sent.
 
 What to do next:
 
 | What happened | What you do |
 | --- | --- |
-| `accepted` came | You are connected with the id it carries. Start counting lost answers from zero again |
-| `refused` came | Handle it by its reason (a size refusal is described above). Start counting lost answers from zero again. If you were already accepted on this port, the sketch keeps your id and your slot (and, unless the size changed, your earlier surfaces, which it keeps writing): send `connect` again from the same port, or let go with `disconnect` or by destroying your port |
-| The deadline passed, and you know your receiver id (an earlier `accepted` told you, and you sent `connect` again, for example after `resized`) | Send `disconnect` with that id. Then replace your port (below) and send `connect` from the new one |
-| The deadline passed, and you do not know your receiver id (your first `connect` got no answer) | Replace your port (below) and send `connect` from the new one |
+| `accepted` came | You are connected with the id it carries. Start counting passed deadlines from zero again |
+| `refused` came | Handle it by its reason (a size refusal is described above). Start counting passed deadlines from zero again. If the sketch had accepted this port before, it keeps your id, your slot and, unless the size changed, your earlier surfaces, which it keeps writing and which `frame` messages that came while you waited still hold. Either send `connect` again from the same port (its `accepted` lets go of all of them) or give the port up (destroying it frees everything) |
+| `connect` could not be sent | Send it again after a moment, from the same port. If the deadline passes before it could be sent, count that as a passed deadline and keep trying with the next, longer one |
+| The deadline passed after `connect` was sent | Replace your port (below) and send `connect` from the new one, with a longer deadline. Do this whether or not you know your receiver id, and do not send `disconnect` |
 | The deadline passed for the third time in a row | Give up: destroy your port and report that the sketch does not answer |
 
-To **replace your port**: read the old port until it is empty, acting on a dead-name notification and on `resized` as in step 4. Destroy its receive right and make a new port. Ask again for the dead-name notification on the sketch's send right (step 2), on the new port, and deallocate the earlier request that the call hands back. If that request fails with `KERN_INVALID_ARGUMENT`, the sketch's name is already dead: the sketch went away.
+To **replace your port**: read the old port until it is empty, acting on a dead-name notification and on `resized` as in step 4. Destroy its receive right and make a new port. Ask again for the dead-name notification on the sketch's send right (step 2), on the new port, and deallocate the earlier request that the call hands back. If that request fails with `KERN_INVALID_ARGUMENT`, the sketch's name is already dead: the sketch went away. Send new surfaces with the new `connect`: until the sketch handles the old port's death, it may still write into the surfaces it had from the old port.
 
-Why a new port, even when you know your id: the answer you gave up on may still come, and on the old port you could not tell it from the answer to your next `connect`. On a destroyed port it never reaches you. The sketch frees what the old port held:
+Why a new port, even when you know your id: the answer you gave up on may still come, and on the old port you could not tell it from the answer to your next `connect`. On a destroyed port it never reaches you. The sketch frees what the old port held when it learns that the port died: it asked for the port's dead-name notification when it accepted you. A `connect` that it reads only after the port died is dropped without an answer and takes no slot. Do not send `disconnect` before you replace the port: it only takes a place in the sketch's short queue, ahead of your new `connect`.
 
-- `disconnect` frees your slot at once. If it could not be sent (the sketch's queue was full) or arrives after the port died, the old port's death frees the slot: the sketch asked for its dead-name notification when it accepted you.
-- A `connect` that the sketch reads only after the port died is not accepted and takes no slot (no answer is sent, since it could not arrive).
-
-Your own messages to the sketch can be dropped too: when the sketch is busy, its queue fills and `mach_msg` reports `MACH_SEND_TIMED_OUT`. A `connect` you could not send gets no answer; wait for the deadline as for a lost answer. A `disconnect` you could not send is covered by the old port's death.
+So once you have given up on an answer, or sent `disconnect`, connect again only from a new port. Sending `connect` from a port after `disconnect` is not part of this procedure.
 
 ## Messages
 

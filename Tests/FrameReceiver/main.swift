@@ -15,10 +15,11 @@
 // その大きさの面で繋ぎ直す。`--service` の形は、目録の大きさを読まない従来の受け手として振る舞う。
 //
 // 答え (`accepted`・`refused`) は待ち行列が満杯なら落ち、送り手が忙しければ遅れる (#3968)。繋ぐ前に自分の待ち行列を
-// 読み切り (送り手が消えた知らせと `resized` は捌く)、答えを `--answer-timeout` 秒 (既定 1・単調な時計) 待つ。届かなければ、
-// 番号を知っていれば `disconnect` してから、**どちらでも受信の port を作り直して**繋ぎ直す (遅れた答えは古い port と
-// 一緒に消える)。答えが届かないことが続けて 3 回で諦める (答えが届けば数え直す)。答えを待つ間の frame は数えない。
-// 答えを落とす・遅らせる状況は検査用の引数で作る (下の `clogAttempts`・`leftoverAttempts`・`holdAttempts`)。
+// 読み切り (送り手が消えた知らせと `resized` は捌く)、答えを期限つきで待つ (単調な時計。見切るたびに倍)。届かなければ、
+// 番号を知っていても `disconnect` は送らずに受信の port と面を作り直して繋ぎ直す (遅れた答えは古い port と一緒に消える)。
+// 送れなかった connect は答えを待たずに送り直す。続けて 3 回目に見切ったら諦める (答えが届けば数え直す)。答えを待つ
+// 間の frame は数えない。決め方の表は `answerDeadline` の上。答えを落とす・遅らせる状況は検査用の引数で作る
+// (下の `clogAttempts` ほか)。
 // 大きさで断られたとき (#3949) は答えが届いているので、こちらではなく目録の読み直しに進む。
 //
 // 標準入力が `resume` 以外の 1 行を届けるか閉じると終わる (検査が、受け手の側から切る形を作れるように)。
@@ -101,20 +102,25 @@ func passed(_ time: DispatchTime) -> Bool { DispatchTime.now() >= time }
 let deadline = after(argument("--timeout").flatMap(Double.init) ?? 30)
 let name = argument("--name")
 
-func attemptNumbers(_ option: String) -> Set<Int> {
+func numbers(_ option: String) -> Set<Int> {
     Set((argument(option) ?? "").split(separator: ",").compactMap { Int($0) })
 }
 /// 検査用: この回数目の connect (1 から数える。`,` で区切って複数) の直前に、自分の受信の待ち行列を詰め物で満杯にして、
 /// 送り手の答えを落とさせる (#3968)。詰めた後は、標準入力に `resume` が届くまで読まない (検査が送り手に答えさせてから)。
-let clogAttempts = attemptNumbers("--clog-attempt")
+/// 送り手の答えより先に自分の期限が来たら `pausedPastDeadline` を言う (検査が期限の後で読ませる合図)。
+let clogAttempts = numbers("--clog-attempt")
 /// 検査用: この回数目の connect の**読み切りより前に**、待ち行列を詰め物で満杯にしておく (前の繋がりの読み残しの代わり)。
 /// 送った後は `resume` まで読まない。読み切っていれば答えは落ちない。
-let leftoverAttempts = attemptNumbers("--leftovers-attempt")
+let leftoverAttempts = numbers("--leftovers-attempt")
 /// 検査用: この回数目の connect の読み切りより前で、`holding` を言って `resume` まで止まる (その間に検査が送り手を
-/// 止める・大きさを変える)。
-let holdAttempts = attemptNumbers("--hold-attempt")
+/// 止める・大きさを変える・頼みを捌かずにおく)。
+let holdAttempts = numbers("--hold-attempt")
+/// 検査用: この回数目の立ち直りで、古い port を読み切る前に `holdingRecovery` を言って `resume` まで止まる。
+let holdRecoveries = numbers("--hold-recovery")
 /// 検査用: この枚数を受けたら、同じ大きさの面を作り直して同じ port から繋ぎ直す。
 let reconnectAfter = argument("--reconnect-after").flatMap(Int.init) ?? 0
+/// 検査用: 上の繋ぎ直しで渡す面の数 (既定は `--surfaces`)。約束の範囲の外の数なら、送り手は `surfaceCount` で断る。
+let reconnectSurfaces = argument("--reconnect-surfaces").flatMap(Int.init) ?? surfaceCount
 
 // 標準入力が `resume` 以外の 1 行を届けるか閉じたら終わる。受信の権利ごと消えるので、送り手は dead-name で知る
 let resumed = DispatchSemaphore(value: 0)
@@ -155,14 +161,21 @@ func makePort() {
 makePort()
 
 // 3. 面を作って繋ぐ
-func makeSurfaces(width: Int, height: Int) -> [IOSurfaceRef] {
-    (0..<surfaceCount).compactMap { _ in
+func makeSurfaces(width: Int, height: Int, count: Int = surfaceCount) -> [IOSurfaceRef] {
+    (0..<count).compactMap { _ in
         IOSurfaceCreate(
             [
                 kIOSurfaceWidth: width, kIOSurfaceHeight: height, kIOSurfacePixelFormat: FrameLink.surfaceFormat,
                 kIOSurfaceBytesPerElement: 8,
             ] as [CFString: Any] as CFDictionary)
     }
+}
+/// いまの面と同じ大きさ・数で作り直す。
+func remakeSurfaces(width: Int? = nil, height: Int? = nil) {
+    let first = surfaces.first
+    surfaces = makeSurfaces(
+        width: width ?? first.map(IOSurfaceGetWidth) ?? 1, height: height ?? first.map(IOSurfaceGetHeight) ?? 1,
+        count: surfaces.count)
 }
 /// 自分の待ち行列を詰め物 (受け手には届かない種類の 1 通) で満杯にする。詰めた数を返す。
 func clogQueue() -> Int {
@@ -174,18 +187,39 @@ func clogQueue() -> Int {
 }
 
 var surfaces = makeSurfaces(width: width, height: height)
-/// 送った connect の数。
+/// 送った (送ろうとした) connect の数。
 var attempts = 0
-/// `accepted` で知った自分の番号。まだ知らない (または `disconnect` した・port を作り直した) なら 0。
+/// 立ち直った (port を作り直した) 回数。
+var recoveries = 0
+/// `accepted` で知った自分の番号。まだ知らない (または port を作り直した) なら 0。
 var receiverID: UInt32 = 0
+
+// 答えを待つ (#3968)。答えは待ち行列が満杯なら落ち、送り手が忙しければ遅れる。見本の決め方:
+//
+//   | 起きたこと                          | すること                                                                     |
+//   | ----------------------------------- | ---------------------------------------------------------------------------- |
+//   | connect を送れた                    | 期限 = `--answer-timeout` (既定 1 秒) × 2^(続けて見切った回数) まで答えを待つ |
+//   | connect を送れなかった (送り手が満杯) | 答えは来ない。0.05 秒おきに同じ port から送り直す。期限は送れた時点から数え直す |
+//   | 答えが届いた (`accepted`・`refused`) | 続けて見切った回数を 0 に戻す                                                |
+//   | 送れたのに期限が過ぎた              | 見切る: port を作り直し、新しい面で繋ぎ直す (`disconnect` は送らない)          |
+//   | 送れないまま期限が過ぎた            | 見切った回数を数え、期限を延ばして送り直しを続ける (port はそのまま)          |
+//   | 続けて 3 回目に見切った             | 諦める (`gaveUp`・exit 7。port は消え、送り手は枠を回収する)                   |
+
 /// 答え (`accepted`・`refused`) を待つ期限。待っていなければ `nil`。**1 つの port から、答えを待つ connect は 1 通だけ。**
 var answerDeadline: DispatchTime?
-/// 答えを待つ時間 (秒)。答えは待ち行列が満杯なら落ち、送り手が忙しければ遅れる (#3968)。
+/// 最初の期限 (秒)。
 let answerTimeout = argument("--answer-timeout").flatMap(Double.init) ?? 1
-/// 答えが届かずに繋ぎ直した回数。**答え (`accepted` でも `refused` でも) が届けば 0 に戻す。** 3 回続けば諦める。
+/// 送れなかった connect を送り直す間 (秒)。
+let resendInterval = 0.05
+/// 続けて見切った回数。**答え (`accepted` でも `refused` でも) が届けば 0 に戻す。** 3 回目で諦める。
 var lostAnswers = 0
+/// connect を送れていない (送り手の待ち行列が満杯)。次に送り直す時刻。
+var resendAt: DispatchTime?
 /// 答えを待つ間に `resized` が届いた。答えが届いたら、新しい大きさの面で繋ぎ直す。
 var owesConnect = false
+
+/// いまの期限の長さ。続けて見切るたびに倍にする (重い作品ほど答えは遅れる)。
+var answerWait: Double { answerTimeout * Double(1 << lostAnswers) }
 
 func waitForResume() {
     if resumed.wait(timeout: deadline) == .timedOut {
@@ -207,11 +241,21 @@ func readEmpty() {
             let newWidth = Int(reader.uint32() ?? 0)
             let newHeight = Int(reader.uint32() ?? 0)
             say(["event": "resized", "width": newWidth, "height": newHeight, "whileReading": true])
-            surfaces = makeSurfaces(width: newWidth, height: newHeight)
+            remakeSurfaces(width: newWidth, height: newHeight)
         default:
             continue
         }
     }
+}
+
+/// connect を送る。送れたら期限を立て、送れなければ (送り手の待ち行列が満杯) 間を置いて送り直す。
+@discardableResult
+func send() -> kern_return_t {
+    let sent = FrameLink.connect(to: sketch, reply: port, surfaces: surfaces, name: name)
+    resendAt = sent == KERN_SUCCESS ? nil : after(resendInterval)
+    // 期限は送れた時点から数える。送り直しが失敗し続ける間は、最初に送ろうとした時点からの期限のまま
+    if sent == KERN_SUCCESS || answerDeadline == nil { answerDeadline = after(answerWait) }
+    return sent
 }
 
 /// いまの面で繋ぐ。**読み切ってから送る** — 読み残しで埋まった待ち行列では、送り手の答えが落ちる。
@@ -225,48 +269,71 @@ func connect() {
     readEmpty()
     attempts = attempt
     let clogged = clogAttempts.contains(attempt) ? clogQueue() : 0
-    let sent = FrameLink.connect(to: sketch, reply: port, surfaces: surfaces, name: name)
-    answerDeadline = after(answerTimeout)
+    let sent = send()
     let paused = clogged > 0 || leftoverAttempts.contains(attempt)
-    say(["event": "connected", "result": Int(sent), "attempt": attempt, "clogged": clogged, "paused": paused])
+    say([
+        "event": "connected", "result": Int(sent), "attempt": attempt, "clogged": clogged, "paused": paused,
+        "wait": answerWait,
+    ])
     if paused {
-        waitForResume()
+        if let answerDeadline, resumed.wait(timeout: answerDeadline) == .timedOut {
+            say(["event": "pausedPastDeadline", "attempt": attempt])
+            waitForResume()
+        }
         // **期限は読み始めてから数える。** 検査が送り手に答えさせる間の待ちを含めると、待ち行列を読む前に期限が過ぎ、
         // どちらの経路を通るかが時間で決まる
-        answerDeadline = after(answerTimeout)
+        answerDeadline = after(answerWait)
     }
 }
 connect()
 
-/// 答えが期限までに届かなかった (落ちたか、遅れている・#3968)。番号を知っていれば `disconnect` し、**どちらでも受信の
-/// port を作り直して**繋ぎ直す。古い port を消すので、遅れて届く答え (`refused` はどの connect への答えか見分けられない)
-/// と前の面の frame は、新しい繋がりに混ざらない。送り手は、`disconnect` か古い port の dead-name で古い枠を回収し、
-/// まだ読んでいなかった古い connect は返信先が死んでいるので登録しない。
+/// 送った connect の答えが期限までに届かなかった (落ちたか、遅れている・#3968)。番号を知っていても知らなくても、
+/// **`disconnect` を送らずに受信の port を作り直して**繋ぎ直す (2026-11-14 の決定)。古い port を消すので、遅れて届く
+/// 答え (`refused` はどの connect への答えか見分けられない) と前の面の frame は、新しい繋がりに混ざらない。送り手は
+/// 古い port の dead-name で古い枠 (待つ間に書いた面ごと) を回収し、まだ読んでいなかった古い connect は返信先が死んで
+/// いるので受け入れない。`disconnect` を送ると、送り手の短い待ち行列を埋めて新しい connect を落とす。
 func recoverFromALostAnswer() {
     lostAnswers += 1
-    // 続けて 3 回目の時間切れで諦める (port は終わるときに消え、送り手は枠を回収する)
     guard lostAnswers < 3 else {
         say(["event": "gaveUp"])
         exit(7)
     }
-    if receiverID != 0 {
-        var payload = FrameLink.Payload()
-        payload.append(receiverID)
-        // 送れなくても (送り手の待ち行列が満杯)、古い port の消滅で送り手は枠を回収する
-        let sent = FrameLink.send(.disconnect, to: sketch, payload: payload)
-        say(["event": "answerTimedOut", "known": true, "receiver": Int(receiverID), "disconnect": Int(sent)])
-    } else {
-        say(["event": "answerTimedOut", "known": false])
-    }
+    say(["event": "answerTimedOut", "known": receiverID != 0, "inARow": lostAnswers])
     receiverID = 0
     answerDeadline = nil
     owesConnect = false  // 下で、知らされた最新の大きさの面で繋ぐ
+    recoveries += 1
+    if holdRecoveries.contains(recoveries) {
+        say(["event": "holdingRecovery", "recovery": recoveries])
+        waitForResume()
+    }
     // 古い port を捨てる前に読み切る (送り手が消えた知らせ・大きさの変更を落とさない)
     readEmpty()
     mach_port_mod_refs(mach_task_self_, port, MACH_PORT_RIGHT_RECEIVE, -1)
     makePort()
-    surfaces = makeSurfaces(width: IOSurfaceGetWidth(surfaces[0]), height: IOSurfaceGetHeight(surfaces[0]))
+    // **面も新しくする。** 送り手は古い port の消滅を捌くまで、古い面へ書き続けうる
+    remakeSurfaces()
     connect()
+}
+
+/// 期限を見る。送れていない connect は送り直し、送れたのに答えが来なければ見切る。
+func checkAnswer() {
+    if let resendAt, passed(resendAt) {
+        if send() == KERN_SUCCESS { say(["event": "resent", "attempt": attempts]) }
+    }
+    guard let due = answerDeadline, passed(due) else { return }
+    if resendAt != nil {
+        // 送れないまま期限が過ぎた。答えを待つ connect は無いので、port はそのままで期限を延ばして送り直しを続ける
+        lostAnswers += 1
+        guard lostAnswers < 3 else {
+            say(["event": "gaveUp"])
+            exit(7)
+        }
+        say(["event": "answerTimedOut", "known": receiverID != 0, "inARow": lostAnswers, "unsent": true])
+        answerDeadline = after(answerWait)
+        return
+    }
+    recoverFromALostAnswer()
 }
 
 func centre(of surface: IOSurfaceRef) -> [Double] {
@@ -286,10 +353,7 @@ var frames = 0
 /// 大きさで断られて目録を読み直した回数。送り手の大きさが変わり続けても、3 回で諦める。
 var retries = 0
 while !passed(deadline) {
-    if let answerDeadline, passed(answerDeadline) {
-        recoverFromALostAnswer()
-        continue
-    }
+    checkAnswer()
     guard let message = FrameLink.receive(on: port, timeout: 100) else { continue }
     var reader = message.payload.reader
     switch message.kind {
@@ -334,7 +398,7 @@ while !passed(deadline) {
         {
             retries += 1
             say(["event": "reread", "width": newWidth, "height": newHeight])
-            surfaces = makeSurfaces(width: newWidth, height: newHeight)
+            remakeSurfaces(width: newWidth, height: newHeight)
             connect()
             continue
         }
@@ -372,14 +436,15 @@ while !passed(deadline) {
             exit(0)
         }
         if reconnectAfter > 0, frames == reconnectAfter {
-            surfaces = makeSurfaces(width: IOSurfaceGetWidth(surfaces[0]), height: IOSurfaceGetHeight(surfaces[0]))
+            surfaces = makeSurfaces(
+                width: IOSurfaceGetWidth(surfaces[0]), height: IOSurfaceGetHeight(surfaces[0]), count: reconnectSurfaces)
             connect()
         }
     case FrameLink.Kind.resized.rawValue:
         let newWidth = Int(reader.uint32() ?? 0)
         let newHeight = Int(reader.uint32() ?? 0)
         say(["event": "resized", "width": newWidth, "height": newHeight])
-        surfaces = makeSurfaces(width: newWidth, height: newHeight)
+        remakeSurfaces(width: newWidth, height: newHeight)
         // 答えを待っている間は、同じ port から次の connect を送らない (どちらへの答えか見分けられなくなる)。答えが
         // 届いてから、新しい大きさの面で繋ぐ
         if answerDeadline != nil {
