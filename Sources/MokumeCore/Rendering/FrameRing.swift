@@ -58,6 +58,13 @@ import MokumeDiagnostics
     /// スロットの本数。
     var slotCount: Int { readers.count }
 
+    /// この環に載る置き場 (``GrowableBuffer``) がいま確保しているバイト数 (`allocatedSize` の合計)。
+    /// **置き場が取り直す・死ぬたびに置き場の側が書く** ので、環に載る置き場を数え漏らさない。
+    /// 合成の単位の中間面の置き場が、持ち越す面の重さに数える ([#4029])。
+    ///
+    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+    var bufferBytes = 0
+
     /// コマンドの置き場と同じ本数で作る。
     init(gpu: RenderDevice) {
         self.gpu = gpu

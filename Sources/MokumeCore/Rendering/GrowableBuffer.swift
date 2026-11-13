@@ -73,7 +73,14 @@ import Metal
     /// [#795]: https://github.com/mokume-metal/mokume/issues/795
     isolated deinit {
         for buffer in buffers { gpu.retire(buffer) }
+        ring.bufferBytes -= allocatedBytes
     }
+
+    /// いま確保している置き場の大きさ (全スロットの `allocatedSize` の合計)。環の合計
+    /// (``FrameRing/bufferBytes``) へ、取り直すたびに差を書く ([#4029])。
+    ///
+    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+    private var allocatedBytes: Int { buffers.reduce(0) { $0 + $1.allocatedSize } }
 
     /// いまのスロットの置き場。`count` 個ぶんが必ず入る。
     ///
@@ -149,7 +156,9 @@ import Metal
         // **新しいほうを揃えてから古いほうを外す。** 途中で確保に失敗しても、外して
         // しまった後だと「置き場が無い」ではなく「常駐していない置き場を読む」になる
         try gpu.releaseResidency(of: buffers.map { $0 as any MTLAllocation })
+        ring.bufferBytes -= allocatedBytes
         buffers = made
+        ring.bufferBytes += allocatedBytes
         capacity = wanted
         reallocations += 1
     }

@@ -1134,7 +1134,12 @@ package final class SketchRuntime {
         // **このフレームで止まったなら、組んだ絵をその場で配る。** 遅らせているのは
         // 次のフレームの CPU と重ねるためなので、次が来ないなら遅らせる意味が無い (#1300)。
         // ここでの `redrawRequested` は上で落としてあるので、残る理由は作者の `noLoop()` である
-        if !isLooping { settleWithoutAnotherFrame() }
+        if !isLooping {
+            settleWithoutAnotherFrame()
+            // 合成の単位の中間面は、持ち主の次のフレームで古いものを手放す。次が来ないので、ここで全部手放す
+            // (#4029)。`redraw()` で描くフレームは作り直す
+            canvas.sketchCompositeSurfaces?.releaseAll()
+        }
         // **組み終えたところで測る。** 観測に応える仕事 (絵を書き出す) は作品の重さではない
         if let began = frameWorkBegan {
             budget.record(frame: timing.frameCount, seconds: now() - began)

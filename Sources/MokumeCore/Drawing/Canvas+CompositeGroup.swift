@@ -108,10 +108,12 @@ extension Canvas {
         case .box(let found): box = found
         }
 
+        // **使い回すのは保持した形の範囲 (`settings` を渡す経路) だけ** (``compositeSurface(width:height:from:)``)
+        let pool = settings != nil ? sketchCompositeSurfaces : nil
         let group: Canvas
         let reused: Bool
         do {
-            (group, reused) = try compositeSurface(width: box.width, height: box.height, pooled: settings != nil)
+            (group, reused) = try compositeSurface(width: box.width, height: box.height, from: pool)
         } catch {
             // 保持した形の範囲 (`settings` を渡す) は、置く口が子ごとに掛けて描くことを 1 度知らせるので、ここでは
             // 重ねて知らせない (#3564 の反証 2 回目の 5)
@@ -133,8 +135,18 @@ extension Canvas {
             SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0),
             SIMD4(-Float(box.left), -Float(box.top), 0, 1))
         group.transform = Transform(matrix: shift * transform.matrix)
+        if let failure = sketchCompositeSurfaces?.failSurfacesForTesting { group.failureForTesting = failure }
         body(group)
-        group.endDraw()
+        // **描き切れなかった中間面は貼らない** (#4029 の反証 5)。描き切れなかったフレームは塗り直しの予定ごと
+        // 捨てられるので、使い回した面は前に描いた別の置き場所の絵を持ったままである。作りたての面なら透明の
+        // まま貼られて何も出なかったので、貼らずに同じ「何も出ない」にする。面は置き場へ戻さずに手放す。
+        // 単位としては扱えた (呼ぶ側が子ごとに描き直さない) ので真を返す — 作りたての面のときと同じ
+        guard group.closeDrawing() else {
+            pool?.discard(group)
+            return true
+        }
+        // 描いて伸びた置き場まで含めて、持ち越す重さを数え直す (上限を越えたら古い面から手放す)
+        pool?.measure(group)
 
         placeCompositeGroup(group, in: box, opacity: min(opacity, 1), placedWith: settings)
         return true
@@ -201,24 +213,37 @@ extension Canvas {
                 left: Int(left), top: Int(top), width: Int(right - left), height: Int(bottom - top)))
     }
 
-    /// 中間面を 1 枚用意する。前のフレームで使い終えた同じ大きさの面があれば使い回し (`reused` が真)、
-    /// 無ければ ``createGraphics(_:_:)`` で作り、置き場の上限 (``CompositeSurfacePool/defaultByteLimit``) の内なら
-    /// 次のフレームのために置き場に残す ([#4029])。
+    /// 中間面を 1 枚用意する。置き場 `pool` に読み終えた同じ形の面があれば使い回し (`reused` が真)、
+    /// 無ければ ``createGraphics(_:_:)`` で作って置き場に載せる ([#4029])。
     ///
-    /// **使い回すのは保持した形の範囲 (`pooled`) だけ。** そこで中に描くのは記録した区間の置き直し
+    /// **使い回すのは保持した形の範囲 (`pool` を渡す) だけ。** そこで中に描くのは記録した区間の置き直し
     /// (``replaying(_:_:)``) で、描き方を出入りで戻すので、面の描き方は既定のまま残る。ほかの `body` は
     /// 描き方 (塗り・線・断片など、フレームを越えて残るもの) を書き換えうるので、使い回すと次の単位が
     /// 「既定から始まる」を破る。そちらは前と同じく毎回作る。
     ///
     /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
     private func compositeSurface(
-        width: Int, height: Int, pooled: Bool
+        width: Int, height: Int, from pool: CompositeSurfacePool?
     ) throws(RenderFailure) -> (Canvas, reused: Bool) {
-        guard pooled else { return (try createGraphics(width, height), false) }
-        if let kept = compositeSurfaces.take(width: width, height: height) { return (kept, true) }
+        guard let pool else { return (try createGraphics(width, height), false) }
+        if let kept = pool.take(width: width, height: height, for: self) { return (kept, true) }
         let made = try createGraphics(width, height)
-        compositeSurfaces.keep(made, width: width, height: height, scale: outputScale)
+        pool.keep(made, for: self)
         return (made, false)
+    }
+
+    /// この面がいま確保している GPU のバイト数 — 色と奥行きの面・字形の焼き場の頁・環に載る置き場
+    /// (``FrameRing/bufferBytes``) の `allocatedSize` の合計。中間面の置き場が持ち越す重さに数える ([#4029])。
+    ///
+    /// 型板は memoryless なので数えない。ほかに面が持つもの (混ぜ方の番号の置き場・空の数の並び) は
+    /// 数百バイトで、合計の検査 (`CompositeSurfacePoolTests`) が常駐の集合の増え方と突き合わせる。細かさを
+    /// 下げた面の描く先も数える (中間面は細かさ 1 なので持たない)。
+    ///
+    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+    var allocatedBytes: Int {
+        var bytes = output.texture.allocatedSize + output.depthTexture.allocatedSize
+        if target !== output { bytes += target.texture.allocatedSize + target.depthTexture.allocatedSize }
+        return bytes + atlas.texture.allocatedSize + frameRing.bufferBytes
     }
 
     /// 閉じた中間面を、不透明度を掛けて、この面へ画像として置く。置き先は箱の位置で、変換は掛けない
@@ -257,77 +282,148 @@ extension Canvas {
     }
 }
 
-/// 合成の単位の中間面の置き場 ([#4029])。面を置く側 (``Canvas``) が 1 つ持つ。
+/// 合成の単位の中間面の置き場 ([#4029])。**スケッチに 1 つ** — 時刻の置き場の持ち主の面が持ち
+/// (``Canvas/compositeSurfaces``)、描き場所も入れ子の中間面も、その 1 つから取る (``Canvas/sketchCompositeSurfaces``)。
 ///
 /// 中間面は置き場所ごと・単位ごとに 1 枚要り、作るたびに描画先の確保・透明への塗り・面の組み立て
-/// (列の置き場) を払っていた (100 個で 1 フレーム約 41 ms)。**同じ大きさの面をフレームをまたいで使い回す。**
+/// (列の置き場) を払っていた (100 個で 1 フレーム約 41 ms)。**同じ形の面を、読み終えたら使い回す。**
 ///
-/// - **同じフレームの中では使い回さない。** 置いた面の絵は置いた側の描き切りまで読まれるので、同じフレームで
-///   描き換えると置いた側に写しを取らせることになる (``Canvas/settlePlacersBeforeChange()``)。使い終えた面は
-///   フレームを出るとき (置いた側の描き切りの後) に空きへ移り、次のフレームから使い回す
-/// - **大きさは画素で完全に一致するものだけを使う。** 大きい面の一部を使うと、四角の貼り方 (uv) が変わり
-///   絵が 1 ビットでも変わりうる
-/// - **寿命: 1 フレーム使わなかった面は手放す** (フレームを出るとき)。置き場所の数や大きさが毎フレーム変わる
-///   置き方では使い回せず、作り直す (前と同じ費用)
-/// - **上限: 次のフレームへ持ち越す面の色と奥行きの合計が ``defaultByteLimit`` まで。** 越える分は前と同じく
-///   作って置き終えたら手放す
+/// - **置いた側が読み終えるまで使い回さない。** 置いた面の絵は置いた側の描き切りまで読まれるので、その前に
+///   描き換えると置いた側に写しを取らせることになる (``Canvas/settlePlacersBeforeChange()``)。面は置いた側が
+///   フレームを出るとき (描き切った後か、捨てた後) に空きへ戻る (``leaveFrame(of:sweeping:)``)。入れ子の単位の
+///   面は、外側の中間面が描き切った時点で空きへ戻るので、同じフレームの次の単位が使い回せる
+/// - **形が完全に一致する面だけを使う** — 座標の大きさと書き出しの倍率 (画素の大きさ)・字形を置くか・GPU。
+///   大きい面の一部を使うと、四角の貼り方 (uv) が変わり絵が 1 ビットでも変わりうる
+/// - **寿命: 持ち主のフレームを 1 つ使われずに過ぎた面は、そのフレームの終わりに手放す。** 描き場所の中の面も
+///   持ち主のフレームで数えるので、`setup()` で 1 度だけ描いた描き場所の面も持ち主の 2 フレーム目の終わりに
+///   手放す。止めたスケッチ (`noLoop()`) は次のフレームが来ないので、止まったフレームの後に全部手放す
+///   (``releaseAll()``・ランタイムが呼ぶ)
+/// - **上限: 置き場が持つ面の合計 (使用中と空きの両方) が ``byteLimit`` まで。** 面の重さは実際に確保した
+///   バイト数 (``Canvas/allocatedBytes``) で、描いた後に数え直す。越えたら古い空きから手放し、それでも越えるなら
+///   その面を残さない (前と同じく、置き終えたら手放される)
 ///
 /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
-struct CompositeSurfacePool {
-    /// 次のフレームへ持ち越す中間面の、色 (8 B/画素) と奥行き (4 B/画素) の合計の上限。型板は
-    /// memoryless なので数えない。置いた時点の絵の写しの上限 (``Canvas/placedPictureCopyLimit``・1920×1080 で
-    /// 4 枚・約 66 MB) と同じ桁にした。#4029 の例 (152×122 を 100 枚) は約 18 MB で収まる。面ごとの列の置き場
-    /// (頂点などの数の並び) は描いた量で伸びるので数えない — 中で描くのは記録した区間の置き直しだけで、
-    /// 置き場は作りたての大きさから大きく伸びない。
-    static let defaultByteLimit = 64 << 20
+final class CompositeSurfacePool {
+    /// 置き場が持つ中間面の合計の上限 (実際に確保したバイト数)。
+    ///
+    /// **#4029 の例 (152×122 の面を 100 枚) が収まる値にした。** 中間面 1 枚の確保は色と奥行きの面 (約 0.33 MB) より、
+    /// 面ごとに持つ字形の焼き場の頁 (約 0.54 MB) と環に載る列の置き場 (描いた後で約 0.76 MB) のほうが重く、
+    /// 152×122 で約 1.6 MB になる。100 枚で約 163 MB。上限はそれに余裕を足した 192 MiB で、1920×1080 の
+    /// 中間面なら約 7 枚 (1 枚約 26 MB) にあたる。
+    ///
+    /// **使い回しが効かない置き方 (大きさが毎フレーム変わる) で、直す前より常駐が増えるのはこの上限まで。**
+    /// 直す前は、作った面を GPU が読み終えれば手放していた (持ち越し 0)。
+    static let defaultByteLimit = 192 << 20
 
-    /// 持ち越す面の合計の上限。製品の経路では ``defaultByteLimit`` のままで、検査だけが小さくして越えたときを見る。
-    var byteLimit = Self.defaultByteLimit
+    /// 持つ面の合計の上限。製品の経路では ``defaultByteLimit`` のままで、検査だけが小さくして越えたときを見る。
+    var byteLimit = CompositeSurfacePool.defaultByteLimit
 
     struct Entry {
         let canvas: Canvas
-        let width: Int
-        let height: Int
-        let bytes: Int
+        /// 描いた後に数え直した重さ (``Canvas/allocatedBytes``)。作って描く前は 0。
+        var bytes: Int
+        /// 置いた面。読み終える (置いた面がフレームを出る) まで `inUse` が立つ。
+        weak var placer: Canvas?
+        var inUse: Bool
+        /// 最後に取った (作った) ときの持ち主のフレームの番号 (``epoch``)。
+        var stamp: Int
     }
 
-    /// 前のフレームで使い終えた面。このフレームで使わなければ、フレームを出るときに手放す。
-    private(set) var free: [Entry] = []
-    /// このフレームで使った (置き場に残す) 面。フレームを出るときに空きへ移る。
-    private(set) var inUse: [Entry] = []
-    private var inUseBytes = 0
+    /// 持っている面。古いものほど前にある (手放すのは前から)。
+    private(set) var entries: [Entry] = []
+    /// 持っている面の重さの合計。**上限と比べるのはこれ 1 つ。**
+    private(set) var heldBytes = 0
+    /// 持ち主のフレームの番号。持ち主のフレームの終わり (``leaveFrame(of:sweeping:)``) で進む。
+    private(set) var epoch = 0
     /// 面を作った回数 (作ってから通算)。**使い回せていることを検査が見る。**
     private(set) var made = 0
     /// 使い回した回数 (作ってから通算)。
     private(set) var reused = 0
 
-    /// 空きにある大きさ `width` × `height` (座標) の面を、このフレームの使用中へ移して返す。
-    mutating func take(width: Int, height: Int) -> Canvas? {
-        guard let index = free.firstIndex(where: { $0.width == width && $0.height == height }) else {
-            return nil
-        }
-        let entry = free.remove(at: index)
-        inUse.append(entry)
-        inUseBytes += entry.bytes
+    /// 検査から「中間面を描き切れなかった」を作るための差し込み (``Canvas/failureForTesting`` を中間面に立てる)。
+    /// 製品の経路では常に `nil`。
+    var failSurfacesForTesting: RenderFailure?
+
+    /// 空き (読み終えた面)。
+    var free: [Entry] { entries.filter { !$0.inUse } }
+    /// 使用中 (置いた側がまだ読む面)。
+    var inUse: [Entry] { entries.filter(\.inUse) }
+
+    /// `placer` が置く `width` × `height` (座標) の中間面に使える空きを、`placer` の使用中にして返す。
+    func take(width: Int, height: Int, for placer: Canvas) -> Canvas? {
+        guard
+            let index = entries.firstIndex(where: { entry in
+                !entry.inUse && entry.canvas.fits(width: width, height: height, placedBy: placer)
+            })
+        else { return nil }
+        entries[index].inUse = true
+        entries[index].placer = placer
+        entries[index].stamp = epoch
         reused += 1
-        return entry.canvas
+        return entries[index].canvas
     }
 
-    /// 作った面を、上限の内なら次のフレームのために残す。越えるなら残さない (置き終えたら手放される)。
-    mutating func keep(_ canvas: Canvas, width: Int, height: Int, scale: Int) {
+    /// 作った面を `placer` の使用中として載せる。重さは描いた後に数える (``measure(_:)``)。
+    func keep(_ canvas: Canvas, for placer: Canvas) {
         made += 1
-        let bytes = width * scale * height * scale * 12
-        guard inUseBytes + bytes <= byteLimit else { return }
-        inUse.append(Entry(canvas: canvas, width: width, height: height, bytes: bytes))
-        inUseBytes += bytes
+        entries.append(Entry(canvas: canvas, bytes: 0, placer: placer, inUse: true, stamp: epoch))
     }
 
-    /// フレームを出る。このフレームで使った面を空きへ移し、使わなかった空きを手放す。
-    mutating func endFrame() {
-        guard !free.isEmpty || !inUse.isEmpty else { return }
-        free = inUse
-        inUse.removeAll(keepingCapacity: true)
-        inUseBytes = 0
+    /// 描き切った面の重さを数え直す。合計が上限を越えたら古い空きから手放し、それでも越えるならこの面を
+    /// 残さない。
+    func measure(_ canvas: Canvas) {
+        guard let index = entries.firstIndex(where: { $0.canvas === canvas }) else { return }
+        let bytes = canvas.allocatedBytes
+        heldBytes += bytes - entries[index].bytes
+        entries[index].bytes = bytes
+        while heldBytes > byteLimit, let oldest = entries.firstIndex(where: { !$0.inUse }) {
+            remove(at: oldest)
+        }
+        if heldBytes > byteLimit, let index = entries.firstIndex(where: { $0.canvas === canvas }) {
+            remove(at: index)
+        }
+    }
+
+    /// 描き切れなかった面を手放す (置いた側へ貼らない面は、前の絵を持ったまま次に使わせない)。
+    func discard(_ canvas: Canvas) {
+        guard let index = entries.firstIndex(where: { $0.canvas === canvas }) else { return }
+        remove(at: index)
+    }
+
+    /// `placer` がフレームを出た (置いた面を読み終えた)。`placer` の使用中の面を空きへ戻す。`sweeping` (持ち主の
+    /// フレームの終わり) なら、このフレームで使わなかった面と置いた面が死んだ面を手放し、番号を進める。
+    func leaveFrame(of placer: Canvas, sweeping: Bool) {
+        for index in entries.indices where entries[index].inUse && entries[index].placer === placer {
+            entries[index].inUse = false
+            entries[index].placer = nil
+        }
+        guard sweeping else { return }
+        for index in entries.indices.reversed() {
+            let entry = entries[index]
+            if entry.stamp < epoch || (entry.inUse && entry.placer == nil) { remove(at: index) }
+        }
+        epoch += 1
+    }
+
+    /// 全部手放す。次のフレームが来ない (止めた) ときにランタイムが呼ぶ。使用中の面を手放しても、置いた側の
+    /// 列は面を自分で抱えている (``HeldTexture``) ので、読む前に解放されることはない。
+    func releaseAll() {
+        entries.removeAll()
+        heldBytes = 0
+    }
+
+    private func remove(at index: Int) {
+        heldBytes -= entries[index].bytes
+        entries.remove(at: index)
+    }
+}
+
+extension Canvas {
+    /// この面を、`placer` が置く `width` × `height` (座標) の中間面として使えるか — `placer` の
+    /// ``createGraphics(_:_:)`` が作る面と同じ形か。
+    fileprivate func fits(width: Int, height: Int, placedBy placer: Canvas) -> Bool {
+        outputScale == placer.outputScale && Int(self.width) == width && Int(self.height) == height
+            && placesGlyphs == placer.placesGlyphs && gpu === placer.gpu
     }
 }
 
