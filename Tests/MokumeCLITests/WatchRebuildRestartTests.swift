@@ -134,6 +134,27 @@ struct WatchRebuildRestartTests {
         #expect(record["requested"] as? String == "rebuild")
     }
 
+    @Test("読みの最中に頼んだ作り直しは、その読みが拾った保存より後の出来事で、頼みを読んだ時点の役で作り直す")
+    func aRebuildAskedDuringAReadOvertakesTheSaveItPicksUp() async throws {
+        let harness = try Harness()
+        let production = try #require(await harness.save())
+        // 本番のまま保存 s2 を読み始め、その読みの最中に試聴へ入ってから作り直しを頼む
+        let reading = try await harness.holdRead()
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        harness.releaseStamp()
+        await reading.value
+        // 頼みが後なので、s2 は頼みを読んだ時点の役 (試聴) で 1 回作り直す。本番は動かない
+        let started = try #require(harness.gens.last)
+        #expect(started !== production)
+        #expect(harness.session.isAuditionGeneration(pid: started.processIdentifier))
+        #expect(harness.session.child === production && production.isRunning)
+        let record = try statusObject(harness)
+        #expect(record["audition"] as? Bool == true)
+        #expect(record["requested"] as? String == "rebuild")
+        #expect(record["stamp"] as? String == "s2")
+    }
+
     // MARK: - 起こし直す (完了条件 2・3)
 
     @Test("起こし直す要求は、作り直さず記録も書かずに、本番の版を最初から起こし直す。時計の場所は新しくなる")
