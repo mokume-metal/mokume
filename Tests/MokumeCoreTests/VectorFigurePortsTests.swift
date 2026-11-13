@@ -188,6 +188,63 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.model(model) } == 1)
     }
 
+    /// 上の検査は控えたものと落としたものの**合計**しか見ないので、立体の曲線が平面の図形として SVG に
+    /// 書かれても緑のまま通る。奥行きを持つ曲線 (#3712) は、既に立体として落とす `line(…z…)` と同じく、
+    /// 図形を 1 つも控えず、立体 (`VectorDrop.solid`) として 1 つだけ名乗ることを、足した形ごとに見る。
+    @Test("奥行きを持つ曲線は、立体の線と同じく、平面の図形として書かずに立体として落とす")
+    func solidCurvesAreDroppedAsSolidsNotWritten() throws {
+        let canvas = try makeCanvas()
+        func outcome(_ body: (Canvas) -> Void) throws -> (figures: Int, drops: [VectorDrop]) {
+            var result: (figures: Int, drops: [VectorDrop]) = (0, [])
+            try canvas.draw {
+                canvas.beginVectorWindow(pending: [])
+                canvas.startVectorCapture(path: "x.svg")
+                body(canvas)
+                let captured = canvas.endVectorWindow()
+                result = (captured?.figures.count ?? 0, captured?.drops ?? [])
+            }
+            return result
+        }
+        // 揃える先: 既に入っている立体の線
+        let solidLine = try outcome { $0.line(0, 0, 0, 10, 10, 10) }
+        #expect(solidLine.figures == 0 && solidLine.drops == [.solid], "立体の線: \(solidLine)")
+        func shape(_ body: @escaping (Canvas) -> Void) -> (Canvas) -> Void {
+            { canvas in
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+                body(canvas)
+                canvas.endShape()
+            }
+        }
+        let curves: [(String, (Canvas) -> Void)] = [
+            ("bezier (12)", { $0.bezier(0, 0, 0, 10, 0, -5, 20, 10, -5, 30, 10, 0) }),
+            ("bezier(from:) Vector3", {
+                $0.bezier(from: Vector3(0, 0, 0), control1: Vector3(10, 0, -5), control2: Vector3(20, 10, -5), to: Vector3(30, 10, 0))
+            }),
+            ("curve (12)", { $0.curve(0, 10, 0, 10, 0, -5, 20, 10, -5, 30, 0, 0) }),
+            ("curve(from:) Vector3", {
+                $0.curve(from: Vector3(10, 0, -5), control1: Vector3(0, 10, 0), control2: Vector3(30, 0, 0), to: Vector3(20, 10, -5))
+            }),
+            ("bezierVertex (9)", shape { $0.bezierVertex(15, 30, -5, 5, 30, -5, 0, 20, 0) }),
+            ("bezierVertex(control1:) Vector3", shape {
+                $0.bezierVertex(control1: Vector3(5, -10, 1), control2: Vector3(15, -10, 1), to: Vector3(20, 0, 0))
+            }),
+            ("quadraticVertex (6)", shape { $0.quadraticVertex(-5, 10, 5, 20, 0, 0) }),
+            ("quadraticVertex(control:) Vector3", shape { $0.quadraticVertex(control: Vector3(10, 10, 2), to: Vector3(20, 0, 0)) }),
+            ("curveVertex (3)", shape {
+                $0.curveVertex(0, 0, 0)
+                $0.curveVertex(0, 0, 0)
+                $0.curveVertex(10, 10, -3)
+                $0.curveVertex(20, 0, 0)
+            }),
+        ]
+        for (name, body) in curves {
+            let result = try outcome(body)
+            #expect(result.figures == 0, "\(name): 平面の図形として \(result.figures) 個書かれた")
+            #expect(result.drops == solidLine.drops, "\(name): 落とした種類が立体の線と違う: \(result.drops)")
+        }
+    }
+
     @Test("字・絵・保持した形・画素・画素への効果・粒の口は、書けないものとして名指しで落とす")
     func pixelsAndTextAreDropped() throws {
         let canvas = try makeCanvas()
