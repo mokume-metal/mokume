@@ -76,9 +76,15 @@ struct WatchSessionModelTests {
         case exitShown
         /// 終われと言われ、作り直しを止めて終える (最後にだけ置く・#3796 の 2 回目の反証 7)。
         case stop
+        /// 作り直す要求 (#3428)。中身は変えない。頼みを読んだ時点の役で、作り直しが済んだ後に 1 回だけ作り直す。
+        case rebuild
+        /// 起こし直す要求 (#3428)。作り直しが済んでから、頼みを読んだ時点の役で決めて行う。
+        case restart
 
         var description: String {
             switch self {
+            case .rebuild: "rebuild"
+            case .restart: "restart"
             case .save: "save"
             case .revert: "revert"
             case .audition: "audition"
@@ -106,6 +112,9 @@ struct WatchSessionModelTests {
         case overlap([Step])
         /// ``overlap(_:)`` と同じだが、門で止めた作り直しは通らない (#3796 の 2 回目の反証 3・7)。
         case overlapFailing([Step])
+        /// ``overlap(_:)`` と同じだが、門で止める作り直しは保存でなく作り直す要求で起こす (中身は変えない・#3428)。
+        /// 頼んだ作り直しの最中に出る・入る形を見る。
+        case rebuildOverlap([Step])
         /// 試聴の子が、自分から (終了コード 0 で) 終わる。
         case exitAudition
         /// 試聴の子が、最初の絵の前に失敗 (終了コード 3) で終わる。続けて 1 拍回る。
@@ -144,9 +153,15 @@ struct WatchSessionModelTests {
         case exitShown
         /// 終われと言われ、終える (最後にだけ置く)。
         case stop
+        /// 作り直す要求 (#3428)。中身を変えずに、保存と同じ作り直しが 1 回起きる。役は頼みを読んだ時点の試聴の状態。
+        case rebuild
+        /// 起こし直す要求 (#3428)。作り直さずに、頼みを読んだ時点の役の子を最初から起こし直す。
+        case restart
 
         var description: String {
             switch self {
+            case .rebuild: "rebuild"
+            case .restart: "restart"
             case .none: "none"
             case .audition: "audition"
             case .leave: "leave"
@@ -154,6 +169,7 @@ struct WatchSessionModelTests {
             case .saveThenLeave: "save+leave"
             case .overlap(let steps): "overlap(\(steps.map(\.description).joined(separator: ",")))"
             case .overlapFailing(let steps): "overlap(failing;\(steps.map(\.description).joined(separator: ",")))"
+            case .rebuildOverlap(let steps): "overlap(rebuild;\(steps.map(\.description).joined(separator: ",")))"
             case .exitAudition: "exit(audition)"
             case .exitAuditionFailing: "exit(audition,failing)"
             case .promoteAudition: "promote(audition)"
@@ -194,6 +210,15 @@ struct WatchSessionModelTests {
         .overlap([.save, .leaveStuck]), .overlap([.save, .save, .leave, .revert]), .overlap([.audition, .exitShown, .save, .leave]),
         .overlap([.save, .stop]), .overlapFailing([.audition, .save, .leave]), .overlapFailing([.save, .leaveStuck]),
         .overlapFailing([.audition, .exitShown, .save, .leave]),
+        // 作り直す・起こし直す要求 (#3428)
+        .rebuild, .rebuild, .restart, .restart, .restart,
+        .overlap([.rebuild]), .overlap([.rebuild, .rebuild]), .overlap([.rebuild, .leave]), .overlap([.rebuild, .audition]),
+        .overlap([.audition, .rebuild, .leave]), .overlap([.save, .rebuild]), .overlap([.rebuild, .save]),
+        .overlapFailing([.rebuild]),
+        .overlap([.restart]), .overlap([.restart, .leave]), .overlap([.audition, .restart]), .overlap([.restart, .audition]),
+        .overlap([.leave, .restart]), .overlapFailing([.restart]),
+        .rebuildOverlap([.leave]), .rebuildOverlap([.audition]), .rebuildOverlap([.rebuild]), .rebuildOverlap([.save, .leave]),
+        .rebuildOverlap([.restart]),
     ]
 
     /// 列の長さ。縮めると `none` が並ぶので、実際の長さはこれ以下。
@@ -421,6 +446,51 @@ struct WatchSessionModelTests {
         #expect(outcome == .pass, "\(outcome)")
     }
 
+    /// 作り直す・起こし直す要求 (#3428)。**生成する検査の seed に頼らず、決定的に回す。** 頼んだ作り直しの役は保存と同じ規則
+    /// (頼みを読んだ時点の試聴の状態・#3796) で決まり、起こし直しは置き場の最後に通った作り直しの版が当たる子の版のときだけ
+    /// 起きる (2026-11-14 の決定)。
+    @Test(
+        "作り直す・起こし直す要求の列は、保存の役の規則と起こし直しの規則と事後条件を破らない (#3428)",
+        arguments: [
+            // 中身が変わっていなくても 1 回作り直す。作り直しの最中に頼むと、済んだ後に 1 回だけ (何度頼んでも)
+            [Op.save, .rebuild, .promoteWaiting, .rebuild],
+            [.save, .promoteWaiting, .overlap([.rebuild, .rebuild])],
+            [.save, .promoteWaiting, .rebuildOverlap([.rebuild])],
+            // 決定的な 2 列 (2026-11-10 の決定): 試聴中に頼む → 最中に出る / 本番で頼む → 最中に入る
+            [.save, .promoteWaiting, .audition, .save, .rebuildOverlap([.leave])],
+            [.save, .promoteWaiting, .rebuildOverlap([.audition])],
+            [.save, .promoteWaiting, .rebuildOverlap([.audition, .leave])],
+            // 作り直しの最中に、頼みの後に中身を変えた保存を読むと、保存が頼みを追い越す (1 回だけ・新しい中身)
+            [.save, .promoteWaiting, .overlap([.rebuild, .save])],
+            [.save, .promoteWaiting, .overlap([.save, .rebuild])],
+            // 試聴の中で頼んで出た版は、出た後の作り直しの要求で本番へ作り直せる
+            [.save, .promoteWaiting, .audition, .save, .leave, .rebuild],
+            // 頼んだ作り直しが通らない: 前の版が走り続ける
+            [.save, .promoteWaiting, .overlapFailing([.rebuild])],
+            // 起こし直す: 本番 / 試聴の子 / 当たる子が居ない (最初の作り直しの失敗・試聴に入って保存の前)
+            [.save, .promoteWaiting, .restart],
+            [.save, .restart, .promoteWaiting, .restart],
+            [.save, .promoteWaiting, .audition, .save, .restart, .leave],
+            [.saveBuildFail, .restart],
+            [.save, .promoteWaiting, .audition, .restart],
+            // 置き場の版が当たる子の版でない (決定の例: 試聴で作った版 Z の後に本番を起こし直す・起こせなかった版の後)
+            [.save, .promoteWaiting, .audition, .save, .leave, .restart],
+            [.save, .promoteWaiting, .saveLaunchFail, .restart],
+            // 試聴の中で同じ中身を作り直した後は、置き場の版が本番の版と同じなので起こし直せる
+            [.save, .promoteWaiting, .audition, .rebuild, .leave, .restart],
+            // 作り直しの最中の起こし直しは、済んでから決める (受けて名乗る)。試聴の中で頼んで出たら捨てる
+            [.save, .promoteWaiting, .overlap([.restart])],
+            [.save, .promoteWaiting, .audition, .save, .overlap([.restart, .leave])],
+            [.save, .promoteWaiting, .audition, .save, .overlap([.leave, .restart])],
+            [.save, .promoteWaiting, .overlapFailing([.restart])],
+            [.save, .promoteWaiting, .rebuildOverlap([.restart])],
+        ])
+    @MainActor
+    func rebuildAndRestartColumnsKeepTheirRules(_ ops: [Op]) async {
+        let outcome = await Driver.runCase(ops: ops, ends: false)
+        #expect(outcome == .pass, "\(outcome)")
+    }
+
     /// 検査の結果を main actor の隔離の外へ持ち出す箱。書くのは 1 つの仕事だけで、読むのは待ち終えた後。
     nonisolated final class Outcome: @unchecked Sendable {
         var value: Probe.Outcome = .pass
@@ -481,7 +551,22 @@ struct WatchSessionModelTests {
             case audition(Int)
         }
         /// 中身ごとの、最後の保存の役。模型が「見張りがこの保存を読む」と分かる時点で控える (``noteRead(_:)``)。
-        private var stampRoles: [String: Role] = [:]
+        /// 作り直す要求 (#3428) も、頼みを読んだ時点の役でいまの中身を上書きする (中身の変わらない保存)。
+        private var stampRoles: [String?: Role] = [:]
+        /// 置き場に在る実行ファイルの版 — 作り直しの替え玉が最後に通した作り直しの中身 (#3428)。起こし直す要求が当たれるのは、
+        /// これと同じ版の子だけ (規則)。1 度も通していなければ `hasBuilt` が偽。
+        private var builtStamp: String?
+        private var hasBuilt = false
+        /// 起こし直す要求で起きる子の役 (規則: 頼みを読んだ時点の役)。模型が「この拍の起こす子は起こし直しの子」と分かる
+        /// 拍だけ立てる (#3428)。起こし直しは作り直さないので、版の役 (``stampRoles``) では決めない。
+        private var restartRole: Role?
+        /// 作り直しを始めた時点の、その中身の役 (規則: 作り直しは、始めるまでに最後に読んだ中身の役で起きる)。作り直しの
+        /// 最中に同じ中身を頼み直しても (``Step/rebuild``)、進行中の作り直しの役は変わらない (#3428)。
+        private var builtRoles: [String?: Role] = [:]
+        /// 起こした子ごとの、起こした時点までに始めた作り直しの数。どの作り直しの子かを見分ける (#3428)。
+        private var launchBuilds: [Int: Int] = [:]
+        /// 起こし直しで起こした子 (作り直しの子ではない)。
+        private var restartGens: Set<Int> = []
         /// 起こした子ごとの、起こした時点の役。
         private var launchRoles: [Int: Role] = [:]
         /// 規則に反して起こした子 (役を控えていない版・試聴の中で読んだ版を本番の子に)。どの操作の後も見る (事後条件 7)。
@@ -518,7 +603,7 @@ struct WatchSessionModelTests {
 
         /// 見張りがいまの中身の保存を読むのは、役 `role` の時点である (保存ごとに上書きする)。
         private func noteRead(_ role: Role) {
-            if let stamp { stampRoles[stamp] = role }
+            stampRoles[stamp] = role
         }
 
         func waitForRebuildGate() async {
@@ -540,12 +625,13 @@ struct WatchSessionModelTests {
                 directory: directory, context: testContext(),
                 hooks: WatchSession.Hooks(
                     rebuild: { directory in
-                        box.driver?.noteRebuild()
+                        let building = box.driver?.noteRebuild()
                         // 作り直しの途中で止めておく (作り直しの最中の出来事を演じる・``Op/overlap(_:)``)。止めた作り直しを
                         // 通らなくするかは門の後で読む
                         let held = box.driver?.holdRebuild ?? false
                         await box.driver?.waitForRebuildGate()
                         let status: Int32 = held && box.driver?.heldFails == true ? 1 : box.driver?.buildStatus ?? 0
+                        if status == 0, let building { box.driver?.noteBuilt(building) }
                         return RunCommand.Rebuilt(
                             status: status, output: "", executable: status == 0 ? URL(fileURLWithPath: "/bin/sh") : nil,
                             binPath: directory, product: "sketch")
@@ -585,10 +671,19 @@ struct WatchSessionModelTests {
         }
 
         /// 作り直しの口が呼ばれた。見張りは世代を取ってから作り直すので、作っているのはいまの世代の版である。
-        private func noteRebuild() {
+        @discardableResult
+        private func noteRebuild() -> String?? {
             rebuilds += 1
             rebuiltStamps.append(stamp)
+            builtRoles[stamp] = stampRoles[stamp]
             if launchFails, let stamp { refusedStamps.insert(stamp) }
+            return .some(stamp)
+        }
+
+        /// 作り直しが通った。置き場の実行ファイルは、この中身の版になる (#3428)。
+        private func noteBuilt(_ built: String?) {
+            builtStamp = built
+            hasBuilt = true
         }
 
         private func launch(_ executable: URL, stamp: String?) throws(CommandFailure) -> Process {
@@ -611,13 +706,16 @@ struct WatchSessionModelTests {
             // 本番を起こし直す回 (本番が居ない・プレビューを戻せない・#3565) だけで、それは本番の子である。**役は模型が控えた
             // ものだけを使う** — 控えていない版 (最初の 1 回の `nil` を除く) を起こしたら、それ自体を破れとして名乗る
             let role: Role
-            if let stamp {
-                if let noted = stampRoles[stamp] {
-                    role = noted
-                } else {
-                    role = .production
-                    launchViolation = launchViolation ?? "模型が役を控えていない版 \(stamp) を起こした"
-                }
+            if let restarting = restartRole {
+                // 起こし直しの子は、頼みを読んだ時点の役 (#3428)
+                role = restarting
+                restartRole = nil
+                restartGens.insert(gens.count)
+            } else if let noted = builtRoles[stamp] ?? stampRoles[stamp] {
+                role = noted
+            } else if let stamp {
+                role = .production
+                launchViolation = launchViolation ?? "模型が役を控えていない版 \(stamp) を起こした"
             } else {
                 role = .production
             }
@@ -631,6 +729,7 @@ struct WatchSessionModelTests {
                 launchViolation = launchViolation ?? "試聴の中で読んだ \(stamp ?? "-") (役 \(role)) を、本番の子として起こした"
             }
             launchRoles[gens.count] = role
+            launchBuilds[gens.count] = rebuilds
             if isAudition { auditionGens.insert(gens.count) }
             // **本番の子は、どの口で起こしても、起こした時点から乗り換えを待つ** (``WatchSession`` は新しい子を起こすたびに
             // 待ち印を立てる)。保存だけでなく、試聴を出る要求が本番を起こし直す回 (本番が居ない・#3565) や、
@@ -718,14 +817,74 @@ struct WatchSessionModelTests {
 
         /// 区画 `watch` へ要求を置いて 1 拍回し、受けたかを返す。
         private func ask(_ action: String) async throws -> (accepted: Bool, started: Set<Int>) {
+            let (report, started) = try await askReport(action)
+            return (report["accepted"] as? Bool == true, started)
+        }
+
+        /// 区画 `watch` へ要求を置いて 1 拍回し、応答を返す。
+        private func askReport(_ action: String) async throws -> (report: [String: Any], started: Set<Int>) {
+            try placeRequest(action)
+            let started = await beat()
+            return (try lastReport(), started)
+        }
+
+        /// 区画 `watch` へ要求を置くが、拍は回さない。
+        private func placeRequest(_ action: String) throws {
             requestCount += 1
             let request = #"{"id":"m\#(requestCount)","action":"\#(action)"}"#
             try AtomicFile.write(
                 Data(request.utf8), to: WorkDirectory.requestURL(under: session.watchFacet))
-            let started = await beat()
+        }
+
+        /// 最後の応答。
+        private func lastReport() throws -> [String: Any] {
             let data = try Data(contentsOf: WorkDirectory.reportURL(under: session.watchFacet))
-            let report = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-            return (report["accepted"] as? Bool == true, started)
+            return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+
+        /// 起こし直す要求を、いま行うとどうなるか (規則・#3428)。**見張りの内部の変数は写さない。**
+        enum RestartExpectation: Equatable {
+            /// 試聴の中で頼んだが、その試聴がもう終わっている。捨てて名乗る。
+            case dropped
+            /// 断る (当たる子が居ない・置き場の版が当たる子の版でない)。
+            case declined(WatchReport.Reason)
+            /// 役 `role` の側に、版 `stamp` の子を起こし直す。`target` は起こし直す相手の世代。
+            case restarted(Role, stamp: String?, target: Int)
+        }
+
+        /// 規則: 役 `role` の起こし直しが当たる子は、試聴の版なら (その試聴が続いていれば) 試聴の子、本番の版なら本番の側の
+        /// 新しい子。居なければ noTarget。置き場の最後に通った作り直しの版 (``builtStamp``) が、当たる子の版でなければ notBuilt。
+        private func expectedRestart(_ role: Role) -> RestartExpectation {
+            let target: Int?
+            switch role {
+            case .audition(let index):
+                guard auditioning, auditionIndex == index else { return .dropped }
+                target = auditionAlive().max()
+            case .production:
+                target = productionAlive().max()
+            }
+            guard let target else { return .declined(.noTarget) }
+            guard hasBuilt, builtStamp == launchStamps[target] else { return .declined(.notBuilt) }
+            return .restarted(role, stamp: launchStamps[target], target: target)
+        }
+
+        /// 起こし直す要求の結末を名乗った行 (プレビュー)。
+        private func restartLines(since start: Int) -> [String] {
+            let lines = [
+                WatchSession.restartLine(.restarted(audition: false)), WatchSession.restartLine(.restarted(audition: true)),
+                WatchSession.restartLine(.dropped), WatchSession.restartLine(.declined(.noTarget)),
+                WatchSession.restartLine(.declined(.notBuilt)),
+            ]
+            return previewLog[start...].filter { lines.contains($0) || $0.hasPrefix("Could not restart it: ") }
+        }
+
+        /// 起こし直す要求の結末の行の、規則どおりの文。
+        private func restartLine(for expectation: RestartExpectation) -> String {
+            switch expectation {
+            case .dropped: WatchSession.restartLine(.dropped)
+            case .declined(let reason): WatchSession.restartLine(.declined(reason))
+            case .restarted(let role, _, _): WatchSession.restartLine(.restarted(audition: role != .production))
+            }
         }
 
         private func placeFellBackMarker(of index: Int) throws {
@@ -795,10 +954,17 @@ struct WatchSessionModelTests {
                 await beat()
                 return nil
 
-            case .save, .saveBuildFail, .saveLaunchFail:
+            case .save, .saveBuildFail, .saveLaunchFail, .rebuild:
                 guard !stopped else { return nil }
-                changeSource()
-                // 要求の無い拍で読むので、いまの役
+                if op == .rebuild {
+                    // 作り直す要求 (#3428): 中身は変えず、頼みを読む拍の役で、いまの中身を「読んだ」ことにする (中身の変わらない
+                    // 保存)。要求は拍の頭で読まれ、同じ拍の読みが取りかかる
+                    await settleUnseen()
+                    try placeRequest("rebuild")
+                } else {
+                    changeSource()
+                }
+                // 要求の無い拍で読むので、いまの役 (作り直す要求も、頼みを読む拍のいまの役)
                 noteRead(currentRole)
                 buildStatus = op == .saveBuildFail ? 1 : 0
                 launchFails = op == .saveLaunchFail
@@ -824,6 +990,15 @@ struct WatchSessionModelTests {
                 }
                 // 作り直しが通った試聴中の保存は、取りかかった拍で試聴の子が起きなければ保留に回りうる
                 if auditioningBefore, buildStatus == 0, !stopped { deferredStamp = startedByRebuild.isEmpty ? stamp : nil }
+                // 作り直す要求は、いつも受け、中身が変わっていなくても 1 回だけ作り直す (#3428 の完了条件 1)
+                if op == .rebuild {
+                    if try lastReport()["accepted"] as? Bool != true {
+                        return Violation(number: 7, text: "作り直す要求を断った")
+                    }
+                    if rebuilds != rebuildsBefore + 1 {
+                        return Violation(number: 7, text: "作り直す要求で、作り直しが \(rebuilds - rebuildsBefore) 回 (1 回のはず)")
+                    }
+                }
                 // 7. 試聴中の保存は、本番の側を動かさない (本番の子は入れ替わらず、生きている本番は落ちない)
                 if auditioningBefore, unseenBefore.isEmpty {
                     let childAfter = session.child.flatMap { child in gens.firstIndex { $0 === child } }
@@ -1063,11 +1238,74 @@ struct WatchSessionModelTests {
                 }
                 return nil
 
+            case .restart:
+                guard !stopped else { return nil }
+                await settleUnseen()
+                let expectation = expectedRestart(currentRole)
+                let before = alive()
+                let productionBefore = productionAlive()
+                let launchesBefore = gens.count
+                let rebuildsBefore = rebuilds
+                let reportBefore = session.lastReport
+                let linesBefore = previewLog.count
+                let deferredBefore = deferredStamp
+                if case .restarted(let role, _, _) = expectation { restartRole = role }
+                let (report, started) = try await askReport("restart")
+                restartRole = nil
+                let accepted = report["accepted"] as? Bool == true
+                let lines = restartLines(since: linesBefore)
+                if lines != [restartLine(for: expectation)] {
+                    return Violation(number: 7, text: "起こし直す要求の名乗りが \(lines) (規則では \(restartLine(for: expectation)))")
+                }
+                if rebuilds != rebuildsBefore {
+                    return Violation(number: 7, text: "起こし直す要求で作り直した")
+                }
+                // 記録は書かない (作り直しではない)。同じ拍の頭で保留していた試聴の子が起きた回は、その記録が書かれる
+                if session.lastReport != reportBefore, pendingLaunches(started, of: deferredBefore).isEmpty {
+                    return Violation(number: 7, text: "起こし直す要求で、区画 build の記録が変わった")
+                }
+                switch expectation {
+                case .dropped:
+                    return Violation(number: 7, text: "模型の外: 拍の頭の起こし直しで試聴が終わっていた")
+                case .declined(let reason):
+                    if accepted || report["reason"] as? String != reason.rawValue {
+                        return Violation(number: 7, text: "起こし直す要求の応答が \(report) (規則では \(reason.rawValue) で断る)")
+                    }
+                    // 何もしない (断った回の拍で起きてよいのは、保留にあり得た試聴の子だけ)
+                    if alive().subtracting(pendingLaunches(started, of: deferredBefore)) != before {
+                        return Violation(number: 7, text: "断った起こし直しで、生きている世代が変わった (前 \(name(before)) → 後 \(name(alive())))")
+                    }
+                case .restarted(let role, let stamp, let target):
+                    if !accepted {
+                        return Violation(number: 7, text: "起こし直す要求を断った (\(report["reason"] ?? "-"))。規則では G\(target) を起こし直す")
+                    }
+                    let launched = Set(launchesBefore..<gens.count)
+                    let side = role == .production ? launched.subtracting(auditionGens) : launched.intersection(auditionGens)
+                    if launched.count != 1 || side.count != 1 || side.contains(where: { launchStamps[$0] != stamp }) {
+                        return Violation(
+                            number: 7,
+                            text: "G\(target) の起こし直しで起きた子が \(launched.sorted().map { "G\($0)=\(launchStamps[$0] ?? "-")" }) (規則では \(role) の側に版 \(stamp ?? "-") の子が 1 つ)")
+                    }
+                    // 試聴の子の起こし直しは本番の側を動かさない。前の試聴の子は止まる
+                    if role != .production {
+                        if productionAlive() != productionBefore {
+                            return Violation(number: 7, text: "試聴の子の起こし直しで、本番の側が動いた")
+                        }
+                        if isAlive(target) {
+                            return Violation(number: 7, text: "起こし直した試聴の子 G\(target) が残る")
+                        }
+                    }
+                }
+                return nil
+
             case .overlap(let steps):
                 return try await overlap(steps)
 
             case .overlapFailing(let steps):
                 return try await overlap(steps, heldFails: true)
+
+            case .rebuildOverlap(let steps):
+                return try await overlap(steps, requested: true)
 
             case .exitAudition:
                 guard let target = auditionAlive().first else { return nil }
@@ -1130,13 +1368,22 @@ struct WatchSessionModelTests {
         /// 戻せない) の版は、本番の子として起きる (``sourceRebuildThrough``)。本番の版の作り直しの最中に出た試聴の版は、その
         /// 作り直しが済んで本番が走っていなければ同じ扱い。作り直しの最中に重ねた保存のうち、最後の版だけが作り直される
         /// (途中の版は追い越される)。**捨てた版があれば、捨てたことを名乗り、無ければ名乗らない。**
-        private func overlap(_ steps: [Step], heldFails: Bool = false) async throws -> Violation? {
+        private func overlap(
+            _ steps: [Step], heldFails: Bool = false, requested: Bool = false
+        ) async throws -> Violation? {
             guard !stopped else { return nil }
             await settleUnseen()
             let launchesBefore = gens.count
             let linesBefore = previewLog.count
             let rebuildsBefore = rebuiltStamps.count
-            placeUnseenSave()
+            if requested {
+                // 門で止める作り直しを、作り直す要求で起こす (中身は変えない・#3428)。要求は門で止める拍の頭で読まれる
+                buildStatus = 0
+                launchFails = false
+                try placeRequest("rebuild")
+            } else {
+                placeUnseenSave()
+            }
             noteRead(currentRole)
             let heldStamp = stamp
             let heldRole = currentRole
@@ -1171,19 +1418,37 @@ struct WatchSessionModelTests {
                 await held?.value
                 return nil
             }
+            /// 最後に重ねた中身の出来事が作り直す要求か (#3428)。そうなら、済んだ後の作り直しは門で止めた版と同じ中身でも起きる
+            var requestedLast = false
+            /// 重ねた起こし直す要求の、頼みを読んだ時点の役 (控えは 1 枠・#3428)
+            var restartAsked: Role?
             for step in steps {
                 switch step {
                 case .save:
                     placeUnseenSave()
                     noteRead(currentRole)
                     placed.append(stamp)
+                    requestedLast = false
                     await beat()
+                case .rebuild:
+                    // 作り直す要求: 中身の変わらない保存として、頼みを読んだ時点の役でいまの中身を読む (#3428)
+                    noteRead(currentRole)
+                    placed.append(stamp)
+                    requestedLast = true
+                    let (accepted, _) = try await ask("rebuild")
+                    if !accepted { return Violation(number: 7, text: "作り直しの最中の作り直す要求を断った") }
+                case .restart:
+                    // 作り直しの最中の起こし直す要求は、受けて、済んでから決める (#3428)
+                    restartAsked = currentRole
+                    let (accepted, _) = try await ask("restart")
+                    if !accepted { return Violation(number: 7, text: "作り直しの最中の起こし直す要求を断った") }
                 case .revert:
                     // 作り直しの最中に重ねた保存の 1 つ前の中身へ戻す。戻した保存の役は、それを読んだ時点の役 (保存ごと)
                     guard placed.count >= 3, let back = placed[placed.count - 2] else { continue }
                     stampOverride = back
                     noteRead(currentRole)
                     placed.append(back)
+                    requestedLast = false
                     await beat()
                 case .audition:
                     let wasAuditioning = auditioning
@@ -1246,6 +1511,30 @@ struct WatchSessionModelTests {
                 leftWhileBuilding = nil
                 if productionAlive().isEmpty { sourceRebuildThrough = max(sourceRebuildThrough, left) }
             }
+            // **起こし直す要求は、作り直しが済んだ後の拍の頭で行う** (#3428)。行う時点の規則で、結末と起こす子を見る
+            if let restartAsked {
+                let expectation = expectedRestart(restartAsked)
+                let launchesAtRestart = gens.count
+                let linesAtRestart = previewLog.count
+                if case .restarted(let role, _, _) = expectation { restartRole = role }
+                for _ in 0..<2 where restartLines(since: linesAtRestart).isEmpty { await beat() }
+                restartRole = nil
+                let lines = restartLines(since: linesAtRestart)
+                if lines != [restartLine(for: expectation)] {
+                    return Violation(
+                        number: 7,
+                        text: "作り直しの最中に頼んだ起こし直しの名乗りが \(lines) (規則では \(restartLine(for: expectation)))")
+                }
+                if case .restarted(let role, let stamp, _) = expectation {
+                    let started = Set(launchesAtRestart..<gens.count)
+                    let side = role == .production ? started.subtracting(auditionGens) : started.intersection(auditionGens)
+                    if side.count != 1 || side.contains(where: { launchStamps[$0] != stamp }) {
+                        return Violation(
+                            number: 7,
+                            text: "作り直しの後の起こし直しで起きた子が \(started.sorted().map { "G\($0)=\(launchStamps[$0] ?? "-")" }) (規則では \(role) の側に版 \(stamp ?? "-") の子が 1 つ)")
+                    }
+                }
+            }
             for _ in 0..<2 { await beat() }
             let launched = Set(launchesBefore..<gens.count)
             func label(_ index: Int) -> String { "G\(index)=\(launchStamps[index] ?? "-")" }
@@ -1268,8 +1557,21 @@ struct WatchSessionModelTests {
             // 最後の版の行き先
             let last = placed.last ?? nil
             if let last, let lastRole = stampRoles[last] {
-                let ofLast = launched.filter { launchStamps[$0] == last }
-                if heldFails && last == heldStamp {
+                // 最後の版の子 (起こし直しの子は除く)。**作り直す要求が門で止めた版と同じ中身を頼んだ回は、済んだ後の作り直し
+                // (2 本目) の子だけ** — 門で止めた版の子は、その版の役で起きる (#3428)
+                let secondBuild = requestedLast && last == heldStamp
+                // 重なりの前の作り直しの子 (保留していた試聴の子が、重なりの頭の拍で起きた) も除く
+                let ofLast = launched.filter {
+                    launchStamps[$0] == last && !restartGens.contains($0)
+                        && (launchBuilds[$0] ?? 0) > rebuildsBefore
+                        && (!secondBuild || launchBuilds[$0] == rebuildsBefore + 2)
+                }
+                if refusedStamps.contains(last) {
+                    // 起こせない版 (``Op/saveLaunchFail`` の版) を頼み直しても、起こせないのは版の性質 (#3428)
+                    if !ofLast.isEmpty {
+                        return Violation(number: 5, text: "起こせない版の \(last) の子が起きた (\(ofLast.sorted().map(label)))")
+                    }
+                } else if heldFails && last == heldStamp && !requestedLast {
                     // 門で止めた版が通らなかったなら、その版の子は起きない
                     if !ofLast.isEmpty {
                         return Violation(number: 5, text: "通らなかった \(last) の子が起きた (\(ofLast.sorted().map(label)))")
@@ -1300,7 +1602,7 @@ struct WatchSessionModelTests {
             // は 1 行にまとめる** (門で止めた版を捨てるとき、同じ試聴で読んで控えた最後の版も一緒に捨てる)
             let lastRole = last.flatMap { stampRoles[$0] }
             let heldDropped = isDropped(heldRole)
-            let lastDropped = last != heldStamp && isDropped(lastRole)
+            let lastDropped = (last != heldStamp || requestedLast) && isDropped(lastRole)
             let sameAudition = lastRole.map { effective($0) == effective(heldRole) } ?? false
             let expectedDrops = (heldDropped ? 1 : 0) + (lastDropped && !(heldDropped && sameAudition) ? 1 : 0)
             let dropLines = previewLog[linesBefore...].filter {
@@ -1314,9 +1616,17 @@ struct WatchSessionModelTests {
             }
             // 同じ版を 2 度作り直さない (出る要求が引き継いだ版を、出た時点のソースとしてもう 1 度作らない)。重なりの中の
             // 保存はどれも新しい中身か、作り直していない中身へ戻す保存なので、1 つの中身の作り直しは 1 度まで
+            // **作り直す要求は、門で止めた版と同じ中身でも、済んだ後に 1 回作り直す** (#3428)。頼んだのが最後の中身の出来事なら、
+            // その中身だけは 2 度まで (何度頼んでも 2 度まで)
             let rebuilt = rebuiltStamps[rebuildsBefore...]
-            if let twice = Set(rebuilt.compactMap { $0 }).first(where: { stamp in rebuilt.filter { $0 == stamp }.count > 1 }) {
-                return Violation(number: 7, text: "同じ版 \(twice) を 2 度作り直した (作り直した順 \(rebuilt.map { $0 ?? "-" }))")
+            func allowed(_ stamp: String) -> Int { requestedLast && stamp == last && stamp == heldStamp ? 2 : 1 }
+            if let twice = Set(rebuilt.compactMap { $0 }).first(where: { stamp in rebuilt.filter { $0 == stamp }.count > allowed(stamp) }) {
+                return Violation(number: 7, text: "同じ版 \(twice) を \(allowed(twice) + 1) 度以上作り直した (作り直した順 \(rebuilt.map { $0 ?? "-" }))")
+            }
+            if requestedLast, let last, last == heldStamp, !isDropped(stampRoles[last]),
+                rebuilt.filter({ $0 == last }).count != 2
+            {
+                return Violation(number: 7, text: "作り直しの最中に頼んだ作り直しが、済んだ後に 1 回起きない (作り直した順 \(rebuilt.map { $0 ?? "-" }))")
             }
             // 落ち着いた後の拍は何も起こさない (捨てた版を後から本番へ作り直さない)
             let settled = gens.count

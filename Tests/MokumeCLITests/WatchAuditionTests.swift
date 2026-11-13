@@ -44,6 +44,8 @@ struct WatchAuditionTests {
 
         /// 作り直しの口が呼ばれた回数。
         private(set) var rebuilds = 0
+        /// 時計を渡す場所を替えた回数 (起こし直しは時刻を 0 から始める・#3428)。
+        var clockRenewals = 0
         /// 立てると、作り直しは通らない (終了コード 1)。**門の後で読む** — 門で止めた作り直しを、開ける前に失敗させられる。
         var buildFails = false
 
@@ -164,7 +166,8 @@ struct WatchAuditionTests {
                         let early = harness.stamp
                         if harness.holdStamp { await harness.waitForStampGate() }
                         return harness.stampReadsAtEnd ? harness.stamp : early
-                    }),
+                    },
+                    renewClock: { box.harness?.clockRenewals += 1 }),
                 stopTimeout: stopTimeout, finishTimeout: 0.5)
             session.overlapsGenerations = overlapsGenerations
             box.harness = self
