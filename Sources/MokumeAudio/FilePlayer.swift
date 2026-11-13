@@ -55,9 +55,13 @@ final class FilePlayer {
     private var isPlaying = false
 
     /// 流れに入れる。鳴らせなければ (出力が開けない・標本が読めない) `nil`。
-    init?(flow: SoundFlow, buffer: AVAudioPCMBuffer) {
+    ///
+    /// - Parameters:
+    ///   - rate: 最初の速さ (#3473)。
+    ///   - kernel: 最初の速さが 1 を越えるときの低域通過の係数。
+    init?(flow: SoundFlow, buffer: AVAudioPCMBuffer, rate: Double = 1, kernel: RateKernel? = nil) {
         self.flow = flow
-        guard let voice = FileVoice(buffer: buffer),
+        guard let voice = FileVoice(buffer: buffer, rate: rate, kernel: kernel),
             let format = Self.nodeFormat(for: buffer.format)
         else { return nil }
         self.voice = voice
@@ -82,6 +86,20 @@ final class FilePlayer {
         didSet { voice.pan(pan) }
     }
 
+    /// 速さ (#3473) を頼む。音の側は次の描き出しの先頭で受け、受けた点を ``absorbRate()`` が返す。
+    ///
+    /// - Parameter kernel: 速さが 1 を越えるときの低域通過の係数。
+    func rate(_ rate: Double, kernel: RateKernel?) {
+        voice.link.request(rate, kernel: kernel)
+    }
+
+    /// 音の側が速さを受けた点。新しく受けていなければ `nil`。`current` は、受けたのがいまの区切りの中か (違えば、
+    /// いまの区切りを始める前に受けた — いまの区切りは頭からその速さ)。
+    func absorbRate() -> (anchor: RateLink.Anchor, current: Bool)? {
+        guard let anchor = voice.link.absorb() else { return nil }
+        return (anchor, isPlaying && FileVoice.matches(anchor.generation, current: generation))
+    }
+
     /// 区切りの始まりから描いた標本の数。まだ描いていなければ 0、鳴らしていなければ `nil`。
     var played: Int? {
         guard isPlaying else { return nil }
@@ -95,11 +113,16 @@ final class FilePlayer {
     ///
     /// - Parameter envelope: この区切りに掛ける包絡 (#3099)。`nil` なら掛けない (器の標本をそのまま渡す)。
     ///   **区切りを始める命令より先に渡す** — 音の側が新しい区切りを読んだとき、その区切りの包絡が必ず見える。
-    func play(from start: Int, looping: Bool, envelope: FileEnvelope? = nil) {
+    ///
+    /// - Parameter origin: 区切りの錨 (``FileVoice/send(_:generation:origin:)``)。`nil` なら `start` から。
+    func play(
+        from start: Int, looping: Bool, envelope: FileEnvelope? = nil,
+        origin: (position: Double, elapsed: Int)? = nil
+    ) {
         generation += 1
         isPlaying = true
         if let envelope { voice.send(envelope, generation: generation) }
-        voice.send(.play(start: start, looping: looping), generation: generation)
+        voice.send(.play(start: start, looping: looping), generation: generation, origin: origin)
     }
 
     /// 鳴らしている区切りの包絡を置き換える (#3099)。次の描き出しの先頭で効く。止めていれば何もしない。
@@ -203,6 +226,8 @@ nonisolated final class FileVoice: @unchecked Sendable {
     private let length: Int
     /// 定位が移りきるまでの標本の数 (器の標本化率で約 5 ミリ秒。合成音の定位と同じくらい)。
     private let panRamp: Int
+    /// 速さ (#3473) の受け渡し。主スレッドが頼み、音の側が受けた点 (錨) を返す。
+    let link: RateLink
 
     private let command = Atomic<UInt64>(FileVoice.haltedBit)
     private let progress = Atomic<UInt64>(0)
@@ -218,6 +243,13 @@ nonisolated final class FileVoice: @unchecked Sendable {
     private let envelopeGeneration = Atomic<UInt64>(0)
     /// 頼まれた定位 (単精度のビット列)。
     private let panTarget = Atomic<UInt32>(Float(0).bitPattern)
+    /// 区切りの錨の置き場 (#3473)。世代の偶奇で 2 つ持つ — 主スレッドが次の世代の錨を書いても、音の側が読みかけの
+    /// 世代の置き場は上書きしない (2 つ先の世代まで)。音の側は命令・置き場・命令の順に読み、命令が変わっていれば読み直す。
+    /// 位置は `Double` のビット列、経った数は 2 の補数。
+    private let originPositionEven = Atomic<UInt64>(0)
+    private let originElapsedEven = Atomic<UInt64>(0)
+    private let originPositionOdd = Atomic<UInt64>(0)
+    private let originElapsedOdd = Atomic<UInt64>(0)
 
     // 音の側だけが読み書きする。
     /// 目指している定位と、いまの定位・移り始めた定位・移りきるまでの残りの標本の数。
@@ -228,6 +260,14 @@ nonisolated final class FileVoice: @unchecked Sendable {
     /// いまの定位の左右の倍率。
     private var leftGain: Float = 1
     private var rightGain: Float = 1
+    /// いまの速さと、速さが 1 を越えるときの低域通過の係数 (主スレッドが作って持つ。``RateLink``)。
+    private var rate: Double
+    private var kernel: Unmanaged<RateKernel>?
+    /// いまの区切りの錨: 速さを最後に変えた点で読んでいた位置 (器の標本・小数・ループでも折り返さない) と、そこまでに
+    /// 区切りの中で描いた標本の数。区切りの頭では、始まりの位置と 0。速さ 1 で位置が整数の間は、``position`` から
+    /// 器の標本をそのまま写す (速さを入れる前と同じ道)。
+    private var anchorPosition: Double = 0
+    private var anchorElapsed = 0
     private var applied = FileVoice.haltedBit
     private var active = false
     private var looping = false
@@ -242,8 +282,11 @@ nonisolated final class FileVoice: @unchecked Sendable {
     /// 無音にする。包絡を掛けていないファイルは常に `false`。
     private var awaitsEnvelope = false
 
+    /// - Parameters:
+    ///   - rate: 最初の速さ (#3473)。
+    ///   - kernel: 最初の速さが 1 を越えるときの低域通過の係数。
     /// - Returns: 標本が浮動小数点・チャンネルごとの並びでなければ (読み込みの形式では起きない) `nil`。
-    init?(buffer: AVAudioPCMBuffer) {
+    init?(buffer: AVAudioPCMBuffer, rate: Double = 1, kernel: RateKernel? = nil) {
         guard !buffer.format.isInterleaved, let data = buffer.floatChannelData else { return nil }
         let count = Int(buffer.format.channelCount)
         guard count > 0 else { return nil }
@@ -254,6 +297,14 @@ nonisolated final class FileVoice: @unchecked Sendable {
         channelCount = count
         length = Int(buffer.frameLength)
         panRamp = max(1, Int((buffer.format.sampleRate * 0.005).rounded()))
+        self.rate = rate
+        self.kernel = kernel.map { Unmanaged.passUnretained($0) }
+        link = RateLink(kernel: kernel)
+    }
+
+    /// 錨の世代 `generation` (音の側の数え方) が、主スレッドの世代 `current` の区切りか。
+    static func matches(_ generation: UInt64, current: Int) -> Bool {
+        generation == UInt64(truncatingIfNeeded: current) & generationMask
     }
 
     deinit {
@@ -263,7 +314,23 @@ nonisolated final class FileVoice: @unchecked Sendable {
     // MARK: - 主スレッド
 
     /// 命令を音の側へ渡す。次の描き出しの先頭で効く。
-    func send(_ order: Command, generation: Int) {
+    ///
+    /// - Parameter origin: 鳴らし始める区切りの錨 (#3473)。区切りの頭から見た錨の経った数 (0 以下) と、そこで読んでいた
+    ///   位置。`nil` なら始まりの標本 (経った数 0)。速さを変えて鳴っているファイルを、鳴らしたまま別の流れへ移すとき
+    ///   (``Playhead/carry(after:)``)、移す前と同じ式で位置を導き続けるために渡す。
+    func send(_ order: Command, generation: Int, origin: (position: Double, elapsed: Int)? = nil) {
+        if case .play(let start, _) = order {
+            // 命令より先に、その世代の側の置き場へ書く (音の側は命令を読んでから置き場を読む)
+            let position = (origin?.position ?? Double(max(0, start))).bitPattern
+            let elapsed = UInt64(bitPattern: Int64(origin?.elapsed ?? 0))
+            if generation & 1 == 0 {
+                originPositionEven.store(position, ordering: .releasing)
+                originElapsedEven.store(elapsed, ordering: .releasing)
+            } else {
+                originPositionOdd.store(position, ordering: .releasing)
+                originElapsedOdd.store(elapsed, ordering: .releasing)
+            }
+        }
         var word = (UInt64(truncatingIfNeeded: generation) & Self.generationMask) << Self.generationShift
         switch order {
         case .play(let start, let looping):
@@ -336,11 +403,22 @@ nonisolated final class FileVoice: @unchecked Sendable {
     /// - Returns: 無音だけを書いたか (止めている・鳴らし終えて何も出なかった)。
     @discardableResult
     func render(frames: Int, into output: UnsafeMutableAudioBufferListPointer) -> Bool {
-        let word = command.load(ordering: .acquiring)
+        var word = command.load(ordering: .acquiring)
         let begins = word != applied
-        if begins { begin(word) }
+        if begins {
+            // 置き場は命令の後に読み、命令が動いていなければ受ける (動いていれば新しい命令で読み直す)
+            var origin = readOrigin(of: word)
+            for _ in 0..<4 {
+                let again = command.load(ordering: .acquiring)
+                if again == word { break }
+                word = again
+                origin = readOrigin(of: word)
+            }
+            begin(word, origin: origin)
+        }
         if envelopeSequence.load(ordering: .relaxed) != envelopeApplied { receiveEnvelope() }
         receivePan()
+        receiveRate()
         // 区切りの頭 (鳴らし始め・鳴らし直し) と鳴っていない間は、移らずにその定位から鳴らす
         if begins || !active { settlePan() }
         guard active, frames > 0 else {
@@ -348,22 +426,7 @@ nonisolated final class FileVoice: @unchecked Sendable {
             return true
         }
         let copied = min(channelCount, output.count)
-        var made = 0
-        var place = position
-        while made < frames {
-            if place >= length {
-                guard looping else { break }
-                place = 0
-            }
-            let run = min(frames - made, length - place)
-            for channel in 0..<copied {
-                guard let target = output[channel].mData?.assumingMemoryBound(to: Float.self) else { continue }
-                (target + made).update(from: channels[channel] + place, count: run)
-            }
-            place += run
-            made += run
-        }
-        position = place
+        let made = isDirect ? copy(frames, into: output, channels: copied) : resample(frames, into: output, channels: copied)
         if let envelope {
             shape(output, channels: copied, made: made, by: envelope)
         } else if awaitsEnvelope {
@@ -388,8 +451,100 @@ nonisolated final class FileVoice: @unchecked Sendable {
         return made == 0
     }
 
+    /// 速さ 1 で位置が整数か。そうなら、器の標本をそのまま写す。
+    private var isDirect: Bool {
+        rate == 1 && anchorPosition.rounded(.down) == anchorPosition
+    }
+
+    /// 器の標本を ``position`` からそのまま写す (速さ 1)。写した数を返す。
+    private func copy(
+        _ frames: Int, into output: UnsafeMutableAudioBufferListPointer, channels copied: Int
+    ) -> Int {
+        var made = 0
+        var place = position
+        while made < frames {
+            if place >= length {
+                guard looping else { break }
+                place = 0
+            }
+            let run = min(frames - made, length - place)
+            for channel in 0..<copied {
+                guard let target = output[channel].mData?.assumingMemoryBound(to: Float.self) else { continue }
+                (target + made).update(from: channels[channel] + place, count: run)
+            }
+            place += run
+            made += run
+        }
+        position = place
+        return made
+    }
+
+    /// 錨から導く位置で、器を読み直して描く (速さ ≠ 1 か、位置が整数でない)。描いた数を返す。速さ 0 の間は描かない
+    /// (無音。区切りは続く — #3473 の 2026-11-14 の決定 3)。1 度だけなら、位置が終わりに着いたところで止まる。
+    private func resample(
+        _ frames: Int, into output: UnsafeMutableAudioBufferListPointer, channels copied: Int
+    ) -> Int {
+        guard rate != 0 else { return 0 }
+        let since = count - anchorElapsed
+        let end = Double(length)
+        var made = 0
+        while made < frames {
+            let place = FileRate.position(from: anchorPosition, elapsed: since + made, rate: rate)
+            if !looping, place >= end { break }
+            for channel in 0..<copied {
+                guard let target = output[channel].mData?.assumingMemoryBound(to: Float.self) else { continue }
+                target[made] = read(channels[channel], at: place)
+            }
+            made += 1
+        }
+        return made
+    }
+
+    /// 1 チャンネルの位置 `place` の値。
+    @inline(__always)
+    private func read(_ source: UnsafePointer<Float>, at place: Double) -> Float {
+        guard let kernel else {
+            return FileRate.read(source, length: length, at: place, looping: looping, kernel: nil)
+        }
+        return kernel._withUnsafeGuaranteedRef {
+            FileRate.read(source, length: length, at: place, looping: looping, kernel: $0.kernel)
+        }
+    }
+
+    /// 頼まれた速さを受ける。いまの位置を錨にして、そこから新しい速さで読む。受けた点を主スレッドへ返す。
+    private func receiveRate() {
+        guard let request = link.take() else { return }
+        let place = FileRate.position(from: anchorPosition, elapsed: count - anchorElapsed, rate: rate)
+        anchorPosition = place
+        anchorElapsed = count
+        rate = request.rate
+        kernel = request.kernel
+        if active, isDirect {
+            // 写す道へ戻る。写す位置は、錨の位置を器の中へ折り返したもの
+            let end = Double(length)
+            position =
+                looping
+                ? Int(place.truncatingRemainder(dividingBy: end)) : (place >= end ? length : Int(place))
+        }
+        link.publish(generation: generation, elapsed: count, position: place, rate: rate)
+    }
+
+    /// 命令の語 `word` の世代の、区切りの錨の置き場。
+    private func readOrigin(of word: UInt64) -> (position: Double, elapsed: Int) {
+        let position: UInt64
+        let elapsed: UInt64
+        if (word >> Self.generationShift) & 1 == 0 {
+            position = originPositionEven.load(ordering: .acquiring)
+            elapsed = originElapsedEven.load(ordering: .acquiring)
+        } else {
+            position = originPositionOdd.load(ordering: .acquiring)
+            elapsed = originElapsedOdd.load(ordering: .acquiring)
+        }
+        return (Double(bitPattern: position), Int(Int64(bitPattern: elapsed)))
+    }
+
     /// 新しい命令を適用する。
-    private func begin(_ word: UInt64) {
+    private func begin(_ word: UInt64, origin: (position: Double, elapsed: Int)) {
         applied = word
         generation = (word >> Self.generationShift) & Self.generationMask
         // 包絡は区切りごとに受け直す (``receiveEnvelope()``)。一度でも包絡が書かれていれば、この区切りの包絡も
@@ -404,6 +559,9 @@ nonisolated final class FileVoice: @unchecked Sendable {
         // (``FileNode``) と同じ。#3303)。**頭から鳴らし直すのは、区切りを決める ``Playhead`` の仕事** で、
         // ここで頭へ戻すと、鳴っている間に終わりへ飛んだとき頭の音が出る。ループなら頭から
         position = start < length ? start : (looping ? 0 : length)
+        // 錨は主スレッドの ``Playhead`` と同じ (ふつうは折り返さない始まりの位置と 0)
+        anchorPosition = origin.position
+        anchorElapsed = origin.elapsed
         count = 0
     }
 
