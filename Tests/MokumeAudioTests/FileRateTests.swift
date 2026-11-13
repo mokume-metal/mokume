@@ -216,6 +216,24 @@ struct FileRateTests {
         #expect(fast == (0..<300).map { values[200 + 2 * $0] })
     }
 
+    @Test("速くするときは低域通過を掛けて読む: 15 kHz の正弦を速さ 2 で鳴らすと (30 kHz は出せない)、折り返さずにほぼ消える")
+    func fastReadsFilterAboveHalf() throws {
+        let tone = (0..<8000).map { Float(0.5 * sin(2 * Double.pi * 15_000 * Double($0) / 48_000)) }
+        var cache: [UInt64: RateKernel] = [:]
+        func loudest(kernel: RateKernel?) throws -> Float {
+            let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+            let player = try #require(
+                FilePlayer(flow: flow, buffer: try monoBuffer(tone), rate: 2, kernel: kernel))
+            player.play(from: 0, looping: true)
+            let heard = try render(flow, 3000)
+            return heard[500...].map { abs($0) }.max() ?? 0
+        }
+        let filtered = try loudest(kernel: RateKernel.make(ratio: 2, cache: &cache))
+        let folded = try loudest(kernel: nil)
+        #expect(filtered < 0.02, "低域通過の後 \(filtered)")
+        #expect(folded > 0.2, "係数なしなら折り返して聞こえる \(folded)")
+    }
+
     @Test("1 度だけを速さ 2 で鳴らすと、器の半分の標本数で鳴り終わって無音になる")
     func voiceEndsEarlyAtRateTwo() throws {
         let values = Self.wobble(1000).map { $0 + 2 }
