@@ -192,23 +192,32 @@ public nonisolated struct Path: Sendable, Hashable {
     public func contains(_ point: Vector2) -> Bool {
         let probe = point.simd
         guard probe.x.isFinite, probe.y.isFinite else { return false }
+        return Self.winding(at: SIMD2<Double>(Double(probe.x), Double(probe.y)), in: subpaths) != 0
+    }
+
+    /// `point` の回り数。``contains(_:)`` と ``clipped(to:)`` が共有する数え方。
+    ///
+    /// 点が 3 つに満たない部分道は数えない。点は Double のまま問う (``contains(_:)`` は Float の点を Double にして渡し、
+    /// ``clipped(to:)`` は区間の中点を Float に丸めずに渡す)。
+    static func winding(at point: SIMD2<Double>, in subpaths: [Subpath]) -> Int {
         var winding = 0
         for subpath in subpaths {
             let points = subpath.points
             guard points.count >= 3 else { continue }
-            var previous = points[points.count - 1]
-            for current in points {
+            var previous = SIMD2<Double>(Double(points[points.count - 1].x), Double(points[points.count - 1].y))
+            for item in points {
+                let current = SIMD2<Double>(Double(item.x), Double(item.y))
                 // 点から右へ伸ばした半直線が、辺を上向き・下向きに横切る数で回り数を数える
                 // 差と積は Double で取る (Float では座標が 1e19 級で inf - inf になり、辺を数え落とす)
-                if previous.y <= probe.y {
-                    if current.y > probe.y, Self.side(previous, current, probe) > 0 { winding += 1 }
-                } else if current.y <= probe.y, Self.side(previous, current, probe) < 0 {
+                if previous.y <= point.y {
+                    if current.y > point.y, Self.side(previous, current, point) > 0 { winding += 1 }
+                } else if current.y <= point.y, Self.side(previous, current, point) < 0 {
                     winding -= 1
                 }
                 previous = current
             }
         }
-        return winding != 0
+        return winding
     }
 
     private static func distance(_ from: SIMD2<Float>, _ to: SIMD2<Float>) -> Double {
@@ -218,8 +227,7 @@ public nonisolated struct Path: Sendable, Hashable {
     }
 
     /// 辺 `a`→`b` の左にあれば正、右にあれば負。
-    private static func side(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ p: SIMD2<Float>) -> Double {
-        (Double(b.x) - Double(a.x)) * (Double(p.y) - Double(a.y))
-            - (Double(p.x) - Double(a.x)) * (Double(b.y) - Double(a.y))
+    private static func side(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ p: SIMD2<Double>) -> Double {
+        (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)
     }
 }

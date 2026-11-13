@@ -385,8 +385,9 @@ public final class Reverb: SoundEffect {
 ///     osc = createSinOsc()
 ///     env = createEnv()
 ///     delay = createDelay()
-///     if let osc { delay?.process(osc, 2, 0.5) }
-///     delay?.time(0.3)
+///     // 上限 2 秒・遅れ 0.3 秒・戻す割合 0.5
+///     if let osc { delay?.process(osc, 2, 0.3) }
+///     delay?.feedback(0.5)
 /// }
 /// func mousePressed() {
 ///     if let osc { env?.play(osc, 0.01, 0.05, 0.5, 0.1) }
@@ -399,33 +400,72 @@ public final class Reverb: SoundEffect {
 public final class Delay: SoundEffect {
     /// 遅れの上限 (秒)。``process(_:_:)`` で変える。
     private var maximumTime: Float = Float(EchoKernel.maximumSeconds)
+    /// 音の側へ送った遅れ (秒)。上限を下げたときに丸め直すために持つ。
+    private var delayTime: Float = EchoKernel.defaultSeconds
 
     init(stage: SynthStage) {
         super.init(stage: stage, node: stage.rack.addDelay(), name: "Delay")
     }
 
-    /// 入力した音に、ディレイタイムの上限を指定してエフェクトをかける。
+    /// 入力した音に、ディレイタイムの上限を指定してエフェクトをかける。**ディレイタイムも上限と同じ値になる。**
+    ///
+    /// Processing Sound の `process(input, maxDelayTime)` と同じく、`process(input, maxDelayTime, maxDelayTime)` と
+    /// 同じに扱う (前に ``time(_:)`` で決めた遅れは上書きされる)。遅れを上限より短くするなら、3 つ目に遅れを渡す
+    /// (``process(_:_:_:)``) か、この後に ``time(_:)`` を呼ぶ。
     ///
     /// ディレイタイム (``time(_:)``) は 0 から `maxDelayTime` 秒まで。0 から 5 秒の外は端にクランプし、NaN・
-    /// 無限大は無視する。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
+    /// 無限大は無視する (上限も遅れも変えない)。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func process(_ input: any EffectInput, _ maxDelayTime: Float) {
-        if let value = accept(
-            maxDelayTime, 0...Float(EchoKernel.maximumSeconds), call: "process",
-            meaning: "a maxDelayTime")
-        {
-            maximumTime = value
-        }
+        if let maximum = acceptMaximum(maxDelayTime) { time(maximum) }
         process(input)
     }
 
-    /// 入力した音に、ディレイタイムの上限とフィードバックの割合を指定してエフェクトをかける。
+    /// 入力した音に、ディレイタイムの上限と始めのディレイタイムを指定してエフェクトをかける。
     ///
-    /// 範囲の外・NaN は、それぞれ ``process(_:_:)``・``feedback(_:)`` と同じに扱う。
-    public func process(_ input: any EffectInput, _ maxDelayTime: Float, _ feedback: Float) {
-        self.feedback(feedback)
-        process(input, maxDelayTime)
+    /// <!-- example: 文脈 var osc: SinOsc?; var delay: Delay? -->
+    /// ```swift
+    /// func setup() {
+    ///     osc = createSinOsc()
+    ///     delay = createDelay()
+    ///     // 上限 2 秒・遅れ 0.3 秒。戻す割合は feedback(_:) で決める
+    ///     if let osc { delay?.process(osc, 2, 0.3) }
+    ///     delay?.feedback(0.5)
+    /// }
+    /// ```
+    ///
+    /// **第 3 引数はディレイタイム (秒)** で、``time(_:)`` と同じ (Processing Sound の
+    /// `process(input, maxDelayTime, delayTime)` と同じ)。フィードバックの割合は ``feedback(_:)`` か
+    /// ``set(_:_:)`` で決める。範囲の外・NaN は、それぞれ ``process(_:_:)``・``time(_:)`` と同じに扱う
+    /// (ディレイタイムは、この呼び出しで決めた上限で丸める)。ディレイタイムが数でなければ、遅れは今のまま
+    /// (新しい上限より長ければ、上限まで縮める)。
+    public func process(_ input: any EffectInput, _ maxDelayTime: Float, _ delayTime: Float) {
+        acceptMaximum(maxDelayTime)
+        time(delayTime)
+        process(input)
+    }
+
+    /// ディレイタイムの上限を受け、範囲の外は丸め、数でない値は無視する (どちらも 1 度だけ知らせる)。
+    ///
+    /// 今の遅れが新しい上限より長ければ、遅れも上限まで縮める (遅れは常に 0〜上限。知らせない)。
+    ///
+    /// - Returns: 受けた上限 (丸めた後)。無視したら `nil`。
+    @discardableResult
+    private func acceptMaximum(_ maxDelayTime: Float) -> Float? {
+        guard let value = accept(
+            maxDelayTime, 0...Float(EchoKernel.maximumSeconds), call: "process",
+            meaning: "a maxDelayTime")
+        else { return nil }
+        maximumTime = value
+        if delayTime > value { sendTime(value) }
+        return value
+    }
+
+    /// 遅れを音の側へ送り、送った値を覚える。
+    private func sendTime(_ seconds: Float) {
+        delayTime = seconds
+        send(.time, seconds)
     }
 
     /// ディレイタイムを設定する。単位は秒で、0 から ``process(_:_:)`` で指定した上限まで (既定は 5)。既定のディレイタイムは 0.25。
@@ -438,7 +478,7 @@ public final class Delay: SoundEffect {
         guard let value = accept(
             seconds, 0...maximumTime, call: "time", meaning: "a delay time")
         else { return }
-        send(.time, value)
+        sendTime(value)
     }
 
     /// フィードバックの割合を設定する。0〜1 で、大きいほど反響が長く続く。既定は 0.5。

@@ -345,7 +345,7 @@ nonisolated final class ReverbNode: RackNode {
 /// ディレイ。
 nonisolated final class DelayNode: RackNode {
     private let kernel: EchoKernel
-    private var time: Float = 0.25
+    private var time: Float = EchoKernel.defaultSeconds
     private var feedback: Float = 0.5
 
     override init(id: Int, sampleRate: Double, meter: SampleRing) {
