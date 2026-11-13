@@ -541,6 +541,63 @@ extension Canvas {
         curve(control1.x, control1.y, start.x, start.y, end.x, end.y, control2.x, control2.y)
     }
 
+    // 立体の空間に 3 次の曲線を 1 本引く (#3712)。`beginShape()`・`vertex(x, y, z)`・9 つの数の
+    // `bezierVertex()`・`endShape()` と同じ道を通る。
+    public func bezier(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
+        _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ z2: some ScalarConvertible,
+        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ z3: some ScalarConvertible,
+        _ x4: some ScalarConvertible, _ y4: some ScalarConvertible, _ z4: some ScalarConvertible
+    ) {
+        let (x1, y1, z1, x2, y2, z2) = (x1.asFloat, y1.asFloat, z1.asFloat, x2.asFloat, y2.asFloat, z2.asFloat)
+        let (x3, y3, z3, x4, y4, z4) = (x3.asFloat, y3.asFloat, z3.asFloat, x4.asFloat, y4.asFloat, z4.asFloat)
+        // 区間の外・組み立て中の形の扱いは平面の ``bezier(_:_:_:_:_:_:_:_:)`` と同じ
+        guard canPlace else { return warnOutsideFrame(.placing) }
+        let outer = takeOpenShape()
+        beginShape()
+        vertex(x1, y1, z1)
+        bezierVertex(x2, y2, z2, x3, y3, z3, x4, y4, z4)
+        endShape()
+        restoreOpenShape(outer)
+    }
+
+    /// 立体の空間に 3 次の曲線を 1 本引く。12 の数の ``bezier(_:_:_:_:_:_:_:_:_:_:_:_:)`` に始点・制御点 2 つ・
+    /// 終点の成分を同じ順で渡すのと同じ (#3712)。
+    public func bezier(from start: Vector3, control1: Vector3, control2: Vector3, to end: Vector3) {
+        bezier(
+            start.x, start.y, start.z, control1.x, control1.y, control1.z,
+            control2.x, control2.y, control2.z, end.x, end.y, end.z)
+    }
+
+    // 立体の空間に通過点を結ぶ曲線の 1 区間を引く (#3712)。`beginShape()`・`curveVertex(x, y, z)` を 4 回・
+    // `endShape()` と同じ道を通る。
+    public func curve(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
+        _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ z2: some ScalarConvertible,
+        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ z3: some ScalarConvertible,
+        _ x4: some ScalarConvertible, _ y4: some ScalarConvertible, _ z4: some ScalarConvertible
+    ) {
+        let (x1, y1, z1, x2, y2, z2) = (x1.asFloat, y1.asFloat, z1.asFloat, x2.asFloat, y2.asFloat, z2.asFloat)
+        let (x3, y3, z3, x4, y4, z4) = (x3.asFloat, y3.asFloat, z3.asFloat, x4.asFloat, y4.asFloat, z4.asFloat)
+        guard canPlace else { return warnOutsideFrame(.placing) }
+        let outer = takeOpenShape()
+        beginShape()
+        curveVertex(x1, y1, z1)
+        curveVertex(x2, y2, z2)
+        curveVertex(x3, y3, z3)
+        curveVertex(x4, y4, z4)
+        endShape()
+        restoreOpenShape(outer)
+    }
+
+    /// 立体の空間に通過点を結ぶ曲線の 1 区間を引く。12 の数の ``curve(_:_:_:_:_:_:_:_:_:_:_:_:)`` に
+    /// `control1`・`start`・`end`・`control2` の成分をこの順で渡すのと同じ (#3712)。
+    public func curve(from start: Vector3, control1: Vector3, control2: Vector3, to end: Vector3) {
+        curve(
+            control1.x, control1.y, control1.z, start.x, start.y, start.z,
+            end.x, end.y, end.z, control2.x, control2.y, control2.z)
+    }
+
     // 線。塗りは持たない。
     public func line(_ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible) {
         let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
