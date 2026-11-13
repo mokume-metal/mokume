@@ -96,13 +96,17 @@ public final class ParamBox<Value> {
                 return
             }
             // 面に出る姿が同じなら通知しない。値は置く (面に出ない部分・零の符号を落とさない)
-            guard offered != toParam(storedValue) else {
+            let current = toParam(storedValue)
+            guard offered != current else {
+                // ビット列が変わったなら (`0` に `-0.0`)、`draw()` の読む値は変わるので番号だけ進める (#2618)
+                if !offered.hasSameBits(as: current) { changeCount &+= 1 }
                 storedValue = newValue
                 return
             }
             observation.withMutation(of: self, keyPath: valueKeyPath) {
                 storedValue = newValue
             }
+            changeCount &+= 1
         }
         _modify {
             observation.access(self, keyPath: valueKeyPath)
@@ -114,12 +118,16 @@ public final class ParamBox<Value> {
             yield &working
             let offered = toParam(working)
             if offered.hasOnlyFiniteNumbers {
-                if offered == toParam(storedValue) {
+                let current = toParam(storedValue)
+                if offered == current {
+                    // setter と同じく、ビット列だけが変わったなら番号だけ進める (#2618)
+                    if !offered.hasSameBits(as: current) { changeCount &+= 1 }
                     storedValue = working
                 } else {
                     observation.withMutation(of: self, keyPath: valueKeyPath) {
                         storedValue = working
                     }
+                    changeCount &+= 1
                 }
             } else {
                 refuse(working, keeping: storedValue)
@@ -129,6 +137,9 @@ public final class ParamBox<Value> {
 
     private var storedValue: Value
     private let observation = ObservationRegistrar()
+    /// 値が変わった回数 (``DeclaredParam/changeCount``)。変化の通知を出すときと、面に出る姿は同じでも置いた値の
+    /// ビット列が変わったとき (`0` に `-0.0` を置いた。通知は出さない) に進める。同じ値の入れ直しでは進めない。
+    private(set) var changeCount: UInt64 = 0
 
     /// この置き場が 1 度だけ言う注意の種類。
     enum Warning: Hashable {
@@ -388,6 +399,35 @@ protocol DeclaredParam: AnyObject {
     /// 持つ実装が書き忘れて「変わったか見ない」へ黙って落ちる)。
     var defaultValue: ParamValue? { get }
     func write(_ incoming: ParamValue) -> ParamOutcome
+    /// 値が変わった回数 ([#2618](https://github.com/mokume-metal/mokume/issues/2618))。
+    /// **入口 (作者のコードの代入・外からの書き込み・復元) を問わず、値が変わるたびに進める。** 面に出る姿
+    /// (``declaration`` の値) が同じでも、置いた値のビット列が変われば (`0` と `-0.0`) `draw()` の読む値は違うので進める。 観測の持ち出しが、
+    /// 絵を描いた `draw()` の終わりから値が動いたかを、値を写さずにこの数で見る。等しさだけに使う。
+    ///
+    /// **既定の実装は置かない** — 数え漏らす実装は、動いた値を古い絵に結び付ける。
+    var changeCount: UInt64 { get }
     /// 外から来た書き込みが置かれたことを知らせる先を差す (記録・#3570)。外すときは `nil`。
     func observeWrites(_ observer: ((String, ParamValue) -> Void)?)
+}
+
+extension ParamValue {
+    /// 同じ型で、数の成分のビット列まで同じか (`0` と `-0.0` を見分ける)。`==` は数として比べるので見分けない。
+    ///
+    /// ``ParamBox`` が、面に出る姿が同じ代入でも置いた値が変わったかを数えるのに使う
+    /// ([#2618](https://github.com/mokume-metal/mokume/issues/2618))。
+    fileprivate func hasSameBits(as other: ParamValue) -> Bool {
+        switch (self, other) {
+        case (.float(let a), .float(let b)): a.bitPattern == b.bitPattern
+        case (.int(let a), .int(let b)): a == b
+        case (.bool(let a), .bool(let b)): a == b
+        case (.string(let a), .string(let b)): a == b
+        case (.color(let a), .color(let b)):
+            a.red.bitPattern == b.red.bitPattern && a.green.bitPattern == b.green.bitPattern
+                && a.blue.bitPattern == b.blue.bitPattern && a.alpha.bitPattern == b.alpha.bitPattern
+        case (.vector2(let a), .vector2(let b)): a.x.bitPattern == b.x.bitPattern && a.y.bitPattern == b.y.bitPattern
+        case (.vector3(let a), .vector3(let b)):
+            a.x.bitPattern == b.x.bitPattern && a.y.bitPattern == b.y.bitPattern && a.z.bitPattern == b.z.bitPattern
+        default: false
+        }
+    }
 }

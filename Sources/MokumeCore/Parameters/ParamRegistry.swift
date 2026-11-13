@@ -98,6 +98,13 @@ struct ParamRegistry {
         boxes.contains { $0.name == name }
     }
 
+    /// 宣言のどれかの値が変わった回数の和 (``DeclaredParam/changeCount``・[#2618](https://github.com/mokume-metal/mokume/issues/2618))。
+    /// **等しさだけに使う** — 2 つの時点で同じなら、その間にどの値も変わっていない。値を写さずに整数を宣言の数だけ
+    /// 足すので、観測の区画が在る実行がフレームごとに控えても、値を読む費用を払わない。
+    var changeCount: UInt64 {
+        boxes.reduce(0) { $0 &+ $1.box.changeCount }
+    }
+
     /// 名前を指して書き換える。
     func write(_ value: ParamValue, to name: String) -> ParamOutcome? {
         guard let entry = boxes.first(where: { $0.name == name }) else { return nil }

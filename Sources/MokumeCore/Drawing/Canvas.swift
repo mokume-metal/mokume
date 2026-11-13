@@ -5095,6 +5095,8 @@ public final class Canvas {
         let startsFrame = passesThisFrame == 0 && drawsInFrame
         let restoresCarry = carriesPictureBeforeEffects && startsFrame && pendingBackground == nil
         let changesTarget = hasPendingDrawing || target.hasPendingPixelWrites || restoresCarry
+        // 描く先を変える描き切りを数える (観測の持ち出しが、描いた後に絵が変わったかを見る・#2618)
+        if changesTarget { target.noteContentWritten() }
         // **GPU に頼む仕事が 1 つも無い描き切りか** ([#2787])。そうなら描く先の絵は 1 画素も変わらないので、
         // 置いた側への写させも、パスも投入も要らない
         let skipsThisFlush = skipsFlush(mirroringPixels: mirroringPixels, changesTarget: changesTarget)

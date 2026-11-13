@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/kept-frame.schema.json",
+  "title": "A kept observation",
+  "description": "One image an observation took, kept with the conditions known for its frame (`.mokume/kept/<id>/kept.json`, beside the image). It is written when an observation request asks for keep (`observe-request.schema.json`), and the next request does not clear it. **It records only what is known**: the knob values are the ones read at the end of the draw() that made the picture, and the random seed and the version of the code are not written here — they belong to the record of the run (`replay-record.schema.json`), which `record` points at; when the run was not being recorded, `record` is null and the seed and the version are not known. **The folder is complete only under its own name**: it is written as `<id>.<pid>.partial` (the process number of the writer, as the record of a run is) and renamed to `<id>` once the image and this catalogue are in place and synced, so a `.partial` folder (left by a failed write or a run that died) is not a kept observation, and **a reader does not read the catalogue inside one** — a write that failed at the rename leaves a catalogue saying `complete: true` there. The rename never replaces anything already under `<id>`, except on a volume without a rename that fails when the name exists, where an empty folder placed between the check and the rename can be replaced. The keys listed here are the whole set of this version (additionalProperties is false), so a writer that adds one updates this schema first.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "image",
+    "frame",
+    "time",
+    "clock",
+    "size",
+    "stamp",
+    "values",
+    "params",
+    "record",
+    "complete"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "The version of this format."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The id of the observation request that asked for keep. The folder is named after it, and the observation reply that answered it carries the same id."
+    },
+    "image": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The file name of the image, relative to this catalogue. Its bytes are those of the image the observation wrote into its facet (the same pixels, at the scale the request asked for)."
+    },
+    "frame": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The number of the frame that drew the picture."
+    },
+    "time": {
+      "type": "number",
+      "description": "The time of that frame, in seconds."
+    },
+    "clock": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "description": "The clock the sketch ran on.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "wallClock",
+            "frames"
+          ],
+          "description": "wallClock: the time that actually passed. frames: the time follows the frame number, so one draw() is exactly 1 / frameRate seconds."
+        },
+        "frameRate": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Frames per second of the frame clock. Present only when kind is frames."
+        }
+      }
+    },
+    "size": {
+      "type": "object",
+      "required": [
+        "width",
+        "height"
+      ],
+      "additionalProperties": false,
+      "description": "The size, in pixels, of the surface that was drawn. The image is smaller when the request asked for a scale below 1.",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "stamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The generation of the input that produced this picture, the same as the observation reply's stamp. Compare it for equality only: it is not a version that can be restored. null when the sketch was not given one."
+    },
+    "values": {
+      "type": "object",
+      "description": "The values the sketch exposed on that frame (expose(_:_:) and measure(_:_:)), as in the observation reply. An empty object when there were none.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "type",
+          "value"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "float",
+              "int",
+              "string",
+              "bool"
+            ]
+          },
+          "value": {}
+        }
+      }
+    },
+    "params": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "read",
+            "values"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "read": {
+              "const": "endOfDraw",
+              "description": "When the values were read: at the end of the draw() that made the picture. **They are not the values the picture was drawn with** when draw() changes them: a sketch that draws circle(…, radius) and then does radius += 1 is kept with the radius it ended on (121 for a picture drawn with 120)."
+            },
+            "values": {
+              "type": "array",
+              "description": "Every knob the sketch declares (@Param), in the order they were declared, written as in the params facet (`params-request.schema.json`). Empty when the sketch declares none.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "type",
+                  "value"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "type": {
+                    "enum": [
+                      "float",
+                      "int",
+                      "bool",
+                      "string",
+                      "color",
+                      "vec2",
+                      "vec3"
+                    ]
+                  },
+                  "value": {}
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The knob values, or null when they are not known for this picture — when a value changed after the frame that drew it (for example a knob moved while the sketch was paused from outside). A picture whose draw() was not seen to its end (drawing that frame failed) is not kept at all, so it has no catalogue. A newer value is never written against an older picture. paramsUnknownReason says which."
+    },
+    "paramsUnknownReason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Why params is null. Present only then."
+    },
+    "record": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "frame"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The id of the record (`replay-record.schema.json`) of the run this picture was taken in."
+            },
+            "frame": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The frame of that record that drew the picture (the same as frame)."
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The record of the run, when the run was being recorded (`mokume run --record`, `mokume watch --record`). The random seed and the knob writes of the run are in that record. null when the run was not being recorded: then the seed and the version of the code are not known, and nothing here guesses them."
+    },
+    "complete": {
+      "const": true,
+      "description": "Always true: this catalogue was written for a pair that was being put in place. **It is not the mark of completion** — the name of the folder is (`<id>`, not a `.partial` name). The catalogue is written before the rename, so a folder left unfinished by a failed rename also holds one with `complete: true`; a catalogue is read only under the folder's own name."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "params": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "paramsUnknownReason"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "paramsUnknownReason"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "clock": {
+            "properties": {
+              "kind": {
+                "const": "frames"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "clock": {
+            "required": [
+              "frameRate"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "clock": {
+            "not": {
+              "required": [
+                "frameRate"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
