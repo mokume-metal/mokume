@@ -156,7 +156,7 @@ func setup() {
 
 監視するのは次の 3 つで、これが仕様である。`Package.swift`、`Sources/` の下の `.swift` (隠しファイルとバンドルの中を除く)、`Sources/<名前>/assets/` の下の通常のファイル (隠しファイル・`.metal`・シンボリックリンクを除く)。
 
-**範囲の外を変えても再起動しない。** `Package.swift` で `assets/` 以外に宣言したリソース (`.process("Resources")`・`.copy("data.json")`・`path:` を変えた target)、アセットのディレクトリの中のシンボリックリンク、`Package.resolved`、パスで指定した依存 (`--local` の mokume のチェックアウト) である。たとえば `resources: [.process("Resources")]` を宣言した作品で `Sources/<名前>/Resources/data.json` を保存しても、再起動は起きない。外を変えたときは `mokume watch` を再起動する。範囲を `Package.swift` の宣言から導く方法は、宣言を変えた作品が出てから決める。
+**範囲の外を変えても再起動しない。** `Package.swift` で `assets/` 以外に宣言したリソース (`.process("Resources")`・`.copy("data.json")`・`path:` を変えた target)、アセットのディレクトリの中のシンボリックリンク、`Package.resolved`、パスで指定した依存 (`--local` の mokume のチェックアウト) である。たとえば `resources: [.process("Resources")]` を宣言した作品で `Sources/<名前>/Resources/data.json` を保存しても、再起動は起きない。外を変えたときは、`mokume watch` を止めずに作り直す要求を置く — `.mokume/watch/request.json` に `{"id": "<毎回新しい値>", "action": "rebuild"}` を原子的に置くと、保存したときと同じ作り直しと差し替えが 1 回起きる。作り直さずに、いまの版を最初から (時刻 0 から。`--keep-time` でも) 起こし直すのは `"action": "restart"` である。要求と応答の形は `Schemas/watch-request.schema.json` と `Schemas/watch-report.schema.json` が正本である。範囲を `Package.swift` の宣言から導く方法は、宣言を変えた作品が出てから決める。
 
 **フレームを越える状態も、この再起動では最初から始まる。** 本体が引き継ぐのは次の2種類である。
 

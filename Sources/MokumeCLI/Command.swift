@@ -137,7 +137,11 @@ enum Command {
                     fragment is not rebuilt: it swaps in while the sketch keeps running.
                     A change anywhere else does not rebuild — resources Package.swift declares outside
                     assets/ (.process("Resources"), .copy("data.json"), a changed path:), Package.resolved,
-                    a dependency given by path (--local). Stop watch and start it again after those
+                    a dependency given by path (--local). After those, place a rebuild request in
+                    .mokume/watch/request.json ({"id": "<new each time>", "action": "rebuild"}): it builds
+                    and swaps in once without stopping watch. "restart" starts the running version again
+                    from the beginning (time from 0, also with --keep-time) without building
+                    (Schemas/watch-request.schema.json).
                     """
                 )
             case .render:
