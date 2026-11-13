@@ -561,8 +561,8 @@ struct SoundFileTests {
         "pan はループの折り返し・飛びの後・止めて定位を変えて鳴らし直し・鳴らし直し・包絡の始まりでも保たれ、区切りの頭からその定位で鳴る",
         arguments: ["loop", "jump", "pause", "replay", "envelope"])
     func panHoldsAcrossSegments(scenario: String) throws {
-        // 1 チャンネルで、位置ごとに違う 0 でない標本
-        let values = (0..<6000).map { Float(0.1) + 0.4 * Float(($0 * 7) % 1000) / 1000 }
+        // 1 チャンネルで、位置ごとに違う 0 でない標本。2000 標本なので、ループはウィンドウ 2 の途中で折り返す
+        let values = (0..<2000).map { Float(0.1) + 0.4 * Float(($0 * 7) % 1000) / 1000 }
         let url = try writeChannelsWAV([values], sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -587,7 +587,7 @@ struct SoundFileTests {
                     case ("loop", 2), ("jump", 2):
                         if panned { sound.pan(-1) }
                     case ("jump", 3):
-                        sound.jump(0.05)
+                        sound.jump(0.02)
                     case ("pause", 2):
                         sound.pause()
                     case ("pause", 3):
