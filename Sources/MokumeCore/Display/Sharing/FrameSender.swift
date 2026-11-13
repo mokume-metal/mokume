@@ -165,6 +165,20 @@ package final class FrameSender {
             for name in received.ports { FrameLink.releaseName(name) }
             return
         }
+        // **返信先が死んでいれば、断る判定と面の包みより前に捨てる** (#3968)。受け手が答えを待ちきれずに port を
+        // 捨てた後で、この connect を読んだ。届いた名前は `MACH_PORT_DEAD`、受けた後に死んだなら死んだ名前。答えも
+        // 断りの診断も要らない (届かない)
+        if Self.isDead(reply) {
+            for name in received.ports.dropFirst() { FrameLink.releaseName(name) }
+            if receivers.contains(where: { $0.port == reply }) {
+                // 受け入れ済みの受け手の名前に重なった。届いた 1 つだけ返し、外すのは知らせ (`removeReceiver`) に任せる
+                mach_port_mod_refs(mach_task_self_, reply, MACH_PORT_RIGHT_DEAD_NAME, -1)
+            } else {
+                FrameLink.releaseName(reply)
+            }
+            warn("Ignored a request for this sketch's frames from a receiver that had already gone")
+            return
+        }
         let surfacePorts = Array(received.ports.dropFirst())
         // 面の port は引いたら手放す (面は IOSurface の参照で持つ)
         let surfaces = surfacePorts.map { name -> IOSurfaceRef? in
@@ -220,9 +234,8 @@ package final class FrameSender {
             accept(existing)
             return
         }
-        // **返信先が死んでいれば登録しない** (#3968)。受け手が答えを待ちきれずに port を捨てた後で、この connect を読んだ。
-        // 死んだ返信先 (届いた名前が `MACH_PORT_DEAD`、または受けた後に死んだ名前) には dead-name の知らせを頼めない
-        // (`KERN_INVALID_ARGUMENT`) ので、登録すると外す契機が無く、枠を握ったまま書き続ける。答えも送らない (届かない)
+        // **dead-name の知らせを頼めなければ登録しない** (#3968)。入口の確かめの後に返信先が死んだ (頼みは
+        // `KERN_INVALID_ARGUMENT`)。登録すると外す契機が無く、枠を握ったまま書き続ける。答えも送らない (届かない)
         var previous: mach_port_t = 0
         guard
             mach_port_request_notification(
@@ -231,8 +244,11 @@ package final class FrameSender {
         else {
             for surface in handed { surface.release(gpu: gpu) }
             FrameLink.releaseName(reply)
+            warn("Ignored a request for this sketch's frames from a receiver that had already gone")
             return
         }
+        // 新しい名前なので前の頼みは無いはず。在れば手放す
+        if previous != mach_port_t(MACH_PORT_NULL) { mach_port_deallocate(mach_task_self_, previous) }
         let receiver = Receiver(id: nextID, name: name, port: reply, surfaces: handed)
         nextID &+= 1
         receivers.append(receiver)
@@ -240,6 +256,16 @@ package final class FrameSender {
         // **繋がったことを 1 行言う** (ADR-0020 決定 5・ADR-0049 決定 6)
         warn("Handing this sketch's frames to \(name)")
         onReceiversChanged?(receiverNames)
+    }
+
+    /// 受けた送信の権利の先が既に死んでいるか。運ばれる間に死んだ port は `MACH_PORT_DEAD` として届き、受けた後に
+    /// 死んだ port はこちらの名前空間で死んだ名前になる。
+    private static func isDead(_ name: mach_port_t) -> Bool {
+        if name == mach_port_t.max { return true }  // MACH_PORT_DEAD (~0)
+        var type: mach_port_type_t = 0
+        guard mach_port_type(mach_task_self_, name, &type) == KERN_SUCCESS else { return true }
+        // `MACH_PORT_TYPE_DEAD_NAME` (`MACH_PORT_TYPE(MACH_PORT_RIGHT_DEAD_NAME)`) は Swift へ来ない
+        return type & (1 << (UInt32(MACH_PORT_RIGHT_DEAD_NAME) + 16)) != 0
     }
 
     private func accept(_ receiver: Receiver) {
