@@ -505,6 +505,26 @@ struct ObservationKeepTests {
         #expect(!exists(place.kept))
     }
 
+    /// 1 回目の反証 8: 撮る絵を読み戻せなかったら、読めなかった警告に加えて、持ち出さなかったと名乗る。止めている間は
+    /// 描かないので、次の投入は撮るための読み戻しになる。
+    @Test("keep を頼んだ観測で絵を読み戻せないと、持ち出さなかったと名乗る")
+    func anImageThatCouldNotBeTakenIsNamedAsNotKept() throws {
+        let place = try place()
+        let (runtime, _) = try makeRuntime(place)
+        for _ in 0..<3 { try runtime.advance() }
+        runtime.pause()
+        try runtime.advance()
+        try request(#"{"id":"g1","keep":true}"#, in: place)
+        runtime.canvas.gpu.dropsNextSubmissionForTesting = "the readback is dropped on purpose"
+        let report = try advance(runtime, untilReportOf: "g1", in: place)
+        runtime.canvas.gpu.dropsNextSubmissionForTesting = nil
+        #expect(report["kept"] == nil, "\(report)")
+        let warnings = report["warnings"] as? [String] ?? []
+        #expect(warnings.contains { $0.contains("Could not take the image") }, "\(warnings)")
+        #expect(warnings.contains(FrameObserver.notKeptPrefix + "the image could not be taken"), "\(warnings)")
+        #expect(!lexists(place.kept.appendingPathComponent("g1")))
+    }
+
     @Test("記録中に撮った枚は、記録の識別子とフレーム番号を指す")
     func aShotWhileRecordingPointsAtTheRecord() throws {
         let place = try place()
