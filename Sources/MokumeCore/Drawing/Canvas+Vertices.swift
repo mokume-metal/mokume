@@ -142,7 +142,15 @@ extension Canvas {
         let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
         guard admitsShapeCall("bezierVertex") else { return }
-        guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("bezierVertex") }
+        guard let position = lastShapePosition else { return warnCurveWithoutStartOnce("bezierVertex") }
+        // 平面の曲線は、奥行きつきの形に z = 0 を渡したのと同じ (#3712)。手前の点が奥行きを持てば、その点から
+        // z = 0 の制御点・終点へ向かう曲線を奥行きつきの形で刻む。手前が z = 0 なら同じ曲線なので、平面の式で
+        // 刻む (平面だけの形の点は #3712 の前と 1 ビットも変わらない)
+        guard position.z == 0 else {
+            let zero: Float = 0
+            return bezierVertex(cx1, cy1, zero, cx2, cy2, zero, x, y, zero)
+        }
+        let start = SIMD2(position.x, position.y)
         let c1 = SIMD2(cx1, cy1)
         let c2 = SIMD2(cx2, cy2)
         let end = SIMD2(x, y)
@@ -158,7 +166,13 @@ extension Canvas {
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
         guard admitsShapeCall("quadraticVertex") else { return }
-        guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("quadraticVertex") }
+        guard let position = lastShapePosition else { return warnCurveWithoutStartOnce("quadraticVertex") }
+        // 奥行きつきの形に z = 0 を渡したのと同じ (#3712・平面の bezierVertex と同じ分け方)
+        guard position.z == 0 else {
+            let zero: Float = 0
+            return quadraticVertex(cx, cy, zero, x, y, zero)
+        }
+        let start = SIMD2(position.x, position.y)
         // 2 次は 3 次の特別な形として通す — 曲線の道具を 1 本に保つ
         let control = SIMD2(cx, cy)
         let end = SIMD2(x, y)
@@ -266,7 +280,8 @@ extension Canvas {
     /// どれも平面の点なら平面の曲線として刻み、刻みの点も `z` = 0 の平面の点として置く (形を立体に
     /// しない。平面だけの形の点は #3712 の前と同じ)。1 つでも奥行きを持つ点があれば 3 次元で刻み、
     /// 刻みの点を `vertex(x, y, z)` と同じく奥行きを持つ点として置く。どちらでも平面の通過点は
-    /// `z` = 0 なので、2 つの区間が同じ通過点を違う奥行きで読むことは無い。
+    /// `z` = 0 なので、2 つの区間が同じ通過点を違う奥行きで読むことは無く、`curveVertex(x, y)` は
+    /// `curveVertex(x, y, 0)` と同じ位置に点を置く。
     private func placeCurveGuide(_ guide: CurveGuide) {
         curveGuides.append(guide)
         guard curveGuides.count >= 4 else { return }
@@ -1417,21 +1432,17 @@ extension Canvas {
 
     // MARK: - 溜める
 
-    /// いま組んでいる環 (外周か穴) の最後の点。**空の穴は外周の点へ倒れない** — 穴の最初の
-    /// ``bezierVertex(_:_:_:_:_:_:)`` / ``quadraticVertex(_:_:_:_:)`` は、形の中で手前に点が
+    /// いま組んでいる環 (外周か穴) の最後の点の位置。曲線 (`bezierVertex` / `quadraticVertex`) の始点に
+    /// なる。平面の点 (`vertex(x, y)`) は `z` = 0 を持つ ([#3712])。**空の穴は外周の点へ倒れない** — 穴の
+    /// 最初の ``bezierVertex(_:_:_:_:_:_:)`` / ``quadraticVertex(_:_:_:_:)`` は、形の中で手前に点が
     /// 無いときと同じく何もしない ([#1449])。
     ///
     /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
-    private var lastShapePoint: SIMD2<Float>? {
+    /// [#3712]: https://github.com/mokume-metal/mokume/issues/3712
+    private var lastShapePosition: SIMD3<Float>? {
         // `Optional.map` に閉包を渡さない (#2376・点を置くたびに実行時の隔離の検査が入る)
         guard let last = (holePoints ?? shapePoints).last else { return nil }
-        return SIMD2(last.position.x, last.position.y)
-    }
-
-    /// ``lastShapePoint`` の奥行きまで含めた位置。奥行きを持つ曲線 (#3712) の始点になる。平面の点
-    /// (`vertex(x, y)`・平面の曲線の点) は `z` = 0 を持つ。
-    private var lastShapePosition: SIMD3<Float>? {
-        (holePoints ?? shapePoints).last?.position
+        return last.position
     }
 
     /// 通過点の曲線の並び (``curveGuides``) を切る。**`curveVertex` 以外で点を置く呼び出し
@@ -1444,8 +1455,9 @@ extension Canvas {
         curveGuides.removeAll(keepingCapacity: true)
     }
 
-    /// 平面の曲線が作った点を置く。**奥行きは `z` = 0** — `vertex(x, y)` の点と同じく、奥行きを持つ点と
-    /// 同じ形に混ぜても手前の点の奥行きを引き継がない ([#3712]。それより前は直前の点から引き継いでいた)。
+    /// 平面の式で刻んだ曲線の点を置く。**奥行きは `z` = 0** — 平面の式で刻むのは、渡した点も始点も
+    /// `z` = 0 の曲線だけである ([#3712]。それより前は直前の点の奥行きを引き継いでいた)。手前の点が奥行きを
+    /// 持つ平面の `bezierVertex` / `quadraticVertex` は、奥行きつきの形に `z` = 0 を渡して刻む。
     ///
     /// [#3712]: https://github.com/mokume-metal/mokume/issues/3712
     private func appendShapePoint(_ point: SIMD2<Float>, isCurveStep: Bool) {
@@ -1564,7 +1576,7 @@ extension Canvas {
     ///
     /// **形の外の注意 (``warnVertexOutsideShapeOnce(_:)``) とは言うことが違う。** 呼んだ場所は
     /// 既に `beginShape()` と `endShape()` の間なので、間で呼べと言っても直す先を指さない。
-    /// 穴の最初もこちらに当たる (穴は外周の点から始めない・``lastShapePoint``)。
+    /// 穴の最初もこちらに当たる (穴は外周の点から始めない・``lastShapePosition``)。
     ///
     /// [#1485]: https://github.com/mokume-metal/mokume/issues/1485
     private func warnCurveWithoutStartOnce(_ name: String) {
