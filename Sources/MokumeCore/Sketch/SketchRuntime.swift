@@ -524,7 +524,7 @@ package final class SketchRuntime {
     /// 控える。** 持ち出し (``ObservationRequest/keep``) が、撮る時点の番号と比べて、絵を描いた後に絵か `@Param` の
     /// 値が動いたか (外から止めている間につまみを動かした・止めている間の入力のコールバックが描いた) を見る。
     /// **控えるのは整数だけで、値は読まない** — 値を読むのは持ち出しを頼まれた観測のときだけである。描けなかった
-    /// フレームでは `nil` に戻す。
+    /// フレームでは `nil` に戻し、持ち出しはその後の絵を持ち出さない。
     ///
     /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
     private var drawnState: DrawnState?
@@ -2788,31 +2788,36 @@ package final class SketchRuntime {
     ///
     /// **絵と値が、撮った枚のフレームの `draw()` の終わりのままかを、書き込みの番号で見る** (``DrawnState``):
     ///
+    /// - **撮った枚のフレームの `draw()` の終わりを控えていなければ持ち出さない** (控えが無い・控えたフレームが撮った枚の
+    ///   フレームと違う)。描き切りが投げたフレームの後に止まると、絵は途中まで描いた絵か前のフレームの絵で、そのフレームの
+    ///   絵とは言えない。絵が書き換えられたときと同じく、組を作らずに理由を名乗る
     /// - **絵が書き換えられていれば持ち出さない** (止めている間の入力のコールバックが描いた・画素を書いた)。絵は
     ///   そのフレームの絵ではないので、目録の `frame`・`time`・`values` がどれもその絵を言わない。目録の形 (2026-11-13 の
-    ///   決定 2) はそれらを不明と書く欄を持たないので、組を作らずに理由を名乗る
+    ///   決定 2) はそれらを不明と書く欄を持たないので、組を作らずに理由を名乗る。`draw()` の外で描いた絵には結び付ける
+    ///   フレームの条件が無いので、持ち出すには `redraw()` で描き直してから頼む
     /// - **`@Param` の値が動いていれば** (外から止めている間につまみを動かした・コールバックが書き換えた)、古い絵に新しい
     ///   値を結び付けず、分からないと名乗る。動いていなければ、いまの値が `draw()` の終わりの値である
     ///
     /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
     private func keptManifest(for id: String, shot: ObservationReport.CapturedFrame) -> KeptManifest {
+        guard let drawn = drawnState, drawn.frame == shot.frame else {
+            return .refused(
+                "the end of the draw() of frame \(shot.frame) was not seen (for example, drawing that frame failed), "
+                    + "so this picture is not known to be that frame's picture")
+        }
+        guard drawn.pictureWrites == canvas.target.contentWrites else {
+            return .refused(
+                "the picture was changed after frame \(shot.frame) was drawn (drawn or written while stopped), "
+                    + "so the conditions of that frame do not describe it; "
+                    + "ask again after redraw() has drawn it again, or on a later frame")
+        }
         var params: KeptFrame.Params?
         var reason: String?
-        if let drawn = drawnState, drawn.frame == shot.frame {
-            guard drawn.pictureWrites == canvas.target.contentWrites else {
-                return .refused(
-                    "the picture was changed after frame \(shot.frame) was drawn (drawn or written while stopped), "
-                        + "so the conditions of that frame do not describe it")
-            }
-            if drawn.paramChanges == paramRegistry.changeCount {
-                params = KeptFrame.Params(values: currentParamValues())
-            } else {
-                reason = "The knob values changed after frame \(shot.frame) was drawn, "
-                    + "so the values this picture was drawn with are not known"
-            }
+        if drawn.paramChanges == paramRegistry.changeCount {
+            params = KeptFrame.Params(values: currentParamValues())
         } else {
-            reason = "The end of the draw() that made this picture was not seen, "
-                + "so the knob values it was drawn with are not known"
+            reason = "The knob values changed after frame \(shot.frame) was drawn, "
+                + "so the values this picture was drawn with are not known"
         }
         return .manifest(
             KeptFrame(

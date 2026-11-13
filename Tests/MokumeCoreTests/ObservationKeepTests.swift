@@ -357,6 +357,12 @@ struct ObservationKeepTests {
             case drawing
             /// `@Param` を書き換える。
             case knob
+            /// 置き場の値をその場で書き換える (`box.value += 1`。`_modify` を通る)。
+            case knobInPlace
+            /// 面に出る姿が同じで、ビット列だけが違う値を置く (`0` に `-0.0`)。
+            case negativeZero
+            /// 画素を 1 つ書いてから `redraw()` で描き直す。
+            case pixelThenRedraw
 
             var description: String {
                 switch self {
@@ -364,11 +370,17 @@ struct ObservationKeepTests {
                 case .pixel: "pixel"
                 case .drawing: "drawing"
                 case .knob: "knob"
+                case .knobInPlace: "knobInPlace"
+                case .negativeZero: "negativeZero"
+                case .pixelThenRedraw: "pixelThenRedraw"
                 }
             }
         }
 
         @Param(0...1000) var radius: Double = 120
+        @Param(-1...1) var offset: Double = 0
+        /// 展開を通らずに置き場を直に持つ (`_modify` の入口を通すため)。登録簿は置き場の型で拾う。
+        let speed = ParamBox(name: "speed", value: 1.0)
         var action: Action = .nothing
         var presses = 0
         init() {}
@@ -388,15 +400,25 @@ struct ObservationKeepTests {
                 rect(0, 0, 8, 8)
                 loadPixels()
             case .knob: radius = 999
+            case .knobInPlace: speed.value += 1
+            case .negativeZero: offset = -0.0
+            case .pixelThenRedraw:
+                set(1, 1, .linear(red: 1, green: 1, blue: 1))
+                redraw()
             }
         }
     }
 
     /// 反証 5: 止めている間に配った入力のコールバックが絵を書き換えたら、その絵は描いたフレームの絵ではない。
     /// 値だけを変えたなら絵は同じで、値が分からないと名乗る。何もしなければ値まで載る。
+    ///
+    /// 2 回目の反証 2〜4: 書き換えた後に `redraw()` で描き直せば持ち出せる。値は、置き場をその場で書き換える
+    /// 書き方 (`_modify`) でも、面に出る姿が同じでビット列だけが違う値 (`-0.0`) でも、動いたと数える。
     @Test(
         "止めている間のコールバックが絵を書き換えたら持ち出さず、値だけなら値を不明と名乗る",
-        arguments: [Pressed.Action.nothing, .pixel, .drawing, .knob])
+        arguments: [
+            Pressed.Action.nothing, .pixel, .drawing, .knob, .knobInPlace, .negativeZero, .pixelThenRedraw,
+        ])
     func aCallbackWhileStoppedIsSeen(_ action: Pressed.Action) throws {
         let place = try place()
         let inbox = try TestScratch.directory("mokume-observe-keep-input")
@@ -415,20 +437,72 @@ struct ObservationKeepTests {
         let report = try advance(runtime, untilReportOf: "c1", in: place)
         let warnings = report["warnings"] as? [String] ?? []
         switch action {
-        case .nothing, .knob:
+        case .nothing, .pixelThenRedraw, .knob, .knobInPlace, .negativeZero:
             #expect(report["kept"] as? String == "../kept/c1", "\(report)")
             let manifest = try json(place.kept.appendingPathComponent("c1/kept.json"))
-            if action == .nothing {
+            if action == .nothing || action == .pixelThenRedraw {
                 #expect(paramValue(manifest, "radius") == 120, "\(manifest)")
+                #expect(manifest["paramsUnknownReason"] == nil, "\(manifest)")
             } else {
                 #expect(manifest["params"] is NSNull, "\(manifest)")
                 #expect((manifest["paramsUnknownReason"] as? String)?.contains("changed after frame") == true)
             }
+            if action == .pixelThenRedraw {
+                // 描き直したフレームの絵を持ち出す (止めている間に描いたフレームより後)
+                let shot = try #require((report["frames"] as? [[String: Any]])?.first)
+                #expect(manifest["frame"] as? Int == shot["frame"] as? Int)
+                #expect((shot["frame"] as? Int ?? 0) > 1, "\(shot)")
+            }
         case .pixel, .drawing:
             #expect(report["kept"] == nil, "\(report)")
             #expect(warnings.contains { $0.contains("not kept") && $0.contains("picture was changed") }, "\(warnings)")
+            #expect(
+                warnings.contains { $0.contains("not kept") && $0.contains("redraw()") }, "直し方を言っていない: \(warnings)")
             #expect(!lexists(place.kept.appendingPathComponent("c1")))
         }
+    }
+
+    /// 2 回目の反証 1・5: 描き切りが投げたフレームでは `draw()` の終わりを控えていない。止まった後に撮った絵は、途中まで
+    /// 描いた絵か前のフレームの絵で、そのフレームの絵と言えないので、組を作らない (`params: null` で持ち出さない)。
+    @Test("描画が失敗したフレームの後に止めて撮ると、組を作らず持ち出さずに名乗る")
+    func aPictureAfterAFailedDrawIsNotKept() throws {
+        let place = try place()
+        let (runtime, _) = try makeRuntime(place)
+        for _ in 0..<3 { try runtime.advance() }
+        runtime.canvas.failureForTesting = .timedOut(seconds: 5)
+        #expect(throws: RenderFailure.self) { try runtime.advance() }
+        runtime.canvas.failureForTesting = nil
+        runtime.pause()
+        try runtime.advance()
+
+        try request(#"{"id":"d1","keep":true}"#, in: place)
+        let report = try advance(runtime, untilReportOf: "d1", in: place)
+        #expect(report["image"] as? String == "frame-000.png", "観測そのものは撮れている: \(report)")
+        #expect(report["kept"] == nil, "\(report)")
+        let warnings = report["warnings"] as? [String] ?? []
+        #expect(warnings.contains { $0.contains("not kept") && $0.contains("was not seen") }, "\(warnings)")
+        #expect(!lexists(place.kept.appendingPathComponent("d1")))
+        #expect(partials(in: place).isEmpty)
+    }
+
+    /// 1 回目の反証 8: keep を頼んだ観測が描画の失敗に当たったら、描画の失敗の警告に加えて、持ち出さなかったと名乗る。
+    @Test("keep を頼んだ観測のフレームで描画が失敗すると、持ち出さなかったと名乗る")
+    func aFailedDrawingIsNamedAsNotKept() throws {
+        let place = try place()
+        let (runtime, _) = try makeRuntime(place)
+        for _ in 0..<2 { try runtime.advance() }
+        try request(#"{"id":"e1","keep":true}"#, in: place)
+        runtime.canvas.failureForTesting = .timedOut(seconds: 5)
+        #expect(throws: RenderFailure.self) { try runtime.advance() }
+        runtime.canvas.failureForTesting = nil
+
+        let report = try json(place.facet.appendingPathComponent("report.json"))
+        #expect(report["id"] as? String == "e1", "\(report)")
+        #expect(report["kept"] == nil)
+        let warnings = report["warnings"] as? [String] ?? []
+        #expect(warnings.contains { $0.contains("Drawing this frame failed") }, "\(warnings)")
+        #expect(warnings.contains(FrameObserver.notKeptPrefix + "drawing this frame failed"), "\(warnings)")
+        #expect(!exists(place.kept))
     }
 
     @Test("記録中に撮った枚は、記録の識別子とフレーム番号を指す")
