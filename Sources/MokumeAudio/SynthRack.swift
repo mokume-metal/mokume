@@ -138,8 +138,9 @@ nonisolated final class SynthRack: @unchecked Sendable {
     /// その前の履歴 (最初のウィンドウの頭まで。最大 1535 標本) が収まる。48 kHz で約 0.17 秒。
     static let meterCapacity = AudioAnalysis.windowSize * 8
     /// 先の位置を待つ予約の操作の数の上限 (``SynthCommand/at``)。`Env.play` 1 回が 6 個 (値 4・包絡・鳴らす)、
-    /// 音の高さなどを決めて鳴らす口が 5 個 (値 4・鳴らす) を使うので、包絡だけの音ならおよそ 340 回、高さも並べた
-    /// 音 (11 個) ならおよそ 186 音ぶん先まで予約できる。
+    /// 音の高さなどを決めて鳴らす API が渡した値の数と鳴らす操作の 1 個 (高さと音量だけなら 3 個、4 つの値なら 5 個) を
+    /// 使うので、包絡だけの音ならおよそ 340 回、高さと音量も並べた音 (9 個) ならおよそ 227 音、4 つの値を並べた音 (11 個)
+    /// ならおよそ 186 音ぶん先まで予約できる。
     static let reservationCapacity = 2048
     /// 操作の列の長さ。2 のべき乗。
     private static let queueCapacity = 4096

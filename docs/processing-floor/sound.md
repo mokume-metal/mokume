@@ -23,7 +23,7 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 - **エフェクトに通せるのは、合成した音と `SoundFile`** (`EffectInput`・[#2220]・PR [#3109])。`AudioIn` (マイク) は通せない。エフェクトの出力を別のエフェクトの入力にもできる (Processing に無い拡張)
 - **合成した音は 1 つのスケッチで 64 個まで** (オシレータ・ノイズ・エフェクトの合計。エフェクトに通した `SoundFile` も 1 つずつ数える)。音量の既定は合成した音が 0.5、`SoundFile` が 1
 - **mokume にだけある API**: `add(_:)` (波形を上下にずらす)、先の時刻に再生を予約する `play(at:)` と `Env.play(…, at:)`・音の時計を読む `Sketch.soundTime` (PR [#3517])、鳴らさずに解析だけする `createAudioIn(file:)`・`createAudioIn(samples:sampleRate:)`。リファレンスに無いので数えない
-- **引数の位置がリファレンスと食い違う形がある。** リファレンスの `noise.play(amp, pos)`・`noise.set(amp, pos)` の第 2 引数と、`osc.set(freq, amp, pos)` の第 3 引数は定位 (`pos`) だが、mokume の同じ位置は `add` である (定位は後ろ)。`delay.process(input, maxDelayTime, delayTime)` の第 3 引数は遅延時間で、mokume ではフィードバックの割合 (`feedback`) である。該当する行の理由に「違い」として書いた。リファレンスの引数をそのまま移すと、定位が加算値に、遅延時間がフィードバックの割合になる
+- **引数を省いた形も、リファレンスと同じ並びで読む** ([#3719])。リファレンスの `noise.play(amp, pos)`・`noise.set(amp, pos)` の第 2 引数と `osc.set(freq, amp, pos)` の第 3 引数は定位 (`pos`)、`delay.process(input, maxDelayTime, delayTime)` の第 3 引数は初期の遅延時間で、mokume も同じ位置を同じ意味に読む (以前は加算値 (`add`)・フィードバックの割合 (`feedback`) に読んでいた)。リファレンスと同じく、省いた値 (加算値・定位) には触れず現在の値のまま保つ。2 引数の `delay.process(input, maxDelayTime)` は遅延時間も上限と同じ値にする
 
 ## 「入れる」の API をまとめた Feature
 
@@ -47,8 +47,8 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 | `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` (クラス 4 件) | `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` (`Sketch.createSinOsc()`・`createSqrOsc()`・`createTriOsc()`・`createSawOsc()` が作る。基底は `Oscillator`・`SynthSource`) | 同等 | 型の名前は Processing のまま。矩形波とのこぎり波は、高次の倍音が折り返して濁らないよう角を丸めてある。作る API は `new SinOsc(this)` ではなく `createSinOsc()` | [#1980]・PR [#2221] |
 | `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` の `amp()`・`pan()`・`stop()` (4 クラス × 3 = 12 件) | `SynthSource.amp(_:)`・`pan(_:)`・`stop()` | 同等 | `amp` は 0〜1、`pan` は -1〜1 (左右の合計のパワーが変わらない定位で、中央は左右とも 1/√2)。`stop()` は約 5 ミリ秒かけてフェードアウトし、`play()` で鳴らし直せる。エフェクトを通した音の定位は、エフェクトの出力では中央になる | PR [#2221] |
 | `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` の `freq()` (4 件) | `Oscillator.freq(_:)` | 同等 | 0 からサンプルレートの半分 (24000 Hz) まで。無い形: 別のオシレータを渡して周波数変調する `freq(modulator)` | PR [#2221] |
-| `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` の `play()` (4 件) | `SynthSource.play()`・`Oscillator.play(_:_:_:_:)` | 同等 | 引数なしは現在の設定のまま (止めた後なら位相を先頭から)。`play(freq, amp, add, pos)` の `pos` は `pan`。mokume にだけ、先の時刻に再生を予約する `play(at:)` がある | PR [#2221]・[#3517] |
-| `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` の `set()` (4 件) | `Oscillator.set(_:_:_:_:)` | 同等 | 鳴らさずに周波数・音量・加算値・定位を決める。**違い:** リファレンスの `set(freq, amp, pos)` (3 引数) の第 3 引数は定位だが、mokume の第 3 引数は `add` で、定位は 4 つ目。`set(440, 0.5, -1)` と移すと左に定位せず、波形が -1 ずれる | PR [#2221] |
+| `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` の `play()` (4 件) | `SynthSource.play()`・`Oscillator.play(_:_:)`・`play(_:_:_:)`・`play(_:_:_:_:)` | 同等 | 引数なしは現在の設定のまま (止めた後なら位相を先頭から)。`play(freq, amp, add, pos)` の `pos` は `pan`。リファレンスと同じく、省いた値は現在の値のまま保つ。3 引数の `play(freq, amp, add)` の第 3 引数は加算値で、`set(freq, amp, pos)` の第 3 引数 (定位) と意味が違う (リファレンスも同じ)。mokume にだけ、先の時刻に再生を予約する `play(at:)` がある | PR [#2221]・[#3517]・[#3719] |
+| `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` の `set()` (4 件) | `Oscillator.set(_:_:)`・`set(_:_:_:)`・`set(_:_:_:_:)` | 同等 | 鳴らさずに周波数・音量・加算値・定位を決める。リファレンスの `set(freq, amp, pos)` (3 引数) と同じく第 3 引数は定位で、`set(440, 0.5, -1)` は左に定位する。加算値も渡すなら 4 引数 (`set(freq, amp, add, pos)`)。省いた値は現在の値のまま保つ。3 引数の第 3 引数は `play(freq, amp, add)` (加算値) と意味が違う (リファレンスも同じ) | PR [#2221]・[#3719] |
 
 ## ノイズ
 
@@ -59,7 +59,7 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 | `WhiteNoise`・`PinkNoise` (クラス 2 件) | `WhiteNoise`・`PinkNoise` (`Sketch.createWhiteNoise()`・`createPinkNoise()` が作る。基底は `Noise`・`SynthSource`) | 同等 | ノイズの系列は固定で、同じ順に作れば何度鳴らしても書き出しても同じ音になる (シードを選ぶ API は持たない) | [#1980]・PR [#2221] |
 | `BrownNoise` (クラス) | `BrownNoise` (`Sketch.createBrownNoise()` が作る。基底は `Noise`・`SynthSource`) | 同等 | ホワイトノイズをリーキー積分器 (カットオフ 約 150 Hz) に通す。カットオフより上は 1 オクターブごとに 6 dB 下がり、下は平坦なので直流成分が溜まらない。サンプル値は -1〜1。系列は `WhiteNoise`・`PinkNoise` と同じく固定のシードで固定する | [#3718]・[#3684 のコメント](https://github.com/mokume-metal/mokume/issues/3684#issuecomment-6586701566) |
 | `WhiteNoise`・`PinkNoise`・`BrownNoise` の `amp()`・`pan()`・`stop()` (3 クラス × 3 = 9 件) | `SynthSource.amp(_:)`・`pan(_:)`・`stop()` | 同等 | オシレータの同じ名前の API と同じ | PR [#2221]・[#3718] |
-| `WhiteNoise`・`PinkNoise`・`BrownNoise` の `play()`・`set()` (3 クラス × 2 = 6 件) | `Noise.play(_:_:_:)`・`Noise.set(_:_:_:)` | 同等 | 音量・加算値・定位を決めて鳴らす (`set` は鳴らさない)。`play(amp, add, pos)` の形はリファレンスと同じ。**違い:** リファレンスの `play(amp, pos)`・`set(amp, pos)` (2 引数) の第 2 引数は定位だが、mokume の第 2 引数は `add` で、定位は 3 つ目 | PR [#2221]・[#3718] |
+| `WhiteNoise`・`PinkNoise`・`BrownNoise` の `play()`・`set()` (3 クラス × 2 = 6 件) | `Noise.play(_:)`・`play(_:_:)`・`play(_:_:_:)`・`Noise.set(_:)`・`set(_:_:)`・`set(_:_:_:)` | 同等 | 音量・加算値・定位を決めて鳴らす (`set` は鳴らさない)。リファレンスの `play(amp)`・`play(amp, pos)`・`play(amp, add, pos)`・`set(amp, pos)`・`set(amp, add, pos)` と同じ並びで、2 引数の第 2 引数は定位。リファレンスと同じく、省いた値は現在の値のまま保つ。`set(amp)` は mokume にだけある | PR [#2221]・[#3718]・[#3719] |
 
 ## 見送った音源とエフェクト
 
@@ -93,7 +93,7 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 | `BandPass` の `bw()`・`freq()`・`process()`・`res()`・`set()`・`stop()` (6 件) | `BandPass.bw(_:)`・`freq(_:)`・`process(_:_:_:)`・`res(_:)`・`set(_:_:)`・`SoundEffect.stop()` | 同等 | `bw` は Hz の幅で、中心が動いても保たれる。`res` は Q (0.1〜10。リファレンスどおりで、`Filter.res(_:)` の 0.1〜100 とは違う) を保ち、幅は中心に比例して変わる。`bw` と `res` は後に呼んだほうが優先される (`set`・`process` の幅は `bw` と同じ)。入力の制限は `LowPass` と同じ | PR [#2221]・[#3109]・[#3706] |
 | `Reverb` (クラス)・`damp()`・`process()`・`room()`・`set()`・`stop()`・`wet()` (7 件) | `Reverb`・`Reverb.damp(_:)`・`room(_:)`・`wet(_:)`・`set(_:_:_:)`・`process(_:_:_:_:)`・`SoundEffect.process(_:)`・`stop()` (`Sketch.createReverb()` が作る) | 同等 | Freeverb と同じ並べ方 (8 本のコムフィルタの後に 4 本のオールパスフィルタ)。既定は 3 つとも 0.5。`wet` 0 で通した音がそのまま出る | [#1980]・PR [#2221]・[#3109] |
 | `Delay` (クラス)・`feedback()`・`set()`・`stop()`・`time()` (5 件) | `Delay`・`Delay.feedback(_:)`・`time(_:)`・`set(_:_:)`・`SoundEffect.stop()` (`Sketch.createDelay()` が作る) | 同等 | 遅延時間は最大 5 秒。既定は遅延時間 0.25 秒・フィードバックの割合 0.5。遅延時間を動かしている最中は音の高さが揺れる | [#1980]・PR [#2221] |
-| `Delay.process()` | `Delay.process(_:_:)`・`process(_:_:_:)` | 同等 | **違い:** リファレンスの `process(input, maxDelayTime, delayTime)` の第 3 引数は初期の遅延時間だが、mokume の第 3 引数はフィードバックの割合 (`feedback`) で、遅延時間は `time(_:)` で決める。遅延時間の上限は 0〜5 秒の範囲外を範囲内に収める | PR [#2221]・[#3109] |
+| `Delay.process()` | `Delay.process(_:_:)`・`process(_:_:_:)` | 同等 | リファレンスの `process(input, maxDelayTime, delayTime)` と同じく、第 3 引数は初期の遅延時間 (`time(_:)` と同じ) で、上限で範囲内に収める。フィードバックの割合は `feedback(_:)` で決める。2 引数の `process(input, maxDelayTime)` はリファレンスと同じく遅延時間も上限と同じ値にする (前に決めた遅延時間は上書きされる)。上限を下げると、それより長い現在の遅延時間も上限まで縮める。遅延時間の上限は 0〜5 秒の範囲外を範囲内に収める | PR [#2221]・[#3109]・[#3719] |
 
 ## 解析
 
@@ -183,4 +183,5 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 [#3705]: https://github.com/mokume-metal/mokume/issues/3705
 [#3706]: https://github.com/mokume-metal/mokume/issues/3706
 [#3718]: https://github.com/mokume-metal/mokume/issues/3718
+[#3719]: https://github.com/mokume-metal/mokume/issues/3719
 [#3969]: https://github.com/mokume-metal/mokume/issues/3969
