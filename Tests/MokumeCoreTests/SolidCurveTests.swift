@@ -354,6 +354,31 @@ struct SolidCurveTests {
         #expect(mixed == vertices)
     }
 
+    /// 上の検査は手前に点が無いので、平面の通過点を「手前の点の奥行き」として読んでも 0 になり、見分けられない。
+    /// 手前に奥行きを持つ点 (`z` = 50) を置き、混ぜた並びの平面の通過点が手前の奥行きでなく `z` = 0 として
+    /// 刻まれることを、置かれた点の位置で見る。
+    @Test("奥行きを持つ点の後でも、混ぜた curveVertex の平面の点は手前の奥行きでなく z = 0 として刻む")
+    func mixedCurveGuidesIgnoreTheDepthOfThePointBefore() throws {
+        let canvas = try CanvasFixture.make(gpu: try RenderDevice(), width: 64, height: 64)
+        let g = Self.guides
+        var placed: [SIMD3<Float>] = []
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.vertex(20, 20, 50)
+            canvas.curveVertex(g[0].x, g[0].y)
+            canvas.curveVertex(g[1].x, g[1].y)
+            canvas.curveVertex(g[2].x, g[2].y, g[2].z)
+            canvas.curveVertex(g[3].x, g[3].y, g[3].z)
+            placed = canvas.shapePoints.map(\.position)
+            canvas.endShape()
+        }
+        let (p0, p1) = (SIMD3(g[0].x, g[0].y, 0), SIMD3(g[1].x, g[1].y, 0))
+        let expected = [SIMD3<Float>(20, 20, 50), p1] + Self.steps(20) { Self.catmullRom(p0, p1, g[2], g[3], $0) }
+        #expect(placed.count == expected.count)
+        let worst = zip(placed, expected).map { simd_length($0.0 - $0.1) }.max() ?? .infinity
+        #expect(worst < 1e-3, "刻みの点が z = 0 の平面の点から求めた位置と \(worst) ずれている")
+    }
+
     /// 奥行きを持つ点を手前に置いた後の平面の `bezierVertex` は、これまでどおり刻みの奥行きを手前から引き継ぐ
     /// (平面の形の振る舞いは変えない)。
     @Test("奥行きを持つ点の後の平面の bezierVertex は、刻みの奥行きを手前の点から引き継ぐ")
