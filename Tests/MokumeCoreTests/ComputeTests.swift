@@ -221,6 +221,68 @@ struct ComputeTests {
         #expect(abs(written(image, atColumn: 30) - 30.0 / 31) < 0.01)
     }
 
+    /// 1 次元の組の幅の約束 ([#3902])。断片が `[[dispatch_threads_per_threadgroup]]` と `[[threads_per_threadgroup]]` を書き出し、要素数によらず 32 が読める。端数の最後の組だけ、後者は端数の数になる。
+    ///
+    /// [#3902]: https://github.com/mokume-metal/mokume/issues/3902
+    @Test("1 次元の compute の組の幅は、要素数によらず 32 で、断片から読める (端数の最後の組を除く)", arguments: [1, 31, 32, 33, 1000])
+    func oneDimensionalThreadgroupIsThirtyTwoWide(_ count: Int) throws {
+        let canvas = try makeCanvas()
+        let width = try canvas.makeNumbers(count: count)
+        let actual = try canvas.makeNumbers(count: count)
+        let probe = try canvas.makeComputation(
+            """
+            kernel void probe(device float *out [[buffer(0)]],
+                              device float *actual [[buffer(1)]],
+                              uint id [[thread_position_in_grid]],
+                              uint size [[dispatch_threads_per_threadgroup]],
+                              uint own [[threads_per_threadgroup]])
+            {
+                out[id] = float(size);
+                actual[id] = float(own);
+            }
+            """, name: "probe")
+        try canvas.draw {
+            canvas.compute(probe, over: count, writes: [width, actual])
+        }
+        #expect(canvas.read(width) == [Float](repeating: 32, count: count))
+        // 最後の組だけが端数の数になり、割り切れるなら全部 32
+        let tail = count % 32
+        let expected = (0..<count).map { $0 >= count - tail && tail > 0 ? Float(tail) : 32 }
+        #expect(canvas.read(actual) == expected)
+    }
+
+    /// 2 次元でも `dispatchThreads` の非一様な組で、`[[threads_per_threadgroup]]` は端の組で端数になる ([#3902])。
+    /// 大きさは約束しないので、数は固定せず「組が 1 つに収まる小さい面なら、組の大きさが面の大きさになる」ことと、
+    /// `[[dispatch_threads_per_threadgroup]]` がそれ以上であることだけを見る。
+    @Test("2 次元の compute も、面より大きい組では threads_per_threadgroup が面の大きさになる")
+    func twoDimensionalEdgeThreadgroupIsTruncated() throws {
+        let canvas = try makeCanvas()
+        let seen = try canvas.makeNumbers(count: 15 * 4)
+        let probe = try canvas.makeComputation(
+            """
+            kernel void probe(device float *out [[buffer(0)]],
+                              uint2 at [[thread_position_in_grid]],
+                              uint2 grid [[threads_per_grid]],
+                              uint2 size [[dispatch_threads_per_threadgroup]],
+                              uint2 own [[threads_per_threadgroup]])
+            {
+                uint i = (at.y * grid.x + at.x) * 4;
+                out[i] = float(own.x);
+                out[i + 1] = float(own.y);
+                out[i + 2] = float(size.x);
+                out[i + 3] = float(size.y);
+            }
+            """, name: "probe")
+        try canvas.draw {
+            canvas.compute(probe, over: 5, by: 3, writes: [seen])
+        }
+        let values = canvas.read(seen)
+        for cell in 0..<15 {
+            #expect(values[cell * 4] == 5 && values[cell * 4 + 1] == 3, "組の大きさが面の大きさでない")
+            #expect(values[cell * 4 + 2] >= 5 && values[cell * 4 + 3] >= 3, "dispatch の大きさが面より小さい")
+        }
+    }
+
     @Test("渡した値が計算に届く")
     func carriesTheValuesIntoTheComputation() throws {
         let canvas = try makeCanvas()

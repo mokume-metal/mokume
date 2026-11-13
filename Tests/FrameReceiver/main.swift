@@ -8,6 +8,11 @@
 //
 //   frame-receiver --service <名前> --width <幅> --height <高さ> [--surfaces 3] [--name <名乗り>]
 //                  [--exit-after <枚数>] [--timeout <秒>]
+//   frame-receiver --listing <目録の 1 件のファイル> [--width <幅> --height <高さ>] [...]
+//
+// `--listing` は目録の 1 件から名前と大きさを読む (#3949)。大きさの無い旧い送り手の項目なら `--width`・`--height` を使い、
+// それも無ければ `sizeUnknown` を言って終わる。`surfaceSize` (4) で断られたら目録を読み直し、大きさが変わっていれば
+// その大きさの面で繋ぎ直す。`--service` の形は、目録の大きさを読まない従来の受け手として振る舞う。
 //
 // 標準入力が 1 行届くか閉じると終わる (検査が、受け手の側から切る形を作れるように)。
 //
@@ -29,12 +34,58 @@ func argument(_ name: String) -> String? {
     return arguments[index + 1]
 }
 
-guard let service = argument("--service"), let width = argument("--width").flatMap(Int.init),
-    let height = argument("--height").flatMap(Int.init)
-else {
-    FileHandle.standardError.write(Data("usage: frame-receiver --service <name> --width <w> --height <h>\n".utf8))
+/// 目録の 1 件を読む。読むのは名前と大きさだけで、他の欄 (知らない欄も) は読み飛ばす。読めなければ `nil`。
+func readListing(at path: String) -> (service: String, width: Int?, height: Int?)? {
+    guard let data = FileManager.default.contents(atPath: path),
+        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+        object["schemaVersion"] as? Int == 1, let service = object["serviceName"] as? String
+    else { return nil }
+    // 幅と高さは揃っていて 1 以上の整数のときだけ使う (片方だけ・それ以外の値なら無いのと同じ)
+    guard let width = pixels(object["width"]), let height = pixels(object["height"]) else {
+        return (service, nil, nil)
+    }
+    return (service, width, height)
+}
+
+/// 大きさの欄を読む。**1 以上の整数だけ** — `JSONSerialization` の `true` は `as? Int` で 1 と読めてしまうので、真偽値を
+/// 先に除く。小数・文字列・0 以下も大きさとして受けない。
+func pixels(_ value: Any?) -> Int? {
+    guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), let whole = value as? Int,
+        whole >= 1
+    else { return nil }
+    return whole
+}
+
+let listingPath = argument("--listing")
+var service = argument("--service")
+var width = argument("--width").flatMap(Int.init)
+var height = argument("--height").flatMap(Int.init)
+if let listingPath {
+    guard let listed = readListing(at: listingPath) else {
+        say(["event": "listingUnreadable"])
+        exit(3)
+    }
+    service = listed.service
+    if let listedWidth = listed.width, let listedHeight = listed.height {
+        width = listedWidth
+        height = listedHeight
+    }
+}
+guard let service else {
+    FileHandle.standardError.write(
+        Data("usage: frame-receiver (--service <name> | --listing <file>) --width <w> --height <h>\n".utf8))
     exit(64)
 }
+guard let width, let height else {
+    // 目録に寸法が無い (旧い送り手) か、従来の形で寸法を渡していない。利用者に指定を頼む
+    say([
+        "event": "sizeUnknown",
+        "message": "The sketch's listing has no width and height (it was written by an older mokume). "
+            + "Give --width and --height to connect.",
+    ])
+    exit(6)
+}
+say(["event": "size", "width": width, "height": height])
 let surfaceCount = argument("--surfaces").flatMap(Int.init) ?? 3
 let exitAfter = argument("--exit-after").flatMap(Int.init) ?? 0
 let deadline = Date().addingTimeInterval(argument("--timeout").flatMap(Double.init) ?? 30)
@@ -88,6 +139,8 @@ func attribute(_ name: String, of surface: IOSurfaceRef) -> Any {
 
 var receiverID: UInt32 = 0
 var frames = 0
+/// 大きさで断られて目録を読み直した回数。送り手の大きさが変わり続けても、3 回で諦める。
+var retries = 0
 while Date() < deadline {
     guard let message = FrameLink.receive(on: port, timeout: 100) else { continue }
     var reader = message.payload.reader
@@ -97,7 +150,21 @@ while Date() < deadline {
         say(["event": "accepted", "receiver": Int(receiverID), "width": Int(reader.uint32() ?? 0),
              "height": Int(reader.uint32() ?? 0)])
     case FrameLink.Kind.refused.rawValue:
-        say(["event": "refused", "reason": Int(reader.uint32() ?? 0)])
+        let reason = reader.uint32() ?? 0
+        say(["event": "refused", "reason": Int(reason)])
+        // 大きさで断られたら、目録を読み直して送り手がいま受け付ける大きさで繋ぎ直す (#3949)。送り手は断る前に目録を
+        // 書き換えるので、読み直した大きさが試した大きさと同じなら、それ以上待っても変わらない
+        if reason == FrameLink.Refusal.surfaceSize.rawValue, let listingPath, retries < 3,
+            let listed = readListing(at: listingPath), listed.service == service,
+            let newWidth = listed.width, let newHeight = listed.height,
+            newWidth != IOSurfaceGetWidth(surfaces[0]) || newHeight != IOSurfaceGetHeight(surfaces[0])
+        {
+            retries += 1
+            say(["event": "reread", "width": newWidth, "height": newHeight])
+            surfaces = makeSurfaces(width: newWidth, height: newHeight)
+            FrameLink.connect(to: sketch, reply: port, surfaces: surfaces, name: name)
+            continue
+        }
         exit(4)
     case FrameLink.Kind.frame.rawValue:
         guard let receiver = reader.uint32(), let slot = reader.uint32(), let frameCount = reader.int64(),

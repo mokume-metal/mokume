@@ -419,16 +419,17 @@ public class SynthSource: SynthSound {
         send(.panning, value)
     }
 
-    /// 音量・足す値・定位のうち、受けられた値 (範囲へ丸めた後)。受けられなかったものは入れない。
-    func mixValues(_ amp: Float, _ add: Float, _ pan: Float) -> [(param: SynthParam, value: Float)] {
+    /// 音量・足す値・定位のうち、渡されて受けられた値 (範囲へ丸めた後)。`nil` (省いた値) と受けられなかったものは
+    /// 入れない — 入れなかった値は今のまま保つ (Processing Sound と同じ・#3719)。
+    func mixValues(_ amp: Float?, _ add: Float?, _ pan: Float?) -> [(param: SynthParam, value: Float)] {
         var values: [(param: SynthParam, value: Float)] = []
-        if let value = accept(amp, 0...1, call: "amp", meaning: "a volume") {
+        if let amp, let value = accept(amp, 0...1, call: "amp", meaning: "a volume") {
             values.append((.amplitude, value))
         }
-        if let value = accept(add, -1...1, call: "add", meaning: "an offset") {
+        if let add, let value = accept(add, -1...1, call: "add", meaning: "an offset") {
             values.append((.offset, value))
         }
-        if let value = accept(pan, -1...1, call: "pan", meaning: "a position") {
+        if let pan, let value = accept(pan, -1...1, call: "pan", meaning: "a position") {
             values.append((.panning, value))
         }
         return values
@@ -568,7 +569,7 @@ public class Oscillator: SynthSource {
             stage: stage, node: stage.rack.addSource(.wave(waveform)), name: name)
     }
 
-    /// 周波数・音量・オフセット・定位を指定して、再生を始める。
+    /// 周波数と音量を指定して、再生を始める。オフセット・定位は今のまま。
     ///
     /// <!-- example: 文脈 var osc: SinOsc? -->
     /// ```swift
@@ -578,13 +579,32 @@ public class Oscillator: SynthSource {
     /// }
     /// ```
     ///
-    /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
-    /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:_:at:)``。
-    public func play(_ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
-        play(freq, amp, add, pan, at: 0)
+    /// **省いた値には触れない** (Processing Sound の `play(freq, amp)` と同じ)。先に ``SynthSource/pan(_:)`` で
+    /// 左へ寄せていれば、左のまま鳴る。範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)`` と
+    /// 同じに扱う。先の時刻に再生するなら ``play(_:_:at:)``。
+    public func play(_ freq: Float, _ amp: Float) {
+        voice(freq, amp, nil, nil, at: 0)
     }
 
-    /// 周波数・音量・オフセット・定位を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    /// 周波数・音量・オフセットを指定して、再生を始める。定位は今のまま。
+    ///
+    /// **第 3 引数はオフセット** (Processing Sound の `play(freq, amp, add)` と同じ)。``set(_:_:_:)`` の第 3 引数は
+    /// 定位で、同じ 3 引数でも意味が違う (手本も同じ)。範囲の外・NaN は、それぞれ ``freq(_:)``・
+    /// ``SynthSource/amp(_:)``・``SynthSource/add(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:at:)``。
+    public func play(_ freq: Float, _ amp: Float, _ add: Float) {
+        voice(freq, amp, add, nil, at: 0)
+    }
+
+    /// 周波数・音量・オフセット・定位を指定して、再生を始める。
+    ///
+    /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
+    /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:_:at:)``。
+    public func play(_ freq: Float, _ amp: Float, _ add: Float, _ pos: Float) {
+        voice(freq, amp, add, pos, at: 0)
+    }
+
+    /// 周波数と音量を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    /// オフセット・定位は今のまま。
     ///
     /// <!-- example: 文脈 var osc: SinOsc? -->
     /// ```swift
@@ -596,14 +616,32 @@ public class Oscillator: SynthSource {
     ///
     /// **値も、再生と同じサンプルの先頭から反映される** (すぐに値を変えるのではない)。`time` の意味・現在より前の値・
     /// ``SynthSource/stop()`` が予約を取り消すことは ``SynthSource/play(at:)`` と同じ。範囲の外・NaN は、
-    /// それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/add(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
+    /// それぞれ ``freq(_:)``・``SynthSource/amp(_:)`` と同じに扱う。
     ///
     /// **エンベロープ (``Env``) と組み合わせて、音高を変えながら連続して鳴らせる**: ``Env/play(_:_:_:_:_:at:)`` と同じ `time` で呼ぶと、音高も
-    /// エンベロープも同じサンプルの先頭から変わる (作例は ``Env/play(_:_:_:_:_:at:)`` の「音高を変えながら連続して鳴らす」)。`add`・`pan` も
-    /// 毎回渡し直す (省略すると 0 に戻る)。``freq(_:)`` をすぐに呼ぶと、再生中の音の音高も変わってしまう。
-    public func play(
-        _ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0, at time: Double
-    ) {
+    /// エンベロープも同じサンプルの先頭から変わる (作例は ``Env/play(_:_:_:_:_:at:)`` の「音高を変えながら連続して鳴らす」)。省いた
+    /// `add`・`pan` は今のまま保つ。``freq(_:)`` をすぐに呼ぶと、再生中の音の音高も変わってしまう。
+    public func play(_ freq: Float, _ amp: Float, at time: Double) {
+        voice(freq, amp, nil, nil, at: time)
+    }
+
+    /// 周波数・音量・オフセットを指定して、`time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。定位は今のまま。
+    ///
+    /// 第 3 引数はオフセットで、``play(_:_:_:)`` と同じ並び。値の反映と `time` の扱いは ``play(_:_:at:)`` と同じ。
+    public func play(_ freq: Float, _ amp: Float, _ add: Float, at time: Double) {
+        voice(freq, amp, add, nil, at: time)
+    }
+
+    /// 周波数・音量・オフセット・定位を指定して、`time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    ///
+    /// 値の反映と `time` の扱いは ``play(_:_:at:)`` と同じ。範囲の外・NaN は、それぞれ ``freq(_:)``・
+    /// ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
+    public func play(_ freq: Float, _ amp: Float, _ add: Float, _ pos: Float, at time: Double) {
+        voice(freq, amp, add, pos, at: time)
+    }
+
+    /// 渡された値 (`nil` は省いた値で、触れない) とともに、`time` 秒のサンプルの先頭から鳴らす。
+    private func voice(_ freq: Float, _ amp: Float, _ add: Float?, _ pan: Float?, at time: Double) {
         guard let position = reservationPosition(time, call: "play") else { return }
         guard postReservation(values: voiceValues(freq, amp, add, pan), ops: [.play], at: position)
         else { return }
@@ -611,9 +649,9 @@ public class Oscillator: SynthSource {
         isPlaying = true
     }
 
-    /// 周波数・音量・足す値・定位のうち、受けられた値 (範囲へ丸めた後)。受けられなかったものは入れない。
+    /// 周波数・音量・足す値・定位のうち、渡されて受けられた値 (範囲へ丸めた後)。省いたもの・受けられなかったものは入れない。
     private func voiceValues(
-        _ freq: Float, _ amp: Float, _ add: Float, _ pan: Float
+        _ freq: Float, _ amp: Float, _ add: Float?, _ pan: Float?
     ) -> [(param: SynthParam, value: Float)] {
         let limit = Float(stage.rack.sampleRate / 2)
         var values: [(param: SynthParam, value: Float)] = []
@@ -637,15 +675,45 @@ public class Oscillator: SynthSource {
         send(.frequency, value)
     }
 
+    /// 周波数と音量を、再生せずに設定する。オフセット・定位は今のまま。
+    ///
+    /// 省いた値には触れない。範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)`` と同じに扱う。
+    public func set(_ freq: Float, _ amp: Float) {
+        self.freq(freq)
+        self.amp(amp)
+    }
+
+    /// 周波数・音量・定位を、再生せずに設定する。オフセットは今のまま。
+    ///
+    /// <!-- example: 文脈 var osc: SinOsc? -->
+    /// ```swift
+    /// func setup() {
+    ///     osc = createSinOsc()
+    ///     // 440 Hz を左へ寄せてから鳴らす
+    ///     osc?.set(440, 0.5, -1)
+    ///     osc?.play()
+    /// }
+    /// ```
+    ///
+    /// **第 3 引数は定位** (Processing Sound の `set(freq, amp, pos)` と同じ)。``play(_:_:_:)`` の第 3 引数は
+    /// オフセットで、同じ 3 引数でも意味が違う (手本も同じ)。オフセットも渡すなら ``set(_:_:_:_:)`` で、定位は
+    /// 4 つ目になる。範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/pan(_:)`` と
+    /// 同じに扱う。
+    public func set(_ freq: Float, _ amp: Float, _ pos: Float) {
+        self.freq(freq)
+        self.amp(amp)
+        self.pan(pos)
+    }
+
     /// 周波数・音量・オフセット・定位を、再生せずに設定する。
     ///
     /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
     /// ``SynthSource/pan(_:)`` と同じに扱う。
-    public func set(_ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
+    public func set(_ freq: Float, _ amp: Float, _ add: Float, _ pos: Float) {
         self.freq(freq)
         self.amp(amp)
         self.add(add)
-        self.pan(pan)
+        self.pan(pos)
     }
 }
 
@@ -711,7 +779,7 @@ public class Noise: SynthSource {
             stage: stage, node: stage.rack.addSource(.noise(color)), name: name)
     }
 
-    /// 音量・オフセット・定位を指定して、再生を始める。
+    /// 音量を指定して、再生を始める。オフセット・定位は今のまま。
     ///
     /// <!-- example: 文脈 var noise: WhiteNoise? -->
     /// ```swift
@@ -721,13 +789,40 @@ public class Noise: SynthSource {
     /// }
     /// ```
     ///
-    /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
-    /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:at:)``。
-    public func play(_ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
-        play(amp, add, pan, at: 0)
+    /// **省いた値には触れない** (Processing Sound の `play(amp)` と同じ)。先に ``SynthSource/pan(_:)`` で左へ寄せて
+    /// いれば、左のまま鳴る。範囲の外・NaN は ``SynthSource/amp(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:at:)``。
+    public func play(_ amp: Float) {
+        sound(amp, nil, nil, at: 0)
     }
 
-    /// 音量・オフセット・定位を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    /// 音量と定位を指定して、再生を始める。オフセットは今のまま。
+    ///
+    /// <!-- example: 文脈 var noise: WhiteNoise? -->
+    /// ```swift
+    /// func setup() {
+    ///     noise = createWhiteNoise()
+    ///     // 左へ寄せて鳴らす
+    ///     noise?.play(0.2, -1)
+    /// }
+    /// ```
+    ///
+    /// **第 2 引数は定位** (Processing Sound の `play(amp, pos)` と同じ)。オフセットも渡すなら
+    /// ``play(_:_:_:)`` で、定位は 3 つ目になる。範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・
+    /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:at:)``。
+    public func play(_ amp: Float, _ pos: Float) {
+        sound(amp, nil, pos, at: 0)
+    }
+
+    /// 音量・オフセット・定位を指定して、再生を始める。
+    ///
+    /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
+    /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:at:)``。
+    public func play(_ amp: Float, _ add: Float, _ pos: Float) {
+        sound(amp, add, pos, at: 0)
+    }
+
+    /// 音量を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    /// オフセット・定位は今のまま。
     ///
     /// <!-- example: 文脈 var noise: WhiteNoise? -->
     /// ```swift
@@ -737,25 +832,62 @@ public class Noise: SynthSource {
     /// ```
     ///
     /// **値も、再生と同じサンプルの先頭から反映される。** `time` の意味・現在より前の値・``SynthSource/stop()`` が予約を
-    /// 取り消すことは ``SynthSource/play(at:)`` と同じ。範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・
+    /// 取り消すことは ``SynthSource/play(at:)`` と同じ。範囲の外・NaN は ``SynthSource/amp(_:)`` と同じに扱う。
+    public func play(_ amp: Float, at time: Double) {
+        sound(amp, nil, nil, at: time)
+    }
+
+    /// 音量と定位を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    /// オフセットは今のまま。
+    ///
+    /// **第 2 引数は定位** (``play(_:_:)`` と同じ並び)。値の反映と `time` の扱いは ``play(_:at:)`` と同じ。
+    /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
+    public func play(_ amp: Float, _ pos: Float, at time: Double) {
+        sound(amp, nil, pos, at: time)
+    }
+
+    /// 音量・オフセット・定位を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
+    ///
+    /// 値の反映と `time` の扱いは ``play(_:at:)`` と同じ。範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・
     /// ``SynthSource/add(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
-    public func play(_ amp: Float, _ add: Float = 0, _ pan: Float = 0, at time: Double) {
+    public func play(_ amp: Float, _ add: Float, _ pos: Float, at time: Double) {
+        sound(amp, add, pos, at: time)
+    }
+
+    /// 渡された値 (`nil` は省いた値で、触れない) とともに、`time` 秒のサンプルの先頭から鳴らす。
+    private func sound(_ amp: Float, _ add: Float?, _ pos: Float?, at time: Double) {
         guard let position = reservationPosition(time, call: "play") else { return }
-        guard postReservation(values: mixValues(amp, add, pan), ops: [.play], at: position) else {
+        guard postReservation(values: mixValues(amp, add, pos), ops: [.play], at: position) else {
             return
         }
         isActive = true
         isPlaying = true
     }
 
+    /// 音量を、再生せずに設定する。オフセット・定位は今のまま (``SynthSource/amp(_:)`` と同じ)。
+    ///
+    /// 範囲の外・NaN は ``SynthSource/amp(_:)`` と同じに扱う。
+    public func set(_ amp: Float) {
+        self.amp(amp)
+    }
+
+    /// 音量と定位を、再生せずに設定する。オフセットは今のまま。
+    ///
+    /// **第 2 引数は定位** (Processing Sound の `set(amp, pos)` と同じ)。範囲の外・NaN は、それぞれ
+    /// ``SynthSource/amp(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
+    public func set(_ amp: Float, _ pos: Float) {
+        self.amp(amp)
+        self.pan(pos)
+    }
+
     /// 音量・オフセット・定位を、再生せずに設定する。
     ///
     /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
     /// ``SynthSource/pan(_:)`` と同じに扱う。
-    public func set(_ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
+    public func set(_ amp: Float, _ add: Float, _ pos: Float) {
         self.amp(amp)
         self.add(add)
-        self.pan(pan)
+        self.pan(pos)
     }
 }
 
@@ -1001,7 +1133,7 @@ public final class Env {
     ///             lastStep = step
     ///             // 次の 16 分音符の頭へ、音高とエンベロープを同じ時刻に予約する (1 フレーム先より遠い)
     ///             let next = Double(step + 1) * 0.125
-    ///             osc.play(notes[(step + 1) % notes.count], 0.5, at: next)   // 音高と音量。add・pan は 0 に戻る
+    ///             osc.play(notes[(step + 1) % notes.count], 0.5, at: next)   // 音高と音量。add・pan は今のまま
     ///             env.play(osc, 0.01, 0.05, 0.5, 0.1, at: next)              // エンベロープ
     ///         }
     ///         for i in 0..<notes.count {
@@ -1018,9 +1150,9 @@ public final class Env {
     ///   `freq(_:)` ですぐに変えると、前の音の余韻が次の音高で鳴り、1 ビート先へ予約する書き方では、いま鳴り始めた音が
     ///   まるごと次の音高になる。値を予約できるのは ``Oscillator/play(_:_:_:_:at:)`` で、再生し直さずに値だけを
     ///   サンプル単位の精度で変えるメソッド (`freq(_:at:)` など) は無い
-    /// - 組み合わせて使うときは、`add`・`pan` も毎回渡し直す。**省略すると 0 に戻る** (`Oscillator.play` は 4 つの値をすべて
-    ///   設定する)
-    /// - 1 音ごとに `osc.play` と `env.play` の 2 回を呼ぶ。予約キューの枠を 1 音で 11 個使う (下の「予約キューの上限」)
+    /// - `Oscillator.play` で省いた `add`・`pan` は今のまま保つ (Processing Sound と同じ)。予約した時刻に定位も変えるなら、
+    ///   4 つの値を渡す形 (``Oscillator/play(_:_:_:_:at:)``) で渡す
+    /// - 1 音ごとに `osc.play` と `env.play` の 2 回を呼ぶ。上の作例の形では、予約キューの枠を 1 音で 9 個使う (下の「予約キューの上限」)
     ///
     /// - 値 (秒数・サステインの音量) も、エンベロープも、再生の操作も、予約した時刻に**まとめて**反映される。続けて予約しても、前の予約の
     ///   値を書き換えない
@@ -1028,8 +1160,9 @@ public final class Env {
     ///   書き出しでは、同じ操作から同じサンプルが出る ([ADR-0025] の水準 2)
     /// - **予約キューの上限は、スケッチごとに 2048 個の操作まで**。この呼び出し 1 回は 6 個 (値 4・エンベロープ・
     ///   再生) を使い、時刻になって反映されたぶんが空く。およそ 340 回ぶん先まで予約でき、足りなければその予約を
-    ///   捨てて 1 度だけ警告する (投げない)。**音高も組み合わせて予約する使い方では、``Oscillator/play(_:_:_:_:at:)`` の 5 個 (値 4・
-    ///   再生) を加えた 1 音 11 個で、およそ 186 音ぶん**。曲全体を先に予約せず、次の数音だけ予約する
+    ///   捨てて 1 度だけ警告する (投げない)。**音高も組み合わせて予約する使い方では、上の作例の ``Oscillator/play(_:_:at:)`` の
+    ///   3 個 (値 2・再生) を加えた 1 音 9 個で、およそ 227 音ぶん** (4 つの値を渡す ``Oscillator/play(_:_:_:_:at:)`` なら 5 個で、
+    ///   1 音 11 個・およそ 186 音ぶん)。曲全体を先に予約せず、次の数音だけ予約する
     /// - **現在のオーディオクロックより前の `at:` は、次に生成するサンプルの先頭で始める** (警告しない)。実機で、`draw()` が間に合わず
     ///   予約が少し遅れたときも、この動作になる
     /// - 予約した音は、参照を手放しても時刻になって再生が終わるまで残る。**``SynthSource/stop()`` を呼ぶと、その音の先の

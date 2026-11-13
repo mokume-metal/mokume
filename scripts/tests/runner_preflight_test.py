@@ -140,6 +140,8 @@ class RunnerPreflightTest(unittest.TestCase):
         if not self.output.exists():
             return None
         lines = [ln for ln in self.output.read_text(encoding="utf-8").splitlines() if ln.startswith("reason=")]
+        if not lines:  # 注意 (notice=) だけを書いた回。赤ではない
+            return None
         self.assertEqual(len(lines), 1, lines)
         return lines[0].removeprefix("reason=")
 
@@ -304,6 +306,33 @@ class RunnerPreflightTest(unittest.TestCase):
                 self.assertIn("::warning title=専用機の環境::orphan-load: job の置き場の外", r.stdout)
                 self.assertIn(f"{comm.rsplit('/', 1)[-1]} (pid 1904, 68.0%, 経過 18-09:23:07)", r.stdout)
                 self.assertIn("注意:", self.summary.read_text(encoding="utf-8"))
+
+    def output_value(self, key):
+        if not self.output.exists():
+            return None
+        lines = [ln for ln in self.output.read_text(encoding="utf-8").splitlines() if ln.startswith(f"{key}=")]
+        return lines[0].removeprefix(f"{key}=") if lines else None
+
+    def test_置き場の外の負荷はプロセス名を_notice_に書き_pid_は数えの材料にしない(self):
+        # render.yml が job の出力へ上げ、scripts/count-runner-notice.sh が run をまたいで数える (#3633)。
+        # 鍵は名前。annotation の末尾の 〔注意の名前: …〕 が前の run から読み戻す材料で、pid を含まない
+        r = self.run_preflight(FAKE_PS=self.MEDIA_ANALYSIS, FAKE_CWDS="1904=/")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(self.output_value("notice"), "mediaanalysisd")
+        self.assertIn("mediaanalysisd (pid 1904", self.output_value("notice-detail"))
+        self.assertIn("〔注意の名前: mediaanalysisd〕", r.stdout)
+        self.assertNotIn("1904", self.output_value("notice"))
+        self.assertIsNone(self.reason())
+
+    def test_置き場の外の負荷が複数なら名前を重複なしで_区切りに並べる(self):
+        ps = self.MEDIA_ANALYSIS + "\n  1905     1  60.0 18-09:23:07 cloudphotod\n  1906     1  61.0 18-09:23:07 cloudphotod"
+        r = self.run_preflight(FAKE_PS=ps, FAKE_CWDS="1904=/\n1905=/\n1906=/")
+        self.assertEqual(self.output_value("notice"), "cloudphotod|mediaanalysisd")
+
+    def test_注意が無ければ_notice_を書かない(self):
+        r = self.run_preflight()
+        self.assertIsNone(self.output_value("notice"))
+        self.assertNotIn("〔注意の名前", r.stdout)
 
     def test_job_の置き場の外の負荷と並んでも_前の_job_の残りは赤(self):
         # 本数に置き場の外を数えず、置き場の外は注意で別に名乗る
