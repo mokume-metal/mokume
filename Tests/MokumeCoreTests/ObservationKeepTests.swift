@@ -46,6 +46,26 @@ struct ObservationKeepRequestTests {
         #expect(KeptFrame.refusal(forDirectoryNamed: id) == nil)
     }
 
+    /// 2 回目の反証 3・4: 持ち出しが見る変化の番号は、面に出る姿が同じでも置いた値のビット列が変われば進め、同じ値の
+    /// 入れ直しでは進めない。代入 (setter) と、その場の書き換え (`_modify`) の両方で見る。
+    @Test("置き場の変化の番号は、ビット列が変われば進め、同じ値の入れ直しでは進めない")
+    func theChangeCountFollowsTheBits() {
+        let box = ParamBox(name: "offset", value: 0.0)
+        let start = box.changeCount
+        box.value = 0
+        #expect(box.changeCount == start, "同じ値の入れ直しで進めた")
+        box.value = -0.0
+        #expect(box.changeCount == start + 1, "-0.0 を置いても進めない")
+        box.value = -0.0
+        #expect(box.changeCount == start + 1)
+        box.value += 0  // -0.0 + 0 は +0.0
+        #expect(box.changeCount == start + 2, "_modify でビット列が変わっても進めない")
+        box.value += 0
+        #expect(box.changeCount == start + 2, "_modify の同じ値で進めた")
+        box.value += 1
+        #expect(box.changeCount == start + 3)
+    }
+
     /// 代表例と同じ中身の目録。`time` は `Float` の時刻を `Double` にした値で書く (実装と同じ道)。
     private static let examples: [String: KeptFrame] = [
         "kept-frame": KeptFrame(
