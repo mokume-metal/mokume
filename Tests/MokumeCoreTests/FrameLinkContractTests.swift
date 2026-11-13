@@ -40,6 +40,8 @@ nonisolated final class FrameReceiverProcess: @unchecked Sendable {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        // 終わった受け手へ 1 行書いても、検査のプロセスを SIGPIPE で落とさない (書けなかったことは `try?` で捨てる)
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             self?.take(handle.availableData)
         }
@@ -73,6 +75,11 @@ nonisolated final class FrameReceiverProcess: @unchecked Sendable {
     /// 受け手に終わるよう言う (標準入力に 1 行)。
     func stop() {
         try? input.fileHandleForWriting.write(contentsOf: Data("stop\n".utf8))
+    }
+
+    /// 待ち行列を詰めて止まっている受け手 (`--clog-attempt`) に、読み始めるよう言う。
+    func resume() {
+        try? input.fileHandleForWriting.write(contentsOf: Data("resume\n".utf8))
     }
 
     /// 条件が立つまで待つ。**期限で諦める** (`body` は待つ間に回す仕事)。
@@ -565,5 +572,546 @@ struct FrameLinkContractGPUTests {
         #expect(received && receiver.events(named: "frame").count >= 2, "絵が届かない: \(receiver.events)")
         #expect(receiver.events(named: "sizeUnknown").isEmpty, "\(receiver.events)")
         _ = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
+    }
+
+    // MARK: - 落ちた答えから立ち直る (#3968)
+
+    /// 同じプロセスで繋いで枠を埋めるだけの受け手。面は返さない (送り手は書かずに見送る)。
+    private final class Occupant {
+        let port: mach_port_t
+        let surfaces: [IOSurfaceRef]
+
+        init(service: mach_port_t, width: Int, height: Int) throws {
+            var port: mach_port_t = 0
+            mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &port)
+            self.port = port
+            surfaces = (0..<2).compactMap { _ in
+                IOSurfaceCreate(
+                    [
+                        kIOSurfaceWidth: width, kIOSurfaceHeight: height,
+                        kIOSurfacePixelFormat: FrameLink.surfaceFormat, kIOSurfaceBytesPerElement: 8,
+                    ] as [CFString: Any] as CFDictionary)
+            }
+            try #require(FrameLink.connect(to: service, reply: port, surfaces: surfaces) == KERN_SUCCESS)
+        }
+
+        deinit { mach_port_mod_refs(mach_task_self_, port, MACH_PORT_RIGHT_RECEIVE, -1) }
+    }
+
+    /// 送り手の枠を 1 つ残して埋める (上限は 4)。**残る 1 枠を古い繋がりが握ったままなら、繋ぎ直しは `receiverLimit` で
+    /// 断られる** — 立ち直りが古い枠を回収したことを、繋がれたことで確かめる。
+    private func occupyAllButOne(of announcement: FrameAnnouncement, sender: FrameSender) throws -> [Occupant] {
+        let service = try #require(Bootstrap.lookUp(announcement.entry.serviceName))
+        defer { Bootstrap.releaseSend(service) }
+        // 1 通ずつ捌く (送り手の待ち行列は短い)
+        let occupants = try (0..<(FrameLink.receiverLimit - 1)).map { _ in
+            defer { sender.drain() }
+            return try Occupant(service: service, width: sender.width, height: sender.height)
+        }
+        try #require(sender.receiverCount == FrameLink.receiverLimit - 1, "検査の前提: 枠を埋められない")
+        return occupants
+    }
+
+    /// 新しい繋がり: 最後の時間切れより後の `accepted` と、それに続くその番号の最初の `frame`。
+    private func newConnection(in events: [[String: Any]]) -> (accepted: Int, receiver: Int, frame: Int)? {
+        guard let timedOut = events.lastIndex(where: { $0["event"] as? String == "answerTimedOut" }),
+            let accepted = events[timedOut...].firstIndex(where: { $0["event"] as? String == "accepted" }),
+            let receiver = events[accepted]["receiver"] as? Int,
+            let frame = events[accepted...].firstIndex(where: {
+                $0["event"] as? String == "frame" && $0["receiver"] as? Int == receiver
+            })
+        else { return nil }
+        return (accepted, receiver, frame)
+    }
+
+    /// 送り手を回す役。**送り手を止める前に作っておく** — 止めた後に作ると、作る間 (混んだ機械では秒の単位) に受け手の
+    /// 期限が過ぎ、時間切れが重なる (#3968 の 2 回目の反証の指摘 5)。
+    @MainActor
+    private final class Driver {
+        let receiver: FrameReceiverProcess
+        let sender: FrameSender
+        let gpu: RenderDevice
+        let presenter: FramePresenter
+        var source: RenderTarget
+        var frame: Int64 = 0
+        var resumed = 0
+        /// 止まった受け手を、自分の期限を過ぎた (`pausedPastDeadline`) と言うまで読ませない。
+        let resumesLate: Bool
+
+        init(_ receiver: FrameReceiverProcess, sender: FrameSender, gpu: RenderDevice, resumesLate: Bool = false) throws {
+            self.receiver = receiver
+            self.sender = sender
+            self.gpu = gpu
+            self.resumesLate = resumesLate
+            presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            source = try RenderTarget(gpu: gpu, width: sender.width, height: sender.height)
+            try source.fill(with: .linear(red: 1, green: 0, blue: 0))
+        }
+
+        /// 頼みを捌き、送り手のいまの大きさで絵を 1 枚書く。connect を送って止まった受け手 (`paused`) には、送り手が
+        /// 答えた (詰めた待ち行列なら落とした) 後で読み始めさせる。
+        @MainActor
+        func step() {
+            sender.drain()
+            let paused = receiver.events(named: "connected").filter { $0["paused"] as? Bool == true }
+            if paused.count > resumed {
+                let attempt = paused[resumed]["attempt"] as? Int
+                let late = receiver.events(named: "pausedPastDeadline").contains { $0["attempt"] as? Int == attempt }
+                if !resumesLate || late {
+                    sender.drain()
+                    resumed += 1
+                    receiver.resume()
+                }
+            }
+            if source.width != sender.width || source.height != sender.height,
+                let resized = try? RenderTarget(gpu: gpu, width: sender.width, height: sender.height)
+            {
+                try? resized.fill(with: .linear(red: 1, green: 0, blue: 0))
+                source = resized
+            }
+            frame += 1
+            try? sender.deliver(
+                width: source.width, height: source.height, frameCount: frame, hostTime: UInt64(frame)
+            ) { [presenter, source] texture throws(RenderFailure) in try presenter.draw(source, into: texture) }
+            _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+        }
+
+        /// `until` が立つか受け手が終わるまで回す (期限つき)。
+        @MainActor
+        func run(until condition: () -> Bool) -> Bool {
+            receiver.wait(upTo: 30, doing: { step() }) { condition() || !receiver.process.isRunning }
+        }
+    }
+
+    private func attempts(_ receiver: FrameReceiverProcess, _ event: String) -> [Int] {
+        receiver.events(named: event).compactMap { $0["attempt"] as? Int }
+    }
+
+    private func inARow(_ receiver: FrameReceiverProcess) -> [Int] {
+        receiver.events(named: "answerTimedOut").compactMap { $0["inARow"] as? Int }
+    }
+
+    /// **送り手を止めて**、受け手が送り手の消えたことを知るまで待つ (期限つき)。立ち直った後の port にも、送り手が消えた
+    /// 知らせを頼み直していること。
+    private func expectTheReceiverLearnsTheSenderWentAway(
+        _ receiver: FrameReceiverProcess, announcement: FrameAnnouncement
+    ) {
+        announcement.withdraw()
+        let told = receiver.wait(upTo: 20) { !receiver.events(named: "senderGone").isEmpty }
+        #expect(told, "立ち直った受け手が送り手の消えたことを知らない: \(receiver.events)")
+    }
+
+    /// **初めての `accepted` が落ちたら、受け手は自分の番号を知らない** ([#3968])。期限で受信の port を作り直して繋ぎ直す。
+    /// 送り手は古い port の dead-name で古い枠を回収する。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test("初めての accepted が満杯の待ち行列で落ちても、受け手は期限で port を作り直して繋ぎ直し、古い枠が空いて新しい繋がりの最初の絵を受ける")
+    func aReceiverRecoversALostFirstAcceptance() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let occupants = try occupyAllButOne(of: announcement, sender: sender)
+        defer { withExtendedLifetime(occupants) {} }
+        var said: [String] = []
+        sender.warn = { said.append($0) }
+
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8",
+            "--clog-attempt", "1", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu)
+        let recovered = driver.run { newConnection(in: receiver.events) != nil }
+        let events = receiver.events
+        #expect(recovered, "新しい繋がりの絵が届かない: \(events)")
+        #expect(
+            receiver.events(named: "answerTimedOut").first?["known"] as? Bool == false,
+            "番号を知らない時間切れとして扱っていない: \(events)")
+        #expect(inARow(receiver) == [1], "\(events)")
+        #expect(receiver.events(named: "accepted").count == 1, "落としたはずの accepted が届いた (検査の前提): \(events)")
+        #expect(receiver.events(named: "refused").isEmpty, "古い枠が回収されず断られた: \(events)")
+        #expect(sender.receiverCount == FrameLink.receiverLimit, "古い枠を回収していない (\(sender.receiverCount))")
+        #expect(said.filter { $0.hasPrefix("Stopped handing") }.count == 1, "送り手が古い繋がりを外していない: \(said)")
+        expectTheReceiverLearnsTheSenderWentAway(receiver, announcement: announcement)
+    }
+
+    /// **番号を知っている受け手の繋ぎ直しの `accepted` が落ちても、`disconnect` は送らずに port を作り直して繋ぎ直す**
+    /// ([#3968]・2026-11-14 の決定)。送り手は古い port の dead-name で古い繋がりを外す。答えを待つ間の `frame` は成功に
+    /// 数えない。`resumesLate` では、受け手が自分の期限を過ぎてから読み始めさせる — 期限を読み始めてから数え直して
+    /// いなければ、待ち行列を読む前に見切り、待つ間の frame を読まない。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test(
+        "繋ぎ直しの accepted が満杯の待ち行列で落ちても、受け手は期限で port を作り直して繋ぎ直し、古い枠が空いて新しい繋がりの最初の絵を受ける",
+        arguments: [false, true])
+    func aReceiverRecoversALostReacceptance(resumesLate: Bool) throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let occupants = try occupyAllButOne(of: announcement, sender: sender)
+        defer { withExtendedLifetime(occupants) {} }
+        var said: [String] = []
+        sender.warn = { said.append($0) }
+
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8",
+            "--reconnect-after", "1", "--clog-attempt", "2", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu, resumesLate: resumesLate)
+        let recovered = driver.run { newConnection(in: receiver.events) != nil }
+        let events = receiver.events
+        #expect(recovered, "新しい繋がりの絵が届かない: \(events)")
+        let first = try #require(receiver.events(named: "accepted").first?["receiver"] as? Int, "\(events)")
+        let timedOut = receiver.events(named: "answerTimedOut")
+        #expect(timedOut.count == 1 && timedOut.first?["known"] as? Bool == true, "\(events)")
+        let new = try #require(newConnection(in: events))
+        #expect(new.receiver != first, "同じ繋がりのまま繋ぎ直した (番号が同じ): \(events)")
+        // 詰めた connect から新しい accepted までの間に、frame を数えていない (古い面への書き込み)
+        let clogged = try #require(events.firstIndex { ($0["clogged"] as? Int ?? 0) > 0 })
+        #expect(
+            !events[clogged..<new.accepted].contains { $0["event"] as? String == "frame" },
+            "答えを待つ間の frame を数えた: \(events)")
+        // 送り手は落ちた accepted の後も新しい面へ書いて frame を送る。受け手はそれを、期限の前に読んで数えずにいる
+        // (読む前に期限が来ていたら、この判定は試されていない)
+        let timedOutAt = try #require(events.firstIndex { $0["event"] as? String == "answerTimedOut" })
+        #expect(
+            events[clogged..<timedOutAt].contains { $0["event"] as? String == "frameWhileWaiting" },
+            "答えを待つ間に frame を読んでいない: \(events)")
+        if resumesLate {
+            #expect(attempts(receiver, "pausedPastDeadline") == [2], "検査の前提: 期限の後で読ませていない: \(events)")
+        }
+        #expect(receiver.events(named: "refused").isEmpty, "\(events)")
+        #expect(sender.receiverCount == FrameLink.receiverLimit, "古い枠を回収していない (\(sender.receiverCount))")
+        #expect(said.filter { $0.hasPrefix("Stopped handing") }.count == 1, "送り手が古い繋がりを外していない: \(said)")
+    }
+
+    // MARK: - 遅れた答え (#3968)
+
+    /// **答えは落ちずに遅れることもある** ([#3968])。番号を知らない受け手が期限で port を作り直した後に、送り手が古い
+    /// connect を読む。その返信先は死んでいるので、送り手は断る判定より前に捨てる — 登録すると枠が 1 つ戻らず、新しい
+    /// connect が `receiverLimit` で断られる。立ち直った port にも、送り手が消えた知らせを頼み直している。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test("初めての答えが遅れて受け手が port を作り直すと、送り手は死んだ返信先の connect を捨て、新しい繋がりが最後の枠を取って絵を受ける")
+    func aReceiverRecoversALateFirstAnswer() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let occupants = try occupyAllButOne(of: announcement, sender: sender)
+        defer { withExtendedLifetime(occupants) {} }
+        var said: [String] = []
+        sender.warn = { said.append($0) }
+
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu)
+        // 送り手は忙しい: 受け手が期限で port を作り直し、2 通目を送るまで、頼みを捌かない
+        let gaveUpWaiting = receiver.wait(upTo: 20) { attempts(receiver, "connected").contains(2) }
+        try #require(gaveUpWaiting, "受け手が期限で繋ぎ直さない: \(receiver.events)")
+        try #require(sender.receiverCount == FrameLink.receiverLimit - 1, "検査の前提: 送り手が先に捌いた")
+
+        let recovered = driver.run { newConnection(in: receiver.events) != nil }
+        let events = receiver.events
+        #expect(recovered, "新しい繋がりの絵が届かない: \(events)")
+        #expect(inARow(receiver) == [1], "時間切れが重なった: \(events)")
+        #expect(receiver.events(named: "answerTimedOut").first?["known"] as? Bool == false, "\(events)")
+        #expect(receiver.events(named: "refused").isEmpty, "死んだ返信先の connect が枠を取った: \(events)")
+        #expect(receiver.events(named: "accepted").count == 1, "\(events)")
+        #expect(sender.receiverCount == FrameLink.receiverLimit, "(\(sender.receiverCount))")
+        #expect(said.filter { $0.hasPrefix("Handing") }.count == 1, "死んだ返信先を受け入れた: \(said)")
+        #expect(
+            said.filter { $0.hasPrefix("Ignored a request") }.count == 1, "死んだ返信先を捨てたことを言っていない: \(said)")
+        #expect(!said.contains { $0.contains("was refused") }, "死んだ返信先に断りの判定をした: \(said)")
+        expectTheReceiverLearnsTheSenderWentAway(receiver, announcement: announcement)
+    }
+
+    /// **番号を知っている受け手の答えが遅れても、遅れた答えは新しい繋がりに混ざらない** ([#3968])。受け手は期限で
+    /// port を作り直す (`disconnect` は送らない) ので、送り手が後で古い connect に答えても、その `accepted` (前の番号) は
+    /// 届かない。新しい connect は送り手の短い待ち行列に収まり、時間切れは 1 回で済む。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test("繋ぎ直しの答えが遅れると、受け手は port を作り直し、遅れた accepted を受けずに 1 回の時間切れで新しい番号の絵を受ける")
+    func aReceiverRecoversALateReacceptance() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let occupants = try occupyAllButOne(of: announcement, sender: sender)
+        defer { withExtendedLifetime(occupants) {} }
+        var said: [String] = []
+        sender.warn = { said.append($0) }
+
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8",
+            "--reconnect-after", "1", "--hold-attempt", "2", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu)
+        // 1 枚受けて繋ぎ直す手前で止まるまで回す
+        let holding = driver.run { attempts(receiver, "holding").contains(2) }
+        try #require(holding, "受け手が繋ぎ直しに来ない: \(receiver.events)")
+        let first = try #require(receiver.events(named: "accepted").first?["receiver"] as? Int, "\(receiver.events)")
+        // 受け手は止まる前に 1 枚目の release を送っている。捌いておく。送り手は忙しい: 繋ぎ直しの connect を、
+        // 受け手が期限で port を作り直して 3 通目を送るまで捌かない
+        sender.drain()
+        receiver.resume()
+        let gaveUpWaiting = receiver.wait(upTo: 20) { attempts(receiver, "connected").contains(3) }
+        try #require(gaveUpWaiting, "受け手が期限で繋ぎ直さない: \(receiver.events)")
+
+        let recovered = driver.run { newConnection(in: receiver.events) != nil }
+        let events = receiver.events
+        #expect(recovered, "新しい繋がりの絵が届かない: \(events)")
+        #expect(inARow(receiver) == [1], "時間切れが重なった: \(events)")
+        let timedOut = receiver.events(named: "answerTimedOut").first
+        #expect(timedOut?["known"] as? Bool == true, "\(events)")
+        // 見切った後の connect は、送り手の待ち行列 (上限 2) が古い connect と古い port の dead-name の知らせで埋まって
+        // いれば送れない。送り手が読み始めたら、時間切れを待たずに送り直して入る
+        let third = receiver.events(named: "connected").first { $0["attempt"] as? Int == 3 }
+        if third?["result"] as? Int != Int(KERN_SUCCESS) {
+            #expect(!receiver.events(named: "resent").isEmpty, "送れなかった connect を送り直していない: \(events)")
+        }
+        let accepted = receiver.events(named: "accepted").compactMap { $0["receiver"] as? Int }
+        #expect(accepted.count == 2 && accepted.last != first, "遅れた accepted を受けた: \(events)")
+        #expect(receiver.events(named: "unexpectedAnswer").isEmpty, "\(events)")
+        #expect(receiver.events(named: "refused").isEmpty, "\(events)")
+        #expect(sender.receiverCount == FrameLink.receiverLimit, "(\(sender.receiverCount))")
+        #expect(said.filter { $0.hasPrefix("Stopped handing") }.count == 1, "\(said)")
+    }
+
+    /// **上限まで繋がった送り手も、死んだ返信先の connect は断る判定に入れずに捨てる** ([#3968])。断りの診断は、生きて
+    /// いる受け手の connect の 1 行だけ。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test("上限まで繋がった送り手は、遅れて読んだ死んだ返信先の connect を断らずに捨て、生きている受け手だけを断る")
+    func aFullSenderIgnoresADeadConnectBeforeRefusing() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        var occupants = try occupyAllButOne(of: announcement, sender: sender)
+        let service = try #require(Bootstrap.lookUp(announcement.entry.serviceName))
+        defer { Bootstrap.releaseSend(service) }
+        occupants.append(try Occupant(service: service, width: 16, height: 8))
+        sender.drain()
+        defer { withExtendedLifetime(occupants) {} }
+        try #require(sender.receiverCount == FrameLink.receiverLimit, "検査の前提: 上限まで埋められない")
+        var said: [String] = []
+        sender.warn = { said.append($0) }
+
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        // 送り手は忙しい: 受け手が port を作り直して 2 通目を送るまで捌かない
+        let gaveUpWaiting = receiver.wait(upTo: 20) { attempts(receiver, "connected").contains(2) }
+        try #require(gaveUpWaiting, "受け手が期限で繋ぎ直さない: \(receiver.events)")
+        let refused = receiver.wait(upTo: 20, doing: { sender.drain() }) { !receiver.events(named: "refused").isEmpty }
+        #expect(refused, "\(receiver.events)")
+        #expect(said.filter { $0.contains("was refused") }.count == 1, "死んだ返信先にも断りの判定をした: \(said)")
+        #expect(said.filter { $0.hasPrefix("Ignored a request") }.count == 1, "\(said)")
+    }
+
+    /// **送れなかった connect は、答えを待たずに送り直す** ([#3968])。送り手の名前の待ち行列 (上限 2) を検査が埋めて
+    /// から受け手に送らせる。送れなかったことは送った時点で分かるので、時間切れを待たない。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test("送り手の待ち行列が満杯で connect を送れなかった受け手は、時間切れを待たずに送り直して繋がる")
+    func aReceiverResendsAConnectItCouldNotSend() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8",
+            "--hold-attempt", "1", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu)
+        let holding = receiver.wait(upTo: 20) { attempts(receiver, "holding").contains(1) }
+        try #require(holding, "\(receiver.events)")
+        // 送り手の待ち行列を、送れなくなるまで埋める (番号の無い disconnect。送り手は読んで捨てる)
+        let name = announcement.receivePort
+        mach_port_insert_right(mach_task_self_, name, name, mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND))
+        var filled = 0
+        while filled < 16, FrameLink.send(.disconnect, to: name) == KERN_SUCCESS { filled += 1 }
+        mach_port_mod_refs(mach_task_self_, name, MACH_PORT_RIGHT_SEND, -1)
+        receiver.resume()
+        let failed = receiver.wait(upTo: 20) { !receiver.events(named: "connected").isEmpty }
+        try #require(failed, "\(receiver.events)")
+        try #require(
+            receiver.events(named: "connected").first?["result"] as? Int != Int(KERN_SUCCESS),
+            "検査の前提: connect が送れてしまった (\(filled) 通で埋めた)")
+        let received = driver.run { !receiver.events(named: "frame").isEmpty }
+        let events = receiver.events
+        #expect(received, "\(events)")
+        #expect(!receiver.events(named: "resent").isEmpty, "\(events)")
+        #expect(receiver.events(named: "answerTimedOut").isEmpty, "送り直さずに時間切れを待った: \(events)")
+    }
+
+    /// **断りが落ちても、受け手は見切って繋ぎ直し、また断られたらそれを答えとして受ける** ([#3968] の形 2)。受け入れ済みの
+    /// 受け手が約束の外の面の数で繋ぎ直し、`refused` を詰めた待ち行列で落とす。断られ続ける受け手が、時間切れと
+    /// 取り違えて作り直しを繰り返さないこと。古い登録 (待つ間に書かれた面ごと) は古い port の消滅で戻る。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test("繋ぎ直しの refused が満杯の待ち行列で落ちても、受け手は見切って新しい port で繋ぎ、また断られたら答えとして受けて止まり、古い枠も戻る")
+    func aReceiverTakesARefusalAfterALostOne() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let occupants = try occupyAllButOne(of: announcement, sender: sender)
+        defer { withExtendedLifetime(occupants) {} }
+
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8",
+            "--reconnect-after", "1", "--reconnect-surfaces", "1", "--clog-attempt", "2", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu)
+        let ended = driver.run { false }
+        let events = receiver.events
+        #expect(ended && !receiver.process.isRunning, "受け手が止まらない: \(events)")
+        #expect(inARow(receiver) == [1], "断りを時間切れと取り違えた: \(events)")
+        #expect(
+            receiver.events(named: "refused").compactMap { $0["reason"] as? Int }
+                == [Int(FrameLink.Refusal.surfaceCount.rawValue)], "\(events)")
+        #expect(receiver.events(named: "gaveUp").isEmpty, "\(events)")
+        #expect(receiver.process.terminationStatus == 4, "\(events)")
+        let reclaimed = receiver.wait(upTo: 20, doing: { sender.drain() }) {
+            sender.receiverCount == FrameLink.receiverLimit - 1
+        }
+        #expect(reclaimed, "断られた受け手の古い枠が戻らない (\(sender.receiverCount))")
+    }
+
+    /// **見切ったら、古い port を捨てる前に読み切る** ([#3968])。古い port に積まれた `resized` を捌き、新しい port では
+    /// 新しい大きさの面で繋ぐ。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test("見切った受け手は、古い port に積まれた resized を捨てる前に読み、新しい port では新しい大きさの面で繋がる")
+    func aReceiverReadsTheOldPortBeforeReplacingIt() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8",
+            "--clog-attempt", "1", "--hold-recovery", "1", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu)
+        // 落とした accepted の繋がりは送り手に登録されている。見切って古い port を捨てる手前で止める
+        let holding = driver.run { !receiver.events(named: "holdingRecovery").isEmpty }
+        try #require(holding, "受け手が見切らない: \(receiver.events)")
+        sender.resize(width: 32, height: 8)
+        receiver.resume()
+        let received = driver.run { newConnection(in: receiver.events) != nil }
+        let events = receiver.events
+        #expect(received, "新しい大きさで繋がらない: \(events)")
+        #expect(receiver.events(named: "resized").first?["whileReading"] as? Bool == true, "\(events)")
+        #expect(receiver.events(named: "accepted").last?["width"] as? Int == 32, "\(events)")
+        #expect(receiver.events(named: "refused").isEmpty, "古い大きさで繋いだ: \(events)")
+    }
+
+    /// **答え (`refused` でも) が届けば、続けて見切った数を数え直す** ([#3968])。落ちる → 大きさで断られる → 落ちる、と
+    /// 続いても、2 度目の時間切れは「続けて 1 回目」。数え直さないと、連続していないのに諦める。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test("答えが落ち、大きさで断られ、また落ちても、断りが届いた所で数え直し、時間切れは続けて 1 回目と数える")
+    func aRefusalResetsTheLostAnswers() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let file = FrameListing.url(for: announcement.entry.serviceName, in: directory)
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--listing", file.path, "--clog-attempt", "1,3", "--hold-attempt", "2", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu)
+        let holding = driver.run { attempts(receiver, "holding").contains(2) }
+        try #require(holding, "受け手が見切らない: \(receiver.events)")
+        // 2 通目を送る前に大きさが変わる (目録も書き換わる)。2 通目は大きさで断られる
+        sender.resize(width: 32, height: 8)
+        receiver.resume()
+        let recovered = driver.run {
+            inARow(receiver).count >= 2 && newConnection(in: receiver.events) != nil
+        }
+        let events = receiver.events
+        #expect(recovered, "\(events)")
+        #expect(receiver.events(named: "refused").compactMap { $0["reason"] as? Int } == [4], "\(events)")
+        #expect(inARow(receiver) == [1, 1], "断りの後も続けて数えた: \(events)")
+    }
+
+    /// **繋ぐ前に待ち行列を読み切る** ([#3968])。前の繋がりの読み残しで待ち行列が埋まっていても、読み切ってから送れば
+    /// 答えは落ちない。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test("読み残しで待ち行列が埋まっていても、読み切ってから connect を送った受け手は、時間切れなしに 1 度で繋がる")
+    func aReceiverReadsItsPortEmptyBeforeConnecting() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8",
+            "--leftovers-attempt", "1", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu)
+        let received = driver.run { !receiver.events(named: "frame").isEmpty }
+        let events = receiver.events
+        #expect(received, "絵が届かない: \(events)")
+        #expect(receiver.events(named: "answerTimedOut").isEmpty, "読み残しで答えが落ちた: \(events)")
+        #expect(attempts(receiver, "connected") == [1], "\(events)")
+    }
+
+    /// **読み切るときも、送り手が消えた知らせと `resized` は捌く** ([#3968])。繋ぎ直す手前で止めた受け手の待ち行列に、
+    /// 大きさの変更か送り手の消えた知らせを積んでから読ませる。
+    ///
+    /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
+    @Test(
+        "繋ぎ直す前の読み切りで、resized なら新しい大きさの面で繋ぎ、送り手が消えた知らせなら繋がずに終わる",
+        arguments: ["resized", "withdrawn"])
+    func aReceiverActsOnWhatItReadsBeforeConnecting(_ queued: String) throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let (announcement, sender) = try startSender(in: directory, gpu: gpu, width: 16, height: 8)
+        defer { announcement.withdraw() }
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8", "--surfaces", "2",
+            "--reconnect-after", "1", "--hold-attempt", "2", "--answer-timeout", "0.5",
+        ])
+        defer { receiver.stop() }
+        let driver = try Driver(receiver, sender: sender, gpu: gpu)
+        let holding = driver.run { attempts(receiver, "holding").contains(2) }
+        try #require(holding, "受け手が繋ぎ直しに来ない: \(receiver.events)")
+        // 止まっている間は絵を書かない (待ち行列の残りは面の数までの frame だけ。上限 5 に届かない)
+        if queued == "resized" {
+            sender.resize(width: 32, height: 8)
+            receiver.resume()
+            let received = driver.run {
+                receiver.events(named: "accepted").count >= 2 && receiver.events.last?["event"] as? String == "frame"
+            }
+            let events = receiver.events
+            #expect(received, "新しい大きさで繋がらない: \(events)")
+            #expect(
+                receiver.events(named: "resized").first?["whileReading"] as? Bool == true, "読み切りで捌いていない: \(events)")
+            #expect(receiver.events(named: "accepted").last?["width"] as? Int == 32, "\(events)")
+            #expect(receiver.events(named: "refused").isEmpty, "古い大きさで繋いだ: \(events)")
+        } else {
+            announcement.withdraw()
+            receiver.resume()
+            let ended = receiver.wait(upTo: 20) { !receiver.process.isRunning }
+            let events = receiver.events
+            #expect(ended, "\(events)")
+            #expect(!receiver.events(named: "senderGone").isEmpty, "\(events)")
+            #expect(!attempts(receiver, "connected").contains(2), "消えた送り手へ繋ぎに行った: \(events)")
+        }
     }
 }

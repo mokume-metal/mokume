@@ -62,8 +62,9 @@ final class FieldAndFlow: Sketch {
     private var shown: (x: Float, y: Float) = (480, 270)
 
     func setup() throws {
-        field = try makeNumbers(count: columns * rows)
-        field?.fill(0)
+        let field = try makeNumbers(count: columns * rows)
+        field.fill(0)
+        self.field = field
 
         // 描く前に走る側。**格子 1 マスにつき 1 本**走り、位置と時刻だけから値を決める。
         // 前のフレームの値を読まないので、どのフレームから始めても同じ場が出る
@@ -106,20 +107,20 @@ final class FieldAndFlow: Sketch {
         // 場を色にする側。**格子より画素のほうが細かい**ので、隣の 4 マスから混ぜて読む
         paint = try createShader(
             """
-            static inline float mokume_cell(Fragment in, float2 grid, float2 at) {
+            static inline float mokume_cell(Numbers numbers, float2 grid, float2 at) {
                 float2 clamped = clamp(at, float2(0.0), grid - 1.0);
                 uint index = uint(clamped.y) * uint(grid.x) + uint(clamped.x);
-                return in.numbers[index];
+                return numbers.field[index];
             }
 
             // 場の座標 spot での値。隣の 4 マスから混ぜる
-            static inline float mokume_heat(Fragment in, float2 grid, float2 spot) {
+            static inline float mokume_heat(Numbers numbers, float2 grid, float2 spot) {
                 float2 base = floor(spot);
                 float2 t = spot - base;
-                float a = mokume_cell(in, grid, base);
-                float b = mokume_cell(in, grid, base + float2(1.0, 0.0));
-                float c = mokume_cell(in, grid, base + float2(0.0, 1.0));
-                float d = mokume_cell(in, grid, base + float2(1.0, 1.0));
+                float a = mokume_cell(numbers, grid, base);
+                float b = mokume_cell(numbers, grid, base + float2(1.0, 0.0));
+                float c = mokume_cell(numbers, grid, base + float2(0.0, 1.0));
+                float d = mokume_cell(numbers, grid, base + float2(1.0, 1.0));
                 return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
             }
 
@@ -135,16 +136,16 @@ final class FieldAndFlow: Sketch {
                 return mix(amber, light, smoothstep(0.7, 1.0, v));
             }
 
-            float4 paint(Fragment in, Values values) {
+            float4 paint(Fragment in, Values values, Numbers numbers) {
                 float2 grid = values.grid;
                 // 場の座標へ移す。マスの真ん中が中心に来るよう半マスずらす
                 float2 spot = in.place * grid - 0.5;
-                float heat = mokume_heat(in, grid, spot);
+                float heat = mokume_heat(numbers, grid, spot);
 
                 // 隣どうしの差で傾きを取り、左上からの光で起伏にする
                 float2 slope = float2(
-                    mokume_heat(in, grid, spot + float2(1.0, 0.0)) - mokume_heat(in, grid, spot - float2(1.0, 0.0)),
-                    mokume_heat(in, grid, spot + float2(0.0, 1.0)) - mokume_heat(in, grid, spot - float2(0.0, 1.0)));
+                    mokume_heat(numbers, grid, spot + float2(1.0, 0.0)) - mokume_heat(numbers, grid, spot - float2(1.0, 0.0)),
+                    mokume_heat(numbers, grid, spot + float2(0.0, 1.0)) - mokume_heat(numbers, grid, spot - float2(0.0, 1.0)));
                 float3 normal = normalize(float3(-slope * 22.0, 1.0));
                 float light = clamp(dot(normal, normalize(float3(-0.6, -0.7, 0.7))), 0.0, 1.0);
 
@@ -162,13 +163,16 @@ final class FieldAndFlow: Sketch {
                 return float4(tint, 1.0);
             }
             """,
-            values: ["grid": .pair(Float(columns), Float(rows))])
+            values: ["grid": .pair(Float(columns), Float(rows))],
+            // 場は名前で渡す。断片は `numbers.field[i]` で読み、描くたびに渡し替えなくてよい
+            numbers: ["field": field])
 
         // 切り出す行は CPU が決める。**書くのはいつでもよい** — 書いた値は次の描き切りが届ける
         probe = try makeNumbers(count: 1)
         probe?.set(Float(peakRow), at: 0)
-        profile = try makeNumbers(count: columns)
-        profile?.fill(0)
+        let profile = try makeNumbers(count: columns)
+        profile.fill(0)
+        self.profile = profile
 
         // **1 次元の計算。** 束ねる先は `reads + writes` の順に buffer(0), (1), … となる
         slice = try makeComputation(
@@ -191,11 +195,11 @@ final class FieldAndFlow: Sketch {
         // 断面を帯にする。**高さがそのまま値**で、帯の下から塗り上げる
         graph = try createShader(
             """
-            static inline float mokume_sample(Fragment in, float columns, float i) {
-                return in.numbers[uint(clamp(i, 0.0, columns - 1.0))];
+            static inline float mokume_sample(Numbers numbers, float columns, float i) {
+                return numbers.profile[uint(clamp(i, 0.0, columns - 1.0))];
             }
 
-            float4 paint(Fragment in, Values values) {
+            float4 paint(Fragment in, Values values, Numbers numbers) {
                 float columns = values.columns;
                 float2 band = values.band;
                 float y = (in.place.y - band.x) / (band.y - band.x);
@@ -204,10 +208,10 @@ final class FieldAndFlow: Sketch {
                 float spot = clamp(in.place.x * columns - 0.5, 0.0, columns - 1.0);
                 float i = floor(spot);
                 float t = spot - i;
-                float p0 = mokume_sample(in, columns, i - 1.0);
-                float p1 = mokume_sample(in, columns, i);
-                float p2 = mokume_sample(in, columns, i + 1.0);
-                float p3 = mokume_sample(in, columns, i + 2.0);
+                float p0 = mokume_sample(numbers, columns, i - 1.0);
+                float p1 = mokume_sample(numbers, columns, i);
+                float p2 = mokume_sample(numbers, columns, i + 1.0);
+                float p3 = mokume_sample(numbers, columns, i + 2.0);
                 float level = 0.5 * (2.0 * p1 + (p2 - p0) * t
                     + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t
                     + (3.0 * (p1 - p2) + p3 - p0) * t * t * t);
@@ -232,7 +236,8 @@ final class FieldAndFlow: Sketch {
             values: [
                 "columns": .number(Float(columns)),
                 "band": .pair(band.top, band.bottom),
-            ])
+            ],
+            numbers: ["profile": profile])
     }
 
     func draw() {
@@ -253,19 +258,16 @@ final class FieldAndFlow: Sketch {
         // ここで戻さないと 2 フレーム目から矩形が 1 枚も出ない (絵は出るので気付きにくい)
         fill(255, 255, 255)
         noStroke()
-        numbers(field)
         shader(paint)
         rect(0, 0, width, height)
         resetShader()
-        resetNumbers()
 
-        // 断面の帯。**塗りの規約は同じで、読む並びだけが違う**
-        if let graph, let profile {
-            numbers(profile)
+        // 断面の帯。**塗りの規約は同じで、読む並びの名前だけが違う** — 並びは作るときに渡してあるので、
+        // 塗りを当てるだけでよい
+        if let graph {
             shader(graph)
             rect(0, height * band.top, width, height * (band.bottom - band.top))
             resetShader()
-            resetNumbers()
         }
 
         // CPU が置く側。**GPU が書いた数を CPU が読んで初めて置ける印**である。

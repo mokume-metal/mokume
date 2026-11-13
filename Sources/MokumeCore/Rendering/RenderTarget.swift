@@ -180,6 +180,16 @@ import MokumeDiagnostics
     /// CPU が写しへ書いたまま、まだテクスチャへ戻していないか。
     var hasPendingPixelWrites: Bool { pixelMirror?.hasPendingWrites ?? false }
 
+    /// この面の中身を書き換える仕事を積んだ回数 ([#2618](https://github.com/mokume-metal/mokume/issues/2618))。
+    /// 描き切りが描く先を変えるとき (``Canvas`` の描き切りの `changesTarget`) と、CPU が書いた画素を書き戻したとき
+    /// (``markPixelsWrittenBack(by:)``) に進む。**等しさだけに使う** — 観測の持ち出しが、`draw()` の終わりから
+    /// 撮るまでの間に絵が書き換えられたか (止めている間の入力のコールバックが描いた・画素を書いた) を見る。
+    /// 多めに数えるのはよい (書き換えたと読んで、持ち出さない側に倒れる) が、数え漏らしてはならない。
+    private(set) var contentWrites: UInt64 = 0
+
+    /// 中身を書き換える仕事を積んだ (``contentWrites``)。
+    func noteContentWritten() { contentWrites &+= 1 }
+
     /// 写しを作った回数。**作り直していないこと**と、**頼まれていなければ 0 のまま**
     /// であることを検査から数えるための目印。
     private(set) var pixelMirrorsMade = 0
@@ -583,6 +593,7 @@ import MokumeDiagnostics
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     func markPixelsWrittenBack(by submission: UInt64) {
         guard let pixelMirror else { return }
+        noteContentWritten()
         pixelMirror.hasPendingWrites = false
         pixelMirror.writtenBackBy = submission
         gpu.awaitSettlement(of: submission, by: self)

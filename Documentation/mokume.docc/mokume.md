@@ -1097,8 +1097,8 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 
 ### GPU に計算させる
 
-- ``SketchPart/loadShader(_:values:surfaces:)``
-- ``SketchPart/createShader(_:name:values:surfaces:)``
+- ``SketchPart/loadShader(_:values:surfaces:numbers:)``
+- ``SketchPart/createShader(_:name:values:surfaces:numbers:)``
 - ``SketchPart/shader(_:)``
 - ``SketchPart/resetShader()``
 - ``SketchPart/effects(_:)``

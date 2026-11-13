@@ -69,6 +69,9 @@ struct ParameterStoreTests {
 
         func write(_ incoming: ParamValue) -> ParamOutcome { .applied }
 
+        /// 値は検査が直に書き換える (``number``) だけで、持ち出しの検査はこの代役を使わない。
+        var changeCount: UInt64 { 0 }
+
         func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {}
     }
 

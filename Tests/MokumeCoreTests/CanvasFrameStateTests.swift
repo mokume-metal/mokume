@@ -540,6 +540,7 @@ extension CanvasTests {
                 "lastWriteSubmission": "この面の中身を書き換えた最後の投入の番号。持ち越した打ち切りを下ろすかを決める。面の中身の印で、フレームに属さない (#1932)",
                 "clearSubmission": construction,
                 "surfaceClearsRepeated": count,
+                "contentWrites": "中身を書き換える仕事を積んだ回数 (作ってから通算)。観測の持ち出しが draw() の終わりから絵が変わったかを等しさで見る番号で、増える一方 (#2618)",
             ]
         }
 
