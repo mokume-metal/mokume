@@ -125,6 +125,13 @@ struct WatchKeepTimeTests {
             let child = try hooks.launch(executable, directory, nil, nil)
             child.waitUntilExit()
             #expect(try String(contentsOf: seen, encoding: .utf8) == (given ?? ""), "\(given ?? "渡さない")")
+            // **起こし直した後の子は、新しい場所を受ける** (時刻を 0 から始める・#3428)。旗の無い見張りは替えても載せない
+            hooks.renewClock()
+            let renewed = try hooks.launch(executable, directory, nil, nil)
+            renewed.waitUntilExit()
+            #expect(
+                try String(contentsOf: seen, encoding: .utf8) == (given.map { $0 + "-1" } ?? ""),
+                "起こし直した後: \(given ?? "渡さない")")
         }
     }
 
