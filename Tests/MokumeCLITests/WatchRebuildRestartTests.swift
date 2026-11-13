@@ -71,6 +71,28 @@ struct WatchRebuildRestartTests {
         #expect(try statusObject(harness)["requested"] == nil)
     }
 
+    @Test("頼んだ作り直しは、始まりの行と要約で頼まれたことを名乗り、保存による作り直しの要約は変えない (反証 9)")
+    func aRequestedRebuildSaysItWasAskedFor() async throws {
+        let harness = try Harness()
+        var requestedAtStart: [Bool] = []
+        harness.session.willRebuild = { [unowned session = harness.session] _ in
+            requestedAtStart.append(session.rebuildingRequested)
+        }
+        try #require(await harness.save())
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        try #require(await harness.save())
+        #expect(requestedAtStart == [false, true, false])
+        let asked = try #require(harness.session.lastReport.map { report -> BuildReport in
+            var report = report
+            report.requested = .rebuild
+            return report
+        })
+        #expect(asked.summary.hasSuffix(" requested=rebuild"), "\(asked.summary)")
+        let saved = try #require(harness.session.lastReport)
+        #expect(!saved.summary.contains("requested"), "\(saved.summary)")
+        #expect(WatchCommand.requestedRebuildingLine != WatchCommand.rebuildingLine)
+    }
+
     @Test("作り直しの最中に何度頼んでも、済んだ後の作り直しは 1 回だけ")
     func rebuildRequestsDuringABuildRunOnceAfterIt() async throws {
         let harness = try Harness()
