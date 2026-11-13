@@ -808,6 +808,11 @@ enum WatchCommand {
         if let answered = await session.answerRequests() {
             for line in answered.lines { say(line) }
             announce(answered.stopped)
+            // 起こし直す要求を断った回は、プレビューにも出す (#3428)
+            if let notice = answered.notice {
+                viewer?.firstFrame.settle()
+                showInPreview(notice, false)
+            }
         }
         // **作り直しの契機より先に見る。** 保存と同時に消えた回では、後に置くと新しい子が
         // 起きて印が下り、消えたことを見逃す。名乗った行は作り直しが始まれば
@@ -898,6 +903,13 @@ enum WatchCommand {
             // 名乗った回も、取りかかる前に捨てた回も同じ行
             guard !session.stopRequested else { return true }
             let line = auditionDiscardedLine(productionRunning: discarded.productionRunning)
+            say(line)
+            viewer?.firstFrame.settle()
+            showInPreview(line, false)
+        }
+        // **起こし直す要求を行った・行えなかった回は名乗る** (#3428)。拍の頭で行うので、上の結果とは別に見る
+        if let restart = session.takeRestart(), !session.stopRequested {
+            let line = WatchSession.restartLine(restart)
             say(line)
             viewer?.firstFrame.settle()
             showInPreview(line, false)

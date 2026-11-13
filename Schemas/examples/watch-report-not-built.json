@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "agent-4713",
+  "action": "restart",
+  "accepted": false,
+  "reason": "notBuilt",
+  "auditioning": false,
+  "production": {
+    "pid": 48213,
+    "stamp": "s1f3a9c"
+  }
+}

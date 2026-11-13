@@ -90,12 +90,31 @@ struct WatchSurfaceSchemaTests {
         #expect(Set(marked.keys).isSubset(of: Set(declared.keys)))
     }
 
+    @Test("区画 build の記録が頼まれた作り直しに付ける欄 requested は、スキーマの欄と enum にあり、保存の回では書かない (#3428)")
+    func buildRecordRequestedKeyIsDeclared() throws {
+        let schema = try Self.schema("build-status")
+        let declared = try Self.properties(schema)
+        let requested = try #require(declared["requested"] as? [String: Any])
+        let spelled = try #require(requested["enum"] as? [String])
+        #expect(Set(BuildReport.Requested.allCases.map(\.rawValue)) == Set(spelled))
+        var report = BuildReport.launched(
+            output: "", stamp: "s", configuration: "debug", timings: .init(buildMs: 1))
+        let plain = try #require(
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+        #expect(plain["requested"] == nil, "保存の回の記録に requested を書いた")
+        report.requested = .rebuild
+        let marked = try #require(
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+        #expect(marked["requested"] as? String == "rebuild")
+        #expect(Set(marked.keys).isSubset(of: Set(declared.keys)))
+    }
+
     @Test("要求が読む動作の綴りは、スキーマの例に挙がり、代表例は読める")
     func actionsAreListedAndTheExampleDecodes() throws {
         let schema = try Self.schema("watch-request")
         let action = try #require(try Self.properties(schema)["action"] as? [String: Any])
         let examples = Set(try #require(action["examples"] as? [String]))
-        #expect(Set([WatchRequest.Action.audition, .leave].map(\.rawValue)) == examples)
+        #expect(Set(WatchRequest.Action.allCases.map(\.rawValue)) == examples)
         #expect(Set(try Self.properties(schema).keys) == ["id", "action"])
 
         let file = URL(fileURLWithPath: #filePath)

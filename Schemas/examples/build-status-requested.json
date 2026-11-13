@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "status": 0,
+  "output": "Build complete! (0.79s)\n",
+  "stamp": "7c1f9ab30d24",
+  "configuration": "debug",
+  "launched": true,
+  "requested": "rebuild",
+  "timings": {
+    "buildMs": 790.2,
+    "relaunchMs": 35.4,
+    "firstFrameMs": 398.1
+  }
+}
