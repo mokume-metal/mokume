@@ -5,6 +5,7 @@
     "Sketch": [
       {
         "owner": "",
+        "ownerPath": "",
         "declaration": "@MainActor protocol Sketch : AnyObject, SketchPart",
         "doc": "利用者が書く単位。"
       }
@@ -12,13 +13,29 @@
     "ambientLight": [
       {
         "owner": "SketchPart",
+        "ownerPath": "SketchPart",
         "declaration": "@MainActor func ambientLight(_ color: LinearRGBA)",
         "doc": "全体を底上げする光を置く。\n\n**この口の目盛りは 0…1 で、塗りと同じ 0–255 ではない。**"
       },
       {
         "owner": "SketchPart",
+        "ownerPath": "SketchPart",
         "declaration": "@MainActor func ambientLight(_ gray: some ScalarConvertible)",
         "doc": ""
+      }
+    ],
+    "init": [
+      {
+        "owner": "PixelSurface",
+        "ownerPath": "PixelSurface",
+        "declaration": "init(width: Int, height: Int)",
+        "doc": "空の面を作る。"
+      },
+      {
+        "owner": "PixelSurface",
+        "ownerPath": "PixelSurface.ColorTable",
+        "declaration": "init(converting surface: PixelSurface)",
+        "doc": "色の表を作る。入れ子の型 ColorTable の初期化子で、owner は最外の型のまま、ownerPath が経路全体を持つ。"
       }
     ]
   }

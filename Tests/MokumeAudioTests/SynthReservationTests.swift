@@ -375,6 +375,32 @@ struct SynthReservationTests {
         stage.close()
     }
 
+    /// `Env.play` の旋律の作例と同じく、1 音ごとに `osc.play(freq, amp, at:)` と `env.play(…, at:)` を同じ時刻へ
+    /// 予約し、置き場から捨てた予約の数を返す。
+    private func droppedMelody(notes: Int) -> Int {
+        let stage = makeStage()
+        let osc = TriOsc(stage: stage)
+        let env = Env()
+        for k in 1...notes {
+            let at = 5 + 0.001 * Double(k)
+            osc.play(440, 0.5, at: at)
+            env.play(osc, 0.01, 0.05, 0.5, 0.1, at: at)
+        }
+        for frame in 0..<8 {
+            stage.frame = frame
+            stage.supply()
+        }
+        defer { stage.close() }
+        return stage.rack.droppedReservations
+    }
+
+    @Test("省いた形の osc.play(freq, amp, at:) と Env.play を組んだ 1 音は 9 個 (3 と 6) で、227 音まで予約できる")
+    func aMelodyNoteTakesNineReservations() {
+        // 2048 ÷ 9 = 227 余り 5。228 音目は高さの 3 個だけ入り (2046)、包絡の 6 個は入らない
+        #expect(droppedMelody(notes: 227) == 0)
+        #expect(droppedMelody(notes: 228) == 1)
+    }
+
     // MARK: - 高さと包絡を同じ時刻に並べる (#3515)
 
     /// 旋律の高さ。k 番目 (k = 1…4) の拍 `0.125 × k` 秒の頭から鳴る。

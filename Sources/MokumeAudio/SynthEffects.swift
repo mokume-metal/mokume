@@ -128,6 +128,8 @@ nonisolated final class DelayLine {
 nonisolated final class EchoKernel {
     /// 作れる最大の遅れ (秒)。置き場を作るときに決める。
     static let maximumSeconds = 5.0
+    /// 既定の遅れ (秒)。
+    static let defaultSeconds: Float = 0.25
     /// 戻す割合の上限。1 に届くと減らずに溜まり続けるので、手前で止める。
     static let maximumFeedback: Float = 0.99
 
@@ -139,7 +141,7 @@ nonisolated final class EchoKernel {
     init(sampleRate: Double) {
         self.sampleRate = sampleRate
         line = DelayLine(capacity: Int(Self.maximumSeconds * sampleRate) + 2)
-        configure(time: 0.25, feedback: 0.5)
+        configure(time: Self.defaultSeconds, feedback: 0.5)
     }
 
     /// `time` 秒の遅れと戻す割合を決める。範囲の外は端へ丸める。

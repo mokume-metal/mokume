@@ -82,6 +82,104 @@ struct FrameListingTests {
         announcement.withdraw()  // 2 度目は何もしない
     }
 
+    // MARK: - 受け付ける面の大きさ (#3949)
+
+    /// **大きさは任意の欄** ([#3949])。載せた項目には鍵が増え、載せない項目 (旧い送り手と同じ形) には鍵ごと無い。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    @Test("大きさを添えて名乗ると最初の 1 件から載り、変わると書き換わる。添えなければ鍵ごと無い")
+    func theSizeIsListedAndRewritten() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "Bricks", identity: "/work/Bricks", title: "Bricks", width: 173, height: 97, in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        defer { announcement.withdraw() }
+        let file = FrameListing.url(for: announcement.entry.serviceName, in: directory)
+        func written() throws -> [String: Any] {
+            try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        }
+        #expect(try written()["width"] as? Int == 173)
+        #expect(try written()["height"] as? Int == 97)
+        #expect(FrameListing.entries(in: directory).map(\.width) == [173])
+
+        announcement.recordSize(width: 211, height: 103)
+        #expect(FrameListing.entries(in: directory).map { [$0.width, $0.height] } == [[211, 103]])
+
+        // 題を書き換えても大きさは残る
+        announcement.update(sketch: "Bricks", title: "Renamed")
+        #expect(FrameListing.entries(in: directory).map { [$0.width, $0.height] } == [[211, 103]])
+
+        // 添えない名乗り (と、片方だけの名乗り) は、旧い送り手と同じく鍵ごと書かない
+        let unsized = try #require(
+            FrameAnnouncement.announce(
+                sketch: "Old", identity: "/work/Old", title: "Old", width: 16, in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        defer { unsized.withdraw() }
+        let old = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: FrameListing.url(for: unsized.entry.serviceName, in: directory)))
+                as? [String: Any])
+        #expect(old["width"] == nil && old["height"] == nil, "大きさの無い項目に鍵を書いた: \(old)")
+    }
+
+    @Test("大きさの無い旧い項目も同じ版として読め、大きさの載った項目は大きさごと読む")
+    func olderEntriesStillRead() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let base = """
+            "schemaVersion": 1, "sketch": "S", "window": "main", "identity": "/s", "title": "S", "pid": 1,
+            "startedAt": 1
+            """
+        try Data("{\(base), \"serviceName\": \"org.mokume.frames.1.a.main\"}".utf8)
+            .write(to: directory.appendingPathComponent("org.mokume.frames.1.a.main.json"))
+        try Data("{\(base), \"serviceName\": \"org.mokume.frames.1.c.main\", \"width\": 16, \"height\": 8}".utf8)
+            .write(to: directory.appendingPathComponent("org.mokume.frames.1.c.main.json"))
+        let entries = FrameListing.entries(in: directory)
+        #expect(entries.map(\.serviceName) == ["org.mokume.frames.1.a.main", "org.mokume.frames.1.c.main"])
+        #expect(entries.map(\.width) == [nil, 16])
+        #expect(entries.map(\.height) == [nil, 8])
+        #expect(entries.allSatisfy { $0.schemaVersion == 1 })
+    }
+
+    /// **Schema が断る大きさは、項目ごと捨てずに大きさの無い項目として読む** (#3949)。Schema の `dependentRequired`
+    /// (片方だけ)・`minimum: 1` (0・負)・`integer` (小数・桁の多い端数・真偽値・文字列) の代表例。旧い送り手の項目と同じに
+    /// 扱うので、名前で繋げ、大きさは別に知っていれば使える。
+    @Test(
+        "Schema が断る大きさの項目は、大きさの無い項目として読む",
+        arguments: [
+            "\"width\": 16", "\"height\": 8", "\"width\": 0, \"height\": 8", "\"width\": 16, \"height\": 0",
+            "\"width\": -16, \"height\": 8", "\"width\": 16, \"height\": -1", "\"width\": 2.5, \"height\": 8",
+            "\"width\": 1.00000000000000000000001, \"height\": 8", "\"width\": true, \"height\": 8",
+            "\"width\": \"16\", \"height\": 8", "\"width\": null, \"height\": 8",
+        ])
+    func sizesTheSchemaRefusesReadAsUnsized(_ size: String) throws {
+        let json = """
+            {"schemaVersion": 1, "sketch": "S", "window": "main", "identity": "/s", "title": "S", "pid": 1,
+             "startedAt": 1, "serviceName": "org.mokume.frames.1.a.main", \(size)}
+            """
+        let entry = try JSONDecoder().decode(FrameListing.Entry.self, from: Data(json.utf8))
+        #expect(entry.width == nil && entry.height == nil, "\(size) を大きさとして読んだ: \(entry)")
+        #expect(entry.serviceName == "org.mokume.frames.1.a.main")
+    }
+
+    /// 大きさの読みを緩めても、必須の欄の整数でない値は今までどおり断る (#4015)。境界の 1×1 は大きさとして読む。
+    @Test("1×1 は大きさとして読み、必須の欄の整数でない値は断る")
+    func theSmallestSizeReadsAndRequiredFieldsStayStrict() throws {
+        func entry(_ fields: String) throws -> FrameListing.Entry {
+            try JSONDecoder().decode(
+                FrameListing.Entry.self,
+                from: Data(
+                    """
+                    {"schemaVersion": 1, "sketch": "S", "window": "main", "identity": "/s", "title": "S",
+                     "serviceName": "org.mokume.frames.1.a.main", \(fields)}
+                    """.utf8))
+        }
+        let smallest = try entry("\"pid\": 1, \"startedAt\": 1, \"width\": 1, \"height\": 1")
+        #expect([smallest.width, smallest.height] == [1, 1])
+        #expect(throws: (any Error).self) { try entry("\"pid\": 1.5, \"startedAt\": 1, \"width\": 16, \"height\": 8") }
+        #expect(throws: (any Error).self) { try entry("\"startedAt\": 1, \"width\": 16, \"height\": 8") }
+    }
+
     /// **名乗れない環境では名乗らずに走り続け、診断に 1 行だけ出す** (App Sandbox を付けた `.app` など)。登録が
     /// 通ってから目録に置くので、断られた回は目録に何も残らない。
     @Test("登録を断られたら、目録に置かず、診断に 1 行だけ出して nil を返す")

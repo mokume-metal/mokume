@@ -164,6 +164,232 @@ nonisolated extension Path {
         return distance > 0 ? operated(with: smooth, .union) : operated(with: smooth, .subtracting)
     }
 
+    /// この道を線とみなし、`shape` の内側にある部分だけを残した道。ペンプロッタ風の斜線を形の中だけに引くのに使う。
+    ///
+    /// 自分の部分道は**線**として読む。開いた部分道は閉じず (2 点の線分も線)、閉じた部分道は閉じる辺も線に含める。
+    /// `shape` の内側は ``contains(_:)`` と同じ数え方 (全部の部分道を 1 つの形とみなし、回り数が 0 でない所。開いた
+    /// 部分道も閉じた形として扱う) で決める。線を縁で区切った区間ごとに、その中点を Float に丸めずに問う。結果は、
+    /// 内側に残った片の並びで、**片は開いた部分道**になる。片の端点は `shape` の縁の上に乗り、片の点は元の向きのまま
+    /// 並ぶ。閉じた部分道の始点が内側にあっても、始点の前後で 2 片に割れず 1 片で返る。**全部が内側にある閉じた部分道は、
+    /// 閉じたまま**返る (長さは元と同じ)。
+    ///
+    /// 片は、部分道の順に、部分道の中では**片が始まる位置 (外から内へ入った点) が元の道を辿って先に来る順**に並ぶ。
+    /// 始点の前後を繋いだ片は、終わり近くで入った点から始まるので、その部分道の片の最後に来る。
+    ///
+    /// - `shape` の縁に接するだけの線 (長さ 0 の片) は残さない
+    /// - **縁にちょうど乗る線**は、``contains(_:)`` が縁の上の点に返す答えのとおりに残ったり消えたりする。四角の縁なら、
+    ///   x の小さい側の縦の辺と y の小さい側の横の辺に乗る線は残り、反対側の 2 辺に乗る線は消える (四角の向きに依らない)。
+    ///   だから `square.clipped(to: square)` は四角の線ではなく、残る 2 辺を繋いだ開いた L 字の 1 片になり、内側に
+    ///   置いた閉じた形が縁と 1 辺を共有すると、その辺が消えて閉じなくなる。**縁に乗せたい線は、少し内側へ寄せてから
+    ///   切る** (四角 (0, 0)–(100, 100) の縁なら、0.5 内側の (0.5, 0.5)–(99.5, 99.5) の四角を切る)
+    /// - 全部が外側にある線と、空の `shape` は、空の道を返す。自分の部分道のうち、点が 2 つに満たないものと数でない
+    ///   座標を持つものは、線にならないので入れない。`shape` の部分道のうち、点が 3 つに満たないもの (面を持たない) と
+    ///   数でない座標を持つものは落ちる (``Path/union(_:)`` と同じ)。`shape` が有限の点だけなら、内側は
+    ///   ``contains(_:)`` と同じ
+    /// - **線として使うなら ``SketchPart/noFill()`` を指定してから** ``SketchPart/shape(_:_:_:)-(Path,_,_)`` で描く。
+    ///   塗りを指定したまま描くと、3 点以上の片は (開いた片も) 閉じた形として塗られ、全部が内側にあって閉じたまま
+    ///   返った部分道はその内側が全部塗られる (``contains(_:)`` と同じく、開いた部分道を閉じた形として塗るため)
+    /// - 計算は本体の中で行い、OS に依らない。元の頂点は曲線が刻んだ点かどうかを引き継ぎ、縁で切ってできた端点は
+    ///   角になる。手間は自分の辺の数と `shape` の辺の数の積に比例する (`shape` を囲む矩形から離れた辺は先に弾く)。
+    ///   同じ線と形を毎フレーム切るなら、結果を持っておいて使い回す
+    ///
+    /// 円の和でできた雲の中だけに斜線を引き、外側に破線の縁を回す例。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     let cloud = Path.union((0..<6).map { i in
+    ///         Path(Circle(center: [200 + Float(i) * 60, 300 + 30 * sin(Float(i) + time)], radius: 70))
+    ///     })
+    ///     background(18, 20, 26)
+    ///     noFill()
+    ///     stroke(240)
+    ///     strokeWeight(2)
+    ///     shape(cloud)                                   // 重なりの内側の線が消える
+    ///     let hatch = createPath {
+    ///         for x in stride(from: Float(-400), to: 1200, by: 8) {
+    ///             beginShape(); vertex(x, 0); vertex(x + 400, 600); endShape()
+    ///         }
+    ///     }
+    ///     stroke(240, 120)
+    ///     shape(hatch.clipped(to: cloud))                // 斜線を雲の中だけに
+    ///     stroke(255, 160, 60)
+    ///     strokeDash(10, 6)
+    ///     shape(cloud.offset(by: 14))                    // 外側に破線の縁 (strokeDash で引く)
+    ///     noStrokeDash()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 濃い下地に、6 つの円を合わせた雲の白い輪郭が 1 本あり、内側だけに斜線が引かれ、外側を橙の破線の縁が囲んでいる | size=800x600 -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 後で撮る
+    public func clipped(to shape: Path) -> Path {
+        // CoreGraphics の `lineIntersection` は使わない。開いた折れ線 (点 3 つ以上) で最後の辺を落とし、外側の片を
+        // 返すことがある (macOS 27.0.1 で確かめた)
+        let region = ClipRegion(shape)
+        guard !region.edges.isEmpty else { return Path() }
+        var result: [Subpath] = []
+        for subpath in subpaths where subpath.points.count >= 2 {
+            guard subpath.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
+            result += Self.clip(subpath, to: region)
+        }
+        return Path(subpaths: result)
+    }
+
+    /// ``clipped(to:)`` の相手。閉じた辺の並びとして持つ。
+    private struct ClipRegion {
+        /// 点が 3 つ以上で、全部が有限の部分道。
+        var subpaths: [Subpath] = []
+        /// `subpaths` の辺 (閉じる辺を含む)。
+        var edges: [(from: SIMD2<Double>, to: SIMD2<Double>)] = []
+        /// 全部の辺を囲む矩形。この外 (縁を含まない) の点は回り数が 0 で、この外にある線は辺と交わらない。
+        var low = SIMD2<Double>(repeating: .infinity)
+        var high = SIMD2<Double>(repeating: -.infinity)
+
+        init(_ path: Path) {
+            for subpath in path.subpaths where subpath.points.count >= 3 {
+                guard subpath.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
+                subpaths.append(subpath)
+                let points = subpath.points.map { SIMD2<Double>(Double($0.x), Double($0.y)) }
+                var previous = points[points.count - 1]
+                for current in points {
+                    edges.append((previous, current))
+                    low = pointwiseMin(low, current)
+                    high = pointwiseMax(high, current)
+                    previous = current
+                }
+            }
+        }
+
+        /// `low`…`high` の矩形が、相手を囲む矩形と離れている (縁で触れるだけなら離れていない)。
+        func isApart(low: SIMD2<Double>, high: SIMD2<Double>) -> Bool {
+            high.x < self.low.x || low.x > self.high.x || high.y < self.low.y || low.y > self.high.y
+        }
+
+        private static func cross(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double { a.x * b.y - a.y * b.x }
+
+        /// 線分 `from`→`to` が辺を横切る所の、線分の上の位置 (0 < t < 1) を `found` に足す。平行な辺は数えない。
+        func crossings(from: SIMD2<Double>, to: SIMD2<Double>, into found: inout [Double]) {
+            let direction = to - from
+            let low = pointwiseMin(from, to)
+            let high = pointwiseMax(from, to)
+            for edge in edges {
+                guard max(edge.from.x, edge.to.x) >= low.x, min(edge.from.x, edge.to.x) <= high.x,
+                    max(edge.from.y, edge.to.y) >= low.y, min(edge.from.y, edge.to.y) <= high.y
+                else { continue }
+                let side = edge.to - edge.from
+                let denominator = Self.cross(direction, side)
+                guard denominator != 0 else { continue }
+                let offset = edge.from - from
+                let t = Self.cross(offset, side) / denominator
+                let u = Self.cross(offset, direction) / denominator
+                if t > 0, t < 1, u >= 0, u <= 1 { found.append(t) }
+            }
+        }
+
+        /// ``Path/contains(_:)`` と同じ数え方の回り数 (``Path/winding(at:in:)``)。
+        func winding(_ point: SIMD2<Double>) -> Int {
+            if isApart(low: point, high: point) { return 0 }
+            return Path.winding(at: point, in: subpaths)
+        }
+    }
+
+    /// 部分道 1 つを切った片。
+    struct ClipPiece: Equatable {
+        var points: [SIMD2<Float>]
+        var isCurveStep: [Bool]
+    }
+
+    /// 閉じた部分道の始点が内側にあるとき、始点の前で終わる最後の片と、始点から始まる最初の片を 1 片に繋ぐ。
+    ///
+    /// 片は 1 つの部分道から出たものだけを渡す (別の部分道の片を繋がない)。開いた部分道、始点か終わりが外側の
+    /// 部分道、片が 1 つしか無い部分道は、そのまま返す。繋いだ片は最後に置く (始点より後の弧長から始まるため)。
+    static func joinedAcrossStart(
+        _ pieces: [ClipPiece], isClosed: Bool, startsInside: Bool, endsInside: Bool
+    ) -> [ClipPiece] {
+        guard isClosed, startsInside, endsInside, pieces.count >= 2, let first = pieces.first, let last = pieces.last
+        else { return pieces }
+        let joined = ClipPiece(
+            points: last.points + first.points.dropFirst(), isCurveStep: last.isCurveStep + first.isCurveStep.dropFirst())
+        return Array(pieces.dropFirst().dropLast()) + [joined]
+    }
+
+    /// 部分道 1 つを、辺ごとに相手の縁で区切り、区間の中点が内側の区間だけを残す。
+    private static func clip(_ subpath: Subpath, to region: ClipRegion) -> [Subpath] {
+        let points = subpath.points
+        let marks = subpath.isCurveStep
+        let count = points.count
+        // 相手を囲む矩形から離れた部分道は、全部が外側
+        let low = points.reduce(SIMD2<Float>(repeating: .infinity)) { pointwiseMin($0, $1) }
+        let high = points.reduce(SIMD2<Float>(repeating: -.infinity)) { pointwiseMax($0, $1) }
+        if region.isApart(low: SIMD2<Double>(low), high: SIMD2<Double>(high)) { return [] }
+        var pieces: [ClipPiece] = []
+        var current: ClipPiece?
+        var startsInside: Bool?
+        var endsInside = false
+        var anyOutside = false
+        // 辺ごとの区切りの位置。辺ごとに作り直さず使い回す
+        var cuts: [Double] = []
+        for index in 0..<(subpath.isClosed ? count : count - 1) {
+            let next = (index + 1) % count
+            let from = SIMD2<Double>(Double(points[index].x), Double(points[index].y))
+            let to = SIMD2<Double>(Double(points[next].x), Double(points[next].y))
+            guard from != to else { continue }
+            cuts.removeAll(keepingCapacity: true)
+            cuts.append(0)
+            // 相手を囲む矩形から離れた辺は、区切らずに 1 区間とする (中点も矩形の外なので、回り数を数えずに外になる)
+            if !region.isApart(low: pointwiseMin(from, to), high: pointwiseMax(from, to)) {
+                region.crossings(from: from, to: to, into: &cuts)
+                cuts[1...].sort()
+            }
+            cuts.append(1)
+            for step in 0..<(cuts.count - 1) {
+                let (t0, t1) = (cuts[step], cuts[step + 1])
+                guard t1 > t0 else { continue }
+                let inside = region.winding(from + (to - from) * ((t0 + t1) / 2)) != 0
+                if startsInside == nil { startsInside = inside }
+                endsInside = inside
+                if inside {
+                    if current == nil {
+                        current =
+                            t0 == 0
+                            ? ClipPiece(points: [points[index]], isCurveStep: [marks[index]])
+                            : ClipPiece(points: [Self.float(from + (to - from) * t0)], isCurveStep: [false])
+                    }
+                    // 内側の区間が続く間は、縁を横切った点 (回り数が 0 でないまま変わる所) を置かない
+                    if t1 == 1 {
+                        current?.points.append(points[next])
+                        current?.isCurveStep.append(marks[next])
+                    }
+                } else {
+                    anyOutside = true
+                    if var piece = current {
+                        if t0 > 0 {
+                            piece.points.append(Self.float(from + (to - from) * t0))
+                            piece.isCurveStep.append(false)
+                        }
+                        pieces.append(piece)
+                    }
+                    current = nil
+                }
+            }
+        }
+        if let piece = current { pieces.append(piece) }
+        // 全部が内側の閉じた部分道は、閉じたまま返す
+        if subpath.isClosed, !anyOutside, startsInside == true { return [subpath] }
+        return joinedAcrossStart(
+            pieces, isClosed: subpath.isClosed, startsInside: startsInside ?? false, endsInside: endsInside
+        )
+        .filter { piece in piece.points.contains { $0 != piece.points[0] } }  // 長さ 0 の片は残さない
+        .map { Subpath(points: $0.points, isClosed: false, isCurveStep: $0.isCurveStep) }
+    }
+
+    private static func float(_ point: SIMD2<Double>) -> SIMD2<Float> {
+        SIMD2<Float>(Float(point.x), Float(point.y))
+    }
+
     private enum Operation {
         case union, subtracting, intersection
     }
