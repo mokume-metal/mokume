@@ -584,10 +584,13 @@ struct SoundFileTests {
                 },
                 act: { sound, frame in
                     switch (scenario, frame) {
-                    case ("loop", 2), ("jump", 2):
+                    case ("loop", 2):
                         if panned { sound.pan(-1) }
                     case ("jump", 3):
                         sound.jump(0.02)
+                    case ("jump", 4):
+                        // 飛び先から鳴り始めるウィンドウで頼む
+                        if panned { sound.pan(-1) }
                     case ("pause", 2):
                         sound.pause()
                     case ("pause", 3):
@@ -616,10 +619,10 @@ struct SoundFileTests {
         let panned = try run(panned: true)
         // 定位なしは、左右が同じ標本
         #expect(plain.left == plain.right)
-        // ウィンドウの番号は 0 から (フレーム f の操作はウィンドウ f - 1 から効く)。定位が頭から効くウィンドウ
-        // (ループ・飛びは、鳴っている間に頼んだので移りきった次のウィンドウ) と、定位を頼む前のウィンドウ
-        let from = ["loop": 2, "jump": 2, "pause": 3, "replay": 2, "envelope": 2][scenario]!
-        let before = scenario == "loop" || scenario == "jump" ? 1 : from
+        // ウィンドウの番号は 0 から (フレーム f の操作はウィンドウ f - 1 から効く。鳴っている間の飛びは f)。定位が
+        // 頭から効くウィンドウ (ループは、鳴っている間に頼んだので移りきった次のウィンドウ) と、定位を頼む前のウィンドウ
+        let from = ["loop": 2, "jump": 3, "pause": 3, "replay": 2, "envelope": 2][scenario]!
+        let before = scenario == "loop" ? 1 : from
         #expect(panned.left[..<before] == plain.left[..<before], "定位を頼む前のウィンドウは同じ")
         #expect(panned.right[..<before] == plain.right[..<before])
         let root2 = Float(2.0.squareRoot())
