@@ -755,7 +755,7 @@ def _sketch_member_uses(code: str, name: str, kind: str, closure_last: bool) -> 
 
 
 def check_sketch_coverage(
-    symbols: list[dict], sources: str, unshown: dict[str, str] = UNSHOWN,
+    symbols: list[dict], sources: str | list[str], unshown: dict[str, str] = UNSHOWN,
     requirements: frozenset[str] | set[str] = frozenset(),
 ) -> list[str]:
     """`Sketch` の公開メンバが、参照スケッチのどこかで呼ばれているか (#1358)。
@@ -783,13 +783,25 @@ def check_sketch_coverage(
     - **性質** (`time`・`width` のように括弧を持たないもの) は、宣言の左辺 (`let time = …`) と
       引数のラベル (`time:`) 以外の出方を数える。同じ基底名に性質もあるときも性質として数える
 
+    **スケッチが自前に宣言した同名の関数は数えない** (#4052)。`sources` は 1 スケッチ (ファイル)
+    ごとの文字列の並びで、あるファイルが `func numbers(` を宣言していれば、そのファイルの
+    `numbers(` は自前の関数の呼び出しで、`Sketch.numbers(_:)` の呼び出しではない
+    (`PartsAndFormats` の補助関数の呼び出しで、どのスケッチも呼ばない API が通っていた)。
+    関数のメンバにだけ効く。宣言の有無はファイル単位で見るので、別のファイルが API を
+    呼んでいれば数える。**代償**: 同じファイルが自前の関数と API を同じ名前で両方呼ぶと、
+    API の呼び出しまでは数えられない。数えたいなら API を呼ぶスケッチを別に置く (宣言した型の中
+    だけを外す読みは、型の波括弧の対応まで読むことになるので採らなかった)。
+
     **数えないもの (代償)**: 関数を値として渡す形 (`values.map(phase)`) は呼び出しの形ではない
     ので数えない。示したいなら `phase(period: …)` と呼ぶ。多重定義は基底名に畳むので、片方の
     引数の形だけが呼ばれていても通る ([#3035](https://github.com/mokume-metal/mokume/issues/3035))。
     根は字句の照合である — コンパイラが解いた参照 (index store) で引けば、局所変数・受け手・
     宣言を取り違えない。残した道として #3026 に書いた。
     """
-    code = blank_comments(sources, strings=True)
+    files = [sources] if isinstance(sources, str) else list(sources)
+    codes = [blank_comments(source, strings=True) for source in files]
+    # ファイルごとに、自前に宣言した関数の名前 (`func name`。型の中の static・private も含む)
+    declared = [set(re.findall(r"\bfunc\s+(\w+)", code)) for code in codes]
     # 基底名 → (口の種類, 最後の引数が閉包の宣言があるか)
     flags: dict[str, dict[str, bool]] = {}
     for member in symbols:
@@ -809,7 +821,12 @@ def check_sketch_coverage(
     problems = []
     for base in sorted(members.keys() - unshown.keys()):
         kind, closure_last = members[base]
-        if _sketch_member_uses(code, base, kind, closure_last):
+        if any(
+            _sketch_member_uses(code, base, kind, closure_last)
+            for code, own in zip(codes, declared)
+            # 自前の同名の関数を持つファイルの呼び出しは、関数のメンバの呼び出しに数えない (#4052)
+            if not (kind == "function" and base in own)
+        ):
             continue
         problems.append(
             f"{ENTRY_TYPE}.{base} が参照スケッチ (Sketches/) から呼ばれていない。"
@@ -1394,10 +1411,9 @@ def check_settings_form(symbols: list[dict], sketches: pathlib.Path) -> list[str
     return problems
 
 
-def read_sketches(directory: pathlib.Path) -> str:
-    return "\n".join(
-        path.read_text(encoding="utf-8") for path in sorted(directory.glob("*.swift"))
-    )
+def read_sketches(directory: pathlib.Path) -> list[str]:
+    """参照スケッチを 1 ファイル 1 文字列で返す (自前の関数の宣言をファイル単位で見るため・#4052)。"""
+    return [path.read_text(encoding="utf-8") for path in sorted(directory.glob("*.swift"))]
 
 
 # ---------------------------------------------------------------- 入口
