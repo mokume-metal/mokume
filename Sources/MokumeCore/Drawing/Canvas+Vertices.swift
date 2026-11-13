@@ -262,9 +262,11 @@ extension Canvas {
 
     /// 通過点を並びへ足し、4 つ揃っていれば最後の 1 区間を刻んで置く。
     ///
-    /// **1 区間の 4 点がどれも平面の点なら、平面の曲線として刻む** — 刻みの点は奥行きを手前の点から
-    /// 引き継ぎ、形を立体にしない (#3712 の前と同じ)。1 つでも奥行きを持つ点があれば、平面の点を
-    /// `z` = 0 として 3 次元で刻み、刻みの点を `vertex(x, y, z)` と同じく奥行きを持つ点として置く。
+    /// **平面の点はどれも `z` = 0 の点として読む** (`vertex(x, y)` と同じ・#3712)。1 区間の 4 点が
+    /// どれも平面の点なら平面の曲線として刻み、刻みの点も `z` = 0 の平面の点として置く (形を立体に
+    /// しない。平面だけの形の点は #3712 の前と同じ)。1 つでも奥行きを持つ点があれば 3 次元で刻み、
+    /// 刻みの点を `vertex(x, y, z)` と同じく奥行きを持つ点として置く。どちらでも平面の通過点は
+    /// `z` = 0 なので、2 つの区間が同じ通過点を違う奥行きで読むことは無い。
     private func placeCurveGuide(_ guide: CurveGuide) {
         curveGuides.append(guide)
         guard curveGuides.count >= 4 else { return }
@@ -278,9 +280,9 @@ extension Canvas {
             let p1 = SIMD2(g1.position.x, g1.position.y)
             let p2 = SIMD2(g2.position.x, g2.position.y)
             let p3 = SIMD2(g3.position.x, g3.position.y)
-            // 並びの最初の区間は始点も置く。環の最後の点が始点と同じ位置なら置き直さない (#1537)
-            let last = lastShapePoint
-            if count == 4, last != p1 { appendShapePoint(p1, isCurveStep: false) }
+            // 並びの最初の区間は始点も置く。環の最後の点が始点と同じ位置なら置き直さない (#1537)。
+            // 位置は奥行きまで比べる — 平面の始点は `z` = 0 の点で、同じ x・y の奥行きを持つ点とは別の点 (#3712)
+            if count == 4, lastShapePosition != g1.position { appendShapePoint(p1, isCurveStep: false) }
             for step in 1...currentCurveDetail {
                 let t = Float(step) / Float(currentCurveDetail)
                 // 最後の刻みは通過点 — 張り具合 1 では折れ線の角になる
@@ -1426,8 +1428,8 @@ extension Canvas {
         return SIMD2(last.position.x, last.position.y)
     }
 
-    /// ``lastShapePoint`` の奥行きまで含めた位置。奥行きを持つ曲線 (#3712) の始点になる。平面の点は
-    /// `z` に置いた時の奥行き (`vertex(x, y)` なら 0、平面の曲線の刻みなら手前から引き継いだ値) を持つ。
+    /// ``lastShapePoint`` の奥行きまで含めた位置。奥行きを持つ曲線 (#3712) の始点になる。平面の点
+    /// (`vertex(x, y)`・平面の曲線の点) は `z` = 0 を持つ。
     private var lastShapePosition: SIMD3<Float>? {
         (holePoints ?? shapePoints).last?.position
     }
@@ -1442,10 +1444,12 @@ extension Canvas {
         curveGuides.removeAll(keepingCapacity: true)
     }
 
-    /// 曲線が作った点を置く。奥行きは直前の点から引き継ぐ。
+    /// 平面の曲線が作った点を置く。**奥行きは `z` = 0** — `vertex(x, y)` の点と同じく、奥行きを持つ点と
+    /// 同じ形に混ぜても手前の点の奥行きを引き継がない ([#3712]。それより前は直前の点から引き継いでいた)。
+    ///
+    /// [#3712]: https://github.com/mokume-metal/mokume/issues/3712
     private func appendShapePoint(_ point: SIMD2<Float>, isCurveStep: Bool) {
-        let depth = (holePoints?.last ?? shapePoints.last)?.position.z ?? 0
-        appendVertex(SIMD3(point.x, point.y, depth), hasDepth: false, isCurveStep: isCurveStep)
+        appendVertex(SIMD3(point.x, point.y, 0), hasDepth: false, isCurveStep: isCurveStep)
     }
 
     func appendVertex(

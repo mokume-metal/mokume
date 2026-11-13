@@ -369,6 +369,9 @@ extension SketchPart {
     ///
     /// 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
     /// 始点が無ければ引きようがない。
+    ///
+    /// **奥行きを持つ点と 1 つの形に混ぜると、平面の点は `z` = 0 として読む** (``vertex(_:_:)`` と同じ)。 制御点も刻んだ点も平面の点で、
+    /// 手前の点の奥行きを引き継がない。奥行きを持たせるなら 9 つの数の ``bezierVertex(_:_:_:_:_:_:_:_:_:)`` で書く。
     // shot: 1 snippet=0439d7b3
     // shot: 2 snippet=74fd9077
     public func bezierVertex(
@@ -433,8 +436,8 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 始点は手前に置いた点で、平面の点 (``vertex(_:_:)`` で置いた点) なら `z` を 0 として読む —
-    /// ``vertex(_:_:)`` と ``vertex(_:_:_:)`` を 1 つの形に混ぜたときと同じ読み方である。刻み (``curveDetail(_:)``)・
+    /// 始点は手前に置いた点である。**奥行きを持つ点と 1 つの形に混ぜると、平面の点は `z` = 0 として読む** (``vertex(_:_:)`` と同じ)。
+    /// 手前が平面の点 (``vertex(_:_:)`` や平面の曲線の点) なら、始点の `z` は 0 になる。刻み (``curveDetail(_:)``)・
     /// 手前に点が無いときの扱い・``curveVertex(_:_:)`` の並びを切ることは、6 つの数の形と同じ。
     // shot: 後で撮る
     public func bezierVertex(
@@ -503,6 +506,9 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// **奥行きを持つ点と 1 つの形に混ぜると、平面の点は `z` = 0 として読む** (``vertex(_:_:)`` と同じ)。 制御点も刻んだ点も平面の点で、
+    /// 手前の点の奥行きを引き継がない。奥行きを持たせるなら 6 つの数の ``quadraticVertex(_:_:_:_:_:_:)`` で書く。
     // shot: 1 snippet=03aa6a6a
     public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
@@ -672,6 +678,9 @@ extension SketchPart {
     /// **穴の中の曲線は、外周と独立に始まる。** 穴の中で最初に引かれる区間は、穴の中で
     /// 置いた点だけで決まり、形の中で最初に引かれる区間と同じくその始点 (2 つ目に置いた点)
     /// から描かれる。穴を閉じた後に外周へ置く `curveVertex` も、穴の点を引き継がない。
+    ///
+    /// **奥行きを持つ点と 1 つの形に混ぜると、平面の点は `z` = 0 として読む** (``vertex(_:_:)`` と同じ)。 通過点も刻んだ点も平面の点で、
+    /// 手前の点の奥行きを引き継がない。奥行きを持たせるなら ``curveVertex(_:_:_:)`` で書く。
     // shot: 1 snippet=398e30fc
     // shot: 2 snippet=794ad9dd
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
@@ -710,9 +719,8 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// **平面の点と混ぜてよい。** 1 区間の 4 点に奥行きを持つ点が 1 つでもあれば、平面の点 (2 つの数で置いた点)
-    /// を `z` が 0 の点として読む — ``vertex(_:_:)`` と ``vertex(_:_:_:)`` を 1 つの形に混ぜたときと同じ読み方である。
-    /// 4 点がどれも平面の点なら、これまでどおり平面の曲線として刻む。
+    /// 平面の点 (2 つの数の ``curveVertex(_:_:)``) と混ぜてよい。**奥行きを持つ点と 1 つの形に混ぜると、平面の点は `z` = 0 として読む** (``vertex(_:_:)`` と同じ)。
+    /// 1 区間の 4 点がどれも平面の点なら、その区間は平面の曲線として刻む。
     // shot: 後で撮る
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }

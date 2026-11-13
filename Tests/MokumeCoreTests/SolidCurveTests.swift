@@ -379,21 +379,143 @@ struct SolidCurveTests {
         #expect(worst < 1e-3, "刻みの点が z = 0 の平面の点から求めた位置と \(worst) ずれている")
     }
 
-    /// 奥行きを持つ点を手前に置いた後の平面の `bezierVertex` は、これまでどおり刻みの奥行きを手前から引き継ぐ
-    /// (平面の形の振る舞いは変えない)。
-    @Test("奥行きを持つ点の後の平面の bezierVertex は、刻みの奥行きを手前の点から引き継ぐ")
-    func flatCurveAfterSolidPointKeepsInheritingDepth() throws {
+    /// 奥行きを持つ形の中の平面の曲線の点は、`vertex(x, y)` と同じく `z` = 0 (#3712 のメンテナの決定・案 a)。
+    /// 手前の点の奥行きは引き継がない。平面の 3 つの曲線の API それぞれで見る。
+    @Test("奥行きを持つ点の後の平面の bezierVertex・quadraticVertex・curveVertex は、刻みの点を z = 0 に置く")
+    func flatCurveAfterSolidPointSitsAtZeroDepth() throws {
         let canvas = try CanvasFixture.make(gpu: try RenderDevice(), width: 64, height: 64)
-        var depths: [Float] = []
+        let flatCurves: [(String, () -> Void)] = [
+            ("bezierVertex", { canvas.bezierVertex(10, 4, 50, 8, 60, 58) }),
+            ("quadraticVertex", { canvas.quadraticVertex(30, 2, 60, 58) }),
+            ("curveVertex", {
+                canvas.curveVertex(2, 60)
+                canvas.curveVertex(10, 10)
+                canvas.curveVertex(50, 40)
+                canvas.curveVertex(62, 4)
+            }),
+        ]
+        for (name, flat) in flatCurves {
+            var points: [SIMD3<Float>] = []
+            try canvas.draw {
+                canvas.beginShape()
+                canvas.vertex(4, 50, -30)
+                flat()
+                points = canvas.shapePoints.map(\.position)
+                canvas.endShape()
+            }
+            #expect(points.first == SIMD3(4, 50, -30), "\(name): 手前の点が動いた")
+            #expect(points.count > 4, "\(name): 刻まれていない")
+            #expect(points.dropFirst().allSatisfy { $0.z == 0 }, "\(name): 平面の曲線の点が z = 0 でない: \(points.map(\.z))")
+        }
+    }
+
+    /// 反証役の例: 奥行きを持つ点の後に平面の通過点を 4 つ、続けて奥行きを持つ通過点を 1 つ置く。1 本目の区間
+    /// (4 点とも平面) と 2 本目の区間 (奥行きを持つ点が入る) が、共有する通過点を同じ奥行きで読む — 線が跳ばない。
+    @Test("平面の通過点の後に奥行きを持つ通過点を足しても、共有する通過点の奥行きは 2 つの区間で同じ (線が跳ばない)")
+    func sharedGuideKeepsOneDepthAcrossSegments() throws {
+        let canvas = try CanvasFixture.make(gpu: try RenderDevice(), width: 64, height: 64)
+        let flat: [SIMD2<Float>] = [SIMD2(4, 40), SIMD2(16, 20), SIMD2(36, 44), SIMD2(52, 12)]
+        let solid = SIMD3<Float>(60, 50, -10)
+        var placed: [SIMD3<Float>] = []
         try canvas.draw {
             canvas.beginShape()
-            canvas.vertex(4, 50, -30)
-            canvas.bezierVertex(10, 4, 50, 8, 60, 58)
-            depths = canvas.shapePoints.map(\.position.z)
+            canvas.vertex(0, 0, 50)
+            for point in flat { canvas.curveVertex(point.x, point.y) }
+            canvas.curveVertex(solid.x, solid.y, solid.z)
+            placed = canvas.shapePoints.map(\.position)
             canvas.endShape()
         }
-        #expect(depths.count == 21)
-        #expect(depths.allSatisfy { $0 == -30 })
+        let g = flat.map { SIMD3($0.x, $0.y, 0) }
+        let first = Self.steps(20) { Self.catmullRom(g[0], g[1], g[2], g[3], $0) }
+        let second = Self.steps(20) { Self.catmullRom(g[1], g[2], g[3], solid, $0) }
+        let expected = [SIMD3<Float>(0, 0, 50), g[1]] + first + second
+        #expect(placed.count == expected.count)
+        let worst = zip(placed, expected).map { simd_length($0.0 - $0.1) }.max() ?? .infinity
+        #expect(worst < 1e-3, "置かれた点が z = 0 の通過点から求めた位置と \(worst) ずれている")
+        // 1 本目の終わり (通過点 g[2]) と、2 本目の最初の刻みの間で奥行きが跳ばない
+        let joint = 2 + first.count - 1
+        #expect(placed[joint].z == 0, "1 本目の区間が通過点に着く奥行きが 0 でない: \(placed[joint].z)")
+        #expect(abs(placed[joint + 1].z - placed[joint].z) < 1, "2 本目の区間の最初の刻みで奥行きが跳んだ")
+    }
+
+    /// 「奥行きを持つ形の中」の判定は、点を置く順に依らない。平面の曲線を先に置き、後から奥行きを持つ点が
+    /// 来て初めて形が立体になる並びでも、先に置いた平面の曲線の点は `z` = 0 のまま。
+    @Test("平面の曲線を先に置き、後から奥行きを持つ点を置いても、平面の曲線の点は z = 0 のまま")
+    func flatCurveBeforeSolidPointStaysAtZeroDepth() throws {
+        let canvas = try CanvasFixture.make(gpu: try RenderDevice(), width: 64, height: 64)
+        var points: [SIMD3<Float>] = []
+        var hasDepth = false
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.vertex(4, 50)
+            canvas.bezierVertex(10, 4, 50, 8, 60, 58)
+            canvas.vertex(30, 30, 20)
+            canvas.bezierVertex(40, 10, 50, 20, 60, 40)
+            points = canvas.shapePoints.map(\.position)
+            hasDepth = canvas.shapeHasDepth
+            canvas.endShape()
+        }
+        #expect(hasDepth)
+        #expect(points.count == 42)
+        #expect(points[21] == SIMD3(30, 30, 20))
+        let flatPoints = points[..<21] + points[22...]
+        #expect(flatPoints.allSatisfy { $0.z == 0 }, "平面の曲線の点が z = 0 でない: \(points.map(\.z))")
+    }
+
+    /// 穴の中でも同じ規則: 奥行きを持つ点の後の平面の曲線の点は `z` = 0。
+    @Test("穴 (beginContour) の中でも、奥行きを持つ点の後の平面の曲線の点は z = 0")
+    func flatCurveInsideAContourSitsAtZeroDepth() throws {
+        let canvas = try CanvasFixture.make(gpu: try RenderDevice(), width: 64, height: 64)
+        var hole: [SIMD3<Float>] = []
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.vertex(0, 0, 10)
+            canvas.vertex(64, 0, 10)
+            canvas.vertex(64, 64, 10)
+            canvas.vertex(0, 64, 10)
+            canvas.beginContour()
+            canvas.vertex(20, 20, 10)
+            canvas.bezierVertex(30, 10, 44, 30, 44, 44)
+            canvas.quadraticVertex(30, 50, 20, 44)
+            canvas.endContour()
+            hole = canvas.shapeHoles.last?.map(\.position) ?? []
+            canvas.endShape(.close)
+        }
+        #expect(hole.count == 41)
+        #expect(hole.first == SIMD3(20, 20, 10))
+        #expect(hole.dropFirst().allSatisfy { $0.z == 0 }, "穴の中の平面の曲線の点が z = 0 でない: \(hole.map(\.z))")
+    }
+
+    /// 記録した形 (`createShape`) を置いても (`shape(_:)`・`shape(_:at:)`)、同じ規則の絵になる。比べる先は、
+    /// 平面の曲線の刻みを `vertex(x, y, 0)` で明示して並べた絵。
+    @Test("記録した形でも、奥行きを持つ点の後の平面の曲線は z = 0 の点を並べた絵と同じ")
+    func recordedShapeFollowsTheSameRule() throws {
+        let start = SIMD2<Float>(100, 100)
+        let (c1, c2, end) = (SIMD2<Float>(150, 60), SIMD2<Float>(200, 140), SIMD2<Float>(250, 100))
+        func mixed(_ canvas: Canvas) {
+            canvas.beginShape()
+            canvas.vertex(start.x, start.y, 40)
+            canvas.bezierVertex(c1.x, c1.y, c2.x, c2.y, end.x, end.y)
+            canvas.endShape()
+        }
+        let explicit = try picture { canvas in
+            canvas.beginShape()
+            canvas.vertex(start.x, start.y, 40)
+            for step in 1...20 {
+                let p = Canvas.cubicPoint(start, c1, c2, end, Float(step) / 20)
+                canvas.vertex(p.x, p.y, 0)
+            }
+            canvas.endShape()
+        }
+        let direct = try picture(mixed)
+        let recorded = try picture { canvas in canvas.shape(canvas.createShape { mixed(canvas) }) }
+        let placed = try picture { canvas in
+            canvas.shape(canvas.createShape { mixed(canvas) }, at: [Placement(x: 0, y: 0)])
+        }
+        #expect(direct != (try blank()), "混ぜた形が何も描いていない")
+        #expect(direct == explicit)
+        #expect(recorded == explicit)
+        #expect(placed == explicit)
     }
 
     // MARK: - 形の外・始点の無いとき

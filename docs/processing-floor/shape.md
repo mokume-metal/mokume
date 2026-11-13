@@ -86,7 +86,7 @@ Processing 本体のリファレンスのうち、category が `shape`・`pshape
 | `beginContour()`・`endContour()` (2 件) | `beginContour()`・`endContour()` | 同等 | 図形の中の穴。閉じてからもう一度開けば、穴はいくつでも空けられる。頂点が 3 つに満たない穴は破棄する | — |
 | `vertex()` | `vertex(_:_:)`・`vertex(_:_:_:)`・`vertex(_:_:_:_:)`・`vertex(_:_:_:_:_:)`・`vertex(_: Vector2)`・`vertex(_: Vector3)` | 同等 | リファレンスの 5 つの引数の形 (`x, y`・`x, y, z`・`v`・`x, y, u, v`・`x, y, z, u, v`) がすべてある。`PVector` は `Vector2`・`Vector3` | — |
 | `bezierVertex()`・`quadraticVertex()` (2 件) | `bezierVertex(_:_:_:_:_:_:)`・`bezierVertex(_:_:_:_:_:_:_:_:_:)`・`quadraticVertex(_:_:_:_:)`・`quadraticVertex(_:_:_:_:_:_:)` | 同等 | 直前の頂点から接続する。直前に頂点が無ければ何もしない。`z` を持つ、引数が 9 個・6 個の形は、分割した点を `vertex(x, y, z)` と同じ奥行きを持つ点として置く (直前の頂点が平面の点なら `z` を 0 として読む)。引数ラベル付きの形は `Vector2` と `Vector3` の両方を受ける | [#2462]・[#3712] |
-| `curveVertex()` | `curveVertex(_:_:)`・`curveVertex(_:_:_:)` | 同等 | 頂点が 4 つ揃って 1 区間が描ける (最初と最後の頂点は曲がり具合を決める制御点)。端まで描くには端の頂点を 2 度指定する (Processing と同じ)。`z` を持つ形と平面の形は混ぜてよく、1 区間の 4 点に `z` を持つ点があれば、平面の点を `z` が 0 の点として読む | [#2462]・[#3712] |
+| `curveVertex()` | `curveVertex(_:_:)`・`curveVertex(_:_:_:)` | 同等 | 頂点が 4 つ揃って 1 区間が描ける (最初と最後の頂点は曲がり具合を決める制御点)。端まで描くには端の頂点を 2 度指定する (Processing と同じ)。`z` を持つ形と平面の形は混ぜてよく、`z` を持つ点と 1 つの形に混ぜると、平面の点は `z` = 0 として読む (`vertex(x, y)` と同じ) | [#2462]・[#3712] |
 
 ## 保持した形
 
