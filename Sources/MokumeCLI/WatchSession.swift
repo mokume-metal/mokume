@@ -679,7 +679,7 @@ final class WatchSession {
             dropEndedRestarts()
             // **控えの先頭が起こし直しなら、読みより先に行う** (#3428)。1 拍に 1 つ。試聴の子を起こす起こし直しは、本番が
             // 乗り換えを待つ間は待つ (作り直しと同じ門・``isProductionSettling``)。待つ間も後ろの項目に追い越させない
-            if let first = pending.first, first.kind == .restart, first.role == nil || !isProductionSettling {
+            if let first = pending.first, first.kind == .restart, !restartMustWait(first) {
                 pending.removeFirst()
                 await performRestart(first)
                 return nil
@@ -745,6 +745,14 @@ final class WatchSession {
         }
         let index = pending.firstIndex { $0.order > order } ?? pending.endIndex
         pending.insert(Pending(kind: .save(stamp), role: role, order: order), at: index)
+    }
+
+    /// 試聴の子を起こす起こし直しを、本番の乗り換えが決着するまで待つか (``isProductionSettling``・#3428 の反証 8)。
+    /// 作り直しの後に試聴の子を起こす経路と同じ門で、生きている子を「本番 + 試聴」の 2 つまでにする。起こさない回 (試聴が
+    /// 終わった・断る) は待たない。
+    private func restartMustWait(_ restart: Pending) -> Bool {
+        guard let role = restart.role, role == readingRole, isProductionSettling else { return false }
+        return restartRefusal(for: role) == nil
     }
 
     /// 控えた保存を捨てる (名乗らない — 戻った先は取りかかる必要が無い)。
