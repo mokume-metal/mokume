@@ -247,6 +247,8 @@ enum ShapeExit {
             "frameCasters": flush, "casterSegmentsFree": resource,
             "placedPictureCopiesFree": resource, "placedPictureCopiesInUse": resource,
             "placedPictureEpoch": frame,
+            // #4029 (合成の単位の中間面の使い回し)
+            "compositeSurfaces": resource,
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
             "placedPictureCopyLimitReached": count, "upscaledBy": flush,
             // #2456 (ShaderSurface.previousFrame の写し)

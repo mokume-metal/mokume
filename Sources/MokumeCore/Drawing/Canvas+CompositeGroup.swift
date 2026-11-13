@@ -109,8 +109,9 @@ extension Canvas {
         }
 
         let group: Canvas
+        let reused: Bool
         do {
-            group = try createGraphics(box.width, box.height)
+            (group, reused) = try compositeSurface(width: box.width, height: box.height, pooled: settings != nil)
         } catch {
             // 保持した形の範囲 (`settings` を渡す) は、置く口が子ごとに掛けて描くことを 1 度知らせるので、ここでは
             // 重ねて知らせない (#3564 の反証 2 回目の 5)
@@ -123,6 +124,9 @@ extension Canvas {
         }
 
         group.beginDraw()
+        // 使い回す面は前に描いた絵を持つので、透明へ塗り直す (作りたての面は作る時点で透明・#766)。
+        // 塗り直しは描き切りの load 動作で済み、色も奥行きも作りたてと同じ値になる
+        if reused { group.replaceSurface(with: .color(.transparent)) }
         // 箱の左上を中の原点にする。既定の視点では、平面の頂点は変換の x・y がそのまま画素の位置なので、
         // 平行移動を前から掛けるだけで、中の 1 画素が置く側の 1 画素に重なる
         let shift = simd_float4x4(
@@ -197,6 +201,26 @@ extension Canvas {
                 left: Int(left), top: Int(top), width: Int(right - left), height: Int(bottom - top)))
     }
 
+    /// 中間面を 1 枚用意する。前のフレームで使い終えた同じ大きさの面があれば使い回し (`reused` が真)、
+    /// 無ければ ``createGraphics(_:_:)`` で作り、置き場の上限 (``CompositeSurfacePool/defaultByteLimit``) の内なら
+    /// 次のフレームのために置き場に残す ([#4029])。
+    ///
+    /// **使い回すのは保持した形の範囲 (`pooled`) だけ。** そこで中に描くのは記録した区間の置き直し
+    /// (``replaying(_:_:)``) で、描き方を出入りで戻すので、面の描き方は既定のまま残る。ほかの `body` は
+    /// 描き方 (塗り・線・断片など、フレームを越えて残るもの) を書き換えうるので、使い回すと次の単位が
+    /// 「既定から始まる」を破る。そちらは前と同じく毎回作る。
+    ///
+    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+    private func compositeSurface(
+        width: Int, height: Int, pooled: Bool
+    ) throws(RenderFailure) -> (Canvas, reused: Bool) {
+        guard pooled else { return (try createGraphics(width, height), false) }
+        if let kept = compositeSurfaces.take(width: width, height: height) { return (kept, true) }
+        let made = try createGraphics(width, height)
+        compositeSurfaces.keep(made, width: width, height: height, scale: outputScale)
+        return (made, false)
+    }
+
     /// 閉じた中間面を、不透明度を掛けて、この面へ画像として置く。置き先は箱の位置で、変換は掛けない
     /// (中の変換が既に箱の左上を原点にしている)。
     ///
@@ -230,6 +254,80 @@ extension Canvas {
         // 戻す操作が列を閉じるので、いま置いた四角は記録した設定で描かれる
         blendMode(savedMode)
         if let savedPaint { usePaint(savedPaint) } else { stopReplayingPaint() }
+    }
+}
+
+/// 合成の単位の中間面の置き場 ([#4029])。面を置く側 (``Canvas``) が 1 つ持つ。
+///
+/// 中間面は置き場所ごと・単位ごとに 1 枚要り、作るたびに描画先の確保・透明への塗り・面の組み立て
+/// (列の置き場) を払っていた (100 個で 1 フレーム約 41 ms)。**同じ大きさの面をフレームをまたいで使い回す。**
+///
+/// - **同じフレームの中では使い回さない。** 置いた面の絵は置いた側の描き切りまで読まれるので、同じフレームで
+///   描き換えると置いた側に写しを取らせることになる (``Canvas/settlePlacersBeforeChange()``)。使い終えた面は
+///   フレームを出るとき (置いた側の描き切りの後) に空きへ移り、次のフレームから使い回す
+/// - **大きさは画素で完全に一致するものだけを使う。** 大きい面の一部を使うと、四角の貼り方 (uv) が変わり
+///   絵が 1 ビットでも変わりうる
+/// - **寿命: 1 フレーム使わなかった面は手放す** (フレームを出るとき)。置き場所の数や大きさが毎フレーム変わる
+///   置き方では使い回せず、作り直す (前と同じ費用)
+/// - **上限: 次のフレームへ持ち越す面の色と奥行きの合計が ``defaultByteLimit`` まで。** 越える分は前と同じく
+///   作って置き終えたら手放す
+///
+/// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+struct CompositeSurfacePool {
+    /// 次のフレームへ持ち越す中間面の、色 (8 B/画素) と奥行き (4 B/画素) の合計の上限。型板は
+    /// memoryless なので数えない。置いた時点の絵の写しの上限 (``Canvas/placedPictureCopyLimit``・1920×1080 で
+    /// 4 枚・約 66 MB) と同じ桁にした。#4029 の例 (152×122 を 100 枚) は約 18 MB で収まる。面ごとの列の置き場
+    /// (頂点などの数の並び) は描いた量で伸びるので数えない — 中で描くのは記録した区間の置き直しだけで、
+    /// 置き場は作りたての大きさから大きく伸びない。
+    static let defaultByteLimit = 64 << 20
+
+    /// 持ち越す面の合計の上限。製品の経路では ``defaultByteLimit`` のままで、検査だけが小さくして越えたときを見る。
+    var byteLimit = Self.defaultByteLimit
+
+    struct Entry {
+        let canvas: Canvas
+        let width: Int
+        let height: Int
+        let bytes: Int
+    }
+
+    /// 前のフレームで使い終えた面。このフレームで使わなければ、フレームを出るときに手放す。
+    private(set) var free: [Entry] = []
+    /// このフレームで使った (置き場に残す) 面。フレームを出るときに空きへ移る。
+    private(set) var inUse: [Entry] = []
+    private var inUseBytes = 0
+    /// 面を作った回数 (作ってから通算)。**使い回せていることを検査が見る。**
+    private(set) var made = 0
+    /// 使い回した回数 (作ってから通算)。
+    private(set) var reused = 0
+
+    /// 空きにある大きさ `width` × `height` (座標) の面を、このフレームの使用中へ移して返す。
+    mutating func take(width: Int, height: Int) -> Canvas? {
+        guard let index = free.firstIndex(where: { $0.width == width && $0.height == height }) else {
+            return nil
+        }
+        let entry = free.remove(at: index)
+        inUse.append(entry)
+        inUseBytes += entry.bytes
+        reused += 1
+        return entry.canvas
+    }
+
+    /// 作った面を、上限の内なら次のフレームのために残す。越えるなら残さない (置き終えたら手放される)。
+    mutating func keep(_ canvas: Canvas, width: Int, height: Int, scale: Int) {
+        made += 1
+        let bytes = width * scale * height * scale * 12
+        guard inUseBytes + bytes <= byteLimit else { return }
+        inUse.append(Entry(canvas: canvas, width: width, height: height, bytes: bytes))
+        inUseBytes += bytes
+    }
+
+    /// フレームを出る。このフレームで使った面を空きへ移し、使わなかった空きを手放す。
+    mutating func endFrame() {
+        guard !free.isEmpty || !inUse.isEmpty else { return }
+        free = inUse
+        inUse.removeAll(keepingCapacity: true)
+        inUseBytes = 0
     }
 }
 

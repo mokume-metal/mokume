@@ -648,6 +648,7 @@ extension CanvasTests {
                 "carriedFlush": "効果を通した絵を出す面へ書いて面を取り替えた最後の投入と、その取り替えの内訳。打ち切られたら取り替えを戻して carriesPictureBeforeEffects を投入の前に戻すために越える (#2199・#2388)",
                 "placedPictureCopiesFree": "置いた時点の絵の写しの空き。使い回すために持ち、境目で 1 フレーム使わなかったものを手放す (#1656)",
                 "placedPictureEpoch": "境目の番号。写しの空きのうち使わなかったものを見分けるのに読む (#1656)",
+                "compositeSurfaces": "合成の単位の中間面の置き場。使い回すために持ち、フレームを出るときに 1 フレーム使わなかったものを手放す (#4029)",
                 "placedPictureCopiesMade": count, "placedPicturesCopied": count,
                 "placedPictureCopyLimitReached": count,
                 "previousFrameCopy": "ShaderSurface.previousFrame が読む写し。1 枚を使い回し、面の大きさが変わったときだけ作り直す (#2456)",

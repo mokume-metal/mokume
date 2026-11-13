@@ -1785,6 +1785,12 @@ public final class Canvas {
     /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
     var failPlacedPictureCopyForTesting: RenderFailure?
 
+    /// 合成の単位の中間面の置き場 (``CompositeSurfacePool``・[#4029])。フレームをまたいで使い回し、
+    /// 1 フレーム使わなかった面はフレームを出るときに手放す (``leaveFrame()``)。
+    ///
+    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+    var compositeSurfaces = CompositeSurfacePool()
+
     /// 弱く持つ面ひとつぶん。
     struct WeakCanvas {
         weak var canvas: Canvas?
@@ -4412,6 +4418,8 @@ public final class Canvas {
         // 書いた画素も同じで、写しの書き込み待ちを残すと次の描き切りが面へ戻す (#1678)
         discardFrame()
         trimPlacedPictureCopies()
+        // 合成の単位の中間面も、このフレームで使ったものだけを次へ持ち越す (#4029)
+        compositeSurfaces.endFrame()
         // **読んだ写しもフレームを越えない** ([#1524] の反証 2-2)。写しはフレームの途中で
         // 読んだ絵のまま残るので、取っておいたビュー (``pixels``) へ止まっている間のコールバックで
         // 書くと、フレームの途中の古い絵へ書いて全面を書き戻していた。ここで下ろせば、止まって
