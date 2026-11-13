@@ -40,11 +40,14 @@ package final class FrameAnnouncement {
     ///   - sketch: 作品名 (product の名前)。
     ///   - identity: 作品を見分ける欄。
     ///   - title: 一覧に見せる名前。
+    ///   - width: 受け付ける面の幅 (描く解像度)。分かっていれば最初の 1 件から載せる (#3949)。`nil` なら送り手を起こすときに
+    ///     載せる (``startSending(gpu:width:height:startsListening:)``)。
+    ///   - height: 同じく高さ。
     ///   - directory: 目録の置き場。
     ///   - warn: 名乗れなかったことを言う口。
     ///   - checkIn: 名前を登録する口。**検査から差し替える** (断られる環境を作るため)。
     package static func announce(
-        sketch: String, identity: String, title: String,
+        sketch: String, identity: String, title: String, width: Int? = nil, height: Int? = nil,
         in directory: URL = FrameListing.directory,
         warn: (String) -> Void = { Diagnostics.warn($0) },
         checkIn: (String) -> Result<mach_port_t, Bootstrap.Failure> = Bootstrap.checkIn
@@ -62,7 +65,9 @@ package final class FrameAnnouncement {
         }
         let entry = FrameListing.Entry(
             sketch: sketch, identity: identity, title: title, pid: pid,
-            startedAt: ProcessRecord.startTime(of: pid) ?? 0, serviceName: serviceName)
+            startedAt: ProcessRecord.startTime(of: pid) ?? 0, serviceName: serviceName,
+            // 幅と高さは揃って載せる (片方だけの項目は書かない)
+            width: height == nil ? nil : width, height: width == nil ? nil : height)
         FrameListing.sweep(in: directory)
         do {
             try FrameListing.place(entry, in: directory)
@@ -92,13 +97,27 @@ package final class FrameAnnouncement {
         try? FrameListing.place(entry, in: directory)
     }
 
+    /// 受け付ける面の大きさを目録に載せる ([#3949])。**変わっていなければ書かない。** 下ろした後は何もしない。
+    ///
+    /// 送り手の大きさが変わると、送り手が `surfaceSize` で断るより前にここが呼ばれる (``FrameSender/onResize``)。だから
+    /// 断られた受け手が目録を読み直せば、断った大きさではなく、送り手がいま受け付ける大きさがある。
+    ///
+    /// [#3949]: https://github.com/mokume-metal/mokume/issues/3949
+    package func recordSize(width: Int, height: Int) {
+        guard receivePort != 0, width != entry.width || height != entry.height else { return }
+        entry.width = width
+        entry.height = height
+        try? FrameListing.place(entry, in: directory)
+    }
+
     /// 繋いできた受け手へ絵を渡す送り手 ([#3920](https://github.com/mokume-metal/mokume/issues/3920))。起こすまで `nil`。
     package private(set) var sender: FrameSender?
 
     /// 受け手の頼みを受け始め、送り手を返す。2 度目は同じ送り手を返す。下ろした後は `nil`。
     ///
     /// - Parameters:
-    ///   - width: いまの描く解像度 (受け手の面はこの大きさで受け入れる)。
+    ///   - width: いまの描く解像度 (受け手の面はこの大きさで受け入れる)。目録にも載せ、以後は送り手の大きさが変わるたびに
+    ///     書き換える (``recordSize(width:height:)``・#3949)。
     ///   - startsListening: 頼みを main queue で受け始めるか。**検査は `false` にして** ``FrameSender/drain()`` を直に呼ぶ。
     @discardableResult
     package func startSending(
@@ -107,6 +126,10 @@ package final class FrameAnnouncement {
         guard receivePort != 0 else { return nil }
         if let sender { return sender }
         let sender = FrameSender(gpu: gpu, port: receivePort, width: width, height: height)
+        // **頼みを受け始める前に目録の大きさを送り手にそろえる** — 受け手が目録で読む大きさと、送り手が受け付ける大きさを
+        // 食い違わせない (#3949)
+        recordSize(width: width, height: height)
+        sender.onResize = { [weak self] width, height in self?.recordSize(width: width, height: height) }
         if startsListening { sender.start() }
         self.sender = sender
         return sender

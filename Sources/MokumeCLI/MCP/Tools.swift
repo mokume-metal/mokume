@@ -701,7 +701,9 @@ struct Tools {
     ) -> String {
         var lines = ["# \(symbol) — \(entries.count) \(entries.count == 1 ? "declaration" : "declarations")", ""]
         for entry in entries {
-            lines.append("## \(entry.owner.isEmpty ? "(top level)" : entry.owner)")
+            // 見出しは経路全体 (`PixelSurface.ColorTable`)。`owner` だと入れ子の型のメンバが最外の型に見える (#3674)
+            let held = entry.effectiveOwnerPath
+            lines.append("## \(held.isEmpty ? "(top level)" : held)")
             lines.append("")
             lines += ["```swift", entry.declaration, "```", ""]
             lines += [entry.doc.isEmpty ? "(no description in the source)" : entry.doc, ""]

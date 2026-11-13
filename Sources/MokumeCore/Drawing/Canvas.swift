@@ -428,9 +428,15 @@ public final class Canvas {
         /// ``Canvas/foldsThinRingAcrossTurns(_:drawn:)`` だけが立てる。真なら ``key`` は回転に依らない部分。
         var widensAcrossTheLine = false
 
+        /// 回転に依らない部分を入れた鍵 (``widensInVertexStage``・``widensAcrossTheLine``) は、単精度の揺れの幅まで同じと
+        /// みなして比べる (``Canvas/sameRotationFreeKey(_:_:)``・#3932)。2x2 そのものの鍵はビット列で比べる。
         static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.key == rhs.key && lhs.widensInVertexStage == rhs.widensInVertexStage
-                && lhs.widensAcrossTheLine == rhs.widensAcrossTheLine
+            guard lhs.widensInVertexStage == rhs.widensInVertexStage, lhs.widensAcrossTheLine == rhs.widensAcrossTheLine
+            else { return false }
+            if lhs.widensInVertexStage || lhs.widensAcrossTheLine {
+                return Canvas.sameRotationFreeKey(lhs.key, rhs.key)
+            }
+            return lhs.key == rhs.key
         }
     }
 

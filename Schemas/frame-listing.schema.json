@@ -52,6 +52,20 @@
       "type": "string",
       "pattern": "^org\\.mokume\\.frames\\.[0-9]+\\.[0-9a-f]+\\.[^.]+$",
       "description": "The name to look up in the bootstrap namespace (`bootstrap_look_up`) and send the connect message to. Unique per run: `org.mokume.frames.<pid>.<hex chosen at launch>.<window>`."
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The width, in pixels, of the surfaces the sketch accepts in `connect` (its drawing size). Optional: written together with `height` by current senders (both a sketch listing itself and `mokume watch`), and rewritten whenever the drawing size changes. An entry from an older sender has neither, and is still version 1: a receiver then needs the size from elsewhere (see frame-link.md). Adding these did not raise the version (ADR-0018 decision 5)."
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The height, in pixels, of the surfaces the sketch accepts in `connect`. Written and rewritten together with `width`."
     }
+  },
+  "dependentRequired": {
+    "width": ["height"],
+    "height": ["width"]
   }
 }

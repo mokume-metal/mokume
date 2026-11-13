@@ -24,8 +24,8 @@ import MokumeDiagnostics
 final class WatchFrameListing {
     /// 作品を見分ける欄 (見張っているパッケージの場所)。
     let identity: String
-    /// 名乗る口。**検査から差し替える** (bootstrap と手元の目録に触らずに数えるため)。
-    var announce: (_ identity: String, _ share: FrameShare) -> FrameAnnouncement?
+    /// 名乗る口。**検査から差し替える** (bootstrap と手元の目録に触らずに数えるため)。幅と高さは分からなければ `nil`。
+    var announce: (_ identity: String, _ share: FrameShare, _ width: Int?, _ height: Int?) -> FrameAnnouncement?
     /// 名乗っている項目。名乗っていなければ `nil`。
     private(set) var announcement: FrameAnnouncement?
     /// 子の面から受け手の面へ写す GPU (作品のウィンドウの台のもの)。`nil` なら受け手へ渡さない (検査)。
@@ -40,11 +40,14 @@ final class WatchFrameListing {
     var say: (String) -> Void = { Diagnostics.warn($0) }
     /// 繋がっている相手の名前が変わったときの知らせ。見張りはプレビューの題に出す (ADR-0049 決定 6・#3921)。
     var onReceiversChanged: (([String]) -> Void)?
+    /// 台が読んだ名乗りの中身のうち、同じリフレッシュの絵 (``attach(to:)``) を待っているもの。外側の `nil` は読んでいない。
+    private var unfollowed: FrameShare??
 
     init(
         identity: String, gpu: RenderDevice? = nil,
-        announce: @escaping (String, FrameShare) -> FrameAnnouncement? = { identity, share in
-            FrameAnnouncement.announce(sketch: share.sketch, identity: identity, title: share.title)
+        announce: @escaping (String, FrameShare, Int?, Int?) -> FrameAnnouncement? = { identity, share, width, height in
+            FrameAnnouncement.announce(
+                sketch: share.sketch, identity: identity, title: share.title, width: width, height: height)
         }
     ) {
         self.identity = identity
@@ -55,9 +58,19 @@ final class WatchFrameListing {
     /// 作品のウィンドウの台の知らせに繋ぐ。**作品のウィンドウが映す世代に従う** ([ADR-0049] 決定 2) — プレビューは
     /// 試聴の子を映すことがあるので繋がない。検査も同じ口で繋ぐ。**ウィンドウが名乗りを持つ** (名乗りはウィンドウを
     /// 持たないので環にならない)。
+    ///
+    /// **名乗りの中身には、同じリフレッシュの絵の大きさを添えて従う** (#3949)。台は中身を読んだ直後に、同じ絵を
+    /// ``SharedFrameWindow/onFrame`` で渡す。中身を読んだ時点で名乗ると、寸法の無い項目が一瞬目録に載り、その間に読んだ
+    /// 受け手は旧い送り手と取り違える。
     func attach(to window: SharedFrameWindow) {
-        window.onFrameShareRead = { share in self.follow(share) }
-        window.onFrame = { texture, isNew in self.handOver(texture, isNew: isNew) }
+        window.onFrameShareRead = { share in self.unfollowed = .some(share) }
+        window.onFrame = { texture, isNew in
+            if let share = self.unfollowed {
+                self.unfollowed = nil
+                self.follow(share, width: texture?.width, height: texture?.height)
+            }
+            self.handOver(texture, isNew: isNew)
+        }
     }
 
     /// 作品のウィンドウが映す世代のいまの絵を、繋いできた受け手の面へ写す ([ADR-0049] 決定 2・[#3920])。
@@ -94,7 +107,12 @@ final class WatchFrameListing {
     }
 
     /// 映す世代の絵から名乗りの中身を読んだ。`nil` は断っている。
-    func follow(_ share: FrameShare?) {
+    ///
+    /// - Parameters:
+    ///   - width: その絵の幅 (受け手の面の大きさ)。分かれば目録に載せる (#3949)。送り手を起こした後は、送り手の大きさが
+    ///     変わるたびに名乗りが書き換える (``FrameAnnouncement/startSending(gpu:width:height:startsListening:)``)。
+    ///   - height: 同じく高さ。
+    func follow(_ share: FrameShare?, width: Int? = nil, height: Int? = nil) {
         // 倒れた子は共有面に書かないので、ここへ来るのは共有面へ戻った世代の絵だけである
         guard let share else {
             withdraw()
@@ -102,8 +120,9 @@ final class WatchFrameListing {
         }
         if let announcement {
             announcement.update(sketch: share.sketch, title: share.title)
+            if let width, let height { announcement.recordSize(width: width, height: height) }
         } else {
-            announcement = announce(identity, share)
+            announcement = announce(identity, share, width, height)
         }
     }
 

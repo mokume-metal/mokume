@@ -77,6 +77,9 @@ package final class FrameSender {
     /// 繋がっている相手の名前が変わったときの知らせ (受け入れた・外した)。メニューバーの名乗りに出す
     /// ([ADR-0049] 決定 6・#3921)。
     package var onReceiversChanged: (([String]) -> Void)?
+    /// 描く解像度が変わったときの知らせ (新しい幅・高さ)。名乗りが目録の大きさを書き換える (#3949)。**受け手へ知らせる前、
+    /// 次の頼みを捌く前に呼ぶ** — 新しい大きさで断った受け手が目録を読み直したとき、もう新しい大きさが載っている。
+    package var onResize: ((Int, Int) -> Void)?
 
     /// 繋がっている相手の名前 (繋いだ順)。
     package var receiverNames: [String] { receivers.map(\.name) }
@@ -392,7 +395,8 @@ package final class FrameSender {
         }
     }
 
-    /// 描く解像度が変わった。受け手の面を手放し、新しい大きさを知らせる。受け手は面を作り直して繋ぎ直す。
+    /// 描く解像度が変わった。受け手の面を手放し、新しい大きさを知らせる。受け手は面を作り直して繋ぎ直す。目録の大きさは
+    /// ``onResize`` で、受け手へ知らせるより前に書き換わる (#3949)。
     ///
     /// **大きさは受け手の数と関係なく送り手の状態である** (#3946)。受け手が居なければ覚えるだけで、写しも送りもしない。
     /// **知らせは受け手に届くまで送り手の状態である** (#3947)。待ち時間 0 の送りが待ち行列の満杯で落ちたら、受け手ごとに
@@ -402,6 +406,7 @@ package final class FrameSender {
         guard width != self.width || height != self.height else { return }
         self.width = width
         self.height = height
+        onResize?(width, height)
         for receiver in receivers {
             for surface in receiver.surfaces { surface.release(gpu: gpu) }
             receiver.surfaces = []

@@ -19,11 +19,17 @@ struct APIDetails: Equatable {
     let symbols: [String: [Entry]]
 
     struct Entry: Equatable, Decodable {
-        /// 口の持ち主の型。型そのものと最上位の宣言は空。
+        /// 口の持ち主の型。型そのものと最上位の宣言は空。**経路の先頭の型だけ**で、入れ子の型のメンバは最外の型になる。
         let owner: String
+        /// 持ち主の経路全体 (`PixelSurface.ColorTable`)。ここを足す前の資産は持たない (nil)。
+        let ownerPath: String?
         let declaration: String
         /// 説明の全文。無ければ空。
         let doc: String
+
+        /// 持ち主を型の綴りで比べるときの経路。`ownerPath` があればそれで、無ければ `owner` に戻る
+        /// (旧い資産。最外の型で引ける今までの振る舞いのまま・#3674)。
+        var effectiveOwnerPath: String { ownerPath ?? owner }
     }
 
     /// 読めなかったとき。
@@ -87,17 +93,27 @@ struct APIDetails: Equatable {
         let whole = Self.baseName(trimmed)
         if let entries = symbols[whole], !entries.isEmpty { return .found(entries) }
         let candidates = candidates(for: whole)
-        guard let dot = trimmed.firstIndex(of: ".") else { return .unknown(candidates: candidates) }
-        let type = String(trimmed[..<dot])
-        let base = Self.baseName(String(trimmed[trimmed.index(after: dot)...]))
-        guard !type.isEmpty, let entries = symbols[base], !entries.isEmpty else {
-            return .unknown(candidates: candidates)
+        // 型の綴りと基底名の分け方を、最初の `.` から順に試す。入れ子の型のメンバ (`PixelSurface.ColorTable.init`) は
+        // 最後の `.` で分けたときに引ける (型は経路全体・基底名は `init`)。列挙の case や入れ子の型の名前は
+        // キーそのものが `.` を含むので、先に全体を基底名として引いた (上)。
+        var notOnOwner: Lookup?
+        var dot = trimmed.firstIndex(of: ".")
+        while let current = dot {
+            let type = String(trimmed[..<current])
+            let base = Self.baseName(String(trimmed[trimmed.index(after: current)...]))
+            if !type.isEmpty, let entries = symbols[base], !entries.isEmpty {
+                let narrowed = entries.filter { $0.effectiveOwnerPath == type }
+                if !narrowed.isEmpty { return .found(narrowed) }
+                // 後ろの分け (型の綴りが長い) ほど正確な案内なので、先勝ちにせず上書きして最後のものを返す
+                var owners: [String] = []
+                for entry in entries where !owners.contains(entry.effectiveOwnerPath) {
+                    owners.append(entry.effectiveOwnerPath)
+                }
+                notOnOwner = .notOnOwner(type: type, base: base, owners: owners, candidates: candidates)
+            }
+            dot = trimmed[trimmed.index(after: current)...].firstIndex(of: ".")
         }
-        let narrowed = entries.filter { $0.owner == type }
-        if !narrowed.isEmpty { return .found(narrowed) }
-        var owners: [String] = []
-        for entry in entries where !owners.contains(entry.owner) { owners.append(entry.owner) }
-        return .notOnOwner(type: type, base: base, owners: owners, candidates: candidates)
+        return notOnOwner ?? .unknown(candidates: candidates)
     }
 
     /// 名前の後ろが一致する、`.` を含むキー (`pie` や `Projection.perspective` に対する `Camera.Projection.perspective`)。
@@ -124,7 +140,7 @@ struct APIDetails: Equatable {
     }
 
     func members(of type: String) -> Members {
-        let hasInit = symbols["init"]?.contains { $0.owner == type } ?? false
+        let hasInit = symbols["init"]?.contains { $0.effectiveOwnerPath == type } ?? false
         let all = symbols.compactMap { key, entries -> String? in
             key.hasPrefix(type + ".") && !entries.isEmpty ? key : nil
         }.sorted()

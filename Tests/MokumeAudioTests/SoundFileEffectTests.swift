@@ -204,7 +204,9 @@ struct SoundFileEffectTests {
                 reverb.process(song, 0.8, 0.3, 0.5)
                 delay.process(song, 2)
                 let echo = Delay(stage: stage)
+                // 第 3 引数は始めの遅れ (秒)。戻す割合は feedback(_:) で渡す (#3719)
                 echo.process(song, 2, 0.5)
+                echo.feedback(0.5)
                 // 合成した音も、エフェクトも、いままでどおり通る
                 let osc = SinOsc(stage: stage)
                 let after = Reverb(stage: stage)

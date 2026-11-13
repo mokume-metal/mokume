@@ -220,6 +220,13 @@ struct WholeIntegerFieldTests {
                 == #"{"identity":"\/a","pid":7,"schemaVersion":1,"serviceName":"n","sketch":"s","startedAt":1700000000000000,"title":"t","window":"main"}"#,
             "\(listed)")
         #expect(try JSONDecoder().decode(FrameListing.Entry.self, from: Data(listed.utf8)) == entry)
+        // 任意の欄 (受け付ける面の大きさ・#3949) も数のまま書き、無ければ鍵ごと書かない (上の形)
+        var sized = entry
+        sized.width = 173
+        sized.height = 97
+        let sizedText = String(decoding: try encoder.encode(sized), as: UTF8.self)
+        #expect(sizedText.contains(#""height":97,"#) && sizedText.contains(#""width":173,"#), "\(sizedText)")
+        #expect(try JSONDecoder().decode(FrameListing.Entry.self, from: Data(sizedText.utf8)) == sized)
 
         let snapshot = ClockHandover.Snapshot(
             seconds: 1.5, isHeld: false, isStill: false, rate: nil, at: 2, writer: 42, generation: 3)
