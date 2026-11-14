@@ -19,7 +19,7 @@ Processing 本体のリファレンスのうち、category が `shape`・`pshape
 
 - **保持された図形 `Shape` は、組み立て済みの頂点配列を持つ値型である** ([#788]・[ADR-0021](../decisions/0021-solid-space-and-frame-assembly.md))。`createShape { }` か `loadShape(_:)` で作り、`shape(_:)` で描画する。子の一覧・頂点の読み書き・変換・表示フラグは持たず、色と線は組み立てたとき (読み込んだとき) に図形へ書き込まれる (描画する側の `fill` は効かない)。`PShape` の API のうち、この性質で「持たない」にしたものと、編集 API の形を決めるまで「作例待ち」にしたものは、下の `PShape` の節に分けた
 - **読めないときは投げる。** `loadShape(_:)` は `null` を返さず `DataFailure` を投げ、`setup() throws` の `try` か `try?` で受ける
-- **平面の図形はカメラ (視点) の変換を受けず、引数に `z` を持つ形と立体は奥行きとカメラの変換を受ける** ([ADR-0021](../decisions/0021-solid-space-and-frame-assembly.md) 決定 2)。同じ名前で引数の数により変わることは、各 API の説明文に書く
+- **平面の図形もカメラ (視点) と変換を通るが、奥行きは持たない (奥行き 0 の面に載り、奥行きを読みも書きもせず、重なりは呼び出し順で決まる)。引数に `z` を持つ形と立体は奥行きを持ち、奥行きで隠し合う** ([ADR-0021](../decisions/0021-solid-space-and-frame-assembly.md) 決定 1 の「改訂 (2026-11-07) — 平面の図形も視点と変換の奥行きを通る」・決定 2)。同じ名前で引数の数により変わることは、各 API の説明文に書く
 - **曲線の分割数の設定は `curveDetail(_:)` の 1 つ**で、`bezierVertex`・`quadraticVertex`・`curveVertex`・`bezier()`・`curve()` のどれにも効く (Processing は `bezierDetail()` と `curveDetail()` が別の設定)
 
 ## 「入れる」の API をまとめた Feature
@@ -40,7 +40,7 @@ Processing 本体のリファレンスのうち、category が `shape`・`pshape
 | --- | --- | --- | --- | --- |
 | `arc()` | `arc(_:_:_:_:_:_:)`・`arc(_:_:_:_:_:_:_:)` (閉じ方 `ArcMode`) | 同等 | 閉じ方を渡さない呼び出しは、塗りが扇形・輪郭が開いた弧 (Processing の既定)。`OPEN`・`CHORD`・`PIE` は `.open`・`.chord`・`.pie`。**`.open` の塗りは扇形ではなく、弧の両端を直線 (弦) で結んだ形**で、引数を渡さない既定と違う。楕円の角度は媒介変数表示の角度 (Processing と同じ) | [#2428]・PR [#3180] |
 | `circle()`・`ellipse()`・`square()`・`triangle()`・`quad()` (5 件) | `circle(_:_:_:)`・`ellipse(_:_:_:_:)`・`square(_:_:_:)`・`triangle(_:_:_:_:_:_:)`・`quad(_:_:_:_:_:_:_:_:)` | 同等 | 引数の数と順序は Processing と同じ。`circle()` の 3 つ目は直径。引数の解釈は `ellipseMode()`・`rectMode()` の行 | — |
-| `line()` | `line(_:_:_:_:)`・`line(_:_:_:_:_:_:)` | 同等 | 引数が 6 個の形は 立体の空間に引き、奥行きとカメラの変換を受ける (`beginShape(.lines)` と画素が一致する) | [#2462]・PR [#2869] |
+| `line()` | `line(_:_:_:_:)`・`line(_:_:_:_:_:_:)` | 同等 | 引数が 6 個の形は 立体の空間に引き、奥行きを持って奥行きで隠し合う (`beginShape(.lines)` と画素が一致する。4 個の形もカメラと変換を通るが、奥行きは持たない) | [#2462]・PR [#2869] |
 | `point()` | `point(_:_:)`・`point(_:_:_:)` | 同等 | 引数が 3 個の形は 立体の空間に描く (`beginShape(.points)` と画素が一致する) | [#2462]・PR [#2869] |
 | `rect()` | `rect(_:_:_:_:)`・`rect(_:_:_:_:_:)` | 同等 | 5 番目の引数は 4 つの角を同じ半径で丸める (短い辺の半分を上限にする。Processing と同じ)。角は円弧で描き、Processing の二次ベジェ曲線とは角の中ほどが半径の 4% ほど違う。無い形: 4 つの角を別々に丸める、引数が 8 個の形 (`tl, tr, br, bl`)。[#2428] が「作例が来てから」と決めた | [#2428]・[#2757]・PR [#2821] |
 
@@ -69,7 +69,7 @@ Processing 本体のリファレンスのうち、category が `shape`・`pshape
 
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
-| `bezier()` | `bezier(_:_:_:_:_:_:_:_:)`・`bezier(_:_:_:_:_:_:_:_:_:_:_:_:)` | 同等 | `beginShape()`・`vertex`・`bezierVertex`・`endShape()` を順に呼んだのと同じ絵。塗りが有効なら、始点と終点を結ばない開いた図形のまま塗る。`z` を持つ、引数が 12 個の形は `vertex(x, y, z)`・引数が 9 個の `bezierVertex` を並べたのと同じ絵で、奥行きとカメラの変換を受ける。引数ラベル付きの形 `bezier(from:control1:control2:to:)` は `Vector2` と `Vector3` の両方を受ける | [#2430]・PR [#3043]・[#3712] |
+| `bezier()` | `bezier(_:_:_:_:_:_:_:_:)`・`bezier(_:_:_:_:_:_:_:_:_:_:_:_:)` | 同等 | `beginShape()`・`vertex`・`bezierVertex`・`endShape()` を順に呼んだのと同じ絵。塗りが有効なら、始点と終点を結ばない開いた図形のまま塗る。`z` を持つ、引数が 12 個の形は `vertex(x, y, z)`・引数が 9 個の `bezierVertex` を並べたのと同じ絵で、奥行きを持って奥行きで隠し合う。引数ラベル付きの形 `bezier(from:control1:control2:to:)` は `Vector2` と `Vector3` の両方を受ける | [#2430]・PR [#3043]・[#3712] |
 | `bezierDetail()` | `curveDetail(_:)` | 同等 | 分割数の設定は 1 つで、ベジェ・2 次・通過点を結ぶ曲線のどれにも効く (Processing は `bezierDetail()` と `curveDetail()` が別の設定)。ベジェだけを粗くするなど、別々に設定する方法は無い。1…1024 の外は範囲内に収め、1 度だけ警告する。名前だけ違う API は足さない | [#2430] |
 | `bezierPoint()`・`bezierTangent()` (2 件) | `bezierPoint(_:_:_:_:_:)`・`bezierTangent(_:_:_:_:_:)` | 同等 | 値だけを扱う関数 (描画はしない)。`x` と `y` を別々に求め、`atan2` で角度にする。`t` が 0…1 の外でも範囲内に収めない | [#2430]・PR [#3043] |
 | `curve()`・`curvePoint()`・`curveTangent()` (3 件) | `curve(_:_:_:_:_:_:_:_:)`・`curve(_:_:_:_:_:_:_:_:_:_:_:_:)`・`curve(from:control1:control2:to:)`・`curvePoint(_:_:_:_:_:)`・`curveTangent(_:_:_:_:_:)` | 同等 | `curve()` は `beginShape()`・`curveVertex` を 4 回・`endShape()` を順に呼んだのと同じ絵で、描くのは 2 つ目から 3 つ目の点までの 1 区間 (`curveDetail`・`curveTightness` も同様に効く)。引数ラベル付きの形は `bezier(from:control1:control2:to:)` に揃え、`control1` が始点の手前・`control2` が終点の先の点。`curvePoint()`・`curveTangent()` は Processing と同じく `curveTightness()` の設定を読む (`PGraphics.java` の `curveInit()` が張力から基底行列を作る) ので、値だけの `bezierPoint()` と違ってスケッチと描画先 (`Canvas`) のメソッドで、引数ラベル付きの形は持たない (`bezierPoint()` と同じ)。`x` と `y` を別々に求め、`atan2` で角度にする。`z` を持つ、引数が 12 個の `curve()` は、同じ 4 点を `curveVertex(x, y, z)` で 4 回指定したのと同じ絵で、引数ラベル付きの形は `Vector3` も受ける | [#2430]・[#3710]・[#3712] |
