@@ -195,8 +195,6 @@ public final class SoundFile: Inlet, EffectInput {
     private var levels: AudioLevels { deferred.levels() }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
-    /// 解析を読んだことの名乗りの理由を組んだ回数。**検査が読む** — 読んだ回数によらず、実行ごとに 1 回まで。
-    var replayReasonsBuilt: Int { deferred.replayReasonsBuilt }
     /// 位置を進める時計。開くまで `nil`。
     private var pace: Pace?
     /// 最後に見たフレームが、時計の上で何フレーム目に並ぶか (最初のフレームが 0)。操作はこの

@@ -37,8 +37,6 @@ package struct SoundAnalysisNotice {
     private let kind: String
     /// 既に名乗った (または名乗らないと決めた) 受け手。受け手の寿命は実行が決めるので弱く持つ。
     private weak var settled: (any UnreproducibleSink)?
-    /// 理由を組んで受け手へ渡した回数。検査が読む。
-    package private(set) var reasonsBuilt = 0
 
     package init(kind: String) {
         self.kind = kind
@@ -49,7 +47,6 @@ package struct SoundAnalysisNotice {
         guard let sink = LaunchingSketch.replay, sink !== settled else { return }
         settled = sink
         guard sink.soundRunsInRealTime else { return }
-        reasonsBuilt += 1
         sink.noteUnreproducible(ReplayRecorder.Reason.soundAnalysis(kind))
     }
 }

@@ -86,8 +86,6 @@ public class SynthSound: EffectInput {
     private var levels: AudioLevels { deferred.levels() }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
-    /// 解析を読んだことの名乗りの理由を組んだ回数。**検査が読む** — 読んだ回数によらず、実行ごとに 1 回まで。
-    var replayReasonsBuilt: Int { deferred.replayReasonsBuilt }
     /// 前のフレームの区間の終わり (出口の標本の通し番号)。
     private var covered = 0
     private var noticed: Set<String> = []

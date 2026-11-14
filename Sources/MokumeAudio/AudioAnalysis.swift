@@ -402,9 +402,6 @@ struct DeferredLevels {
         replayNotice = replayKind.map(SoundAnalysisNotice.init(kind:))
     }
 
-    /// 名乗りの理由を組んで渡した回数。検査が読む。
-    var replayReasonsBuilt: Int { replayNotice?.reasonsBuilt ?? 0 }
-
     /// 鳴り始める前が無音と分かっている音源か (``SoundTrace/beginsSilent``)。
     var beginsSilent: Bool {
         get { trace.beginsSilent }

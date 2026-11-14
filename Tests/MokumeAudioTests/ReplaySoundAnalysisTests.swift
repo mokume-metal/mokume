@@ -87,10 +87,10 @@ struct ReplaySoundAnalysisTests {
         }
     }
 
-    /// 録る。`onScreen` ならウィンドウの経路で、音は差し込んだ流れで鳴る。録り終えた実行も返す (音を読むため)。
+    /// 録る。`onScreen` ならウィンドウの経路で、音は差し込んだ流れで鳴る。
     private func record(
         _ source: Source = .synth, read: Read?, times: Int = 1, onScreen: Bool, to url: URL, file: URL? = nil
-    ) throws -> (record: ReplayRecord, sketch: Reader) {
+    ) throws -> ReplayRecord {
         let flow = onScreen ? try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096) : nil
         let sketch = Reader(source, read: read, times: times, flow: flow, file: file)
         let runtime = try SketchRuntime(
@@ -99,7 +99,7 @@ struct ReplaySoundAnalysisTests {
         try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
         for _ in 0..<3 { try runtime.advance() }
         runtime.closePlugins()
-        return (try ReplayRecord.read(from: url), sketch)
+        return try ReplayRecord.read(from: url)
     }
 
     /// ウィンドウなしで流す。
@@ -128,12 +128,12 @@ struct ReplaySoundAnalysisTests {
         let analysis = ReplayRecorder.Reason.soundAnalysis("TriOsc")
 
         let quiet = directory.appendingPathComponent("quiet.json")
-        let plain = try record(read: nil, onScreen: true, to: quiet).record
+        let plain = try record(read: nil, onScreen: true, to: quiet)
         #expect(plain.window && plain.unreproducible.isEmpty, "\(plain.unreproducible)")
         #expect(try replay(read: nil, quiet).unreproducible.isEmpty)
 
         let read = directory.appendingPathComponent("read.json")
-        let named = try record(read: .level, onScreen: true, to: read).record
+        let named = try record(read: .level, onScreen: true, to: read)
         #expect(named.unreproducible == [analysis], "\(named.unreproducible)")
         #expect(try replay(read: .level, read).unreproducible == [analysis])
 
@@ -154,26 +154,24 @@ struct ReplaySoundAnalysisTests {
         let file = source == .file ? try writeWAV(chord, sampleRate: 48_000) : nil
         defer { if let file { try? FileManager.default.removeItem(at: file) } }
         let url = directory.appendingPathComponent("\(source)-\(read).json")
-        let named = try record(source, read: read, onScreen: true, to: url, file: file).record
+        let named = try record(source, read: read, onScreen: true, to: url, file: file)
         #expect(
             named.unreproducible == [ReplayRecorder.Reason.soundAnalysis(source.kind)],
             "\(source).\(read): \(named.unreproducible)")
     }
 
-    @Test("1 フレームに解析の値を何百回読んでも、名乗りの理由を組むのは実行ごとに 1 回で、記録の理由も 1 つ")
-    func manyReadsBuildTheReasonOnce() throws {
+    @Test("1 フレームに解析の値を何百回読んでも、記録の理由は 1 つ")
+    func manyReadsAreNamedOnce() throws {
         let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("many.json")
-        let (taken, sketch) = try record(read: .level, times: 300, onScreen: true, to: url)
+        let taken = try record(read: .level, times: 300, onScreen: true, to: url)
         #expect(taken.unreproducible == [ReplayRecorder.Reason.soundAnalysis("TriOsc")], "\(taken.unreproducible)")
-        #expect(sketch.tone?.replayReasonsBuilt == 1)
     }
 
     @Test("ウィンドウなしで録った記録は、解析の値を読んでも名乗らない (流す側と同じくフレームの数で進む)")
     func aHeadlessRecordIsNotNamed() throws {
         let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("headless.json")
-        let (taken, sketch) = try record(read: .level, onScreen: false, to: url)
+        let taken = try record(read: .level, onScreen: false, to: url)
         #expect(!taken.window && taken.unreproducible.isEmpty, "\(taken.unreproducible)")
-        #expect(sketch.tone?.replayReasonsBuilt == 0, "名乗らない実行では理由を組まない")
         let report = try replay(read: .level, url)
         #expect(report.unreproducible.isEmpty && report.matched, "\(report.unreproducible)")
     }
@@ -207,5 +205,77 @@ struct ReplaySoundAnalysisTests {
         runtime.closePlugins()
         let record = try ReplayRecord.read(from: url)
         #expect(record.unreproducible == [ReplayRecorder.Reason.waitingLoad], "\(record.unreproducible)")
+    }
+}
+
+/// 音 1 つの解析の名乗り (``SoundAnalysisNotice``) が、受け手ごとに 1 度だけ理由を組んで渡すこと。
+///
+/// 受け手を数える偽物に差し替え、解析の値の置き場 (``DeferredLevels``) を直に読む。GPU も音の機材も要らない。
+@Suite("音の解析の名乗りと受け手")
+@MainActor
+struct SoundAnalysisNoticeTests {
+    /// 渡された理由と、ウィンドウかを訊かれた回数を数える受け手。検査の main actor の上でだけ触る。
+    final class CountingSink: UnreproducibleSink, @unchecked Sendable {
+        let window: Bool
+        private(set) var reasons: [String] = []
+        private(set) var windowQueries = 0
+        init(window: Bool) { self.window = window }
+        func noteUnreproducible(_ reason: String) { reasons.append(reason) }
+        var soundRunsInRealTime: Bool {
+            windowQueries += 1
+            return window
+        }
+    }
+
+    private let reason = ReplayRecorder.Reason.soundAnalysis("TriOsc")
+
+    /// `sink` を受け手にして、解析の読みの口 3 つを `times` 回ずつ読む。
+    private func read(_ levels: inout DeferredLevels, by sink: CountingSink, times: Int = 1) {
+        LaunchingSketch.$replay.withValue(sink) {
+            for _ in 0..<times {
+                _ = levels.levels()
+                _ = levels.waveform()
+                _ = levels.isBeat
+            }
+        }
+    }
+
+    @Test("同じ音を 2 つの受け手 (記録とその後の別の記録・記録と再生) で読むと、それぞれへ 1 度ずつ名乗る")
+    func eachSinkIsNamedOnce() {
+        var levels = DeferredLevels(replayKind: "TriOsc")
+        let first = CountingSink(window: true)
+        let second = CountingSink(window: true)
+        read(&levels, by: first, times: 3)
+        read(&levels, by: second, times: 3)
+        #expect(first.reasons == [reason], "\(first.reasons)")
+        #expect(second.reasons == [reason], "受け手が変わったら名乗り直す: \(second.reasons)")
+    }
+
+    @Test("1 つの受け手に何百回読んでも、理由を組んで渡すのは 1 回")
+    func manyReadsReachTheSinkOnce() {
+        var levels = DeferredLevels(replayKind: "TriOsc")
+        let sink = CountingSink(window: true)
+        read(&levels, by: sink, times: 300)
+        #expect(sink.reasons.count == 1)
+    }
+
+    @Test("ウィンドウでない受け手は 1 度だけ訊いて名乗らず、その後のウィンドウの受け手には名乗る")
+    func aHeadlessSinkIsAskedOnceThenAWindowSinkIsNamed() {
+        var levels = DeferredLevels(replayKind: "TriOsc")
+        let headless = CountingSink(window: false)
+        read(&levels, by: headless, times: 100)
+        #expect(headless.reasons.isEmpty)
+        #expect(headless.windowQueries == 1, "名乗らないと決めた受け手には、読むたびに訊き直さない")
+        let window = CountingSink(window: true)
+        read(&levels, by: window)
+        #expect(window.reasons == [reason], "\(window.reasons)")
+    }
+
+    @Test("名乗る種類を持たない置き場は、受け手が居ても名乗らない")
+    func aKindlessHolderIsSilent() {
+        var levels = DeferredLevels()
+        let sink = CountingSink(window: true)
+        read(&levels, by: sink)
+        #expect(sink.reasons.isEmpty && sink.windowQueries == 0)
     }
 }
