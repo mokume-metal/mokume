@@ -30,11 +30,22 @@ struct MoviePrefetcherTests {
 
     /// 係が列を埋め終えるまで待つ。期限 (60 秒) を越えたら落とす。期限は、係が最初のコマで面の色の表を作る (debug で数秒・#2962) 間を含む。
     private func settle(_ prefetcher: MoviePrefetcher) async throws {
-        let deadline = ContinuousClock.now + .seconds(60)
-        while !prefetcher.isSettled {
-            try #require(ContinuousClock.now < deadline, "係が 60 秒で列を埋め終えない")
-            try await Task.sleep(for: .milliseconds(1))
-        }
+        try await PrefetcherSettle.wait(prefetcher)
+    }
+
+    @Test("待ち切れの説明に載せる係の状態は、休み・見た頼みと最新の頼み・列のコマ数・最後に進んでからの経過を名乗る")
+    func diagnosisNamesTheWorkerState() async throws {
+        let url = try await movie()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let prefetcher = MoviePrefetcher(source: source(url))
+        defer { prefetcher.close() }
+        _ = try prefetcher.picture(at: 0, generation: 0, lap: 0, looping: false)
+        _ = try prefetcher.picture(at: 0.1, generation: 0, lap: 0, looping: false)
+        try await settle(prefetcher)
+        let text = prefetcher.diagnosis
+        #expect(text.contains("idle=true seen=2 request=2 frames="), "\(text)")
+        #expect(text.contains("failure=false ended=false broken=false lastStep="), "\(text)")
+        #expect(prefetcher.isSettled)
     }
 
     @Test("埋まった列から、頼んだ位置のコマを待たずに選ぶ")

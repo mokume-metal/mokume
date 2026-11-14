@@ -112,6 +112,17 @@ final class MoviePrefetcher {
         mailbox.state.withLock { $0.idle && $0.seen == serial }
     }
 
+    /// 係の今の状態を 1 行にしたもの。**検査が待ち切れの説明に載せる** — 係が進んでいるのに遅い (遅れ) のか、
+    /// 頼みが新しいのに休んでいる (取りこぼし) のかを、記録 1 回で読み分けるため。
+    var diagnosis: String {
+        let (idle, seen, frames, failure, ended, broken, progressed) = mailbox.state.withLock {
+            ($0.idle, $0.seen, $0.frames.count, $0.failure != nil, $0.ended, $0.broken, $0.progressed)
+        }
+        let since = ContinuousClock.now - progressed
+        return "idle=\(idle) seen=\(seen) request=\(serial) frames=\(frames) failure=\(failure) "
+            + "ended=\(ended) broken=\(broken) lastStep=\(since) ago"
+    }
+
     /// 係が動画を開けなかったか。開けなければ ``Movie`` は同期の読みに戻る。
     var isBroken: Bool {
         mailbox.state.withLock { $0.broken }
@@ -255,6 +266,8 @@ nonisolated final class PrefetchMailbox: Sendable {
         /// 係が読み手を閉じて抜けた。
         var exited = false
         var restarts = 0
+        /// 係が最後に 1 歩進んだ (頼みを見た・コマを積んだ・休んだ) 時刻。**検査が待ち切れの説明に使う。**
+        var progressed = ContinuousClock.now
     }
 
     let state = Mutex(State())
@@ -293,6 +306,7 @@ nonisolated struct PrefetchWorker {
                 guard !state.stopping, let request = state.request else { return nil }
                 state.seen = request.serial
                 state.idle = false
+                state.progressed = .now
                 let limit = PrefetchKey(lap: request.lap, time: request.position + Playhead.tolerance)
                 let ahead = state.frames.count(where: { $0.generation == request.generation && $0.key > limit })
                 return (request, ahead, state.ended)
@@ -309,6 +323,7 @@ nonisolated struct PrefetchWorker {
                 let rest = mailbox.state.withLock { state -> Bool in
                     guard state.request?.serial == request.serial || state.stopping else { return false }
                     state.idle = true
+                    state.progressed = .now
                     return true
                 }
                 if rest { return mailbox.state.withLock { !$0.stopping } }
@@ -406,6 +421,7 @@ nonisolated struct PrefetchWorker {
             // 変換の間に飛んでいれば積まない
             guard state.request?.generation == prefetched.generation, !state.stopping else { return }
             state.frames.append(prefetched)
+            state.progressed = .now
         }
     }
 }
