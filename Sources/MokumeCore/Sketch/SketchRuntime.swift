@@ -1001,22 +1001,10 @@ package final class SketchRuntime {
         try runFrameInOwnPool(displayTime: displayTime)
     }
 
-    /// ``runFrame(displayTime:)`` を、自分の autorelease の置き場の中で回す (#4081)。
-    ///
-    /// **フレームの区切りを呼び手の run loop に頼らない。** ウィンドウ・書き出し・流す経路は run loop の
-    /// 1 回ごとに進めるので、置き場はそこで空になる。検査や、`advance()` を自分のループで回す道具には
-    /// その区切りが無い。描き場所と面の持ち主が死んだ後も、フレームの中で autorelease されたものが捨てた
-    /// 描き場所の確保を掴み続けるので、区切りが無いと GPU のメモリが呼び手のループを抜けるまで伸び続ける。
+    /// ``runFrame(displayTime:)`` を、自分の autorelease の置き場の中で回す (``drainingAutoreleased(_:)``・#4081)。
+    /// 区切りを、`advance()` を呼ぶループの形 (run loop か、検査や道具のループか) に頼らない。
     private func runFrameInOwnPool(displayTime: Double? = nil) throws(RenderFailure) {
-        let failure: RenderFailure? = autoreleasepool {
-            do throws(RenderFailure) {
-                try runFrame(displayTime: displayTime)
-                return nil
-            } catch {
-                return error
-            }
-        }
-        if let failure { throw failure }
+        try drainingAutoreleased { () throws(RenderFailure) in try runFrame(displayTime: displayTime) }
     }
 
     /// フレームを 1 つ進める本体。**名乗りの世話は含まない。**

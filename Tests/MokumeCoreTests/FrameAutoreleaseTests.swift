@@ -96,6 +96,44 @@ struct FrameAutoreleaseTests {
         #expect(alive <= ChurningSketch.perFrame, "捨てた描き場所が \(sketch.made.count) 枚のうち \(alive) 枚生きている")
     }
 
+    @Test("面を直に回すループでも、draw { } が返った時点で、その中で autorelease したものは手放されている")
+    func canvasDrawDrainsWhatItAutoreleased() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 64, height: 32)
+        let canvas = try Canvas(target: target, gpu: gpu)
+        var made: [Canvas.WeakCanvas] = []
+        for frame in 1...10 {
+            weak var marker: Marker?
+            try canvas.draw {
+                marker = Self.autoreleased()
+                canvas.background(20, 20, 20)
+                guard let graphics = try? canvas.createGraphics(19, 15) else { return }
+                graphics.beginDraw()
+                graphics.background(200, 80, 120)
+                graphics.endDraw()
+                canvas.image(graphics, 0, 0)
+                made.append(Canvas.WeakCanvas(canvas: graphics))
+            }
+            try #require(marker == nil, "\(frame) 枚目の draw { } の後に、autorelease したものが生きている")
+        }
+        #expect(made.count == 10, "描き場所を作れなかった")
+    }
+
+    @Test("包んだ仕事が投げても、autorelease したものを手放してから同じ失敗を投げ直す")
+    func aFailedWorkStillDrains() {
+        weak var marker: Marker?
+        #expect {
+            try drainingAutoreleased { () throws(RenderFailure) in
+                marker = Self.autoreleased()
+                throw RenderFailure.commandBufferUnavailable
+            }
+        } throws: { error in
+            guard case RenderFailure.commandBufferUnavailable = error else { return false }
+            return true
+        }
+        #expect(marker == nil, "投げた後も autorelease したものが生きている")
+    }
+
     @Test("setup() が投げたフレームも、autorelease したものを手放してから投げる")
     func aFailedFrameStillDrains() throws {
         let sketch = ChurningSketch()

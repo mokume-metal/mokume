@@ -3850,9 +3850,12 @@ public final class Canvas {
         }
         // ここへ来るのは組み立ての外だけで (上の守り)、閉包の中の組み立ては閉包の中で閉じる。だから閉包の
         // 終わりで閉じるのを組み立ての出口まで待たせる場合 (#1855 の案 G) は、もう無い
-        beginFrame()
-        body()
-        try endFrame()
+        // 面を直に回すループ (道具・検査) は run loop の区切りを持たない。描き切りまでを自分の置き場で包む (#4081)
+        try drainingAutoreleased { () throws(RenderFailure) in
+            beginFrame()
+            body()
+            try endFrame()
+        }
     }
 
     /// 描き場所として 1 フレーム分を描き始める。
@@ -7271,4 +7274,23 @@ extension Canvas: SettlementObserver {
         carriesPictureBeforeEffects = flush.hadCarry
         target.noteTextureReplaced()
     }
+}
+
+/// `work` を自分の autorelease の置き場の中で走らせ、投げた失敗は置き場を空にしてから投げ直す (#4081)。
+///
+/// **1 フレームの区切りを呼び手の run loop に頼らないための口。** ウィンドウ・書き出し・流す経路は run loop の
+/// 1 回ごとに置き場が空になるが、検査や道具が面やランタイムを自分のループで回すと区切りが無い。描き場所と面の
+/// 持ち主が死んだ後も、フレームの中で autorelease されたものが捨てた描き場所の確保を掴み続けるので、区切りが無いと
+/// GPU のメモリがループを抜けるまで伸び続ける。
+@MainActor
+func drainingAutoreleased(_ work: () throws(RenderFailure) -> Void) throws(RenderFailure) {
+    let failure: RenderFailure? = autoreleasepool {
+        do throws(RenderFailure) {
+            try work()
+            return nil
+        } catch {
+            return error
+        }
+    }
+    if let failure { throw failure }
 }
