@@ -113,7 +113,8 @@ struct MovieResizedFrameTests {
             case .failure(.tablePending): break
             case .failure(let refusal): Issue.record("表を作れない: \(refusal)"); return
             }
-            try #require(ContinuousClock.now < deadline, "表が 60 秒で出来ない")
+            // 先読みの係の状態は無い (表は共有で、係を通さない) ので、診断は載せず、待っている相手を名乗る
+            try #require(ContinuousClock.now < deadline, "表が 60 秒で出来ない (応答は tablePending のまま)")
             try await Task.sleep(for: .milliseconds(10))
         }
     }

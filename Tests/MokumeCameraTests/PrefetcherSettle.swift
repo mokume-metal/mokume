@@ -24,19 +24,4 @@ enum PrefetcherSettle {
             try await Task.sleep(for: .milliseconds(1))
         }
     }
-
-    /// ``wait(_:sourceLocation:)`` の、同期の文脈 (`draw()` の中) から呼べる形。呼んだスレッドを塞ぐ
-    /// (係は別のスレッドで走る)。期限を越えたら失敗を記録して `false` を返す。
-    @discardableResult
-    static func waitBlocking(_ prefetcher: MoviePrefetcher, sourceLocation: SourceLocation = #_sourceLocation) -> Bool {
-        let deadline = ContinuousClock.now + limit
-        while !prefetcher.isSettled {
-            guard ContinuousClock.now < deadline else {
-                Issue.record("係が \(limit) で列を埋め終えない: \(prefetcher.diagnosis)", sourceLocation: sourceLocation)
-                return false
-            }
-            Thread.sleep(forTimeInterval: 0.001)
-        }
-        return true
-    }
 }

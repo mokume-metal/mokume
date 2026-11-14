@@ -112,8 +112,17 @@ final class MoviePrefetcher {
         mailbox.state.withLock { $0.idle && $0.seen == serial }
     }
 
+    /// 係が最後に 1 歩進んだ (頼みを見た・コマを積んだ・休んだ) 時刻。**検査が読む。**
+    var lastStep: ContinuousClock.Instant {
+        mailbox.state.withLock { $0.progressed }
+    }
+
     /// 係の今の状態を 1 行にしたもの。**検査が待ち切れの説明に載せる** — 係が進んでいるのに遅い (遅れ) のか、
     /// 頼みが新しいのに休んでいる (取りこぼし) のかを、記録 1 回で読み分けるため。
+    ///
+    /// 読み方: `idle=true` で `seen` が `request` より小さければ取りこぼし (頼みが新しいのに休んでいる)。
+    /// `idle=false` は 1 歩の最中で、`lastStep` が大きいのは長い 1 歩 (復号が遅い) であり、取りこぼしの印ではない。
+    /// `lastStep` は 1 歩を終えるたびに更新するので、1 歩の途中の長さは含まない。
     var diagnosis: String {
         let (idle, seen, frames, failure, ended, broken, progressed) = mailbox.state.withLock {
             ($0.idle, $0.seen, $0.frames.count, $0.failure != nil, $0.ended, $0.broken, $0.progressed)
@@ -314,6 +323,7 @@ nonisolated struct PrefetchWorker {
             guard let (request, ahead, ended) = snapshot else {
                 return mailbox.state.withLock { state in
                     state.idle = true
+                    state.progressed = .now
                     return !state.stopping
                 }
             }

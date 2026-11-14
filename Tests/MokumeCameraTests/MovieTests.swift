@@ -591,12 +591,16 @@ struct MovieTests {
         var movie: Movie?
         var phase = 0
         var afterReattach: [SourceState] = []
+        var reader: MovieReader?
+        var restartsAtReattach = 0
+        var restartsInFirstFrame: Int?
         let runtime = try run(
             frames: 60,
             setup: { sketch in
-                let reader = try MovieReader(url: broken, path: "broken.mov")
+                let opened = try MovieReader(url: broken, path: "broken.mov")
+                reader = opened
                 let made = Movie(
-                    image: try sketch.createImage(reader.width, reader.height), reader: reader,
+                    image: try sketch.createImage(opened.width, opened.height), reader: opened,
                     name: "video: broken.mov", owner: sketch, warn: { _ in })
                 sketch.attach(made)
                 made.loop()
@@ -614,23 +618,27 @@ struct MovieTests {
                     }
                 case 1:
                     // 足し直して、また流す
+                    restartsAtReattach = reader?.restarts ?? 0
                     sketch.attach(movie)
                     movie.loop()
                     phase = 2
                 default:
+                    if restartsInFirstFrame == nil { restartsInFirstFrame = reader?.restarts }
                     afterReattach.append(movie.state)
-                    // 先読みの係が頼みに答え終えてから次のフレームへ進む。読みに行った結果の届く遅さ (機械の
-                    // 混み具合) が、見る枚数に混ざらない
-                    if let prefetcher = movie.prefetcher { PrefetcherSettle.waitBlocking(prefetcher) }
                 }
             })
         #expect(phase == 2, "読めなくなるところまで進まなかった")
         #expect(afterReattach.count >= 10)
-        // 足し直した直後に読みに行き、読めない所で disconnected になる。外す前の「まだ試さない」を持ち越すと、
-        // 約 1 秒 (60 フレームほど) の間、読みに行かずに絵が止まったまま動いていると名乗る。係の答えを
-        // フレームごとに待っているので、読みに行く経路なら 2〜3 フレーム目で名乗り、持ち越す経路の 60 フレームとは
-        // 桁が違う (5 は遅れの余裕で、機械の速さには依らない)
-        #expect(afterReattach.prefix(5).contains(.disconnected), "\(afterReattach)")
+        // **足し直した最初のフレームで、読みに行く** (読み直しの回数が増える)。この検査の経路 (フレームの時計) は
+        // 同期の読みで、数えるのは「読みに行ったか」だけなので、機械の速さに依らない。外す前の「まだ試さない」を
+        // 持ち越すと、約 1 秒 (retryDistance) の間、読みに行かずに絵が止まったまま動いていると名乗る
+        #expect(
+            (restartsInFirstFrame ?? 0) > restartsAtReattach,
+            "足し直した最初のフレームで読みに行かなかった: 読み直し \(restartsAtReattach) → \(restartsInFirstFrame ?? -1)")
+        // 読めない所の手前から読み直すと、その所へ届くまでに何枚かは読める。どの枚で壊れたと分かるかは復号器の
+        // 進み方 (機械の負荷) で数枚動くので、持ち越しの長さ (retryDistance 秒ぶんのフレーム) の半分までに名乗ればよい
+        let carryOver = Int(MovieReader.retryDistance * 30)
+        #expect(afterReattach.prefix(carryOver / 2).contains(.disconnected), "\(afterReattach)")
         runtime.closePlugins()
     }
 
