@@ -1342,6 +1342,10 @@ extension PositionLayoutDrawingTests {
             let heading = SIMD3<Float>(unit() * 2 - 1, unit() * 2 - 1, unit() * 2 - 1) * length
             places.append((position, heading))
         }
+        // 真上・真下のごく近く (x・y の 2 乗が下へ溢れる大きさ) でも、方位は atan2(y, x) のまま
+        for heading: SIMD3<Float> in [[0, -1e-25, 1], [1e-20, 1e-20, -1], [-3e-24, 2e-24, 5], [1e-30, 0, -1e10]] {
+            places.append((SIMD3<Float>(100, 150, 0), heading))
+        }
         // 移す・軸ごとに違う倍率・回す、のまざった変換の下で比べる (面の向きは逆転置で移る)
         let setup: (Canvas) -> Void = { canvas in
             canvas.translate(30, 20, 5)
@@ -1384,9 +1388,13 @@ extension PositionLayoutDrawingTests {
         #expect(worst <= 1e-5, "GPU と CPU の置き場所の行列が相対 \(worst) ずれる")
     }
 
-    @Test("成分の 2 乗が溢れる大きい向きと、小さい向きも、同じ向きの長さ 1 の向きと同じ行列になる")
+    @Test("成分の 2 乗が溢れる大きい向きと、小さい向きも、同じ向きの長さ 1 の向きと同じ行列になる。非正規化数の成分は 0 と読む")
     func extremeHeadingLengthsKeepTheirDirection() throws {
-        let headings: [SIMD3<Float>] = [[1e30, 1e30, 0], [1, 1, 0], [-3e37, 0, 3e37], [-1, 0, 1], [1e-30, 0, 0], [1, 0, 0]]
+        let headings: [SIMD3<Float>] = [
+            [1e30, 1e30, 0], [1, 1, 0], [-3e37, 0, 3e37], [-1, 0, 1], [1e-30, 0, 0], [1, 0, 0],
+            // 非正規化数の成分は 0 として読む: 全部が非正規化数なら長さ 0 (回さない)、x と y だけなら真上
+            [1e-40, 1e-40, 0], [0, 0, 0], [3e-39, -2e-39, 5], [0, 0, 1],
+        ]
         let placed = try placedMatrices(
             headings.map { (SIMD3<Float>(100, 150, 0), $0) }, layout: .positionAndHeading)
         #expect(placed.count == headings.count, "大きい向きの 1 か所が外れた")

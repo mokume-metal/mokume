@@ -337,7 +337,8 @@ static inline uint mokume_positionStride(device const float *parameters) {
 ///
 /// 方位 φ の分だけ z 軸まわりに、続けて仰角 θ の分だけ y 軸まわりに回すのと同じ行列を、三角関数を
 /// 使わずに組む: 1 列目は向きそのもの (長さ 1)、2 列目は (−sin φ, cos φ, 0)、3 列目はその外積。
-/// 長さ 0 の向きは回さない (単位行列)。真上・真下 (x と y が 0) の向きは方位を 0 とする。
+/// 長さ 0 の向きは回さない (単位行列)。真上・真下 (x と y がどちらも 0) の向きは方位を 0 とする。
+/// 非正規化数 (絶対値が約 1.2e-38 未満) の成分は 0 として読む (GPU が 0 に流す)。
 ///
 /// 長さは成分の最大の絶対値で割ってから求める — 大きい向き (1e20 など) の 2 乗が溢れて無限になり、
 /// 有限の向きが数でない行列になるのを避ける。割り算と平方根は **正確な版** (precise::) を使い、軸に
@@ -353,10 +354,15 @@ static inline float3x3 mokume_headingRotation(float3 heading) {
     float length3 = precise::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
     float3 forward = float3(
         precise::divide(d.x, length3), precise::divide(d.y, length3), precise::divide(d.z, length3));
-    float flat = precise::sqrt(d.x * d.x + d.y * d.y);
-    float3 side = flat > 0.0
-        ? float3(-precise::divide(d.y, flat), precise::divide(d.x, flat), 0.0)
-        : float3(0.0, 1.0, 0.0);
+    // 方位は x と y だけから、x と y の大きいほうで割ってから求める。z で割った値の 2 乗から求めると、
+    // ほぼ真上・真下の向きで x と y の 2 乗が下へ溢れて 0 になり、方位が 0 に潰れる
+    float across = max(fabs(heading.x), fabs(heading.y));
+    float3 side = float3(0.0, 1.0, 0.0);
+    if (across > 0.0) {
+        float2 e = float2(precise::divide(heading.x, across), precise::divide(heading.y, across));
+        float flat = precise::sqrt(e.x * e.x + e.y * e.y);
+        side = float3(-precise::divide(e.y, flat), precise::divide(e.x, flat), 0.0);
+    }
     return float3x3(forward, side, cross(forward, side));
 }
 
