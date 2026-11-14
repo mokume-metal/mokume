@@ -625,13 +625,10 @@ struct ThinFillVertexStageTests {
                         Canvas.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
                             .moved(by: SIMD2(-w / 2, -h / 2)))
                 }
-                if folding {
-                    // 塗りだけは畳まれ、輪郭つきは畳まれない (置き場所ごとに組む・#3170 の決定)
-                    if stroke {
-                        #expect(canvas.openFlat == nil, "\(name): 輪郭つきが畳まれた")
-                    } else {
-                        #expect(canvas.openFlat != nil, "\(name): 畳まれていない")
-                    }
+                // 塗りだけは畳まれる。輪郭つき (太さ 0.7 は描く画素で細い) は 2x2 が畳みの鍵で、回転が全部違う
+                // この場面では畳む相手が無い (輪郭つきを畳んだ絵は `FoldedPlacementTests` が見る・#3759)
+                if folding, !stroke {
+                    #expect(canvas.openFlat != nil, "\(name): 畳まれていない")
                 }
             }
         }
@@ -644,9 +641,7 @@ struct ThinFillVertexStageTests {
             if unfolded.components[index] > 0 { lit += 1 }
         }
         #expect(lit > 0, "\(name): 絵が空")
-        // **どの場面も許容 0。** 輪郭つきは畳まずに置き場所ごとに組むので、畳まない道と同じ頂点を同じ順で置く
-        // (畳んだ雛形は輪郭の頂点を「雛形の座標を置き場所の行列で移す」順で置き、縁の頂点が 1 ulp 違って
-        // 縁の画素が入れ替わるため、輪郭つきは畳まない)
+        // **どの場面も許容 0**
         #expect(
             differing == 0, "\(name): 畳まずに置いた絵と画素の成分が \(differing) 個違う (点いている成分 \(lit))")
     }

@@ -280,10 +280,9 @@ struct FoldedPlacementTests {
         }
     }
 
-    @Test("畳んだ角丸 rect (塗りだけ・貼る絵) は、畳まない道と画素が同じ (許容 0)")
+    @Test("畳んだ角丸 rect は、輪郭 (丸い角) も貼る絵も、畳まない道と画素が同じ (許容 0)")
     func roundedRectsKeepTheirPixels() throws {
-        // 輪郭つきの角丸は畳まない (#3170・畳む条件はこの検査の外)
-        try Self.expectSameAsUnfolded(.roundedRect, strokes: [nil])
+        try Self.expectSameAsUnfolded(.roundedRect, strokes: Self.roundStrokes)
         try Self.expectSameAsUnfolded(.roundedRect, strokes: [nil], texture: true)
     }
 
@@ -322,6 +321,7 @@ struct FoldedPlacementTests {
             (.rect, Stroke(weight: 0.7), false), (.rect, Stroke(weight: 2), false),
             (.rect, Stroke(weight: 0.7, join: .miter), false), (.rect, Stroke(weight: 0.7, join: .bevel), false),
             (.rect, nil, true), (.roundedRect, nil, false), (.roundedRect, nil, true),
+            (.roundedRect, Stroke(weight: 0.7), false), (.roundedRect, Stroke(weight: 2), false),
             (.ellipse, Stroke(weight: 0.7), false), (.ellipse, Stroke(weight: 2), false), (.ellipse, nil, true),
             (.circle, Stroke(weight: 0.7), false), (.pie, Stroke(weight: 0.7), false), (.pie, Stroke(weight: 2), false),
             (.pie, nil, true), (.fullTurn, Stroke(weight: 0.7), false), (.chord, nil, false),

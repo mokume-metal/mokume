@@ -68,30 +68,14 @@ extension Canvas {
         // 角を丸めた矩形は、貼る絵 (`texture()`) か利用者の断片 (`shader()`) が効いている間だけ
         // ここへ来る。距離関数の経路に入れないので、角を円弧の刻みで繋いだ周で描く。
         if radius > 0 {
-            // **塗りだけのときは、角を丸めない矩形と同じく畳む** (#3170)。周は形自身の座標で作って左上の角を
-            // 置き場所として渡し、角の弧の刻みは鍵が持つ数 (置き場所の拡大で決まる整数) で刻む。
-            // **輪郭があれば畳まず、置き場所ごとに組む。** #3170 のときは、畳んだ雛形が輪郭の頂点を「雛形の座標を
-            // 置き場所の行列で移す」順で置き、縁の頂点が 1 ulp 違って縁の画素が畳まない絵と変わった (16×10・半径 5・
-            // `strokeWeight(0.7)`・回転 0.29 で 3 成分)。頂点段は #3555 で畳まない道と同じ順に置くようになったので、
-            // 畳む側へ寄せられるはずだが、許容 0 を検査で縛るまでは今までの道に残す (#3759)
-            if !(style.hasStroke && style.strokeWeight > 0) {
-                return draw(folding: .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y)) {
-                    segments in
-                    Self.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
-                }
-            }
-            let segments = Self.segmentCount(
-                forRadius: radius, scale: Self.splitScale(of: flatTransform.matrix))
-            // ベクターへは、周を刻んだ折れ線でなく**角丸の矩形そのもの**を書く (#3271)。控えは描く前に済ませ、
-            // 内側の `draw(_:)` が周を 2 度控えないよう止める — 描く道は触らないので、絵は変わらない。
-            // 区間の外では置かないので、控えもしない (``Canvas/canPlace``・#1672)
-            guard canPlace else { return warnOutsideFrame(.placing) }
-            let heldVector = suspendVectorRecordingShadedFigure(
-                .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y))
-            defer { resumeVector(heldVector) }
-            return draw(
+            // **角を丸めない矩形と同じく畳む** (#3170・#3759)。周は形自身の座標で作って左上の角を置き場所として渡し、
+            // 角の弧の刻みは鍵が持つ数 (置き場所の拡大で決まる整数) で刻む。輪郭つきも、畳んだ絵が畳まない道と
+            // 許容 0 で一致することを `FoldedPlacementTests` が見る。ベクターへは角丸の矩形そのものを書く (#3271・
+            // 控えは畳む口が済ませる)
+            return draw(folding: .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y)) {
+                segments in
                 Self.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
-                    .moved(by: SIMD2(box.x, box.y)))
+            }
         }
         // 周は**形自身の座標**で作り、左上の角を置き場所として渡す。畳まないときは
         // 角を足し戻すだけなので、絵は 1 ビットも変わらない (足す順が入れ替わるだけ)
