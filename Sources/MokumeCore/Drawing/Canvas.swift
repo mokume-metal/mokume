@@ -1791,6 +1791,20 @@ public final class Canvas {
     /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
     var failPlacedPictureCopyForTesting: RenderFailure?
 
+    /// 合成の単位の中間面の置き場 (``CompositeSurfacePool``・#4029)。**使うのは時刻の置き場の持ち主
+    /// (``Timebase/owner``) のものだけで、スケッチに 1 つ** — 描き場所も入れ子の中間面も、持ち主の置き場を
+    /// 使う (``sketchCompositeSurfaces``)。持ち越す量の上限はそこで 1 度だけ数える。面ごとに持つと、描き場所の
+    /// 数と入れ子の深さだけ上限が増える。
+    ///
+    /// **置き場は持ち主の面が持ち、時刻の置き場には置かない。** 置いた中間面は時刻の置き場を強く指すので、
+    /// 時刻の置き場が置き場を持つと輪になり、スケッチを閉じても面が解放されない。持ち主の面は時刻の置き場から
+    /// 弱くしか指されないので、持ち主が死ねば置き場ごと面も手放される。
+    let compositeSurfaces = CompositeSurfacePool<Canvas>()
+
+    /// このスケッチの中間面の置き場 (持ち主の ``compositeSurfaces``)。持ち主を手放した後は `nil` で、
+    /// 中間面は使い回さずに毎回作る。
+    var sketchCompositeSurfaces: CompositeSurfacePool<Canvas>? { timebase.owner?.compositeSurfaces }
+
     /// 弱く持つ面ひとつぶん。
     struct WeakCanvas {
         weak var canvas: Canvas?
@@ -4019,36 +4033,60 @@ public final class Canvas {
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
     public func endDraw() {
+        closeDrawing()
+    }
+
+    /// ``endDraw()`` そのもの。**このフレームを描き切れたときだけ真を返す** (閉じなかった・描き切れなかったときは偽)。
+    ///
+    /// 合成の単位 (``withCompositeGroup(opacity:covering:placedWith:_:)``) が読む (#4029)。描き切れなかった
+    /// 中間面は塗り直しの予定ごと捨てられ、使い回した面なら前に描いた絵を持ったままなので、貼ってはならない。
+    @discardableResult
+    func closeDrawing() -> Bool {
         // **組み立ての中でフレームを始めなかった ``beginDraw()`` と対の `endDraw()` は、何もしない** ([#2834])。
         // 閉じるものを始めていないので、組み立ての前に開いたフレームを閉じも待たせもせず、フレームの外でも
         // 「`beginDraw()` より前」と言わない (`beginDraw()` が既に言っている)。数は組み立ての出口で下ろす
         if recordingShape, refusedBeginDrawsInsideShape > 0 {
             refusedBeginDrawsInsideShape -= 1
-            return
+            return false
         }
         // **本体のフレームが始まる所で捨てることになったフレーム** (出口で捨てる・``dropAwaitingShape``・[#2509]) は、
         // もう閉じるものではない。閉じると前のフレームの中身を描くので、待たせず、既に捨てたと言って何もしない
-        if dropAwaitingShape { return warnEndDrawAfterFrameDropped() }
+        if dropAwaitingShape {
+            warnEndDrawAfterFrameDropped()
+            return false
+        }
         guard isDrawing else {
             // 捨てたことを名乗るのは 1 度だけ。2 度目からは、`beginDraw()` を書いていない誤りである。
             // 組み立ての中でも同じ — 対の `beginDraw()` が無いので、始めようとしたとは言わない (#2834)
-            guard droppedAtTheMainFrame else { return warnNotDrawing() }
-            droppedAtTheMainFrame = false
-            return warnEndDrawAfterFrameDropped()
+            if droppedAtTheMainFrame {
+                droppedAtTheMainFrame = false
+                warnEndDrawAfterFrameDropped()
+            } else {
+                warnNotDrawing()
+            }
+            return false
         }
         // `draw { }` が開いたフレームは、閉包を抜けるときに `draw` が閉じる。ここで閉じると
         // 閉包が戻った後に `draw` がもう一度描き切り、番号も 2 つ進む
-        guard beginDrawFrame != nil else { return warnFrameCallInsideFrame("endDraw") }
+        guard beginDrawFrame != nil else {
+            warnFrameCallInsideFrame("endDraw")
+            return false
+        }
         // **自分の形の組み立ての中では、ここで閉じない** ([#1855] の案 G)。閉じる描き切りが組み立ての
         // 区間を空にし、形が空になっていた (#1588 の安全網)。1 度注意して、一番外の組み立ての出口で
         // 閉じる (``closeFrameAwaitingShape()``)。それまでに置いたものも形に入る
         //
         // [#1855]: https://github.com/mokume-metal/mokume/issues/1855
-        guard !recordingShape else { return awaitFrameEndInsideShape() }
+        guard !recordingShape else {
+            awaitFrameEndInsideShape()
+            return false
+        }
         do {
             try endFrame()
+            return true
         } catch {
             Diagnostics.warn("endDraw(): could not finish drawing: \(error.headline)")
+            return false
         }
     }
 
@@ -4422,6 +4460,9 @@ public final class Canvas {
         // 書いた画素も同じで、写しの書き込み待ちを残すと次の描き切りが面へ戻す (#1678)
         discardFrame()
         trimPlacedPictureCopies()
+        // この面が置いた合成の単位の中間面は、ここで読み終えた (描き切ったか捨てた) ので空きへ戻す。持ち主の
+        // フレームの終わりなら、このフレームで使わなかった面を手放す (#4029)
+        sketchCompositeSurfaces?.leaveFrame(of: self, sweeping: timebase.owner === self)
         // **読んだ写しもフレームを越えない** ([#1524] の反証 2-2)。写しはフレームの途中で
         // 読んだ絵のまま残るので、取っておいたビュー (``pixels``) へ止まっている間のコールバックで
         // 書くと、フレームの途中の古い絵へ書いて全面を書き戻していた。ここで下ろせば、止まって

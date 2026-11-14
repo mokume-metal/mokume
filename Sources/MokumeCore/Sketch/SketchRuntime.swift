@@ -1092,6 +1092,7 @@ package final class SketchRuntime {
             canvas.catchUpOutputWithoutThrowing()
             takeFragmentChangesWithoutAFrame()
             settleWithoutAnotherFrame()
+            releaseIdleCompositeSurfaces()
             serveObservationIfRequested(request: observation)
             // 観測の一枚描きが最初のフレームで `setup()` を走らせて、投げたなら、応えた後で投げる (#2401)
             if let setupFailure { throw setupFailure }
@@ -1117,6 +1118,7 @@ package final class SketchRuntime {
                     canvas.catchUpOutputWithoutThrowing()
                     takeFragmentChangesWithoutAFrame()
                     settleWithoutAnotherFrame()
+                    releaseIdleCompositeSurfaces()
                     serveObservationIfRequested(request: observation)
                     if let setupFailure { throw setupFailure }  // 上の外の停止の分岐と同じ (#2401)
                     return
@@ -1154,7 +1156,10 @@ package final class SketchRuntime {
         // **このフレームで止まったなら、組んだ絵をその場で配る。** 遅らせているのは
         // 次のフレームの CPU と重ねるためなので、次が来ないなら遅らせる意味が無い (#1300)。
         // ここでの `redrawRequested` は上で落としてあるので、残る理由は作者の `noLoop()` である
-        if !isLooping { settleWithoutAnotherFrame() }
+        if !isLooping {
+            settleWithoutAnotherFrame()
+            releaseIdleCompositeSurfaces()
+        }
         // **組み終えたところで測る。** 観測に応える仕事 (絵を書き出す) は作品の重さではない
         if let began = frameWorkBegan {
             budget.record(frame: timing.frameCount, seconds: now() - began)
@@ -1162,6 +1167,14 @@ package final class SketchRuntime {
         }
         serveObservationIfRequested(request: observation, drawFailure: drawFailure, appliedTime: requestedTime)
         if let drawFailure { throw drawFailure }
+    }
+
+    /// 合成の単位の中間面の空きを全部手放す (``CompositeSurfacePool/releaseIdle()``・#4029)。**描かない回に呼ぶ** —
+    /// `noLoop()` で止まったフレームの後・止まっている間に入力だけを配った回・外から止められている回・1 枚描きの後。
+    /// 空きは持ち主の次のフレームの終わりに手放すが、描かない回は次のフレームがいつ来るか分からない。
+    /// `redraw()` や再開で描くフレームは作り直す。
+    private func releaseIdleCompositeSurfaces() {
+        canvas.sketchCompositeSurfaces?.releaseIdle()
     }
 
     /// ``setup()`` が投げているなら、観測の要求には失敗を載せて応え、同じ失敗を投げる ([#2401])。
@@ -2336,6 +2349,8 @@ package final class SketchRuntime {
         // 書き出す絵は残る。拡大した字の焼きを次へ送らない (#2446)
         exportsOneFrame = true
         defer { exportsOneFrame = false }
+        // 1 枚描きは次のフレームを約束しないので、描いた後に中間面の空きを持ち越さない (#4029)
+        defer { releaseIdleCompositeSurfaces() }
         try advance()
         try PNGFile.write(try target.encodeToImageAndRead(avoiding: outletStorageToAvoid()), to: url)
     }
