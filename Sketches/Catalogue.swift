@@ -105,4 +105,5 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "capture-and-mirror") { CaptureAndMirror() },
     // 遊べる作例。書き出しは触っていない (球が出る前の) 1 枚で、台帳には「走っても落ちない」として載る
     ReferenceSketch(name: "bricks-and-ball") { BricksAndBall() },
+    ReferenceSketch(name: "jump-and-scroll") { JumpAndScroll() },
 ]

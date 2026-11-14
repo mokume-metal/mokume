@@ -768,6 +768,50 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
                    symbol("count(of:)", owner="Sketch", precise="b")]
         self.assertEqual(api.check_sketch_coverage(symbols, "let n = count", {}), [])
 
+    # ---- スケッチの自前の同名の関数 (#4052) ----
+
+    def test_スケッチが自前に宣言した同名の関数の呼び出しは_Sketch_の口の呼び出しに数えない(self):
+        """`PartsAndFormats` の補助関数 `numbers(_:)` の呼び出しで、`Sketch.numbers(_:)` が通っていた。"""
+        symbols = [symbol("numbers(_:)", owner="Sketch")]
+        for source in [
+            "private static func numbers(_ v: SIMD3<Float>) -> [Float] { [v.x] }\nlet a = numbers(v)",
+            "func numbers(_ v: Int) {}\nnumbers(3)\nself.numbers(4)",
+            # **近似を固定する例**: Swift の名前の解き方では S の外の素の `numbers(2)` は
+            # `S.numbers` に解けない。#4052 の完了条件 1 が代償として認めた「ファイル単位で外す」形で、
+            # 入れ子の型の中だけの宣言でも、そのファイルの素の呼び出しは数えない
+            "struct S { static func numbers(_ v: Int) {} }\nlet a = S.numbers(1)\nnumbers(2)",
+            # 宣言の名前のバッククォート (呼び出しの側 `numbers`( はもともと数えない)
+            "func `numbers`(_ v: Int) {}\nnumbers(1)",
+        ]:
+            with self.subTest(source=source):
+                problems = api.check_sketch_coverage(symbols, source, {})
+                self.assertEqual(len(problems), 1)
+                self.assertIn("Sketch.numbers", problems[0])
+
+    def test_自前の同名の関数が別のスケッチに在っても_API_を呼ぶスケッチがあれば数える(self):
+        """宣言の有無は 1 つのスケッチ (ファイル) の中で見る。別のファイルの呼び出しは API の呼び出し。"""
+        symbols = [symbol("numbers(_:)", owner="Sketch")]
+        own = "private static func numbers(_ v: Int) {}\nnumbers(1)"
+        caller = "let a = numbers([1, 2, 3])"
+        self.assertEqual(api.check_sketch_coverage(symbols, [own, caller], {}), [])
+        self.assertEqual(api.check_sketch_coverage(symbols, [caller, own], {}), [])
+        self.assertEqual(len(api.check_sketch_coverage(symbols, [own, "let b = 1"], {})), 1)
+
+    def test_自前の宣言は_同じ綴りの名前の口にしか効かない(self):
+        symbols = [symbol("numbers(_:)", owner="Sketch"), symbol("ellipse(_:_:_:_:)", owner="Sketch")]
+        source = "func numbers(_ v: Int) {}\nnumbers(1)\nellipse(1, 2, 3, 4)"
+        problems = api.check_sketch_coverage(symbols, source, {})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Sketch.numbers", problems[0])
+
+    def test_自前の関数の宣言は_作者が書く口と性質には影響しない(self):
+        """`func draw()` はプロトコルの要件の宣言で数える口 (callback)。性質も字面のまま。"""
+        callback = [symbol("draw()", owner="Sketch", precise="req")]
+        self.assertEqual(
+            api.check_sketch_coverage(callback, "func draw() {}", {}, requirements={"req"}), [])
+        prop = [symbol("time", owner="Sketch", kind="swift.property")]
+        self.assertEqual(api.check_sketch_coverage(prop, "func time() {}\nlet t = time", {}), [])
+
     # ---- 反証の指摘 (#3026) ----
 
     def test_受け手つきの別の型の呼び出しは_数えない(self):
@@ -834,7 +878,7 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
 
     def test_いまの参照スケッチを読める(self):
         # 置き場を取り違えると全部が「呼ばれていない」になる。読めていることだけを見る
-        self.assertIn("catalogue", api.read_sketches(api.SKETCHES))
+        self.assertIn("catalogue", "\n".join(api.read_sketches(api.SKETCHES)))
 
 
 STORED_SKETCH = """\
