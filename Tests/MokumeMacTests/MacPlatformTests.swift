@@ -111,12 +111,13 @@ struct MacPlatformTests {
         let settings = SketchSettings(width: 16, height: 16)
     }
 
-    /// 設定の中で画面の一覧を読むスケッチ。
+    /// 設定の中で画面の一覧を読むスケッチ。**最初の読みだけを控える** — 組み立ては設定を何度か読むので、
+    /// 最後の読みを見ると、最初の読みの後に差し込んでも通ってしまう。
     private final class ReadsDisplays: Sketch {
         init() {}
         var seenInSettings: [Display]?
         var settings: SketchSettings {
-            seenInSettings = displays
+            if seenInSettings == nil { seenInSettings = displays }
             return SketchSettings(width: 16, height: 16)
         }
     }
