@@ -1,0 +1,98 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: measure-replay-3571
+# 使い捨て (#3571 の完了条件 4)。main には入れない。専用機・release で、BricksAndBall の 3600 フレームの記録
+# (→ を 30 フレーム押す操作を含む) を流す子 (SketchApplication の全速の駆動) で流し、report.json の
+# timing.seconds (最初の枚の前〜最後の枚の読み戻し = GPU の完了) を 3 回読む。6 秒以下なら条件 4 を満たす
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [.github/workflows/measure-replay-3571.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  # 専用機の queue に積む前に、merge queue の render が終わるのを待つ (render.yml の scheduled-release-turn と同じ)
+  turn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read # checkout
+      actions: read # merge queue の render の run を読む
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/render-turn.sh wait
+
+  measure:
+    needs: turn
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 30
+    concurrency:
+      group: measure-replay-3571
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      # 組むのは GPU の枠の外 (CPU の段)。test と同じ旗で組み、下の 3 回は --skip-build で同じバイナリを流す
+      - name: release で組む
+        run: |
+          mkdir -p .build/measure
+          swift --version 2>&1 | tee .build/measure/build-log.txt
+          set -o pipefail
+          swift build -c release -Xswiftc -enable-testing --build-tests 2>&1 | sed 's/\x1b\[[0-9;]*m//g' \
+            | sed "s|$HOME|~|g" | tail -5 | tee -a .build/measure/build-log.txt
+      # 1 回ずつ別のプロセスで流す (同じプロセスに他の検査を混ぜない)。GPU の枠は make test と同じく gpu-slot で取る
+      - name: 3 回流す
+        run: |
+          for i in 1 2 3; do
+            MOKUME_MEASURE_REPLAY_OUT="$PWD/.build/measure/run-$i.json" \
+              python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing --skip-build \
+                --filter "ReplayChildTests/measureBricksAndBall" 2>&1 \
+              | sed 's/\x1b\[[0-9;]*m//g' | tee ".build/measure/test-log-$i.txt" | grep -E "MEASURE|✘|Test run with" || true
+          done
+      - name: 要約を書く
+        if: ${{ !cancelled() }}
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'EOF' > .build/measure/summary.txt
+          import json, os, platform, subprocess
+          def sh(*cmd):
+              try:
+                  return subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+              except OSError:
+                  return "?"
+          print(f"sha: {os.environ['HEAD_SHA']}")
+          print(f"machine: {sh('scutil', '--get', 'ComputerName')} / {sh('sysctl', '-n', 'hw.model')} / "
+                f"{sh('sysctl', '-n', 'machdep.cpu.brand_string')} / macOS {platform.mac_ver()[0]}")
+          print("condition 4: every timing.seconds <= 6.0 (3600 frames, release, first frame to the last frame's read-back)")
+          values = []
+          for i in (1, 2, 3):
+              path = f".build/measure/run-{i}.json"
+              if not os.path.exists(path):
+                  print(f"run {i}: no report")
+                  continue
+              r = json.load(open(path))
+              t = r["timing"]
+              h = t.get("heaviest") or {}
+              values.append(t["seconds"])
+              print(f"run {i}: seconds={t['seconds']:.3f} matched={r['matched']} frames={r['frames']} "
+                    f"heaviest=frame {h.get('frame')} at {h.get('seconds', 0) * 1000:.2f} ms")
+          if values:
+              print(f"max seconds: {max(values):.3f} ({'<= 6.0' if max(values) <= 6.0 else '> 6.0'})")
+          EOF
+          # ログも artifact も公開なので、上げる前に $HOME を ~ に畳む
+          sed -i '' "s|$HOME|~|g" .build/measure/*.txt .build/measure/*.json 2>/dev/null || true
+          tee -a "$GITHUB_STEP_SUMMARY" < .build/measure/summary.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: measure-replay-3571
+          path: .build/measure/
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 7

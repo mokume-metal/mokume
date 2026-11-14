@@ -543,6 +543,44 @@ struct ReplayChildTests {
         #expect(refused.report?.problem != nil)
     }
 
+    /// 使い捨ての計測 (#3571 の完了条件 4・枝 measure/replay-3571 だけに在る)。`MOKUME_MEASURE_REPLAY_OUT` が在るときだけ走る。
+    /// BricksAndBall を 3600 フレーム (→ を 100〜130 の 30 フレーム押す) 記録し、本番の流す子と同じ `SketchApplication`
+    /// (全速の駆動の 1 回ずつ) で流して、結果 (`report.json` と同じ中身) を指定の場所へ書く。
+    @Test(
+        "計測: BricksAndBall の 3600 フレームの記録を流す子で流し、結果を書く",
+        .enabled(if: ProcessInfo.processInfo.environment["MOKUME_MEASURE_REPLAY_OUT"] != nil))
+    func measureBricksAndBall() throws {
+        let out = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["MOKUME_MEASURE_REPLAY_OUT"]))
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        sketchStopRequested = 0
+        let directory = try TestScratch.directory("mokume-replay-measure")
+        let url = directory.appendingPathComponent("bricks.json")
+        let runtime = try SketchRuntime(
+            sketch: BricksAndBall(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
+        runtime.startRecording(try #require(ReplayRequest(destination: url.path)))
+        for frame in 1...3600 {
+            if frame == 100 { runtime.input.enqueue(.keyDown(code: .arrowRight, characters: "", isRepeat: false)) }
+            if frame == 130 { runtime.input.enqueue(.keyUp(code: .arrowRight)) }
+            try runtime.advance()
+        }
+        runtime.closePlugins()
+
+        try? FileManager.default.removeItem(at: out)
+        let player = try #require(
+            ReplayPlayer.startup(environment: [StartupReads.replay.key: url.path], unset: { _ in }, reportURL: out))
+        let application = try SketchApplication(
+            sketch: BricksAndBall(), gpu: RenderDevice(), render: nil, replay: player)
+        let ran = run(application, fires: 4000)
+        let report = try #require(player.report)
+        print(
+            "MEASURE matched=\(report.matched) frames=\(report.frames) seconds=\(report.timing.seconds) "
+                + "heaviest=\(report.timing.heaviest.map { "\($0.frame):\($0.seconds)" } ?? "none")")
+        #expect(ran.finished && ran.exit == nil)
+        #expect(report.matched && report.frames == 3600, "\(String(describing: report.firstMismatch))")
+        #expect(FileManager.default.fileExists(atPath: out.path))
+    }
+
     @Test("区画 input / params / observe に要求が在っても、流す子は読まず応えず、照合が一致する")
     func theChildLeavesTheFacetsAlone() throws {
         let kept = SignalState.current()
