@@ -737,7 +737,7 @@ struct DensityInvarianceTests {
         /// 矩形の輪郭の口 (``Amount/diagonalFoldedRect``・``Amount/smallShaderRect``・``Amount/smallRect``) の幅と高さ (出す画素)。
         var size = SIMD2<Float>(40, 20)
         /// 小さい矩形の輪郭の口 (``Amount/smallShaderRect``・``Amount/smallRect``) が回した後に掛ける縦横同率の `scale`。
-        /// 表 (``DensityInvarianceTests/smallRectTable()``) だけが 1 以外にする。
+        /// ほかの口は 1 のまま置く。
         var scale: Float = 1
 
         /// 矩形の周の長さ (出す画素)。
@@ -818,8 +818,8 @@ struct DensityInvarianceTests {
     ///   (額縁で組む下限・``Canvas/framesThinRect(width:height:weight:join:drawn:)``) になる長さ。上端は、45° に回しても
     ///   回さなくても形が出す面 (128) に収まる長さ。`round` の角は額縁で組まない (一般の細い輪郭の帯で組む) ので振らない
     /// - 丸い周の口 (``Amount/diagonalFoldedRing``・#3863) だけが、形の座標を足す (``ringAxes``)
-    /// - 小さい矩形の輪郭の口 (``Amount/smallShaderRect``・``Amount/smallRect``・#3929) は、描く画素での短い辺と縦横比を
-    ///   足す (``smallRectAxes``)。短い辺は約束の下限 (``smallRectFloor``) から振る
+    /// - 小さい矩形の輪郭の口 (``Amount/smallShaderRect``・``Amount/smallRect``・#3929) は、描く画素での短い辺・縦横比・
+    ///   角の形・縦横同率の `scale` を足す (``smallRectAxes``)。短い辺は約束の下限 (``smallRectFloor``) から振る
     static func axes(for mouth: Amount) -> [ProbeAxis] {
         var axes = [
             ProbeAxis("weight", 0.07..<(mouth.maxWeight + 0.0001), simplest: 1),
@@ -845,10 +845,30 @@ struct DensityInvarianceTests {
     ///
     /// - 短い辺: `side` の [0, 1) から描く画素の短い辺を作る (``smallRectSide(_:)``)
     /// - 縦横比 (長い辺 / 短い辺): `[1, 2)`
+    /// - 角の形 (`join`: 0 が `miter`・1 が `bevel`・2 が `round`)
+    /// - 回した後に掛ける縦横同率の `scale`: `[0.5, 3)`。短い辺と太さは描く画素で同じ分布から選ぶ (出す画素の値を
+    ///   `scale` で割って置く・``smallRectPose(_:)``)。縦横で倍率の違う変換と剪断は振らない
     static let smallRectAxes: [ProbeAxis] = [
         ProbeAxis("side", 0..<1, simplest: 0),
         ProbeAxis("aspect", 1..<2, simplest: 1.5),
+        ProbeAxis("join", 0..<3, simplest: 0, step: 1),
+        ProbeAxis("scale", 0.5..<3, simplest: 1),
     ]
+
+    /// 生成した座標から、小さい矩形の輪郭の口の置き方を作る (``smallRectAxes``)。
+    static func smallRectPose(_ input: ProbeInput) -> Pose {
+        let density = input.float("density")
+        var pose = Pose(
+            weight: input.float("weight"), density: density, offset: SIMD2(input.float("dx"), input.float("dy")),
+            angle: input.float("angle"), squash: 1)
+        pose.join = [StrokeJoin.miter, .bevel, .round][Int(input["join"])]
+        pose.scale = input.float("scale")
+        pose.size =
+            smallRectSize(side: smallRectSide(input.float("side")), aspect: input.float("aspect"), density: density)
+            / pose.scale
+        pose.weight /= pose.scale
+        return pose
+    }
 
     /// `side` の座標 `unit` ([0, 1)) から作る、描く画素での短い辺。
     ///
@@ -1050,11 +1070,7 @@ struct DensityInvarianceTests {
                 pose.join = input["join"] >= 1 ? .bevel : .miter
                 pose.size = SIMD2(input.float("width"), input.float("height"))
             }
-            if mouth.isSmallRect {
-                pose.size = Self.smallRectSize(
-                    side: Self.smallRectSide(input.float("side")), aspect: input.float("aspect"),
-                    density: input.float("density"))
-            }
+            if mouth.isSmallRect { pose = Self.smallRectPose(input) }
             return try Self.measure(mouth, pose)
         }
         #expect(report.failure == nil, "\(mouth.rawValue): \(report.failure ?? "")")
@@ -1309,9 +1325,13 @@ struct DensityInvarianceTests {
         for step in 32...128 {
             let density = Float(step) / 128
             for aspect: Float in [1, 1.5, 1.999] {
-                var pose = Pose(weight: 0.5, density: density, offset: .zero, angle: 0, squash: 1)
-                pose.size = Self.smallRectSize(side: low, aspect: aspect, density: density)
-                #expect(!Self.isBelowSmallRectFloor(pose), "生成の下端 \(low) が細かさ \(density) で下限の外へ落ちた: \(pose)")
+                for scale: Float in [0.5, 1, 1.7, 2.999] {
+                    // ``smallRectPose(_:)`` と同じ置き方
+                    var pose = Pose(weight: 0.5, density: density, offset: .zero, angle: 0, squash: 1)
+                    pose.scale = scale
+                    pose.size = Self.smallRectSize(side: low, aspect: aspect, density: density) / scale
+                    #expect(!Self.isBelowSmallRectFloor(pose), "生成の下端 \(low) が下限の外へ落ちた: \(pose)")
+                }
             }
         }
         for unit: Float in [0, 0.1, 0.25, 0.4, 0.499] {
