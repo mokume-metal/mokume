@@ -5,7 +5,7 @@ import CoreFoundation
 import Foundation
 import MokumeDiagnostics
 
-/// 記録を流して照らす係 (`mokume replay <記録>`・[#3571])。
+/// 記録を流して照らす係 (`mokume replay <記録>`・#3571)。
 ///
 /// ## 誰が起こすか
 ///
@@ -30,8 +30,6 @@ import MokumeDiagnostics
 ///
 /// フレームごとに `advance()` 1 回の時間 (CPU の側。描いた枚の組み立てと投入まで) を残し、いちばん重いフレームを名乗る。
 /// 全体の時間は、最初の枚の前から最後の枚の絵を読み戻し終える (GPU の完了) まで。
-///
-/// [#3571]: https://github.com/mokume-metal/mokume/issues/3571
 final class ReplayPlayer {
     /// 結果のファイルの名前 (区画 `replay` の下)。
     static let reportName = "report.json"

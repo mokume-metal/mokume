@@ -455,10 +455,8 @@ package final class SketchRuntime {
     ///
     /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
     private(set) var replay: ReplayRecorder?
-    /// 記録を流して照らす係 ([#3571])。`mokume replay` の子だけが持ち、ほかの実行は `nil` で、当てる点・照らす点は
+    /// 記録を流して照らす係 (#3571)。`mokume replay` の子だけが持ち、ほかの実行は `nil` で、当てる点・照らす点は
     /// どれも `nil` の判定だけで通り過ぎる。
-    ///
-    /// [#3571]: https://github.com/mokume-metal/mokume/issues/3571
     private(set) var player: ReplayPlayer?
     /// カーソルを捕まえる要求 (``SketchPart/requestPointerLock()``)。``SketchPart/exitPointerLock()`` まで残る。
     ///
@@ -1407,13 +1405,11 @@ package final class SketchRuntime {
         (try? target.encodeToImageAndRead(avoiding: outletStorageToAvoid())).map(ReplayRecorder.hash(of:))
     }
 
-    // MARK: - 流す ([#3571])
+    // MARK: - 流す (#3571)
 
     /// 記録を流して照らし始める。**``start()`` の前に呼ぶ** — 開始の状態は `setup()` の前に当てる。
     ///
     /// 記録の大きさと描く先の大きさが違えば、流さずに理由を持たせる (絵が一致しえない)。
-    ///
-    /// [#3571]: https://github.com/mokume-metal/mokume/issues/3571
     func startReplaying(_ player: ReplayPlayer) {
         guard self.player == nil, !hasSetUp else { return }
         player.check(width: canvas.output.width, height: canvas.output.height)

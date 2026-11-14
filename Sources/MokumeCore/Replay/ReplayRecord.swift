@@ -4,13 +4,11 @@
 import Foundation
 import MokumeDiagnostics
 
-/// 読んだ記録 (`Schemas/replay-record.schema.json`・[#3571])。流す側 (``ReplayPlayer``) が当てる値と照らす値を持つ。
+/// 読んだ記録 (`Schemas/replay-record.schema.json`・#3571)。流す側 (``ReplayPlayer``) が当てる値と照らす値を持つ。
 ///
 /// **読めない記録は流さない。** 版が違う・完成の印が無い・この mokume が知らない入力を持つ記録は、理由を 1 文で
 /// 返して断る (``Unreadable``)。流してから食い違ったと名乗ると、記録の誤りと作品の変化の見分けが付かない。
 /// 道具 (`mokume replay`) もビルドの前に同じ型で読み、断る理由を先に言う。
-///
-/// [#3571]: https://github.com/mokume-metal/mokume/issues/3571
 package struct ReplayRecord {
     /// 読めない理由 (1 文・英語)。
     package struct Unreadable: Error, Equatable {

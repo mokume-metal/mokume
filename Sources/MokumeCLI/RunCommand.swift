@@ -797,7 +797,7 @@ enum RunCommand {
     ///   渡す)。子は最初の枚の前から記録し、終わりで書き切って閉じる (``StartupReads/record``・
     ///   [#3570](https://github.com/mokume-metal/mokume/issues/3570))。**渡さなければ、親の環境に在っても落とす。**
     /// - Parameter replaying: 流す記録の絶対パス (`replay` だけが渡す)。子はウィンドウも区画も開かずに記録を流して照らし、
-    ///   結果を書いて終わる (``StartupReads/replay``・[#3571](https://github.com/mokume-metal/mokume/issues/3571))。
+    ///   結果を書いて終わる (``StartupReads/replay``・#3571)。
     ///   **渡さなければ、親の環境に在っても落とす。**
     ///
     /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**

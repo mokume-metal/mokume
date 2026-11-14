@@ -97,7 +97,7 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 古い版の子 (道具と依存の版のずれ) がこちらに来る。
     case renderOutputShort(
         destination: String, expected: Int, shortfall: RenderRequest.Shortfall)
-    /// 流そうとした記録が読めない (`replay`・[#3571](https://github.com/mokume-metal/mokume/issues/3571))。
+    /// 流そうとした記録が読めない (`replay`・#3571)。
     /// `reason` は記録の読み手 (`ReplayRecord`) の 1 文。**ビルドの前に断る。**
     case recordUnreadable(reason: String)
     /// 流した子が、照合の食い違い・流せなかったことを名乗って 0 以外で終わった (`replay`・#3571)。

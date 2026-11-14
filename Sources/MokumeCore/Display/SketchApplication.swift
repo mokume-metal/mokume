@@ -100,10 +100,8 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
         /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
         case render(RenderRequest)
-        /// 画面へは出さず、記録を流して照らして終わる (`mokume replay`・[#3571])。**ウィンドウも共有面も持たない** —
+        /// 画面へは出さず、記録を流して照らして終わる (`mokume replay`・#3571)。**ウィンドウも共有面も持たない** —
         /// 書き出しと同じく、画面を持たない全速の駆動で回る。
-        ///
-        /// [#3571]: https://github.com/mokume-metal/mokume/issues/3571
         case replay(ReplayPlayer)
     }
     private var outlet: ScreenOutlet

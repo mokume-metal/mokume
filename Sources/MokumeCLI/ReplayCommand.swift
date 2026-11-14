@@ -4,7 +4,7 @@
 import Foundation
 import mokume
 
-/// 記録を画面なしで全速で流し、照らす (`replay <記録>`・[#3571])。
+/// 記録を画面なしで全速で流し、照らす (`replay <記録>`・#3571)。
 ///
 /// ## 子がすること
 ///
@@ -18,8 +18,6 @@ import mokume
 /// **終了コードと `.mokume/replay/report.json`** (`Schemas/replay-report.schema.json`)。照合がすべて一致すれば 0 で、
 /// 食い違ったら、最初に食い違ったフレームの番号を名乗って 0 以外で終わる。作品の CI からは、この 2 つだけで使える
 /// (MCP の道具・Swift の検査から呼ぶ口は足さない・#3571 の完了条件 9)。
-///
-/// [#3571]: https://github.com/mokume-metal/mokume/issues/3571
 enum ReplayCommand {
     /// 解いた引数。
     struct Options: Equatable {
