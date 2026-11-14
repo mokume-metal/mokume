@@ -24,12 +24,12 @@ Processing 本体のリファレンスのうち、category が `shape`・`pshape
 
 ## 「入れる」の API をまとめた Feature
 
-「入れる」の 3 件は、1 つの `Feature` で入れる (いまは 0 件。[#3710] で入れた 3 件は「同等」に移した)。欠けた形のうち、3 次元の曲線は別の 1 つで入れる (件数に入れない)。`loadShape()` の下の子の行にある SVG の勾配 (件数に入れない) は、既に起票済みの [#3031] を `Feature` として使う。
+「入れる」の 3 件は、1 つの `Feature` で入れる (いまは 0 件。[#3710] で入れた 3 件は「同等」に移した)。欠けた形のうち、3 次元の曲線は別の 1 つで入れる (件数に入れない。[#3712] で入れた)。`loadShape()` の下の子の行にある SVG の勾配 (件数に入れない) は、既に起票済みの [#3031] を `Feature` として使う。
 
 | Feature | API | 件数 |
 | --- | --- | --- |
 | [#3710] 通過点を結ぶ曲線を、頂点を使わず 一度の呼び出しで描く・求める API (入れた) | `curve()`・`curvePoint()`・`curveTangent()` | 3 |
-| [#3712] 3 次元の曲線 (欠けた形) | `bezierVertex()`・`quadraticVertex()`・`curveVertex()` の `z` を持つ形と、引数が 12 個の `bezier()` | 0 |
+| [#3712] 3 次元の曲線 (欠けた形・入れた) | `bezierVertex()`・`quadraticVertex()`・`curveVertex()` の `z` を持つ形と、引数が 12 個の `bezier()`・`curve()` | 0 |
 | [#3031] SVG の勾配 (子の行・入れた) | `loadShape()` が読む `<linearGradient>`・`<radialGradient>` | 0 |
 
 ## 2D の図形
@@ -69,10 +69,10 @@ Processing 本体のリファレンスのうち、category が `shape`・`pshape
 
 | API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
-| `bezier()` | `bezier(_:_:_:_:_:_:_:_:)` | 同等 | `beginShape()`・`vertex`・`bezierVertex`・`endShape()` を順に呼んだのと同じ絵。塗りが有効なら、始点と終点を結ばない開いた図形のまま塗る。無い形: `z` を持つ、引数が 12 個の形 ([#3712] で入れる) | [#2430]・PR [#3043]・[#3712] |
+| `bezier()` | `bezier(_:_:_:_:_:_:_:_:)`・`bezier(_:_:_:_:_:_:_:_:_:_:_:_:)` | 同等 | `beginShape()`・`vertex`・`bezierVertex`・`endShape()` を順に呼んだのと同じ絵。塗りが有効なら、始点と終点を結ばない開いた図形のまま塗る。`z` を持つ、引数が 12 個の形は `vertex(x, y, z)`・引数が 9 個の `bezierVertex` を並べたのと同じ絵で、奥行きとカメラの変換を受ける。引数ラベル付きの形 `bezier(from:control1:control2:to:)` は `Vector2` と `Vector3` の両方を受ける | [#2430]・PR [#3043]・[#3712] |
 | `bezierDetail()` | `curveDetail(_:)` | 同等 | 分割数の設定は 1 つで、ベジェ・2 次・通過点を結ぶ曲線のどれにも効く (Processing は `bezierDetail()` と `curveDetail()` が別の設定)。ベジェだけを粗くするなど、別々に設定する方法は無い。1…1024 の外は範囲内に収め、1 度だけ警告する。名前だけ違う API は足さない | [#2430] |
 | `bezierPoint()`・`bezierTangent()` (2 件) | `bezierPoint(_:_:_:_:_:)`・`bezierTangent(_:_:_:_:_:)` | 同等 | 値だけを扱う関数 (描画はしない)。`x` と `y` を別々に求め、`atan2` で角度にする。`t` が 0…1 の外でも範囲内に収めない | [#2430]・PR [#3043] |
-| `curve()`・`curvePoint()`・`curveTangent()` (3 件) | `curve(_:_:_:_:_:_:_:_:)`・`curve(from:control1:control2:to:)`・`curvePoint(_:_:_:_:_:)`・`curveTangent(_:_:_:_:_:)` | 同等 | `curve()` は `beginShape()`・`curveVertex` を 4 回・`endShape()` を順に呼んだのと同じ絵で、描くのは 2 つ目から 3 つ目の点までの 1 区間 (`curveDetail`・`curveTightness` も同様に効く)。引数ラベル付きの形は `bezier(from:control1:control2:to:)` に揃え、`control1` が始点の手前・`control2` が終点の先の点。`curvePoint()`・`curveTangent()` は Processing と同じく `curveTightness()` の設定を読む (`PGraphics.java` の `curveInit()` が張力から基底行列を作る) ので、値だけの `bezierPoint()` と違ってスケッチと描画先 (`Canvas`) のメソッドで、引数ラベル付きの形は持たない (`bezierPoint()` と同じ)。`x` と `y` を別々に求め、`atan2` で角度にする。無い形: `z` を持つ、引数が 12 個の `curve()` ([#3712] で入れる) | [#2430]・[#3710]・[#3712] |
+| `curve()`・`curvePoint()`・`curveTangent()` (3 件) | `curve(_:_:_:_:_:_:_:_:)`・`curve(_:_:_:_:_:_:_:_:_:_:_:_:)`・`curve(from:control1:control2:to:)`・`curvePoint(_:_:_:_:_:)`・`curveTangent(_:_:_:_:_:)` | 同等 | `curve()` は `beginShape()`・`curveVertex` を 4 回・`endShape()` を順に呼んだのと同じ絵で、描くのは 2 つ目から 3 つ目の点までの 1 区間 (`curveDetail`・`curveTightness` も同様に効く)。引数ラベル付きの形は `bezier(from:control1:control2:to:)` に揃え、`control1` が始点の手前・`control2` が終点の先の点。`curvePoint()`・`curveTangent()` は Processing と同じく `curveTightness()` の設定を読む (`PGraphics.java` の `curveInit()` が張力から基底行列を作る) ので、値だけの `bezierPoint()` と違ってスケッチと描画先 (`Canvas`) のメソッドで、引数ラベル付きの形は持たない (`bezierPoint()` と同じ)。`x` と `y` を別々に求め、`atan2` で角度にする。`z` を持つ、引数が 12 個の `curve()` は、同じ 4 点を `curveVertex(x, y, z)` で 4 回指定したのと同じ絵で、引数ラベル付きの形は `Vector3` も受ける | [#2430]・[#3710]・[#3712] |
 | `curveDetail()` | `curveDetail(_:)` | 同等 | 1 区間あたりの分割数。既定は 20 (Processing と同じ)。`createShape { }` の中で変えても、抜けると戻る | [#2430] |
 | `curveTightness()` | `curveTightness(_:)` | 同等 | 0 が既定で、1 にすると点と点が直線で結ばれる (Processing と同じ) | [#2430] |
 
@@ -85,8 +85,8 @@ Processing 本体のリファレンスのうち、category が `shape`・`pshape
 | `beginShape()`・`endShape()` (2 件) | `beginShape(_:)` (`VertexKind`)・`endShape(_:)` (`ShapeEnd`) | 同等 | 頂点の並べ方 (図形の種類) は `.polygon` (既定)・`.points`・`.lines`・`.triangles`・`.quads`・`.triangleStrip`・`.triangleFan`。`endShape(CLOSE)` は `endShape(.close)`。無い形: `QUAD_STRIP`。[#902] が実際に必要になるまで待つと決めて閉じ、足すなら新しい `Feature` を立てる | [#882]・[#1551]・[#902] |
 | `beginContour()`・`endContour()` (2 件) | `beginContour()`・`endContour()` | 同等 | 図形の中の穴。閉じてからもう一度開けば、穴はいくつでも空けられる。頂点が 3 つに満たない穴は破棄する | — |
 | `vertex()` | `vertex(_:_:)`・`vertex(_:_:_:)`・`vertex(_:_:_:_:)`・`vertex(_:_:_:_:_:)`・`vertex(_: Vector2)`・`vertex(_: Vector3)` | 同等 | リファレンスの 5 つの引数の形 (`x, y`・`x, y, z`・`v`・`x, y, u, v`・`x, y, z, u, v`) がすべてある。`PVector` は `Vector2`・`Vector3` | — |
-| `bezierVertex()`・`quadraticVertex()` (2 件) | `bezierVertex(_:_:_:_:_:_:)`・`quadraticVertex(_:_:_:_:)` | 同等 | 直前の頂点から接続する。直前に頂点が無ければ何もしない。無い形: `z` を持つ、引数が 9 個・6 個の形 ([#3712] で入れる) | [#2462]・[#3712] |
-| `curveVertex()` | `curveVertex(_:_:)` | 同等 | 頂点が 4 つ揃って 1 区間が描ける (最初と最後の頂点は曲がり具合を決める制御点)。端まで描くには端の頂点を 2 度指定する (Processing と同じ)。無い形: `z` を持つ形 ([#3712] で入れる) | [#2462]・[#3712] |
+| `bezierVertex()`・`quadraticVertex()` (2 件) | `bezierVertex(_:_:_:_:_:_:)`・`bezierVertex(_:_:_:_:_:_:_:_:_:)`・`quadraticVertex(_:_:_:_:)`・`quadraticVertex(_:_:_:_:_:_:)` | 同等 | 直前の頂点から接続する。直前に頂点が無ければ何もしない。`z` を持つ、引数が 9 個・6 個の形は、分割した点を `vertex(x, y, z)` と同じ奥行きを持つ点として置く (直前の頂点が平面の点なら `z` を 0 として読む)。引数が 6 個・4 個の平面の形は、`z` を持つ形に `z` = 0 を渡したのと同じ絵になる (`vertex(x, y)` が `vertex(x, y, 0)` と同じなのと同じ)。直前の頂点が奥行きを持てば、曲線はその点から `z` = 0 の制御点・終点へ向かう ([#3712] で変えた。前は分割点がどれも直前の頂点の `z` のままだった)。引数ラベル付きの形は `Vector2` と `Vector3` の両方を受ける | [#2462]・[#3712] |
+| `curveVertex()` | `curveVertex(_:_:)`・`curveVertex(_:_:_:)` | 同等 | 頂点が 4 つ揃って 1 区間が描ける (最初と最後の頂点は曲がり具合を決める制御点)。端まで描くには端の頂点を 2 度指定する (Processing と同じ)。`z` を持つ形と平面の形は混ぜてよく、平面の形は `z` を持つ形に `z` = 0 を渡したのと同じ絵になる (`vertex(x, y)` が `vertex(x, y, 0)` と同じなのと同じ)。奥行きを持つ点の後でも通過点は `z` = 0 である ([#3712] で変えた。前は分割点が直前の頂点の `z` のままだった) | [#2462]・[#3712] |
 
 ## 保持した形
 
