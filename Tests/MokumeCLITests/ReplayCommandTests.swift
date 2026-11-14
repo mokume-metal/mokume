@@ -59,13 +59,63 @@ struct ReplayCommandTests {
         #expect(Command.Verb.named("replay") == .replay)
     }
 
-    @Test("結果のファイルは、子を起こした後に書かれたものだけを今回のものと読む")
-    func onlyAFreshReportCounts() throws {
+    /// 子の代わり。結果を書くか・どう終わるかを決めて、`launch` に差す。
+    private func child(writing report: URL?, ending: CommandFailure?) -> (URL, URL, [String: String]) throws(
+        CommandFailure
+    ) -> Void {
+        { _, _, environment throws(CommandFailure) in
+            #expect(environment[StartupReads.replay.key] == "/tmp/take.json")
+            if let report { try? Data(#"{"matched":false}"#.utf8).write(to: report) }
+            if let ending { throw ending }
+        }
+    }
+
+    private func replay(report: URL, child: (URL, URL, [String: String]) throws(CommandFailure) -> Void) -> CommandFailure? {
+        do {
+            try ReplayCommand.replay(
+                URL(fileURLWithPath: "/bin/false"), in: Self.typedFrom, record: "/tmp/take.json", report: report,
+                launch: child)
+            return nil
+        } catch {
+            return error
+        }
+    }
+
+    @Test("前の回の結果を消してから子を起こし、子が結果を書かずに 1 で終われば、食い違いでなく子の失敗として名乗る")
+    func aStaleReportIsNotThisReplays() throws {
         let directory = try TestScratch.directory("mokume-replay-cli")
         let report = directory.appendingPathComponent("report.json")
-        #expect(!ReplayCommand.isFresh(report, since: Date()), "無いファイル")
-        try Data("{}".utf8).write(to: report)
-        #expect(ReplayCommand.isFresh(report, since: Date().addingTimeInterval(-5)))
-        #expect(!ReplayCommand.isFresh(report, since: Date().addingTimeInterval(60)), "前の回の結果")
+        try Data(#"{"matched":true}"#.utf8).write(to: report)
+        let failed = replay(report: report, child: child(writing: nil, ending: .sketchExited(status: 1)))
+        #expect(failed == .sketchExited(status: 1), "\(String(describing: failed))")
+        #expect(!FileManager.default.fileExists(atPath: report.path), "前の回の結果が残った")
+
+        // 0 で終わって結果が無い (合図を読まない古い子)
+        try Data(#"{"matched":true}"#.utf8).write(to: report)
+        #expect(replay(report: report, child: child(writing: nil, ending: nil)) == .replayReportMissing(path: report.path))
+        // 結果を書いて 1 で終わった: 食い違い
+        #expect(
+            replay(report: report, child: child(writing: report, ending: .sketchExited(status: 1)))
+                == .replayDiffered(report: report.path, ending: .exited(1)))
+        // 結果を書いて 0 で終わった: 一致
+        #expect(replay(report: report, child: child(writing: report, ending: nil)) == nil)
+    }
+
+    @Test("記録を読む前・ビルドの前に前の回の結果を消す (流す前に断った回に古い結果を残さない)")
+    func aRefusedReplayDoesNotLeaveAStaleReport() throws {
+        let directory = try TestScratch.directory("mokume-replay-cli-refused")
+        let options = try ReplayCommand.parse(["take.json", directory.path], currentDirectory: directory)
+        let report = try ReplayCommand.reportURL(for: options.invocation)
+        try FileManager.default.createDirectory(
+            at: report.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"matched":true}"#.utf8).write(to: report)
+        // 記録が無い: ビルドの前に断る
+        #expect {
+            try ReplayCommand.run([directory.appendingPathComponent("take.json").path, directory.path])
+        } throws: { error in
+            guard case CommandFailure.recordUnreadable = error else { return false }
+            return true
+        }
+        #expect(!FileManager.default.fileExists(atPath: report.path), "前の回の結果が残った")
     }
 }

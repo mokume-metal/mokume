@@ -107,6 +107,8 @@ nonisolated enum CommandFailure: Error, Equatable {
     case replayDiffered(report: String, ending: ChildEnding)
     /// 子は 0 で終わったが、今回の結果のファイルが無い (`replay`・#3571)。合図を読まない古い版の子が来る。
     case replayReportMissing(path: String)
+    /// 前の回が残した結果のファイルを消せなかった (`replay`・#3571)。今回の結果と見分けが付かないので流さない。
+    case replayReportStale(path: String, reason: String)
     case noExecutable(path: String)
     /// 起こそうとした実行ファイルが、起こす時点で無かった。
     ///
@@ -468,6 +470,11 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
             The replay ended without writing its report (\(path)).
             The sketch may depend on a version of mokume that does not replay; build it against this tool's version
+            """
+        case .replayReportStale(let path, let reason):
+            """
+            Cannot replay it: the report a previous replay left (\(path)) could not be removed: \(reason)
+            Remove it, so that it is not read as this replay's report
             """
         case .noExecutable(let path):
             """

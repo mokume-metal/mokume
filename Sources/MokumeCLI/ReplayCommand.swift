@@ -30,6 +30,9 @@ enum ReplayCommand {
     static func run(_ arguments: [String]) throws(CommandFailure) {
         // **ビルドの前に解き、記録も読む。** 引数の誤りと読めない記録を、数分のビルドの後で知らせない
         let options = try parse(arguments)
+        // **前の回の結果を最初に消す** — 記録が読めない・ビルドや起動が落ちた回に、前の回の結果を今回のものとして読ませない
+        let report = try reportURL(for: options.invocation)
+        try discardPreviousReport(report)
         do {
             _ = try ReplayRecord.read(from: URL(fileURLWithPath: options.record))
         } catch {
@@ -46,22 +49,46 @@ enum ReplayCommand {
             afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
-        let report = WorkDirectory.facet("replay", under: try options.invocation.facetBase())
-            .appendingPathComponent("report.json")
         try replay(executable, in: directory, record: options.record, report: report)
     }
 
-    /// 走らせて、結果のファイルが書かれたことまで確かめる。
-    ///
-    /// 子の終了コードは「照合がすべて一致したか」を言う。**0 で終わっても、今回の結果のファイルが無ければ揃っていない** —
-    /// 合図を読まずにウィンドウを開いて 0 で終わる古い版の子 (道具と依存の版のずれ) は、何も照らしていない。
-    static func replay(_ executable: URL, in directory: URL, record: String, report: URL) throws(CommandFailure) {
-        // 子を起こす前の時刻。前の回が残した結果を、この回のものと取り違えない
-        let start = Date()
+    /// 結果のファイルの場所 (区画 `replay` の `report.json`)。子が書く先 (`ReplayPlayer.defaultReport`) と同じ計算。
+    static func reportURL(for invocation: Invocation) throws(CommandFailure) -> URL {
+        WorkDirectory.facet("replay", under: try invocation.facetBase()).appendingPathComponent("report.json")
+    }
+
+    /// 前の回が残した結果を消す。**消せなければ流さない** — 残った結果は今回のものと見分けが付かない。
+    static func discardPreviousReport(_ report: URL) throws(CommandFailure) {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: report.path) else { return }
         do {
-            try RunCommand.launch(
-                executable, in: directory, environment: RunCommand.childEnvironment(replaying: record))
+            try manager.removeItem(at: report)
         } catch {
+            throw .replayReportStale(path: report.path, reason: error.localizedDescription)
+        }
+    }
+
+    /// 走らせて、今回の結果のファイルが書かれたことまで確かめる。**呼ぶ前に前の回の結果を消してある**
+    /// (``discardPreviousReport(_:)``) ので、在る結果は今回の子が書いたものである。
+    ///
+    /// 子の終了コードは「照合がすべて一致したか」を言う。
+    /// - 0 以外で終わって結果が在る: 子が食い違い・流せなかった理由を書いた (``CommandFailure/replayDiffered(report:ending:)``)
+    /// - 0 以外で終わって結果が無い: 流す前に落ちた (GPU・起動・合図を読まない古い子)。ほかの道具の「子が失敗した」と
+    ///   同じ失敗をそのまま返す
+    /// - 0 で終わって結果が無い: 合図を読まずにウィンドウを開いて 0 で終わる古い版の子で、何も照らしていない
+    static func replay(
+        _ executable: URL, in directory: URL, record: String, report: URL,
+        launch: (URL, URL, [String: String]) throws(CommandFailure) -> Void = { executable, directory, environment
+            throws(CommandFailure) in
+            try RunCommand.launch(executable, in: directory, environment: environment)
+        }
+    ) throws(CommandFailure) {
+        try discardPreviousReport(report)
+        let written = { FileManager.default.fileExists(atPath: report.path) }
+        do {
+            try launch(executable, directory, RunCommand.childEnvironment(replaying: record))
+        } catch {
+            guard written() else { throw error }
             switch error {
             case .sketchExited(let status):
                 throw .replayDiffered(report: report.path, ending: .exited(status))
@@ -71,17 +98,8 @@ enum ReplayCommand {
                 throw error
             }
         }
-        guard isFresh(report, since: start) else { throw .replayReportMissing(path: report.path) }
+        guard written() else { throw .replayReportMissing(path: report.path) }
         print("Report: \(report.path)")
-    }
-
-    /// 結果のファイルが、子を起こした後に書かれているか。
-    static func isFresh(_ report: URL, since start: Date) -> Bool {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: report.path),
-            let modified = attributes[.modificationDate] as? Date
-        else { return false }
-        // ファイルの時刻は秒より粗い器もあるので、1 秒のゆとりを持つ
-        return modified >= start.addingTimeInterval(-1)
     }
 
     // MARK: - 引数
