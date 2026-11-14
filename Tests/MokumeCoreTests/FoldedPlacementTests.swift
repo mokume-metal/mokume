@@ -45,10 +45,12 @@ struct FoldedPlacementTests {
         case pie
         /// 一周の弧 (楕円と同じ形)
         case fullTurn
-        /// 輪郭を引かない既定の弧 (塗りは扇)
+        /// 既定の弧 (塗りは扇・輪郭は開いた弧)
         case standardArc
-        /// 輪郭も貼る絵も無い `.chord` の弧 (弦で結んだ形の塗り)
+        /// `.chord` の弧 (弦で結んだ形の塗りと、その周の輪郭)
         case chord
+        /// `.open` の弧 (弦で結んだ形の塗りと、開いた弧の輪郭)
+        case open
 
         var description: String {
             switch self {
@@ -60,6 +62,7 @@ struct FoldedPlacementTests {
             case .fullTurn: "一周の arc"
             case .standardArc: "既定の arc"
             case .chord: ".chord の arc"
+            case .open: ".open の arc"
             }
         }
 
@@ -74,6 +77,7 @@ struct FoldedPlacementTests {
             case .fullTurn: canvas.arc(2.3, -1.7, 14, 10, 0.3, 0.3 + 2 * .pi + 0.1, .pie)
             case .standardArc: canvas.arc(2.3, -1.7, 14, 10, 0.3, 4.1)
             case .chord: canvas.arc(2.3, -1.7, 14, 10, 0.3, 4.1, .chord)
+            case .open: canvas.arc(2.3, -1.7, 14, 10, 0.3, 4.1, .open)
             }
         }
 
@@ -93,8 +97,15 @@ struct FoldedPlacementTests {
                 Self.ring(canvas, 2.3, -1.7, 14, 9, start: 0, sweep: 2 * .pi, piece: .sector, scale: scale)
             case .circle:
                 Self.ring(canvas, -2.9, 1.3, 11, 11, start: 0, sweep: 2 * .pi, piece: .sector, scale: scale)
-            case .pie, .standardArc:
+            case .pie:
                 Self.ring(canvas, 2.3, -1.7, 14, 10, start: 0.3, sweep: 4.1 - 0.3, piece: .sector, scale: scale)
+            case .standardArc:
+                // 塗りの周の後に輪郭の周 (開いた弧)。輪郭を引かなければ、輪郭の周は何も出さない
+                Self.ring(canvas, 2.3, -1.7, 14, 10, start: 0.3, sweep: 4.1 - 0.3, piece: .sectorFill, scale: scale)
+                Self.ring(canvas, 2.3, -1.7, 14, 10, start: 0.3, sweep: 4.1 - 0.3, piece: .arcLine, scale: scale)
+            case .open:
+                Self.ring(canvas, 2.3, -1.7, 14, 10, start: 0.3, sweep: 4.1 - 0.3, piece: .chordFill, scale: scale)
+                Self.ring(canvas, 2.3, -1.7, 14, 10, start: 0.3, sweep: 4.1 - 0.3, piece: .arcLine, scale: scale)
             case .fullTurn:
                 Self.ring(
                     canvas, 2.3, -1.7, 14, 10, start: 0.3, sweep: min((0.3 + 2 * .pi + 0.1) - 0.3, 2 * .pi),
@@ -225,9 +236,9 @@ struct FoldedPlacementTests {
         return (differing, lit, folded.folded)
     }
 
-    /// 場面の組: 形 × 輪郭 (または貼る絵) × 細かさ × 並べ方。
+    /// 場面の組: 形 × 輪郭 (または貼る絵) × 細かさ × 並べ方。`folds` が偽なら、どの並べ方も畳まれないことを見る。
     private static func expectSameAsUnfolded(
-        _ form: Form, strokes: [Stroke?], texture: Bool = false, densities: [Float] = [1, 0.5]
+        _ form: Form, strokes: [Stroke?], texture: Bool = false, densities: [Float] = [1, 0.5], folds: Bool = true
     ) throws {
         for density in densities {
             for stroke in strokes {
@@ -237,7 +248,9 @@ struct FoldedPlacementTests {
                         form, density: density, stroke: stroke, texture: texture, arrangement: arrangement)
                     #expect(result.lit > 0, "\(name): 絵が空")
                     // 2 つずつ同じ置き場所は、どの鍵でも全部畳まれる (畳まれないまま比べると検査が空になる)
-                    if arrangement != .mixed {
+                    if !folds {
+                        #expect(result.folded == 0, "\(name): 畳まれた置き場所 \(result.folded)")
+                    } else if arrangement != .mixed {
                         #expect(result.folded == arrangement.count, "\(name): 畳まれた置き場所 \(result.folded)")
                     }
                     #expect(
@@ -294,15 +307,22 @@ struct FoldedPlacementTests {
         try Self.expectSameAsUnfolded(.circle, strokes: [nil], texture: true)
     }
 
-    @Test("畳んだ arc (.pie・一周・既定・.chord) は、輪郭も貼る絵も、畳まない道と画素が同じ (許容 0)")
+    @Test("畳んだ arc (.pie・一周・既定・.chord・.open) は、輪郭も貼る絵も、畳まない道と画素が同じ (許容 0)")
     func arcsKeepTheirPixels() throws {
         try Self.expectSameAsUnfolded(.pie, strokes: Self.roundStrokes)
         try Self.expectSameAsUnfolded(.pie, strokes: [nil], texture: true)
         try Self.expectSameAsUnfolded(.fullTurn, strokes: Self.roundStrokes)
-        // 輪郭を引かない既定の弧と、輪郭も貼る絵も無い `.chord` だけが畳まれる (#3248)
-        try Self.expectSameAsUnfolded(.standardArc, strokes: [nil])
-        try Self.expectSameAsUnfolded(.standardArc, strokes: [nil], texture: true)
-        try Self.expectSameAsUnfolded(.chord, strokes: [nil])
+        try Self.expectSameAsUnfolded(.chord, strokes: Self.roundStrokes)
+        // 既定・`.open` の輪郭は、塗りと別の周 (開いた弧) で雛形に積む (#3759)。描く画素で 1 以上の太さで畳む
+        // (並べ方の倍率は 0.8 以上なので、太さ 3 は細かさ 0.5 でも 1.2 画素)
+        for form in [Form.standardArc, .open] {
+            try Self.expectSameAsUnfolded(form, strokes: [nil, Stroke(weight: 3)])
+            // 細い輪郭は、開いた端を描く画素の列の境目で切る (#3764)。切る位置が置き場所の平行移動で決まるので畳まない
+            try Self.expectSameAsUnfolded(form, strokes: [Stroke(weight: 0.7)], folds: false)
+        }
+        for form in [Form.standardArc, .chord, .open] {
+            try Self.expectSameAsUnfolded(form, strokes: [nil], texture: true)
+        }
     }
 
     // MARK: - 1 つだけ置く・続けて置く
@@ -325,6 +345,8 @@ struct FoldedPlacementTests {
             (.ellipse, Stroke(weight: 0.7), false), (.ellipse, Stroke(weight: 2), false), (.ellipse, nil, true),
             (.circle, Stroke(weight: 0.7), false), (.pie, Stroke(weight: 0.7), false), (.pie, Stroke(weight: 2), false),
             (.pie, nil, true), (.fullTurn, Stroke(weight: 0.7), false), (.chord, nil, false),
+            (.chord, Stroke(weight: 0.7), false), (.chord, nil, true), (.open, Stroke(weight: 3), false),
+            (.open, nil, true), (.standardArc, Stroke(weight: 3), false),
         ]
         let count = 48
         let scales: [(Float, Float)] = [(1, 1), (-1.15, 1.15), (1.25, 0.8), (-0.9, 1.1)]

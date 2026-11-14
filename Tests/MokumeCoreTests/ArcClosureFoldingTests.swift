@@ -10,11 +10,9 @@ import simd
 
 /// 弧の閉じ方 (既定・`.chord`・`.open`) の畳み ([#3248]) の検査。GPU を要する。
 ///
-/// `shader()` / `texture()` を効かせた間、弧の閉じ方は周を部分ごとに組んで置いていた。**輪郭を引かず貼る絵も無い塗りは、
-/// 同じ形が続く間は置き場所を足すだけの 1 つの雛形に畳む。** 輪郭つき・貼る絵つきは畳まない — 畳んだ絵が畳まない絵と
-/// 縁の数成分違う (置き場所の変換を GPU で掛けるぶん・#3170 の角丸の輪郭つきと同じ根) ので、絵を動かさない約束を
-/// 守るため今までの道に残す。どちらも、畳まずに置く道 (閉じ方ごとの周を作って直に `draw(_:)` へ渡す) と
-/// **同じ画素** (許容 0) で出ることを見る。
+/// `shader()` / `texture()` を効かせた間、弧の閉じ方は周を部分ごとに組んで置いていた。**同じ形が続く間は、置き場所を
+/// 足すだけの 1 つの雛形に畳む** — 輪郭を引かない塗り (#3248) も、輪郭つき・貼る絵つき (#3759) も。畳んだ絵が、畳まずに
+/// 置く道 (閉じ方ごとの周を作って直に `draw(_:)` へ渡す) と **同じ画素** (許容 0) で出ることを見る。
 ///
 /// [#3248]: https://github.com/mokume-metal/mokume/issues/3248
 @Suite(
@@ -227,8 +225,9 @@ struct ArcClosureFoldingTests {
         }
     }
 
-    /// 畳まない道: **本物の ``Canvas/placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``** を、`arc` と同じ手順で
-    /// 解いた中心・半径で呼ぶ (手で写した複製にしない — 本物を直しても基準が追従する)。
+    /// 畳まない道: `arc` と同じ手順で解いた中心・半径から、閉じ方ごとの周 (形自身の座標) を組み、中心ぶん `moved(by:)`
+    /// して `draw(_:)` へ渡す。既定と `.open` は塗りの周 (扇・弦で結んだ形) の後に輪郭の周 (開いた弧) を渡す
+    /// (畳む口が畳まずに置くときと同じ順)。
     private static func placeUnfolded(
         _ canvas: Canvas, mode: ArcMode?, radii: (Float, Float), at center: (Float, Float),
         ellipseMode: ShapeMode, sweep: (Float, Float)
@@ -237,9 +236,28 @@ struct ArcClosureFoldingTests {
         let box = Canvas.resolveBox(a, b, c, d, mode: ellipseMode)
         let radiusX = box.width / 2
         let radiusY = box.height / 2
-        canvas.placeArcInParts(
-            mode: mode, center: SIMD2(box.x + radiusX, box.y + radiusY), radiusX: radiusX, radiusY: radiusY,
-            start: sweep.0, sweep: min(sweep.1 - sweep.0, 2 * .pi))
+        let segments = Canvas.segmentCount(
+            forRadius: max(radiusX, radiusY), scale: Canvas.splitScale(of: canvas.flatTransform.matrix))
+        func draw(_ piece: Canvas.Outline.Ring.Piece) {
+            canvas.draw(
+                Canvas.ringOutline(
+                    Canvas.Outline.Ring(
+                        radiusX: radiusX, radiusY: radiusY, start: sweep.0, sweep: min(sweep.1 - sweep.0, 2 * .pi),
+                        segments: segments, piece: piece)
+                ).moved(by: SIMD2(box.x + radiusX, box.y + radiusY)))
+        }
+        switch mode {
+        case nil:
+            draw(.sectorFill)
+            draw(.arcLine)
+        case .chord?:
+            draw(.chord)
+        case .open?:
+            draw(.chordFill)
+            draw(.arcLine)
+        case .pie?:
+            draw(.sector)
+        }
     }
 
     @Test("輪郭を引かない弧の閉じ方は、畳んでも畳まずに置いた絵と画素が同じ (許容 0)")
@@ -331,26 +349,72 @@ struct ArcClosureFoldingTests {
             closures: chords, folded: true)
     }
 
-    /// **畳んだ絵が畳まない絵と縁の数成分違う場面は、畳まない** (#3248)。輪郭つきの弧 (全部の閉じ方) と、貼る絵つきの
-    /// `.chord` / `.open` は今までの道で置く — 畳まないことと、畳まない道と同じ画素 (許容 0) の両方を見る。
-    @Test("輪郭つきの弧は畳まず、畳まずに置いた絵と画素が同じ (許容 0)")
-    func strokedClosuresAreNotFolded() throws {
-        try expectSameAsUnfolded("輪郭つき", folded: false)
-        try expectSameAsUnfolded("縦長の楕円の弧", radii: (6, 15), spin: 0.3, folded: false)
-        try expectSameAsUnfolded("細い輪郭", stroke: (0.3, .round, .round), spin: 0.27, folded: false)
-        try expectSameAsUnfolded("太い輪郭", stroke: (3, .round, .round), folded: false)
+    /// 輪郭を弦で結んだ形の周で引く閉じ方。
+    private static let chordOnly: [(String, ArcMode?)] = [(".chord", .chord)]
+    /// 輪郭を塗りと別の周 (開いた弧) で引く閉じ方。
+    private static let openLines: [(String, ArcMode?)] = [("既定", nil), (".open", .open)]
+
+    /// **輪郭つきの弧も畳む** (#3759)。輪郭を塗りと別の周 (開いた弧) で引く既定・`.open` は、雛形に塗りの周と輪郭の周を
+    /// 積む。畳んだことと、畳まない道と同じ画素 (許容 0) の両方を見る。
+    ///
+    /// 描く画素で 1 画素より細い輪郭は置き場所の 2x2 が畳みの鍵なので、回転が全部違う並び (`spin` が 0 でない) は畳む相手が
+    /// 無く、畳みの有無は見ない (`folded: nil`)。同じ場面を回転を揃えて (`spin: 0`) 置き、畳まれることを見る。
+    /// **開いた弧の細い輪郭は畳まない** — 開いた端を描く画素の列の境目で切る (#3764) ので、切る位置が置き場所の平行移動で
+    /// 決まる。畳むと、細かさ 1 の回転を揃えた 30 個で 105 成分違った。太い輪郭 (描く画素で 1 以上) は開いた弧も畳む。
+    @Test("輪郭つきの弧は畳まれ (開いた弧の細い輪郭を除く)、畳まずに置いた絵と画素が同じ (許容 0)", arguments: [Float(1), 0.5])
+    func strokedClosuresFold(density: Float) throws {
+        try expectSameAsUnfolded("輪郭つき", density: density, folded: nil)
+        // 細い輪郭 (0.7・0.3): 弦で結んだ形は畳み、開いた弧は畳まない
+        for (closures, folds) in [(Self.chordOnly, true), (Self.openLines, false)] {
+            try expectSameAsUnfolded(
+                "回転を揃えた輪郭つき", density: density, spin: 0, closures: closures, folded: folds)
+            try expectSameAsUnfolded(
+                "非零の中心で回転を揃えた輪郭つき", density: density, at: (21.3, -13.7), spin: 0,
+                scale: { _ in (1.2, 0.8) }, closures: closures, folded: folds)
+            try expectSameAsUnfolded(
+                "非零の中心で鏡映した輪郭つき", density: density, at: (21.3, -13.7), spin: 0,
+                scale: { _ in (-1.1, 1.1) }, closures: closures, folded: folds)
+            try expectSameAsUnfolded(
+                "回転を揃えた縦長の楕円の弧", density: density, radii: (6, 15), spin: 0, closures: closures,
+                folded: folds)
+            try expectSameAsUnfolded(
+                "細い輪郭", density: density, stroke: (0.3, .round, .round), spin: 0, closures: closures,
+                folded: folds)
+        }
+        try expectSameAsUnfolded("縦長の楕円の弧", density: density, radii: (6, 15), spin: 0.3, folded: nil)
+        // 太い輪郭 (描く画素で 1 以上): どの閉じ方も、回転をまたいで畳む
+        try expectSameAsUnfolded("太い輪郭", density: density, stroke: (3, .round, .round), at: (7.3, -4.1), folded: true)
+        try expectSameAsUnfolded(
+            "鏡映した非一様の太い輪郭", density: density, stroke: (4, .round, .round), at: (21.3, -13.7), spin: 0.29,
+            scale: { _ in (-1.2, 0.8) }, folded: true)
         for cap in [StrokeCap.round, .square, .project] {
             try expectSameAsUnfolded(
-                "短い弧 \(cap)", stroke: (2.5, cap, .miter), radii: (3, 3), sweep: (0.3, 0.4), folded: false)
-            try expectSameAsUnfolded("ほぼ一周の弧 \(cap)", stroke: (2, cap, .round), sweep: (0.1, 6.2), folded: false)
+                "短い弧 \(cap)", density: density, stroke: (2.5, cap, .miter), radii: (3, 3), sweep: (0.3, 0.4),
+                folded: true)
+            try expectSameAsUnfolded(
+                "ほぼ一周の弧 \(cap)", density: density, stroke: (3, cap, .round), sweep: (0.1, 6.2), folded: true)
         }
+        // 半透明を足し算で多数重ね、縁の食い違いが飽和に隠れないようにする
+        try expectSameAsUnfolded(
+            "輪郭つきの 400 個の重なり", density: density, stroke: (3, .round, .round), radii: (5, 3.5),
+            at: (7.3, -4.1), spin: 0.917, blend: .add, count: 400, fillAlpha: 30, folded: true)
     }
 
-    @Test("貼る絵つきの .chord / .open は畳まず、畳まずに置いた絵と画素が同じ (許容 0)")
-    func texturedChordFillsAreNotFolded() throws {
+    /// 貼る絵だけの `.chord` / `.open` は畳む (#3759)。貼る絵と輪郭が同居する弧は、どの形とも同じく畳まない (塗りと輪郭が
+    /// 別の面を読み、1 つの図形の途中で列が割れる・``Canvas/draw(folding:at:outline:)``)。
+    @Test("貼る絵だけの .chord / .open は畳まれ、貼る絵と輪郭の弧は畳まれず、どちらも畳まずに置いた絵と画素が同じ (許容 0)")
+    func texturedChordFills() throws {
         let chords: [(String, ArcMode?)] = [(".chord", .chord), (".open", .open)]
-        try expectSameAsUnfolded("貼る絵だけ", texture: true, stroke: nil, closures: chords, folded: false)
-        try expectSameAsUnfolded("貼る絵と輪郭", texture: true, closures: chords, folded: false)
+        for density in [Float(1), 0.5] {
+            try expectSameAsUnfolded(
+                "貼る絵だけ", density: density, texture: true, stroke: nil, closures: chords, folded: true)
+            try expectSameAsUnfolded(
+                "非零の中心の貼る絵だけ", density: density, texture: true, stroke: nil, at: (21.3, -13.7), spin: 0.29,
+                scale: { _ in (-1.2, 0.9) }, closures: chords, folded: true)
+            try expectSameAsUnfolded(
+                "貼る絵と輪郭", density: density, texture: true, closures: chords, folded: false)
+        }
+        try expectSameAsUnfolded("貼る絵と輪郭の既定", texture: true, closures: [("既定", nil)], folded: false)
     }
 
     @Test("破線の弧は畳まず、畳まずに置いた絵と画素が同じ (許容 0)")
