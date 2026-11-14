@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/replay-report.schema.json",
+  "title": "The report of a replay",
+  "description": "What `mokume replay <record>` found when it played a record (`replay-record.schema.json`) back with no window, at full speed, written to `.mokume/replay/report.json` each time it runs. The replay feeds the record's input, knob writes and timed observations to the same advance() they reached, starts from the record's knob values and clock, opens no facets, and checks every step against the values the record holds — the frame number, whether it drew, the exposed values, the picture hash where the record has one, and the last frame. It compares with the record, never with another replay. The tool ends with 0 exactly when `matched` is true.",
+  "type": "object",
+  "required": ["schemaVersion", "record", "matched", "steps", "frames", "mismatches", "unreproducible", "timing"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "The version of this format."
+    },
+    "record": {
+      "type": "string",
+      "description": "The path of the record that was played, as the tool passed it (absolute)."
+    },
+    "id": {
+      "type": "string",
+      "description": "The record's identifier (`id` in the record). Missing when the record could not be read."
+    },
+    "matched": {
+      "type": "boolean",
+      "description": "Whether the replay ran to the end of the record and every check matched. False when a check differed, when it could not run (`problem`), or when it was stopped before the end."
+    },
+    "steps": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many of the record's advance() calls that delivered input (`step`) were played."
+    },
+    "frames": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The last frame the replay drew."
+    },
+    "mismatches": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many checks differed (at most one per step, plus the start's knobs and the last frame)."
+    },
+    "firstMismatch": {
+      "type": "object",
+      "required": ["frame", "what"],
+      "additionalProperties": false,
+      "description": "The first check that differed. Omitted when none did.",
+      "properties": {
+        "step": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The step (as in the record) it differed at. Omitted for the start's knobs and the last frame."
+        },
+        "frame": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The frame number in the record (the replay's own number for a step the record does not list; 0 for the start's knobs)."
+        },
+        "what": {
+          "enum": ["frame", "drew", "expose", "pixelHash", "step", "last", "params"],
+          "description": "What differed: the frame number the step ended on, whether it drew, an exposed value, the picture hash, a step the record has nothing for but the replay drew or exposed in, the last frame (its number or its hash), or a knob the sketch no longer declares."
+        },
+        "name": {
+          "type": "string",
+          "description": "The exposed value's or the knob's name."
+        },
+        "recorded": {
+          "type": "string",
+          "description": "The record's side, written for a person (a value is its JSON, as in `{\"type\", \"value\"}`). Omitted when the record has nothing there."
+        },
+        "replayed": {
+          "type": "string",
+          "description": "The replay's side, written the same way. Omitted when the replay has nothing there."
+        }
+      }
+    },
+    "unreproducible": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The reasons the record gives (under `unreproducible`) why it is not promised to replay frame for frame. The replay names them too, and they do not change `matched`."
+    },
+    "problem": {
+      "type": "string",
+      "description": "Why the replay could not run to the end: the record could not be read, it was taken at another size, the sketch could not start, it stopped reaching the input, or it was stopped. Omitted when it ran to the end."
+    },
+    "timing": {
+      "type": "object",
+      "required": ["seconds", "frames"],
+      "additionalProperties": false,
+      "description": "How long the replay took. Measured on the machine it ran on.",
+      "properties": {
+        "seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "From the start of the first frame until the last frame's picture was read back (the GPU finished it), in seconds. The build and the launch are not in it."
+        },
+        "heaviest": {
+          "$ref": "#/$defs/frameTime",
+          "description": "The frame that took longest. Omitted when no frame was drawn."
+        },
+        "frames": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/frameTime" },
+          "description": "The time each drawn frame took, in frame order: one advance() on the CPU side, up to its work being handed to the GPU."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "frameTime": {
+      "type": "object",
+      "required": ["frame", "seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "frame": { "type": "integer", "minimum": 1 },
+        "seconds": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

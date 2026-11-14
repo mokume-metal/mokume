@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import CoreFoundation
 import Foundation
 import MokumeDiagnostics
 

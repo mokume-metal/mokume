@@ -1,0 +1,23 @@
+{
+  "firstMismatch" : {
+    "frame" : 100,
+    "name" : "paddleX",
+    "recorded" : "155",
+    "replayed" : "150",
+    "step" : 99,
+    "what" : "expose"
+  },
+  "frames" : 3600,
+  "id" : "6f1d6b0e-52a7-4c9e-9a1d-3f58f1a3c0de",
+  "matched" : false,
+  "mismatches" : 1,
+  "record" : "/Users/someone/sketches/bricks/shifted.json",
+  "schemaVersion" : 1,
+  "steps" : 3600,
+  "timing" : {
+    "frames" : [ { "frame" : 1, "seconds" : 0.0298 } ],
+    "heaviest" : { "frame" : 1, "seconds" : 0.0298 },
+    "seconds" : 4.18
+  },
+  "unreproducible" : [ "Replay is not guaranteed (sound plays in real time in a window, and counts frames when replayed: SynthStage)" ]
+}

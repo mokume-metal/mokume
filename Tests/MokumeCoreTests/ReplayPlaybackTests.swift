@@ -227,6 +227,14 @@ struct ReplayPlaybackTests {
         let written = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: report)) as? [String: Any])
         #expect(written["matched"] as? Bool == true && written["schemaVersion"] as? Int == 1)
+        // 書いた鍵は面の仕様 (`Schemas/replay-report.schema.json`) の鍵に収まり、必須の鍵が揃う
+        let schemaURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Schemas/replay-report.schema.json")
+        let schema = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: schemaURL)) as? [String: Any])
+        let declared = Set(try #require(schema["properties"] as? [String: Any]).keys)
+        let required = Set(try #require(schema["required"] as? [String]))
+        #expect(Set(written.keys).isSubset(of: declared) && required.isSubset(of: Set(written.keys)), "\(written.keys)")
     }
 
     @Test("作例 BricksAndBall の 3600 フレームの記録が一致し、→ を押し始める枚を 1 枚遅らせると、そのフレームを名乗る")
