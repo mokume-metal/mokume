@@ -71,6 +71,9 @@ nonisolated class RackNode {
     /// 区切りを始める (ファイルの音源)。`bits` の読み方は ``FileNode/segment(start:looping:generation:)``。
     func begin(_ bits: UInt64) {}
 
+    /// 次に始める区切りを、小数の位置から読む (ファイルの音源・#3473)。直後の ``begin(_:)`` だけに効く。
+    func origin(_ position: Double) {}
+
     /// いまの区切りに包絡を掛ける (ファイルの音源・#3099)。形は直前に渡された秒の値から作る。
     func shapeEnvelope(offset: Int) {}
 

@@ -495,6 +495,146 @@ struct SoundFileTests {
         #expect(muted[2].isPlaying && muted[2].level == 0)
     }
 
+    /// 定位 (#3473): 範囲の外・数でない値の扱いは合成した音の `pan(_:)` と同じ。解析するのは定位を掛ける前の音。
+    @Test("pan は -1〜1 の外を丸め、数でない値は無視して、それぞれ 1 度だけ知らせる。鳴る左右は変わり、解析の値は変わらない")
+    func panClampsIgnoresAndKeepsTheAnalysis() throws {
+        let tone = sine(band: 40, amplitude: 0.5, count: 48_000)
+        let url = try writeChannelsWAV([tone], sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        var notices: [String] = []
+        func run(_ adjust: @escaping (SoundFile) -> Void) throws -> (heard: [Heard], left: [Float], right: [Float]) {
+            let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+            var left: [Float] = []
+            var right: [Float] = []
+            let heard = try record(
+                frames: 4,
+                { sketch in
+                    let loaded = try AudioFile.load(url, path: "tone.wav")
+                    let sound = SoundFile(
+                        name: "tone.wav", buffer: loaded, owner: sketch, flow: flow,
+                        warn: { notices.append($0) })
+                    sketch.attach(sound)
+                    adjust(sound)
+                    sound.play()
+                    return sound
+                },
+                between: { _ in
+                    let both = try renderBoth(flow, Self.perFrame)
+                    left += both.left
+                    right += both.right
+                })
+            return (heard, left, right)
+        }
+
+        let centre = try run { _ in }
+        let played = Array(tone.prefix(4 * Self.perFrame))
+        #expect(centre.left == played && centre.right == played, "既定の中央は左右とも元の標本そのまま")
+        #expect(notices.isEmpty)
+
+        let leftEdge = try run { sound in
+            sound.pan(-3)
+            sound.pan(-2)
+        }
+        #expect(leftEdge.right.allSatisfy { $0 == 0 }, "-1 に丸めたので右は無音")
+        #expect(leftEdge.left.contains { $0 > 0.5 }, "左は元の √2 倍")
+        #expect(leftEdge.heard == centre.heard, "解析の値 (level・rms・spectrum) は定位で変わらない")
+        #expect(notices.count == 1, "丸めたことは 1 度だけ言う: \(notices)")
+        #expect(notices.first?.contains("from -1 to 1") == true)
+
+        notices.removeAll()
+        let ignored = try run { sound in
+            sound.pan(1)
+            sound.pan(.nan)
+            sound.pan(-.infinity)
+        }
+        #expect(ignored.left.allSatisfy { $0 == 0 }, "数でない値の前の定位 (右の端) のまま")
+        #expect(ignored.heard == centre.heard)
+        #expect(notices.count == 1, "\(notices)")
+        #expect(notices.first?.contains("not a number") == true)
+    }
+
+    /// 定位と区切りの組み合わせ (#3473 の反証の指摘 9)。同じ操作の列を、定位なしと `pan(-1)` つきで回し、
+    /// 定位が効いた後のウィンドウで、左が定位なしの √2 倍・右が無音になることを見る。区切りを始める操作
+    /// (鳴らし始め・鳴らし直し・包絡の始まり・飛び) のウィンドウは、移らずに頭からその定位で鳴る。
+    @Test(
+        "pan はループの折り返し・飛びの後・止めて定位を変えて鳴らし直し・鳴らし直し・包絡の始まりでも保たれ、区切りの頭からその定位で鳴る",
+        arguments: ["loop", "jump", "pause", "replay", "envelope"])
+    func panHoldsAcrossSegments(scenario: String) throws {
+        // 1 チャンネルで、位置ごとに違う 0 でない標本。2000 標本なので、ループはウィンドウ 2 の途中で折り返す
+        let values = (0..<2000).map { Float(0.1) + 0.4 * Float(($0 * 7) % 1000) / 1000 }
+        let url = try writeChannelsWAV([values], sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        /// 定位を付けるか (`panned`) で同じ操作の列を回し、ウィンドウごとの左右を返す。
+        func run(panned: Bool) throws -> (left: [[Float]], right: [[Float]]) {
+            let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+            var left: [[Float]] = []
+            var right: [[Float]] = []
+            _ = try record(
+                frames: 7,
+                { sketch in
+                    let loaded = try AudioFile.load(url, path: "steps.wav")
+                    let sound = SoundFile(name: "steps.wav", buffer: loaded, owner: sketch, flow: flow)
+                    sketch.attach(sound)
+                    if scenario != "envelope" {
+                        if scenario == "loop" { sound.loop() } else { sound.play() }
+                    }
+                    return sound
+                },
+                act: { sound, frame in
+                    switch (scenario, frame) {
+                    case ("loop", 2):
+                        if panned { sound.pan(-1) }
+                    case ("jump", 3):
+                        sound.jump(0.02)
+                    case ("jump", 4):
+                        // 飛び先から鳴り始めるウィンドウで頼む
+                        if panned { sound.pan(-1) }
+                    case ("pause", 2):
+                        sound.pause()
+                    case ("pause", 3):
+                        if panned { sound.pan(-1) }
+                    case ("pause", 4):
+                        sound.play()
+                    case ("replay", 3):
+                        if panned { sound.pan(-1) }
+                        sound.play()
+                    case ("envelope", 3):
+                        if panned { sound.pan(-1) }
+                        sound.triggerEnvelope(attack: 0.002, sustain: 0.01, level: 0.8, release: 0.005)
+                    default:
+                        break
+                    }
+                },
+                between: { _ in
+                    let both = try renderBoth(flow, Self.perFrame)
+                    left.append(both.left)
+                    right.append(both.right)
+                })
+            return (left, right)
+        }
+
+        let plain = try run(panned: false)
+        let panned = try run(panned: true)
+        // 定位なしは、左右が同じ標本
+        #expect(plain.left == plain.right)
+        // ウィンドウの番号は 0 から (フレーム f の操作はウィンドウ f - 1 から効く。鳴っている間の飛びは f)。定位が
+        // 頭から効くウィンドウ (ループは、鳴っている間に頼んだので移りきった次のウィンドウ) と、定位を頼む前のウィンドウ
+        let from = ["loop": 2, "jump": 3, "pause": 3, "replay": 2, "envelope": 2][scenario]!
+        let before = scenario == "loop" ? 1 : from
+        #expect(panned.left[..<before] == plain.left[..<before], "定位を頼む前のウィンドウは同じ")
+        #expect(panned.right[..<before] == plain.right[..<before])
+        let root2 = Float(2.0.squareRoot())
+        for window in from..<7 {
+            #expect(panned.right[window].allSatisfy { $0 == 0 }, "\(scenario): ウィンドウ \(window) の右")
+            let worst = zip(panned.left[window], plain.left[window]).map { abs($0 - $1 * root2) }.max() ?? 1
+            #expect(worst < 1e-6, "\(scenario): ウィンドウ \(window) の左のずれ \(worst)")
+        }
+        // 区切りの頭のウィンドウに音がある (無音どうしを比べていない)
+        #expect(plain.left[from].contains { $0 != 0 }, "\(scenario): ウィンドウ \(from) が無音")
+    }
+
     // MARK: - 解析は読まれたときだけ (#2379)
 
     @Test("値を読まない再生は解析されず、読む再生は 1 フレームに何度読んでも 1 回だけ解析される")

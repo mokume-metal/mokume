@@ -29,6 +29,9 @@ nonisolated struct SynthCommand {
         /// `attack`・`sustain`・`level`・`release`。秒) から作り、`bits` に位置のずれ (2 の補数の `Int64`。
         /// ``FileEnvelope/offset``)。
         case envelope
+        /// ファイルの節 (``FileNode``) が次に始める区切りを、小数の位置から読ませる (#3473。速さを変えて鳴っている
+        /// ファイルを、鳴らしたままエフェクトへ通すとき)。`bits` に `Double` のビット列。直後の ``segment`` だけに効く。
+        case origin
     }
 
     var op: Op
@@ -303,11 +306,17 @@ nonisolated final class SynthRack: @unchecked Sendable {
     ///   - samples: ファイルの標本 (チャンネルを平均したモノラル)。
     ///   - fileRate: ファイルの標本化率 (Hz)。ラックの率と違えば、節が変換する。
     ///   - amplitude: 音量 (0〜1)。
-    func addFile(samples: [Float], fileRate: Double, amplitude: Float) -> FileNode? {
+    ///   - rate: 最初の速さ (#3473)。
+    ///   - kernel: 読む比 (速さ × ファイルの率 ÷ ラックの率) から、低域通過の係数を返す (1 以下なら `nil`)。
+    func addFile(
+        samples: [Float], fileRate: Double, amplitude: Float, rate: Double = 1,
+        kernel: (_ ratio: Double) -> RateKernel? = { _ in nil }
+    ) -> FileNode? {
         add { id, _ in
             FileNode(
                 id: id, sampleRate: sampleRate, meter: Self.makeMeter(), samples: samples,
-                fileRate: fileRate, amplitude: amplitude)
+                fileRate: fileRate, amplitude: amplitude, rate: rate,
+                kernel: rate == 1 ? nil : kernel(rate * fileRate / sampleRate))
         }
     }
 
@@ -686,6 +695,8 @@ nonisolated final class SynthRack: @unchecked Sendable {
             if nodes[id] != nil { released |= 1 << UInt64(id) }
         case .envelope:
             nodes[id]?.shapeEnvelope(offset: Int(Int64(bitPattern: command.bits)))
+        case .origin:
+            nodes[id]?.origin(Double(bitPattern: command.bits))
         }
         return false
     }

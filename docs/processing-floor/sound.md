@@ -9,9 +9,9 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 
 | 区分 | 件数 |
 | --- | --- |
-| 同等 | 114 |
-| 入れる | 4 |
-| 作例待ち | 36 |
+| 同等 | 116 |
+| 入れる | 0 |
+| 作例待ち | 38 |
 | 持たない | 11 |
 | 計 | 165 |
 
@@ -31,7 +31,7 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 
 | Feature | API | 件数 |
 | --- | --- | --- |
-| [#3473] `SoundFile` の再生速度と定位 (既存の Issue。意味は決定済みで、型を `Feature` に替えてラベルを付ければ着手できる。`pan` と `rate` は別の PR でよい) | `SoundFile.rate()`・`pan()`・`AudioSample.rate()`・`pan()` | 4 |
+| [#3473] `SoundFile` の再生速度と定位 (入れた。`SoundFile` の 2 件は「SoundFile と AudioSample」の節で同等、`AudioSample` の 2 件は型が無いので作例待ちに揃えた) | `SoundFile.rate()`・`pan()`・`AudioSample.rate()`・`pan()` | 4 |
 | [#3705] `SoundFile` のチャンネルの数とサンプルの数 (入れた。`SoundFile` の 2 件は「SoundFile と AudioSample」の節で同等、`AudioSample` の 2 件は型が無いので作例待ちに揃えた) | `SoundFile.channels()`・`frames()`・`AudioSample.channels()`・`frames()` | 4 |
 | [#3706] `BandPass` を Q で決める (入れた。行は「エフェクト」の節で同等) | `BandPass.res()` | 1 |
 | [#3718] `BrownNoise` (入れた。行は「ノイズ」の節で同等) | `BrownNoise` (クラス)・`amp()`・`pan()`・`play()`・`set()`・`stop()` | 6 |
@@ -135,12 +135,13 @@ Processing Sound のリファレンスのうち、25 のクラスのページと
 | `AudioSample.sampleRate()` | `SoundFile.sampleRate` | 同等 | ファイルのサンプルレート (Hz)。設定はできない | PR [#2200] |
 | `AudioSample.stop()` | `SoundFile.stop()` | 同等 | 止めて先頭へ戻す | PR [#2200] |
 | `SoundFile.isPlaying()` | `SoundFile.isPlaying` | 同等 | プロパティ。値はそのフレームの開始時点のもの | PR [#2200] |
-| `SoundFile`・`AudioSample` の `rate()`・`pan()` (2 つ × 2 = 4 件) | — | 入れる | 再生速度 (リサンプリングでピッチも変わる) と定位。意味は [#3473] の本文で決まっていて (再生速度は 0 以上・位置はファイルの秒のまま・解析は鳴った音・定位は合成音と同じ API の形)、選択が分かれる点は残っていない。実装は 4 つの進め方 (固定の時計のフレーム・実時間・直接鳴らす経路・エフェクトを通した経路) すべてに入れる必要があり重いが、それは Feature の中で分ける (`pan` と `rate` は別の PR でよい)。基準 2〜5 を満たす (リサンプリングは AVFAudio だけで書ける) | [#3473]・[#2464] |
+| `SoundFile.rate()`・`pan()` (2 件) | `SoundFile.rate(_:)`・`pan(_:)` | 同等 | 速さ: 0 以上の有限値 (既定 1)。負・数でない値・無限は速さを変えず 1 度だけ警告する (`Movie.speed(_:)` と同じ扱い。名前はリファレンスどおり `rate` で、`Movie` は Processing Video に倣って `speed`)。読み直し (リサンプリング) で音程も変わり、遅くするときは三次補間、速くするときは窓つき sinc のローパスで読む (エフェクトに通したファイルのサンプルレートの変換と同じ方式。8 倍を越える速さは 8 倍のローパスのまま)。一度も速さを変えていなければサンプルを 1 つも変えない。`position`・`duration`・`jump(_:)` はファイルの秒のままで、`position` は経過した時間 × 速さで進む。0 の間は無音で位置が進まず、`isPlaying` は `true` のまま。解析は鳴った音で、`spectrum`・`isBeat` の格子は再生を始めた位置から鳴ったサンプルの数で数える。`Env` の秒は経過した時間。エフェクトに通したファイルにも効く。定位: 合成音の `pan(_:)` と同じ API の形 (-1〜1・範囲の外は端へ丸め・数でない値は無視) で、基準の大きさは違う。モノラルは中央で左右とも 1 倍の、左右を合わせた大きさが変わらない定位 (端で片側が √2 倍。合成音は中央 1/√2)、ステレオは反対側だけを下げる直線のバランス、3 チャンネル以上は先頭の 2 チャンネルだけ。解析は定位を掛ける前の音で、エフェクトに通したファイルはエフェクトの出口で中央 | [#3473]・[#2464] |
+| `AudioSample.rate()`・`pan()` (2 件) | — | 作例待ち | 意味は `SoundFile` の行と同じだが、`AudioSample` の型が無い (上の `AudioSample` (クラス) の行が作例待ち)。型を追加するときに、`SoundFile` と同じ API を持たせる | [#3473] |
 | `SoundFile.channels()`・`frames()` (2 件) | `SoundFile.channels`・`SoundFile.frames` | 同等 | チャンネルの数とサンプルの数を読むプロパティ。`channels` は 3 チャンネル以上でも 2 に減らさず数をそのまま返す (解析の値はチャンネルを平均したものだが、この数は平均する前)。`frames` は読み込んだサンプルの数そのもので、`duration * sampleRate` の近似ではない (単精度の丸め誤差で長いファイルのサンプルの数が合わない)。取り外した後も取り付け直した後も同じ値 | [#3705]・[#3969] |
 | `AudioSample.channels()`・`frames()` (2 件) | — | 作例待ち | 読み取りの意味は `SoundFile` の行と同じだが、`AudioSample` の型が無い (上の `AudioSample` (クラス) の行が作例待ち)。型を追加するときに、`SoundFile` と同じプロパティを持たせる | [#3705] |
 | `SoundFile`・`AudioSample` の `cue()` (2 件) | `SoundFile.jump(_:)` (止まっている間) | 持たない | 止まっている間の `jump(_:)` が、次の `play()` の位置を決める。リファレンスの `cue()` は `play()` の位置にだけ効き `loop()` には効かないが、mokume の位置は両方に効く | [#2464] |
 | `AudioSample.percent()` | `song.position / song.duration` | 持たない | 割り算 1 つで求められ、百分率にするかは作者が決める | — |
-| `AudioSample.set()` | `rate(_:)`・`pan(_:)`・`amp(_:)` | 持たない | 再生速度・定位・音量を続けて呼ぶ (`rate`・`pan` は [#3473] で入れる)。3 つをまとめる API は足さない | — |
+| `AudioSample.set()` | `rate(_:)`・`pan(_:)`・`amp(_:)` | 持たない | 再生速度・定位・音量を続けて呼ぶ (`rate`・`pan` は [#3473] で入れた)。3 つをまとめる API は足さない | — |
 | `SoundFile.removeFromCache()` | — (手放せば解放される) | 持たない | 読み込んだサンプルを共有するキャッシュが無い。`loadSound(_:)` は呼ぶたびに読み込み、`SoundFile` への参照を手放せばサンプルも解放される | — |
 | `AudioSample.positionFrame()`・`jumpFrame()`・`cueFrame()` (3 件) | — | 作例待ち | サンプルの番号で位置を指す API。位置は秒の `Float` で持つ ([#2464] が `Movie` に揃えた) ので、長いファイル (約 350 秒 = 2^24 サンプルより長い) では秒からサンプルの番号が合わない。選択が分かれる点: 番号の API を秒の API と別に持つか、位置をサンプルの整数で持ち直すか。`cue` を持たないので `cueFrame()` は `jumpFrame()` とセット | [#2464] |
 | `AudioSample.playFor()` | — | 作例待ち | 再生時間を指定して鳴らし、終わりで止める API。止める時刻をサンプルの単位で揃えるには、再生の予約が要る。`SoundFile` の予約 (`play(at:)`) は [#3516] がこの表では決められないと自ら書いた論点で、この行は区分だけを持ち、予約の形は決めない | [#3516] |

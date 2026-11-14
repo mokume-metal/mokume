@@ -39,8 +39,9 @@ import MokumeDiagnostics
 /// | ``position`` | 現在の再生位置 (秒) |
 /// | ``duration`` | 長さ (秒) |
 /// | ``amp(_:)`` | 音量 (0〜1) |
+/// | ``pan(_:)`` | 左右の定位 (-1〜1)。モノラルは中央で左右とも元の大きさ、ステレオはバランス (合成した音の ``SynthSource/pan(_:)`` と同じ API の形で、基準の大きさは違う) |
 ///
-/// 位置・長さ・シークの名前は Processing Sound の `position()`・`duration()`・`jump()` に倣った。
+/// 位置・長さ・シーク・定位の名前は Processing Sound の `position()`・`duration()`・`jump()`・`pan()` に倣った。
 /// 動画 (`Movie`) では同じ量を `time` と呼ぶ — `Movie` が倣う Processing Video が `time()` と呼ぶため。
 ///
 /// 再生中に ``play()`` か ``loop()`` を呼ぶと、先頭から再生し直す (キーを押すたびに鳴らす
@@ -81,7 +82,8 @@ import MokumeDiagnostics
 /// - **エフェクトに通した後は、ラック (合成音を生成してミックスするオーディオグラフ) で再生される。** 通すまでは、これまでどおり直接出力される。ラックでは、読み込んだサンプルを
 ///   合成音と同じクロックで読み出してノードとしてミックスする。通した音はエフェクトの出力を通してだけ聞こえる
 /// - **ステレオはモノラルにまとめられる。** ラックのノードは中央に定位するので、ステレオのファイルも、エフェクトの出力では
-///   モノラルになる。エフェクトを解除しても (``SoundEffect/stop()``)、通したファイルはラックで中央のまま再生される
+///   モノラルになる。エフェクトを解除しても (``SoundEffect/stop()``)、通したファイルはラックで中央のまま再生される。
+///   ``pan(_:)`` も効かない (合成した音の ``SynthSource/pan(_:)`` と同じ)
 /// - **ラックのノードの上限を 1 つ使う。** 同時に存在できるノードは 64 までで、通したファイルはそのうちの 1 つ
 ///   (``SynthSound``)。スケッチから外す (`detach(_:)`) とノードが解放され、外したファイルを追加し直して通すと
 ///   ノードを取り直す。空きが無ければ通さず、そのことを 1 度だけ警告する。通せなかったファイルは直接出力される
@@ -121,9 +123,10 @@ import MokumeDiagnostics
 /// (LPCM・32 ビット浮動小数点・48 kHz・2 チャンネル。ステレオのファイルはステレオのまま入る)。
 ///
 /// **操作が反映される時刻は、操作ごとに違う。** フレーム `N` の `draw()` が要求した ``play()``・``loop()``・``pause()``・
-/// ``stop()``・``amp(_:)`` は、区間 `N` の先頭のサンプルから反映される (音量は区間 `N` の先頭から変わり始め、区間 `N` の終わりまでに新しい音量に達する。途中の変化の形と長さは OS に依存するので保証しない)。**``jump(_:)`` は、再生中は次のフレームの先頭で反映される
+/// ``stop()``・``amp(_:)``・``pan(_:)``・``rate(_:)`` は、区間 `N` の先頭のサンプルから反映される (音量は区間 `N` の先頭から変わり始め、区間 `N` の終わりまでに新しい音量に達する。途中の変化の形と長さは OS に依存するので保証しない。定位は区間 `N` の先頭から約 5 ミリ秒の直線で新しい定位に移る。移らずに切り替わる例外は ``pan(_:)`` に書いた)。**``jump(_:)`` は、再生中は次のフレームの先頭で反映される
 /// ので、区間 `N + 1` の先頭のサンプルから反映される** (区間 `N` はシーク前の位置のまま再生される。停止中は位置だけが動き、
-/// 音は出さない)。
+/// 音は出さない)。サンプルレートが出力と違うファイルでは、再生中の操作 (再生し直す・停止する・定位) が、出力のレートへ
+/// 変換する分 (macOS 27 で数十サンプル) だけ区間の先頭より遅れて聞こえる。
 ///
 /// 音声トラックに入るのは、録画を要求したフレームの `draw()` が終わった時点でオーディオストリームに音源がある録画で、実時間クロック・MP4・GIF・
 /// 連番画像の録画には入らない (音源があれば、そのことを 1 度だけ警告する)。
@@ -180,6 +183,12 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// 鳴っている間に頼まれた飛び先 (標本)。次のフレームの ``supply()`` で、そこから区切りを始め直す。
     private var pendingJump: Int?
     private var volume: Float = 1
+    /// 左右の定位 (-1〜1。範囲へ寄せた値)。鳴らす player へ渡す。解析には掛けない (#3473)。
+    private var panning: Float = 0
+    /// 頼まれた速さ (0 以上の有限値)。鳴らす側へ渡す。位置と解析は、鳴らす側が受けた点 (錨) から ``playhead`` が導く (#3473)。
+    private var speed: Float = 1
+    /// 速さが 1 を越えるときの低域通過の係数の置き場 (読む比ごと)。解析・``FileVoice``・``FileNode`` が同じ係数を読む。
+    private var kernels: [UInt64: RateKernel] = [:]
     /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
     private var deferred = DeferredLevels()
     private var levels: AudioLevels { deferred.levels() }
@@ -245,18 +254,28 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         ///
         /// 包絡を掛けているなら、区切りを始める操作の直後に、その区切りの包絡を載せる。**まとめて 1 度に
         /// 載せる** — 音の側が区切りだけを先に読んで、前の区切りの位置のずれで 1 回描く、ということが起きない。
+        ///
+        /// - Parameter origin: 区切りを始める小数の位置 (#3473)。`nil` なら `start` の標本から。
         mutating func begin(
-            start: Int, looping: Bool, envelope: FileEnvelope?, seconds: EnvelopeArguments.Accepted?
+            start: Int, looping: Bool, envelope: FileEnvelope?, seconds: EnvelopeArguments.Accepted?,
+            origin: Double? = nil
         ) {
             generation += 1
             let segment = SynthCommand(
                 op: .segment, node: UInt8(node.id),
                 bits: FileNode.segment(start: start, looping: looping, generation: generation))
+            // 小数の位置は、区切りを始める操作の直前に、まとめて 1 度に載せる
+            let lead =
+                origin.map { [SynthCommand(op: .origin, node: UInt8(node.id), bits: $0.bitPattern)] } ?? []
             guard let envelope, let seconds else {
-                stage.rack.post(segment)
+                if lead.isEmpty {
+                    stage.rack.post(segment)
+                } else {
+                    stage.rack.postReservation(lead + [segment])
+                }
                 return
             }
-            stage.rack.postReservation([segment] + shaping(envelope, seconds))
+            stage.rack.postReservation(lead + [segment] + shaping(envelope, seconds))
         }
 
         /// いまの区切りの包絡を置き換える。
@@ -325,6 +344,9 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case cannotCarry
         case volumeOutOfRange
         case volumeNotANumber
+        case panOutOfRange
+        case panNotANumber
+        case rateNotAccepted
         case jumpNotANumber
         case energyNotANumber
         case cannotProcess
@@ -553,6 +575,165 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         if case .speaker(let player) = pace { player.volume = clamped }
     }
 
+    /// 左右の定位を設定する。-1 で左、0 で中央、1 で右。既定は 0。
+    ///
+    /// <!-- example: 文脈 var song: SoundFile? -->
+    /// ```swift
+    /// song?.pan(map(mouseX, 0, width, -1, 1))
+    /// ```
+    ///
+    /// - **モノラルのファイル**は、左右を合わせた大きさが変わらない定位で、**中央では左右とも元の大きさ** (1 倍)
+    ///   になる (左 = √2·cos θ・右 = √2·sin θ。θ は -1〜1 を 0〜π/2 へ写したもの)。**代償: 端 (`pan(-1)`・`pan(1)`)
+    ///   では片側が元の √2 倍 (+3 dB) になり、``amp(_:)`` が 1 で目一杯の大きさのファイルは 1 を越えうる。**
+    ///   合成した音の ``SynthSource/pan(_:)`` は中央で左右とも 1/√2 なので、同じ定位でも基準の大きさが違う
+    /// - **出力の機材が 44.1 kHz のときだけ、モノラルのファイルの既定の大きさがこれまでより約 3 dB 上がった。**
+    ///   定位を入れる前は、OS のミキサーが 44.1 kHz の出力でだけモノラルを左右とも約 1/√2 倍で配っていた
+    ///   (macOS 27 で測った)。いまは出力の標本化率に依らず、書き出しと同じく左右とも 1 倍で鳴る
+    /// - **ステレオのファイル**はバランスで、反対側にだけ 1 - |位置| を掛ける。`pan(-1)` で右が無音・左は元の左のまま。
+    ///   左右を畳まない
+    /// - **3 チャンネル以上のファイル**は、先頭の 2 チャンネルを左・右としてステレオと同じに掛け、3 チャンネル目から
+    ///   先は変えない。チャンネルの配置が左・右・中央なら、3 チャンネル目は OS のミキサーが左右へ配る (macOS 27 で
+    ///   左右とも約 0.7071 倍) ので、**`pan(-1)` でも右に 3 チャンネル目の分が残る**
+    /// - **解析の値 (``level``・``rms`` ほか) は定位で変わらない** — 解析するのは定位を掛ける前の音
+    ///   (合成した音の解析と同じ)
+    /// - 鳴っている間にフレーム `N` の `draw()` で呼ぶと、区間 `N` の先頭のサンプルから約 5 ミリ秒の直線で新しい定位へ
+    ///   移る (書き出しでも同じ操作から同じサンプルになる)。**移らずにその定位から鳴る例外**: 停止中に呼んだとき
+    ///   (次に再生した先頭から)、同じフレームで区切りを始める操作 — ``play()``・``loop()`` の鳴らし始めと鳴らし直し・
+    ///   ``pause()`` の後の再開・``Env`` の鳴らし始め — を呼んだとき (その区間の先頭から)、``jump(_:)`` の飛び先から
+    ///   鳴り始める区間 (移る途中でも打ち切って、その区間の先頭から)。区間が 5 ミリ秒より短い (240 fps など) と、
+    ///   移る途中で次の区間の飛びが来れば、そこで打ち切る
+    /// - サンプルレートが出力 (書き出しは 48000 Hz) と違うファイルでは、鳴っている間の定位は、鳴らし直し・停止と同じく、
+    ///   出力のレートへ変換する分 (macOS 27 で数十サンプル・1 ミリ秒ほど) だけ区間の先頭より遅れて移り始める
+    /// - **エフェクトに通したファイルの定位は、エフェクトの出力で中央になる** (``SynthSource/pan(_:)`` と同じ)。
+    ///   エフェクトを解除しても中央のまま。通した後に呼んでも効かず、そのことは知らせない (合成した音と同じ)
+    ///
+    /// -1〜1 の外は端にクランプし、NaN・無限大は無視する。どちらもそのことを 1 度だけ警告する (投げない —
+    /// [ADR-0020] 決定 5。``SynthSource/pan(_:)`` と同じ扱い)。Processing Sound の `SoundFile.pan()` に当たる。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func pan(_ position: Float) {
+        guard position.isFinite else {
+            notice(
+                .panNotANumber,
+                "pan() got a value that is not a number, or an infinite one, so the position of "
+                    + "\"\(name)\" stays at \(panning)")
+            return
+        }
+        let clamped = min(max(position, -1), 1)
+        if clamped != position {
+            notice(
+                .panOutOfRange,
+                "pan() takes a position from -1 to 1, so \(position) was clamped to \(clamped) for "
+                    + "\"\(name)\"")
+        }
+        panning = clamped
+        if case .speaker(let player) = pace { player.pan = clamped }
+    }
+
+    /// 再生の速さを設定する。1 で読み込んだままの速さ (既定)、2 で倍の速さ、0.5 で半分の速さ、0 で止まる。
+    ///
+    /// <!-- example: 文脈 var song: SoundFile? -->
+    /// ```swift
+    /// song?.rate(map(mouseX, 0, width, 0.5, 2))
+    /// ```
+    ///
+    /// - **音程も速さとともに変わる** (2 で 1 オクターブ上、0.5 で 1 オクターブ下)。ピッチを保つタイムストレッチと逆再生はしない。
+    ///   サンプルは読み直して作る — 遅くするときは三次補間、速くするときは折り返しを抑える窓つき sinc のローパスを掛けて読む
+    ///   (エフェクトに通したファイルのサンプルレートの変換と同じ方式)。**一度も速さを変えていない間は読み直さず、サンプルは
+    ///   これまでと 1 つも変わらない。** 速さを変えてから 1 に戻したとき (`rate(0.5)` の後の `rate(1)` など)、戻した位置が
+    ///   サンプルの間なら、次に再生し直す・シークする・止めて再開する (``play()``・``loop()``・``jump(_:)``・``pause()`` の後の
+    ///   再開・``stop()``) まで、速さ 1 のまま三次補間で読む (元のサンプルとは少し違う音になる)。8 倍を越える速さは 8 倍の
+    ///   ローパスのまま読む (越えた分の高い音は折り返す)
+    /// - ``position``・``duration``・``jump(_:)`` はファイルの秒のまま。``position`` は経過した時間 × 速さで進む。鳴っている間に
+    ///   速さを変えても位置は跳ばず、そこから新しい速さで進む。同じ速さを毎フレーム渡しても位置は変わらない。変えたフレームの
+    ///   ``position`` は、変える前の値のまま
+    /// - **0 の間は無音で、位置は進まない。** ``isPlaying`` は `true` のまま (1 度だけの再生も終わらない)。解析の値
+    ///   (``level`` ほか) は、サンプルが進まなかったフレームと同じく前の値のまま
+    /// - 解析の値は鳴った音のもの — 速さ 2 なら ``spectrum`` の山も 1 オクターブ上に出る。``spectrum`` のウィンドウと
+    ///   ``isBeat`` のブロックの格子は、再生を始めた位置から**鳴ったサンプルの数**で数える。一度も速さを変えていなければこれまで
+    ///   どおりファイルの位置で、速さを変えた後は、格子とファイルの位置は対応しない
+    /// - ``Env`` のエンベロープの秒は**経過した時間**で数える (`rate(2)` でも、0.5 秒の立ち上がりは 0.5 秒かかる)
+    /// - フレーム `N` の `draw()` で呼ぶと、区間 `N` の先頭のサンプルから新しい速さで鳴る (書き出しでも同じ操作から同じサンプルになる)。
+    ///   実時間で 1 フレームに 2 度以上変えると、2 度目は次のフレームまで待つことがある
+    /// - エフェクトに通したファイルにも効き、位置も同じに進む。**ただし、サンプルレートが 48000 Hz でないファイルを速さ 1 以外で
+    ///   鳴らすと、``position`` と解析の位置は通さないときと最大 1 サンプルほどずれうる** (ラックのノードはラックのレートで位置を
+    ///   数えて、速さを変えた点をファイルのレートへ換算して返すので、換算の丸めが入る。48000 Hz のファイルは同じ)
+    ///
+    /// 負 (逆再生)・NaN・無限大は受け付けず、速さを変えない。そのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5。
+    /// `Movie` の `speed(_:)` と同じ扱い)。Processing Sound の `SoundFile.rate()` に当たる。**動画 (`Movie`) では同じ量を
+    /// `speed(_:)` と呼ぶ** — `Movie` が倣う Processing Video が `speed()` と呼ぶため。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func rate(_ rate: Float) {
+        guard rate.isFinite, rate >= 0 else {
+            notice(
+                .rateNotAccepted,
+                "rate() takes a finite rate of 0 or more, so \(rate) was ignored and \"\(name)\" keeps "
+                    + "its rate of \(speed)")
+            return
+        }
+        guard rate != speed else { return }
+        speed = rate
+        let value = Double(rate)
+        switch pace {
+        case .speaker(let player):
+            // 位置と解析は、音の側が受けた点から (``absorbRate()``)
+            player.rate(value, kernel: kernel(forRatio: value))
+        case .routed:
+            if let feed {
+                feed.node.link.request(
+                    value, kernel: kernel(forRatio: value * Double(sampleRate) / feed.node.sampleRate))
+            }
+        case .frames, .realTime, .unloaded, nil:
+            // 鳴らす側が居ないので、いま (このフレームの頭・実時間ならいま) から
+            playhead.setRate(value, kernel: kernel(forRatio: value), at: played())
+        }
+        RateKernel.prune(&kernels)
+    }
+
+    /// 読む比 `ratio` の低域通過の係数 (1 以下なら `nil`)。同じ比には同じ係数を返す。
+    private func kernel(forRatio ratio: Double) -> RateKernel? {
+        RateKernel.make(ratio: ratio, cache: &kernels)
+    }
+
+    /// 鳴らす側が速さを受けた点 (錨) を読み、位置と解析の ``playhead`` に置く。**鳴った数を読んだ後に呼ぶ** — 読んだ数の
+    /// 内に錨があれば、必ずここで見える。
+    private func absorbRate() {
+        let absorbed: (anchor: RateLink.Anchor, current: Bool)
+        switch pace {
+        case .speaker(let player):
+            guard let found = player.absorbRate() else { return }
+            absorbed = found
+        case .routed:
+            guard let feed, let anchor = feed.node.link.absorb() else { return }
+            absorbed = (
+                anchor,
+                playhead.isPlaying && FileNode.matches(anchor.generation, current: feed.generation)
+            )
+        case .frames, .realTime, .unloaded, nil:
+            return
+        }
+        let anchor = absorbed.anchor
+        let kernel = kernel(forRatio: anchor.rate)
+        if absorbed.current {
+            playhead.setRate(anchor.rate, kernel: kernel, at: anchor.elapsed, position: anchor.position)
+        } else if playhead.isPlaying {
+            // いまの区切りを始める前に受けていた。区切りの頭からその速さ
+            playhead.retime(anchor.rate, kernel: kernel)
+        } else {
+            playhead.setRate(anchor.rate, kernel: kernel, at: 0)
+        }
+    }
+
+    /// 鳴らす側を作り直した (新しい側は頼んだ速さで始まる) ときに、``playhead`` の速さを頼んだ速さに揃える。鳴っていれば、
+    /// 始め直したばかりの区切りの頭から。
+    private func adoptRate() {
+        let value = Double(speed)
+        guard playhead.rate != value || !playhead.isPlaying else { return }
+        // 鳴っていれば、始め直したばかりの区切りの頭 (経った数 0) から
+        playhead.setRate(value, kernel: kernel(forRatio: value), at: 0)
+    }
+
     /// 再生中か。``play()`` か ``loop()`` で `true` になり、``pause()``・``stop()``・
     /// 再生の終了で `false` になる。値はそのフレームの開始時点のもの。
     ///
@@ -610,10 +791,10 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// ``FileEnvelope/before``。
     private func shaped(_ span: AudioSpan) -> AudioSpan {
         guard let envelope else { return volume == 1 ? span : span.scaled(by: volume) }
-        let head = playhead.shift + playhead.start
         var samples = span.samples
         for index in samples.indices {
-            samples[index] *= volume * envelope.gain(atPlayed: span.base + index - head)
+            // 包絡の位置は経った数 (速さを変えていなければ、区切りの頭からの番号の差)
+            samples[index] *= volume * envelope.gain(atPlayed: playhead.elapsed(atNumber: span.base + index))
         }
         return AudioSpan(base: span.base, samples: samples, from: span.from)
     }
@@ -767,6 +948,9 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             beginSegment()
         }
         guard playhead.isPlaying else {
+            // 止めている間も、鳴らす側が受けた速さ (錨) を毎フレーム読む。読まないと鳴らす側は次の速さを受けず、
+            // 止めている間に 2 度変えた速さが、鳴らし始めた区間に間に合わない
+            absorbRate()
             // 止める操作の時点で解析していなかった分があれば、それを見せてから無音にする (1 フレームだけ)
             if let tail = stoppedTail, !tail.isEmpty { deferred.hold(tail) } else { deferred.silence() }
             stoppedTail = nil
@@ -793,6 +977,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         let span = playhead.span(of: samples, from: covered, after: played ?? self.played())
         covered = span.to
         deferred.hold(shaped(span))
+        // 次の区間より前の標本を読むのにしか要らない錨を捨てる (速さを毎フレーム変えても溜まらない)
+        playhead.forget(before: AudioAnalysis.firstNeeded(from: covered))
     }
 
     /// 止める操作の時点までの、前のフレーム以後の区間を控える。**止める前に鳴っていた分を、取りこぼさない。**
@@ -820,6 +1006,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         feed = nil
         pace = nil
         playhead.stop()
+        // 鳴らす側が受ける前に手放した速さも、次に鳴らす側を作るときの速さにする
+        adoptRate()
         stoppedTail = nil
         deferred.forget()
     }
@@ -850,8 +1038,10 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         // 節を足す・入力に選ぶ・鳴らし始めるの 3 つが、**控えに回らず続けて載る**ときだけ切り替える。
         // どれかが控えに回ると、鳴らしていた音を外したのに節が鳴らない (か、入力に選ばれない節が直に鳴る) 間ができる
         guard !stage.rack.isCongested else { return refuse(.congested) }
-        guard let node = stage.rack.addFile(
-            samples: samples, fileRate: Double(sampleRate), amplitude: volume)
+        guard
+            let node = stage.rack.addFile(
+                samples: samples, fileRate: Double(sampleRate), amplitude: volume, rate: Double(speed),
+                kernel: { self.kernel(forRatio: $0) })
         else { return refuse(.fileCapacity) }
 
         // 位置は、時計を切り替える前の測り方で読む
@@ -864,7 +1054,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             // いまの位置から区切りを始め直す。ウィンドウは、始まりより前もファイルの標本で埋める (``Playhead/carry(after:)``)
             // ので、解析の値は途切れない。鳴らし始めるのは、入力に選ばれてから (``nodeIsConnected()``)
             foldEnvelope(after: playedNow)
-            playhead.carry(after: playedNow)
+            // 節は錨を経った数 0 でしか受けないので、速さを変えて鳴っていれば、いまの位置 (小数) を錨にする
+            playhead.carry(after: playedNow, keepingAnchor: false)
             lastPlayed = 0
             // 前の区間の続きから (``beginSegment()`` が始まりの位置へ戻さない)。標本の流れは続く (飛んだのではない)
             // ので、**区間の番号も続ける** — 番号を位置の側へ付け直すと、ループで何周かした後はウィンドウの格子が
@@ -872,6 +1063,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             continuedCoverage = covered
             feed?.waitsForInput = true
         }
+        // 節は頼んだ速さで始まる
+        adoptRate()
         return node
     }
 
@@ -934,8 +1127,12 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     }
 
     private func startPlayer(through flow: SoundFlow, buffer: AVAudioPCMBuffer) {
-        if let player = FilePlayer(flow: flow, buffer: buffer) {
+        let value = Double(speed)
+        if let player = FilePlayer(
+            flow: flow, buffer: buffer, rate: value, kernel: kernel(forRatio: value))
+        {
             player.volume = volume
+            player.pan = panning
             pace = .speaker(player)
             return
         }
@@ -978,7 +1175,11 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
                 return
             }
         }
-        guard let player = FilePlayer(flow: flow, buffer: loaded) else {
+        let value = Double(speed)
+        guard
+            let player = FilePlayer(
+                flow: flow, buffer: loaded, rate: value, kernel: kernel(forRatio: value))
+        else {
             notice(
                 .cannotCarry,
                 "\"\(name)\" could not be put in the recording: the audio flow of the recording could not "
@@ -987,6 +1188,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             return
         }
         player.volume = volume
+        player.pan = panning
         let wasPlaying = playhead.isPlaying
         // 位置は、切り替える前の測り方 (フレームの数) で読む
         let playedNow = played()
@@ -997,8 +1199,10 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             foldEnvelope(after: playedNow)
             playhead.carry(after: playedNow)
             continuedCoverage = covered
-            beginSegment()
         }
+        // 新しい player は頼んだ速さで始まる
+        adoptRate()
+        if wasPlaying { beginSegment() }
     }
 
     /// 録りの頭で器を読み直すことを、``BlockingLoads`` に知らせる。**画面へ出す実行だけ** ([#3125])。
@@ -1088,9 +1292,18 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case .realTime(let origin):
             return Int(((now() - origin) * Double(sampleRate)).rounded(.down))
         case .speaker(let player):
-            return player.played ?? lastPlayed
+            let played = player.played ?? lastPlayed
+            absorbRate()
+            return played
         case .routed:
-            return feed.map { $0.node.played(generation: $0.generation) } ?? lastPlayed
+            guard let feed else { return lastPlayed }
+            let played = feed.node.played(generation: feed.generation)
+            absorbRate()
+            // 速さを変えた区切りは、節が終わりの印を立てる (経った数と位置が比例しないので)。位置の側の数え方で終わりに揃える
+            if feed.node.ended(generation: feed.generation) {
+                return max(played, playhead.endingElapsed ?? played)
+            }
+            return played
         case .unloaded, nil:
             return 0
         }
@@ -1207,13 +1420,18 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         case .realTime:
             pace = .realTime(origin: now())
         case .speaker(let player):
-            player.play(from: playhead.start, looping: playhead.isLooping, envelope: envelope)
+            // 速さを変えて鳴っていたファイルを録りへ移したときだけ、錨が始まりの標本と違う (``Playhead/carry(after:keepingAnchor:)``)
+            let origin = playhead.origin
+            player.play(
+                from: playhead.start, looping: playhead.isLooping, envelope: envelope,
+                origin: origin == (Double(playhead.start), 0) ? nil : origin)
         case .routed, .unloaded, nil:
             break
         }
+        let origin = playhead.origin.position
         feed?.begin(
             start: playhead.start, looping: playhead.isLooping, envelope: envelope,
-            seconds: envelopeSeconds)
+            seconds: envelopeSeconds, origin: origin == Double(playhead.start) ? nil : origin)
     }
 
     /// 鳴らしている player と、ラックの節を止める。
@@ -1236,6 +1454,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         if !player.flow.start() {
             player.leave()
             pace = .realTime(origin: now())
+            // 手放した player がまだ受けていない速さも、ここからの位置と解析の速さにする (区切りの頭から)
+            adoptRate()
             notice(
                 .noOutput,
                 "The audio output stopped and could not be restarted, so \"\(name)\" is no longer "

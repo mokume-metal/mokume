@@ -99,6 +99,26 @@ func writeWAV(_ samples: [Float], sampleRate: Double) throws -> URL {
     return url
 }
 
+/// チャンネルごとの標本列を、32 bit 浮動小数の WAV に書く (`channels` の数がチャンネルの数)。
+func writeChannelsWAV(_ channels: [[Float]], sampleRate: Double) throws -> URL {
+    let url = TestScratch.path("mokume-audio", pathExtension: "wav")
+    let format = try #require(
+        AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: sampleRate,
+            channels: AVAudioChannelCount(channels.count), interleaved: false))
+    let file = try AVAudioFile(forWriting: url, settings: format.settings)
+    let count = channels.first?.count ?? 0
+    let buffer = try #require(
+        AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count)))
+    buffer.frameLength = AVAudioFrameCount(count)
+    let data = try #require(buffer.floatChannelData)
+    for (channel, samples) in channels.enumerated() {
+        for (index, sample) in samples.enumerated() { data[channel][index] = sample }
+    }
+    try file.write(from: buffer)
+    return url
+}
+
 /// 音の入り口 (#1978)。走っているスケッチの中で回すので GPU を要する。
 @Suite(
     "音の入り口",

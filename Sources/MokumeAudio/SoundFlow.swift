@@ -41,12 +41,24 @@ final class SoundFlow {
     private static var shared: SoundFlow?
 
     /// 機材に出さない流れ。描くのは呼んだ側 (`engine.renderOffline`) で、描いた分だけ時間が進む。
+    ///
+    /// 3 チャンネル以上は、配置を持たない機材 (多チャンネルの出力の機材) と同じく、チャンネルを番号順に並べた形
+    /// (`kAudioChannelLayoutTag_DiscreteInOrder`) にする。検査が多チャンネルの出力を作るのに使う (#3473)。
     static func offline(
         sampleRate: Double, channels: AVAudioChannelCount, maximumFrames: AVAudioFrameCount
     ) throws -> SoundFlow {
         let engine = AVAudioEngine()
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels)
-        else { throw AudioFailure.invalidSampleRate(Float(sampleRate)) }
+        let made: AVAudioFormat?
+        if channels > 2 {
+            // 配置から作る形は、標本化率を検めないので先に検める
+            guard sampleRate.isFinite, sampleRate > 0 else { throw AudioFailure.invalidSampleRate(Float(sampleRate)) }
+            made = AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | channels).map {
+                AVAudioFormat(standardFormatWithSampleRate: sampleRate, channelLayout: $0)
+            }
+        } else {
+            made = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels)
+        }
+        guard let format = made else { throw AudioFailure.invalidSampleRate(Float(sampleRate)) }
         try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: maximumFrames)
         return SoundFlow(engine: engine, isOffline: true)
     }

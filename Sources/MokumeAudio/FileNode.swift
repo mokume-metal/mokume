@@ -109,11 +109,25 @@ nonisolated final class FileNode: RackNode {
     /// 区切りを始め直したとき、消えていく前の区切り (先頭から `fadingCount` 個)。確保しないよう、上限の
     /// 個数ぶんを作っておく。
     private var fading = [Fading](
-        repeating: Fading(start: 0, count: 0, looping: false, gain: 0),
+        repeating: Fading(origin: 0, count: 0, rate: 1, looping: false, gain: 0),
         count: FileNode.maximumFadingSegments)
     private var fadingCount = 0
-    /// 世代 (上位) と、区切りの中で鳴った標本の数 (下位・ファイルの標本)。
+    /// 世代 (上位) と、区切りの中で経った標本の数 (下位・ファイルの標本)。最上位のビットは、速さを変えた区切りが
+    /// 1 度だけ鳴らしてファイルの終わりに着いた印 (``ended(generation:)``)。
     private let progress = Atomic<UInt64>(0)
+    private static let endedBit: UInt64 = 1 << 63
+    /// 速さ (#3473) の受け渡し。主スレッドが頼み、音の側が受けた点を返す。
+    let link: RateLink
+    /// いまの速さ。音の側だけが読み書きする。
+    private var rate: Double
+    /// いまの速さで読む比が 1 を越えるときの低域通過の係数 (主スレッドが作って持つ)。速さ 1 では使わない (``lowPass``)。
+    private var kernel: Unmanaged<RateKernel>?
+    /// いまの区切りの錨: 速さを最後に変えた点で読んでいた位置 (ファイルの標本・折り返さない) と、そこまでに区切りの中で
+    /// 作った標本の数 (ラックの標本)。区切りの頭では、始まりの位置と 0。
+    private var anchorPosition: Double = 0
+    private var anchorCount = 0
+    /// 次に始める区切りの、小数の始まりの位置 (``origin(_:)``)。`nil` なら区切りの始まりの標本から。
+    private var pendingOrigin: Double?
     /// いまの区切りに掛ける包絡 (#3099)。`nil` なら掛けない。位置は区切りの中で鳴ったファイルの標本の数
     /// (``played(generation:)`` が返す数と同じ数え方) から引く。**区切りを始め直しても外さない** — 主スレッドが
     /// 区切りを始める操作の直後に、その区切りの位置のずれを渡す。
@@ -124,21 +138,34 @@ nonisolated final class FileNode: RackNode {
     private var pendingLevel: Float = 1
     private var pendingRelease: Float = 0
 
-    /// 消えていく区切り。位置を導くのに要るものと、いまの音量。
+    /// 消えていく区切り。位置を導くのに要るもの (錨の位置・錨から作った数・速さ) と、いまの音量。読み方 (係数) は
+    /// いまの区切りと同じものを使う — 前の速さの係数は、主スレッドがもう手放しているかもしれない。
     private struct Fading {
-        var start: Int
+        var origin: Double
         var count: Int
+        var rate: Double
         var looping: Bool
         var gain: Float
+
+        /// 作った数 `count` のところで読む位置 (``FileNode/position(at:)`` と同じ式)。
+        func position(fileRate: Double, sampleRate: Double) -> Double {
+            FileNode.position(from: origin, made: count, rate: rate, fileRate: fileRate, sampleRate: sampleRate)
+        }
     }
 
+    /// - Parameters:
+    ///   - rate: 最初の速さ (#3473)。
+    ///   - kernel: 最初の速さで読む比 (速さ × `fileRate` ÷ `sampleRate`) が 1 を越えるときの係数。速さ 1 なら使わない。
     init(
         id: Int, sampleRate: Double, meter: SampleRing, samples: [Float], fileRate: Double,
-        amplitude: Float
+        amplitude: Float, rate: Double = 1, kernel: RateKernel? = nil
     ) {
         self.samples = samples
         self.fileRate = fileRate
         lowPass = fileRate > sampleRate ? DownsamplingKernel(ratio: fileRate / sampleRate) : nil
+        self.rate = rate
+        self.kernel = kernel.map { Unmanaged.passUnretained($0) }
+        link = RateLink(kernel: kernel)
         self.amplitude = amplitude
         amplitudeNow = amplitude
         smoothing = Float(1 - RuntimeMath.exp(-1 / (0.005 * sampleRate)))
@@ -166,6 +193,20 @@ nonisolated final class FileNode: RackNode {
         let seen = (value >> Self.countBits) & Self.generationMask
         guard seen == UInt64(truncatingIfNeeded: generation) & Self.generationMask else { return 0 }
         return Int(value & Self.countMask)
+    }
+
+    /// 錨の世代 `generation` (音の側の数え方) が、主スレッドの世代 `current` の区切りか。
+    static func matches(_ generation: UInt64, current: Int) -> Bool {
+        generation == UInt64(truncatingIfNeeded: current) & generationMask
+    }
+
+    /// 世代 `generation` の区切りが、速さを変えたうえで 1 度だけ鳴らしてファイルの終わりに着いたか。速さを変えて
+    /// いない区切りは、終わりに着くと ``played(generation:)`` が終わりまでの数を返すので、この印を立てない。
+    func ended(generation: Int) -> Bool {
+        let value = progress.load(ordering: .acquiring)
+        let seen = (value >> Self.countBits) & Self.generationMask
+        guard seen == UInt64(truncatingIfNeeded: generation) & Self.generationMask else { return false }
+        return value & Self.endedBit != 0
     }
 
     // MARK: - 音の側
@@ -209,9 +250,15 @@ nonisolated final class FileNode: RackNode {
         // ここでは捨てない** — 自分の音量が 0 になるまで鳴らす。包絡を掛けていれば、消え始めの倍率で止めて残す
         if playing, gate > 0 {
             let shaped = envelope.map { gate * $0.gain(atPlayed: filePlayed(count)) } ?? gate
-            pushFading(Fading(start: start, count: count, looping: looping, gain: shaped))
+            pushFading(
+                Fading(
+                    origin: anchorPosition, count: count - anchorCount, rate: rate, looping: looping,
+                    gain: shaped))
         }
         start = min(Int(bits & Self.countMask), samples.count)
+        anchorPosition = pendingOrigin ?? Double(start)
+        pendingOrigin = nil
+        anchorCount = 0
         looping = bits & Self.loopingBit != 0
         generation = Int((bits >> (Self.countBits + 1)) & Self.generationMask)
         count = 0
@@ -238,6 +285,10 @@ nonisolated final class FileNode: RackNode {
         gateTarget = 0
     }
 
+    override func origin(_ position: Double) {
+        pendingOrigin = position
+    }
+
     /// `current` を `target` へ 1 標本ぶん近づける (``SourceNode`` と同じ追い方)。**十分近づいたら
     /// `target` に揃える** — 揃えないと、1 付近では差が 1e-5 のあたりで止まって届かない。
     private func approach(_ current: Float, _ target: Float) -> Float {
@@ -248,6 +299,7 @@ nonisolated final class FileNode: RackNode {
     override func render(
         frames: Int, input: UnsafePointer<Float>, output: UnsafeMutablePointer<Float>
     ) {
+        receiveRate()
         guard playing || fadingCount > 0, !samples.isEmpty else {
             output.update(repeating: 0, count: frames)
             return
@@ -258,7 +310,7 @@ nonisolated final class FileNode: RackNode {
             while made < frames {
                 var value: Float = 0
                 if playing {
-                    let position = Double(start) + Double(count) * fileRate / sampleRate
+                    let position = position(at: count)
                     if !looping, position >= Double(length) {
                         // ファイルの終わり。ファイルが終わるので、いまの区切りは消えるのを待たずに止まる
                         // (消えていく前の区切りは、自分の音量が 0 になるまで続ける)
@@ -272,7 +324,8 @@ nonisolated final class FileNode: RackNode {
                             // 止める途中の消え方が終わった
                             playing = false
                         } else {
-                            value = read(source, at: position, looping: looping) * gate
+                            // 速さ 0 の間は無音 (位置は進まず、区切りは続く)
+                            value = rate == 0 ? 0 : read(source, at: position, looping: looping) * gate
                             if let envelope { value *= envelope.gain(atPlayed: filePlayed(count)) }
                             count += 1
                         }
@@ -281,7 +334,7 @@ nonisolated final class FileNode: RackNode {
                 var index = 0
                 while index < fadingCount {
                     var previous = fading[index]
-                    let before = Double(previous.start) + Double(previous.count) * fileRate / sampleRate
+                    let before = previous.position(fileRate: fileRate, sampleRate: sampleRate)
                     guard previous.looping || before < Double(length) else {
                         removeFading(at: index)
                         continue
@@ -293,7 +346,9 @@ nonisolated final class FileNode: RackNode {
                         removeFading(at: index)
                         continue
                     }
-                    value += read(source, at: before, looping: previous.looping) * previous.gain
+                    if previous.rate != 0 {
+                        value += read(source, at: before, looping: previous.looping) * previous.gain
+                    }
                     previous.count += 1
                     fading[index] = previous
                     index += 1
@@ -305,8 +360,32 @@ nonisolated final class FileNode: RackNode {
             }
         }
         if made < frames { (output + made).update(repeating: 0, count: frames - made) }
-        // 1 度だけで終わりに着いたら、鳴った数は終わりまでの数にする (主スレッドが終わりと読めるように)
-        publish(reachedEnd ? length - start : filePlayed(count))
+        // 1 度だけで終わりに着いたら、鳴った数は終わりまでの数にする (主スレッドが終わりと読めるように)。速さを変えた
+        // 区切りは、経った数のまま終わりの印を立てる (経った数と位置は比例しないので、数だけでは終わりと読めない)
+        if reachedEnd, !isPlain {
+            publish(filePlayed(count), ended: true)
+        } else {
+            publish(reachedEnd ? length - start : filePlayed(count))
+        }
+    }
+
+    /// いまの区切りが、速さを変えずに鳴っているか (速さ 1 で、錨が区切りの頭のまま)。
+    private var isPlain: Bool {
+        rate == 1 && anchorCount == 0 && anchorPosition == Double(start)
+    }
+
+    /// 頼まれた速さを受ける。鳴っていれば、いまの位置を錨にして、そこから新しい速さで読む。受けた点を主スレッドへ返す。
+    private func receiveRate() {
+        guard let request = link.take() else { return }
+        if playing {
+            anchorPosition = position(at: count)
+            anchorCount = count
+        }
+        rate = request.rate
+        kernel = request.kernel
+        link.publish(
+            generation: UInt64(generation), elapsed: filePlayed(count), position: anchorPosition,
+            rate: rate)
     }
 
     /// `index` 番目の消えていく区切りを外す (残りの順は保つ)。
@@ -319,38 +398,51 @@ nonisolated final class FileNode: RackNode {
         fadingCount -= 1
     }
 
-    private func publish(_ played: Int) {
+    private func publish(_ played: Int, ended: Bool = false) {
         let bounded = UInt64(max(0, played)) & Self.countMask
-        progress.store(UInt64(generation) << Self.countBits | bounded, ordering: .releasing)
+        progress.store(
+            UInt64(generation) << Self.countBits | bounded | (ended ? Self.endedBit : 0),
+            ordering: .releasing)
     }
 
     // MARK: - 読み出し
 
-    /// `position` (ファイルの標本・小数) の値。ループなら端を折り返して読み、1 度だけなら端の標本を保って読む。
+    /// いまの区切りの、区切りが始まってから `count` 標本 (ラックの標本) 作ったところで読む位置。錨 (速さを変えた点) から
+    /// 導く (``FileRate``)。**速さを変えていなければ `start + count × fileRate ÷ sampleRate`** (掛けてから割る — 速さ 1 を
+    /// 掛けても値は変わらない)。
+    private func position(at count: Int) -> Double {
+        Self.position(
+            from: anchorPosition, made: count - anchorCount, rate: rate, fileRate: fileRate,
+            sampleRate: sampleRate)
+    }
+
+    /// 錨 `origin` から `made` 標本 (ラックの標本) 作ったところで読む位置。**ファイルの率がラックの率と同じなら、
+    /// ``FileRate/position(from:elapsed:rate:)`` (直に鳴らす道と解析の式) そのもの** — 率の比を掛けて割ると丸めが
+    /// 入り、通さないときと位置が食い違う。違えば率の比を掛けてから割る。
+    static func position(
+        from origin: Double, made: Int, rate: Double, fileRate: Double, sampleRate: Double
+    ) -> Double {
+        guard fileRate != sampleRate else {
+            return FileRate.position(from: origin, elapsed: made, rate: rate)
+        }
+        return origin + Double(made) * rate * fileRate / sampleRate
+    }
+
+    /// `position` (ファイルの標本・小数) の値。読み方は ``FileRate/read(_:length:at:looping:kernel:)`` (``SoundFile`` の
+    /// 解析と同じ)。読む比 (速さ × ファイルの率 ÷ ラックの率) が 1 を越えれば低域通過を掛ける。**速さ 1 では、作ったときの
+    /// 係数 (``lowPass``)** で読む。
     private func read(
         _ source: UnsafeBufferPointer<Float>, at position: Double, looping: Bool
     ) -> Float {
-        let length = source.count
-        let floor = position.rounded(.down)
-        let fraction = position - floor
-        var base = floor
-        if looping { base = base.truncatingRemainder(dividingBy: Double(length)) }
-        let index = Int(base)
-        func at(_ place: Int) -> Float {
-            if looping { return source[((place % length) + length) % length] }
-            return source[min(max(place, 0), length - 1)]
+        guard let base = source.baseAddress else { return 0 }
+        if rate == 1 || kernel == nil {
+            return FileRate.read(
+                base, length: source.count, at: position, looping: looping,
+                kernel: rate == 1 ? lowPass : nil)
         }
-        if let lowPass { return lowPass.apply(at: index, fraction: fraction, read: at) }
-        let near = at(index)
-        guard fraction != 0 else { return near }
-        let before = at(index - 1)
-        let next = at(index + 1)
-        let after = at(index + 2)
-        let t = Float(fraction)
-        let cubic = -0.5 * before + 1.5 * near - 1.5 * next + 0.5 * after
-        let square = before - 2.5 * near + 2 * next - 0.5 * after
-        let slope = -0.5 * before + 0.5 * next
-        return ((cubic * t + square) * t + slope) * t + near
+        return kernel!._withUnsafeGuaranteedRef {
+            FileRate.read(base, length: source.count, at: position, looping: looping, kernel: $0.kernel)
+        }
     }
 }
 

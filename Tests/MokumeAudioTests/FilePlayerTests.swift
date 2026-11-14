@@ -23,22 +23,69 @@ func rampBuffer(_ count: Int) throws -> AVAudioPCMBuffer {
 }
 
 /// 機材に出さない流れで、`frames` 標本ぶん描かせて左の音を返す。
+///
+/// **右も見る** (#3473): 鳴らす音は左右が同じもの (モノラルか、左右に同じ標本を置いた器) だけを使う前提で、
+/// 2 チャンネルの流れなら右が左と 1 標本も違わないことを確かめる。定位は音の側が左右へ配るので、包絡・ループ・
+/// 飛びの検査が、右へ配る複写も通して見る。
 func render(_ flow: SoundFlow, _ frames: Int) throws -> [Float] {
+    let both = try renderBoth(flow, frames)
+    if flow.engine.manualRenderingFormat.channelCount >= 2 {
+        #expect(both.right == both.left, "右が左と違う")
+    }
+    return both.left
+}
+
+/// 機材に出さない流れで、`frames` 標本ぶんを `chunk` 標本ずつ描かせて、左右の音を返す (1 チャンネルの流れなら
+/// 右も左と同じ列)。
+func renderBoth(_ flow: SoundFlow, _ frames: Int, chunk: Int = 4096) throws -> (left: [Float], right: [Float]) {
+    let all = try renderChannels(flow, frames, chunk: chunk)
+    return (all[0], all.count > 1 ? all[1] : all[0])
+}
+
+/// 機材に出さない流れで、`frames` 標本ぶんを `chunk` 標本ずつ描かせて、出力のチャンネルごとの音を返す。
+func renderChannels(_ flow: SoundFlow, _ frames: Int, chunk: Int = 4096) throws -> [[Float]] {
     let output = try #require(
         AVAudioPCMBuffer(
             pcmFormat: flow.engine.manualRenderingFormat,
             frameCapacity: flow.engine.manualRenderingMaximumFrameCount))
-    var left: [Float] = []
+    var heard = [[Float]](repeating: [], count: Int(output.format.channelCount))
     var remaining = frames
     while remaining > 0 {
-        let chunk = min(remaining, Int(output.frameCapacity))
-        let status = try flow.engine.renderOffline(AVAudioFrameCount(chunk), to: output)
+        let size = min(remaining, chunk, Int(output.frameCapacity))
+        let status = try flow.engine.renderOffline(AVAudioFrameCount(size), to: output)
         #expect(status == .success)
-        let data = try #require(output.floatChannelData)[0]
-        left += (0..<Int(output.frameLength)).map { data[$0] }
-        remaining -= chunk
+        let data = try #require(output.floatChannelData)
+        for channel in heard.indices {
+            heard[channel] += (0..<Int(output.frameLength)).map { data[channel][$0] }
+        }
+        remaining -= size
     }
-    return left
+    return heard
+}
+
+/// 1 チャンネルの器 (48 kHz)。標本は `values`。
+func monoBuffer(_ values: [Float]) throws -> AVAudioPCMBuffer {
+    let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+    let buffer = try #require(
+        AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(values.count)))
+    buffer.frameLength = AVAudioFrameCount(values.count)
+    let data = try #require(buffer.floatChannelData)
+    for (index, value) in values.enumerated() { data[0][index] = value }
+    return buffer
+}
+
+/// 2 チャンネルの器 (48 kHz)。左右の標本は `left`・`right`。
+func stereoBuffer(left: [Float], right: [Float]) throws -> AVAudioPCMBuffer {
+    let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+    let buffer = try #require(
+        AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(left.count)))
+    buffer.frameLength = AVAudioFrameCount(left.count)
+    let data = try #require(buffer.floatChannelData)
+    for index in left.indices {
+        data[0][index] = left[index]
+        data[1][index] = right[index]
+    }
+    return buffer
 }
 
 /// CPU に負荷を掛ける。コア数ちょうどの busy スレッドを回し、`stop()` か期限で止まる。
@@ -286,6 +333,229 @@ struct FilePlayerTests {
         #expect(heard.dropFirst().allSatisfy { $0 > 0 })
         #expect(zip(heard, heard.dropFirst()).allSatisfy { $0 < $1 }, "傾きが保たれる")
         player.leave()
+    }
+
+    /// 定位を入れる前 (#3473 の前・origin/main `538143a4`) の木で、1 チャンネルの器は 1 チャンネルの節のまま流れへ
+    /// 入り、48 kHz の出力では混ぜる節が左右とも 1 倍で振り分けていた (出力が 1 チャンネルならそのまま、6 チャンネルなら
+    /// 先頭の 2 チャンネルへ配り、残りは無音)。この期待は、直す前の木でこの検査を回して緑だったことで確かめた。
+    /// 定位を持つ形 (常に 2 チャンネルの節) でも、既定 (`pan` 0) では 1 標本も違わない。
+    ///
+    /// 出力が 44.1 kHz のときだけは、直す前の木の 1 チャンネルの節が左右とも約 1/√2 倍で鳴っていた (#3473 の
+    /// 2026-11-13 の決定で、44.1 kHz の出力の既定は約 +3 dB になると名乗った)。OS の混ぜる節の振る舞いなので、
+    /// 検査では値を固定しない。
+    @Test(
+        "既定の定位では、48 kHz の 1・2・6 チャンネルの出力で、1 チャンネルの器は直す前と同じ標本で鳴る",
+        arguments: [AVAudioChannelCount(1), 2, 6])
+    func defaultPanKeepsEverySampleOfAMonoBuffer(outputs: AVAudioChannelCount) throws {
+        let values = (0..<3000).map { Float(($0 * 37) % 1001) / 1000 - 0.5 }
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: outputs, maximumFrames: 4096)
+        let player = try #require(FilePlayer(flow: flow, buffer: try monoBuffer(values)))
+        player.play(from: 0, looping: true)
+        let heard = try renderChannels(flow, 6000, chunk: 733)
+        let expected = (0..<6000).map { values[$0 % 3000] }
+        #expect(heard.count == Int(outputs))
+        for channel in heard.indices {
+            if channel < 2 {
+                #expect(heard[channel] == expected, "出力 \(outputs) のチャンネル \(channel)")
+            } else {
+                #expect(heard[channel].allSatisfy { $0 == 0 }, "出力 \(outputs) のチャンネル \(channel) は無音")
+            }
+        }
+        player.leave()
+    }
+
+    /// 器の標本化率が流れと違うと、混ぜる節の変換が節を先読みする。鳴っている間に頼んだ定位は、鳴らし直し
+    /// (``FilePlayer/play(from:looping:envelope:)``) と同じく、その先読みの分 (数十標本) だけ区間の先頭より遅れて
+    /// 効き始める (反証の指摘 2)。標本化率が同じなら先頭の標本から。遅れの標本の数は OS の変換に依るので、上限
+    /// (64 標本・48 kHz で約 1.3 ミリ秒) だけを見る。
+    @Test(
+        "鳴っている間の定位は、標本化率の違う器では鳴らし直しと同じく変換の先読みの分だけ遅れ、同じ器では区間の先頭から効く",
+        arguments: [22_050.0, 44_100.0, 48_000.0])
+    func panDuringPlaybackLagsLikeAReplayWhenResampled(fileRate: Double) throws {
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: fileRate, channels: 1))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_000))
+        buffer.frameLength = 48_000
+        let data = try #require(buffer.floatChannelData)
+        // 前半は 0.5、後半は無音 (鳴らし直しの効き始めを、無音になる所で見る)
+        for index in 0..<48_000 { data[0][index] = index < 24_000 ? 0.5 : 0 }
+        let flow = try makeFlow()
+        let player = try #require(FilePlayer(flow: flow, buffer: buffer))
+        player.play(from: 0, looping: true)
+        _ = try renderBoth(flow, 3200, chunk: 800)
+        player.pan = -1
+        let panned = try renderBoth(flow, 1600, chunk: 800)
+        let panLag = try #require(panned.right.firstIndex { abs($0 - 0.5) > 1e-4 })
+        player.play(from: 30_000, looping: true)
+        let replayed = try renderBoth(flow, 800, chunk: 800)
+        let replayLag = try #require(replayed.left.firstIndex { abs($0) < 1e-3 })
+        player.leave()
+        if fileRate == 48_000 {
+            #expect(panLag == 0 && replayLag == 0)
+        } else {
+            #expect(panLag > 0 && panLag <= 64, "定位の遅れ \(panLag) 標本")
+            #expect(replayLag > 0 && replayLag <= 64, "鳴らし直しの遅れ \(replayLag) 標本")
+        }
+        // 遅れても、移りきった後は端の定位
+        #expect(panned.right.suffix(800).allSatisfy { $0 == 0 })
+    }
+
+    /// 3 チャンネル以上の器は、先頭の 2 チャンネルにだけ定位を掛け、残りは変えない (反証の指摘 3)。配置が
+    /// L R C の器では、混ぜる節が 3 チャンネル目を左右へ配る (macOS 27 で左右とも約 0.7071 倍) ので、`pan(-1)` でも
+    /// 右に 3 チャンネル目の分が残る。配る倍率は OS に依るので、3 チャンネル目だけを鳴らした音と比べる。
+    @Test("配置が L R C の器の pan(-1) は、先頭の 2 チャンネルだけに掛かり、右に 3 チャンネル目の分が残る")
+    func panTouchesOnlyTheFirstTwoChannels() throws {
+        let layout = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_MPEG_3_0_A))
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channelLayout: layout)
+        func buffer(left: Float, right: Float, centre: Float) throws -> AVAudioPCMBuffer {
+            let made = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 2000))
+            made.frameLength = 2000
+            let data = try #require(made.floatChannelData)
+            for index in 0..<2000 {
+                let shape = Float((index * 13) % 401) / 400
+                data[0][index] = left * shape
+                data[1][index] = right * shape
+                data[2][index] = centre * shape
+            }
+            return made
+        }
+        func heard(_ buffer: AVAudioPCMBuffer, pan: Float) throws -> (left: [Float], right: [Float]) {
+            let flow = try makeFlow()
+            let player = try #require(FilePlayer(flow: flow, buffer: buffer))
+            player.pan = pan
+            player.play(from: 0, looping: false)
+            let both = try renderBoth(flow, 2000)
+            player.leave()
+            return both
+        }
+        let centreOnly = try heard(try buffer(left: 0, right: 0, centre: 0.4), pan: 0)
+        let whole = try heard(try buffer(left: 0.5, right: 0.3, centre: 0.4), pan: -1)
+        let leftOnly = try heard(try buffer(left: 0.5, right: 0, centre: 0), pan: 0)
+        #expect(centreOnly.right.contains { $0 > 0.01 }, "3 チャンネル目は右へも配られる")
+        let worstRight = zip(whole.right, centreOnly.right).map { abs($0 - $1) }.max() ?? 1
+        #expect(worstRight < 1e-6, "右に残るのは 3 チャンネル目の分だけ (ずれ \(worstRight))")
+        let worstLeft = zip(whole.left, zip(leftOnly.left, centreOnly.left).map { $0 + $1 })
+            .map { abs($0 - $1) }.max() ?? 1
+        #expect(worstLeft < 1e-6, "左は元の左と 3 チャンネル目の分 (ずれ \(worstLeft))")
+    }
+
+    @Test("既定の定位では、2 チャンネルの器は左右のまま鳴る")
+    func defaultPanKeepsEverySampleOfAStereoBuffer() throws {
+        let values = (0..<3000).map { Float(($0 * 37) % 1001) / 1000 - 0.5 }
+        let other = values.map { -$0 * 0.5 }
+        let stereo = try makeFlow()
+        let stereoPlayer = try #require(
+            FilePlayer(flow: stereo, buffer: try stereoBuffer(left: values, right: other)))
+        stereoPlayer.play(from: 0, looping: false)
+        let both = try renderBoth(stereo, 3000)
+        #expect(both.left == values && both.right == other)
+        stereoPlayer.leave()
+    }
+
+    /// 直す前の木の節の形 (器のチャンネルの数のままの節が ``FileVoice`` を描かせる) で、同じ器を鳴らした音。
+    private func heardThroughTheOldNode(
+        _ buffer: AVAudioPCMBuffer, flow: SoundFlow, frames: Int, chunk: Int
+    ) throws -> [[Float]] {
+        let voice = try #require(FileVoice(buffer: buffer))
+        let node = AVAudioSourceNode(format: buffer.format) { isSilence, _, frameCount, list in
+            isSilence.pointee = ObjCBool(
+                voice.render(frames: Int(frameCount), into: UnsafeMutableAudioBufferListPointer(list)))
+            return noErr
+        }
+        #expect(flow.join(node, format: buffer.format))
+        voice.send(.play(start: 0, looping: true), generation: 1)
+        let heard = try renderChannels(flow, frames, chunk: chunk)
+        flow.leave(node)
+        return heard
+    }
+
+    /// 器の標本化率が流れ (48 kHz) と違うと、混ぜる節が変換する。変換の手前で節の形を変えても、既定の定位では
+    /// 直す前の形 (1 チャンネルの節) と 1 標本も違わない (反証の指摘 2)。
+    @Test("標本化率の違う 1 チャンネルの器も、既定の定位では直す前の節の形と同じ標本で鳴る", arguments: [22_050.0, 44_100.0, 96_000.0])
+    func defaultPanKeepsEverySampleOfAResampledMonoBuffer(fileRate: Double) throws {
+        let count = 5000
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: fileRate, channels: 1))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count)))
+        buffer.frameLength = AVAudioFrameCount(count)
+        let data = try #require(buffer.floatChannelData)
+        for index in 0..<count { data[0][index] = Float(sin(Double(index) * 0.031) * 0.5) }
+        let old = try heardThroughTheOldNode(buffer, flow: try makeFlow(), frames: 9000, chunk: 800)
+        let flow = try makeFlow()
+        let player = try #require(FilePlayer(flow: flow, buffer: buffer))
+        player.play(from: 0, looping: true)
+        let heard = try renderChannels(flow, 9000, chunk: 800)
+        #expect(heard[0] == old[0] && heard[1] == old[1])
+        #expect(heard[0].contains { $0 != 0 })
+        player.leave()
+    }
+
+    /// 1 チャンネルの器は、中央で 1 になるよう掛け直した等しい大きさの定位 (#3473 の 2026-11-13 の決定)。
+    @Test(
+        "1 チャンネルの器の定位は 左 √2·cos θ・右 √2·sin θ で、端の反対側は無音",
+        arguments: [Float(-1), -0.5, 0.25, 1])
+    func monoPanIsEqualPowerScaledToTheCentre(position: Float) throws {
+        let values = (0..<2000).map { Float(($0 * 13) % 401) / 400 - 0.5 }
+        let flow = try makeFlow()
+        let player = try #require(FilePlayer(flow: flow, buffer: try monoBuffer(values)))
+        // 鳴らす前に頼んだ定位は、鳴らし始めの頭から効く (移らない)
+        player.pan = position
+        player.play(from: 0, looping: false)
+        let heard = try renderBoth(flow, 2000)
+        let angle = Double(position + 1) * 0.25 * Double.pi
+        let left = Float(2.0.squareRoot() * cos(angle))
+        let right = Float(2.0.squareRoot() * sin(angle))
+        let worst = values.indices.map {
+            max(abs(heard.left[$0] - values[$0] * left), abs(heard.right[$0] - values[$0] * right))
+        }.max() ?? 1
+        #expect(worst < 1e-6, "最大のずれ \(worst)")
+        if position == -1 { #expect(heard.right.allSatisfy { $0 == 0 }, "左の端で右が無音") }
+        if position == 1 { #expect(heard.left.allSatisfy { $0 == 0 }, "右の端で左が無音") }
+        // 左右を合わせた大きさは中央 (左右とも 1 倍) と同じ
+        #expect(abs(left * left + right * right - 2) < 1e-5)
+        player.leave()
+    }
+
+    /// 2 チャンネルの器はバランス: 反対側にだけ 1 - |pan| を掛ける直線 (#3473 の 2026-11-13 の決定)。
+    @Test("2 チャンネルの器の定位はバランスで、反対側にだけ 1 - |pan| を掛け、手前の側は元のまま")
+    func stereoPanIsABalance() throws {
+        let leftValues = (0..<2000).map { Float(($0 * 13) % 401) / 400 - 0.5 }
+        let rightValues = leftValues.map { 0.25 - $0 * 0.5 }
+        for (position, keptLeft, keptRight) in [(Float(-1), Float(1), Float(0)), (0.5, 0.5, 1), (1, 0, 1)] {
+            let flow = try makeFlow()
+            let player = try #require(
+                FilePlayer(flow: flow, buffer: try stereoBuffer(left: leftValues, right: rightValues)))
+            player.pan = position
+            player.play(from: 0, looping: false)
+            let heard = try renderBoth(flow, 2000)
+            #expect(heard.left == leftValues.map { $0 * keptLeft }, "pan \(position) の左")
+            #expect(heard.right == rightValues.map { $0 * keptRight }, "pan \(position) の右")
+            player.leave()
+        }
+    }
+
+    /// 鳴っている間に変えた定位は、次の描き出しの先頭から約 5 ミリ秒 (48 kHz で 240 標本) の直線で移る。
+    /// 移り方は描いた標本の数だけで決まり、描き出しの区切り方に依らない。
+    @Test("鳴っている間に変えた定位は、次の描き出しの先頭から 240 標本で移りきり、描き出しの区切り方に依らない")
+    func panMovesFromTheNextRenderAndDoesNotDependOnChunks() throws {
+        let values = [Float](repeating: 0.5, count: 4000)
+        func run(chunk: Int) throws -> (left: [Float], right: [Float]) {
+            let flow = try makeFlow()
+            let player = try #require(FilePlayer(flow: flow, buffer: try monoBuffer(values)))
+            player.play(from: 0, looping: true)
+            var heard = try renderBoth(flow, 1000, chunk: chunk)
+            player.pan = -1
+            let after = try renderBoth(flow, 1000, chunk: chunk)
+            heard.left += after.left
+            heard.right += after.right
+            player.leave()
+            return heard
+        }
+        let whole = try run(chunk: 4096)
+        #expect(whole.left[0..<1000].allSatisfy { $0 == 0.5 } && whole.right[0..<1000].allSatisfy { $0 == 0.5 })
+        #expect(whole.right[1000] < 0.5 && whole.right[1000] > 0.4, "頼んだ次の描き出しの先頭から移り始める")
+        #expect(whole.right[1240...].allSatisfy { $0 == 0 }, "240 標本で移りきる")
+        #expect(whole.left[1240...].allSatisfy { abs($0 - 0.5 * Float(2.0.squareRoot())) < 1e-6 })
+        let pieces = try run(chunk: 7)
+        #expect(pieces.left == whole.left && pieces.right == whole.right)
     }
 
     @Test("止めると無音になり、描いた数は読めなくなる")
