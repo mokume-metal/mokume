@@ -1369,7 +1369,7 @@ enum WatchCommand {
     /// 変化を見つけて作り直すときの行。
     static let rebuildingLine = "Change spotted — rebuilding…"
 
-    /// 作り直す要求 (`rebuild`) で作り直すときの行 ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。保存で気付いた
+    /// 作り直す要求 (`rebuild`) で作り直すときの行 (#3428)。保存で気付いた
     /// 回の行 (``rebuildingLine``) と言い分ける — 中身を変えていないのに「変化を見つけた」と言わない。
     static let requestedRebuildingLine = "Rebuild asked for — rebuilding…"
 

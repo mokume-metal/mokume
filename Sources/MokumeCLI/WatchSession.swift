@@ -67,7 +67,7 @@ final class WatchSession {
         /// 既定は「何も走っていない」 — 替え玉の作り直しは子を起こさない。
         var stopRebuild: () -> Process? = { nil }
         /// 次に起こす子へ渡す、作者の時計のファイル (`--keep-time`) の場所を番号で選ぶ
-        /// ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。`0` は旗の場所、`n` は同じディレクトリの `<旗の場所>-n`。
+        /// (#3428)。`0` は旗の場所、`n` は同じディレクトリの `<旗の場所>-n`。
         ///
         /// **どの子にどの番号を渡すかは ``WatchSession`` が決める** (本番と試聴の場所・起こし直し)。起こす口 (``launch``) の
         /// 直前に呼ぶ。旗の無い見張りでは何もしない。
@@ -256,7 +256,7 @@ final class WatchSession {
         /// 言葉はここから組む。手前に作り直しの失敗の記録が挟まっていたときは書かないが、言葉の材料としては持つ。
         var report: BuildReport?
         /// 起こし直す要求 (`restart`) で起こした子が最初の絵の前に終わった回の理由 (`failedToStart` のときだけ・
-        /// [#3428](https://github.com/mokume-metal/mokume/issues/3428))。**この回は記録を書かない** (``report`` は `nil`) —
+        /// #3428)。**この回は記録を書かない** (``report`` は `nil`) —
         /// 作り直していないので、区画 `build` の記録は前の作り直しのものである。端末とプレビューは起こし直しの失敗として名乗る。
         var restartFailure: String?
     }
@@ -416,7 +416,7 @@ final class WatchSession {
     ///
     /// **読みの粒度ぶんの幅は残る** (2026-11-13 の決定) — 見張りがまだ読み始めていない保存は、出た後・入った後に読まれる
     /// ので、そのときの役になる。逆に、読みの最中に置いた保存は、走っている読みが拾えば、その読みを始めた時点の役になる
-    /// (世代の読みは資材を読み終えてから値を返す)。作り直しの最中に読んだ保存も、その読みの役を控えて (``heldRead``)、
+    /// (世代の読みは資材を読み終えてから値を返す)。作り直しの最中に読んだ保存も、その読みの役を控えて (``pending``)、
     /// 作り直しが済んだ後に控えた役のまま取りかかる。
     ///
     /// **例外は出る要求だけが作る** — 本番が居ない・プレビューを戻せないと決めた出る要求は、その試聴までの番号の版を
@@ -429,7 +429,7 @@ final class WatchSession {
     /// 進行中の作り直しの世代。作り直していなければ `nil`。出る要求が引き継ぐとき、世代の控えをこの版へ合わせる
     /// (同じ版を 2 度作り直さない・#3796)。
     private var rebuildingStamp: String?
-    /// 進行中の作り直しが、作り直す要求 (`rebuild`) で起きたか ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+    /// 進行中の作り直しが、作り直す要求 (`rebuild`) で起きたか (#3428)。
     /// 口の側が、作り直しの始まりの行 (``willRebuild``) を頼まれた作り直しの言葉にするのに読む。
     private(set) var rebuildingRequested = false
 
@@ -669,7 +669,7 @@ final class WatchSession {
     /// もう終わっていれば、その版は捨てて名乗る (本番にしない・``discardAudition()``)。ただし出る要求が本番の版へ寄せた
     /// 試聴の版は、本番の版として取りかかる (``effectiveRole(_:)``)。
     ///
-    /// **作り直す要求 (`rebuild`)・起こし直す要求 (`restart`) も、同じ控えの列に頼みを読んだ順で並ぶ** ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+    /// **作り直す要求 (`rebuild`)・起こし直す要求 (`restart`) も、同じ控えの列に頼みを読んだ順で並ぶ** (#3428)。
     /// 役は頼みを読んだ時点の ``readingRole``。控えは読んだ・頼みを読んだ順に 1 拍に 1 つずつ行い、**役の違う項目は互いを
     /// 消さない** (``Pending``)。起こし直しは読みより先に行う (作り直しの最中なら済んでから・``performRestart(_:)``)。
     @discardableResult
@@ -748,7 +748,7 @@ final class WatchSession {
         pending.insert(Pending(kind: .save(stamp), role: role, order: order), at: index)
     }
 
-    /// 試聴の子を起こす起こし直しを、本番の乗り換えが決着するまで待つか (``isProductionSettling``・#3428 の反証 8)。
+    /// 試聴の子を起こす起こし直しを、本番の乗り換えが決着するまで待つか (``isProductionSettling``・#3428)。
     /// 作り直しの後に試聴の子を起こす経路と同じ門で、生きている子を「本番 + 試聴」の 2 つまでにする。起こさない回 (試聴が
     /// 終わった・断る) は待たない。
     private func restartMustWait(_ restart: Pending) -> Bool {
@@ -780,8 +780,8 @@ final class WatchSession {
         return orderCount
     }
 
-    /// まだ取りかかっていない出来事 — 控えの列の 1 項目 ([#3796](https://github.com/mokume-metal/mokume/issues/3796)・
-    /// [#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+    /// まだ取りかかっていない出来事 — 控えの列の 1 項目 (#3796・
+    /// #3428)。
     ///
     /// | 種類 | 役 | 捨てる時 |
     /// | --- | --- | --- |
@@ -815,7 +815,7 @@ final class WatchSession {
     /// ``isRebuilding`` とは別の印にする — 出る要求はあれを「作り直しの最中に出た」 (``Left/building``) と読む。
     private var isRestarting = false
 
-    /// 置き場に在る実行ファイルと、それを建てた作り直しの版 (ソースの世代) ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+    /// 置き場に在る実行ファイルと、それを建てた作り直しの版 (ソースの世代) (#3428)。
     /// **分かっていなければ `nil`** で、起こし直す要求は ``WatchReport/Reason/notBuilt`` で断る。
     ///
     /// **本番の版も試聴の版も同じ置き場の同じ実行ファイルへ組む** ので、起こし直せるのは、最後に通った作り直しの版の子だけ
@@ -1725,7 +1725,7 @@ final class WatchSession {
     ///   **完了時に試聴に入っているかでは決めない** ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。いまの扱いは
     ///   ``effectiveRole(_:)`` で読む — 作り直しの最中に出る要求が「出た時点のソースを本番に作り直す」と決めたら、この版を
     ///   本番の版として引き継ぐ (同じ版を 2 度作り直さない)。
-    /// - Parameter requested: 作り直す要求 (`rebuild`) で起きた回か ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+    /// - Parameter requested: 作り直す要求 (`rebuild`) で起きた回か (#3428)。
     ///   記録に `requested` を書く。
     /// - Returns: 記録。**試聴の版で、その試聴を作り直しの最中に出た回は `nil`** — 版は捨てて名乗り
     ///   (``discardAudition()``)、記録も書かない (出る要求が本番の版の記録へ戻している)。
@@ -1927,7 +1927,7 @@ final class WatchSession {
             audition: false, requested: requested)
     }
 
-    /// 本番の子を、新しく起こした子へ差し替える ([#3428](https://github.com/mokume-metal/mokume/issues/3428) で作り直しから切り出した)。
+    /// 本番の子を、新しく起こした子へ差し替える (#3428 で作り直しから切り出した)。
     ///
     /// **作り直しの後の差し替え (``rebuildAndReplace(stamp:audition:initial:requested:)``) と、起こし直し
     /// (``performRestart(_:)``) が同じ手順を通る** — 前の世代を重ねる・起こせなかったら前の役へ戻す・台へ伝える、の規律を
@@ -2328,10 +2328,10 @@ final class WatchSession {
 
     // MARK: - 作り直す・起こし直す (#3428)
 
-    /// 作り直す要求 ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。**いつも受ける。**
+    /// 作り直す要求 (#3428)。**いつも受ける。**
     ///
     /// 頼みは控えの列 (``pending``) に、頼みを読んだ順と役 (``readingRole``) で並ぶ。保存と同じ規則
-    /// ([#3796](https://github.com/mokume-metal/mokume/issues/3796)) に従う — 試聴の中で頼めば試聴の版で、最中に出れば捨てて
+    /// (#3796) に従う — 試聴の中で頼めば試聴の版で、最中に出れば捨てて
     /// 名乗る。本番で頼めば、最中に入っても本番の版。作り直しの最中に続けて頼んだら、済んだ後に 1 回だけ作り直す。
     private func askRebuild(_ request: WatchRequest) -> WatchReport {
         let role = readingRole
@@ -2340,7 +2340,7 @@ final class WatchSession {
         return acceptance(request)
     }
 
-    /// 起こし直す要求 ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+    /// 起こし直す要求 (#3428)。
     ///
     /// **作り直さずに、いまの版を最初から起こし直す。** 当たる子は頼みを読んだ時点の試聴の状態で決める — 試聴中なら試聴の子、
     /// そうでなければ本番の子。当たる子が居なければ ``WatchReport/Reason/noTarget``、置き場の最後に通った作り直しの版が
@@ -2375,7 +2375,7 @@ final class WatchSession {
         return nil
     }
 
-    /// 受けた起こし直しを行う ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。**拍の頭で、作り直しの最中でないときに
+    /// 受けた起こし直しを行う (#3428)。**拍の頭で、作り直しの最中でないときに
     /// 呼ぶ** (``tick()``)。
     ///
     /// 試聴の中で頼んだ起こし直しの試聴が終わっていれば (出た・入り直した。役は生の番号で比べる)、捨てて名乗る。本番で
@@ -3085,7 +3085,7 @@ final class WatchSession {
     ///   本番の昇格のように役が決まっている口は、その役を渡す。試聴の版の記録は欄 `audition: true` を持ち、
     ///   本番の記録は ``productionReport`` として控える (試聴を出るときの戻り先)。
     ///   **試聴の記録は、本番の昇格を待つ測定 (``firstFrameSince``) に触らない。**
-    /// - Parameter requested: 作り直す要求 (`rebuild`) で起きた回か ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+    /// - Parameter requested: 作り直す要求 (`rebuild`) で起きた回か (#3428)。
     ///   立てると記録に `requested` を書く。**立てなければ、渡された記録の欄をそのまま残す** — 起こした後に足す口
     ///   (新しい絵が出るまでの時間・起こせなかった回の書き直し) は、同じ作り直しの記録を書き直す。
     @discardableResult

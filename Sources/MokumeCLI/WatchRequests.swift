@@ -20,9 +20,9 @@ struct WatchRequest: ExchangeRequest, Equatable {
         case audition
         case leave
         /// ソースの中身が変わっていなくても、保存したときと同じ作り直しと差し替えを 1 回起こす
-        /// ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+        /// (#3428)。
         case rebuild
-        /// 作り直さずに、いまの版を最初から起こし直す ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+        /// 作り直さずに、いまの版を最初から起こし直す (#3428)。
         case restart
     }
 
@@ -67,9 +67,9 @@ struct WatchReport: Encodable, Equatable {
         /// 区別して別のウィンドウに出し分けられない。入ると、試聴の版が作品のウィンドウにも出て、ウィンドウの入力は本番へ届く。
         case unidentifiedGeneration
         /// 起こし直す要求で、当たる子が走っていない (試聴中なら試聴の子、そうでなければ本番の子が居ない。最初の作り直しが
-        /// 失敗した後など) ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+        /// 失敗した後など) (#3428)。
         case noTarget
-        /// 起こし直す要求で、当たる子の版の組み上がりがもう無い ([#3428](https://github.com/mokume-metal/mokume/issues/3428))。
+        /// 起こし直す要求で、当たる子の版の組み上がりがもう無い (#3428)。
         /// 本番の版も試聴の版も同じ置き場の同じ実行ファイルへ組むので、最後に通った作り直しの版が当たる子の版でなければ、
         /// その版では起こし直せない。作り直す要求を使う。
         case notBuilt
