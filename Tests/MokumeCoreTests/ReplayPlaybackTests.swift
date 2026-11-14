@@ -58,6 +58,36 @@ struct ReplayRecordReadingTests {
         #expect((try? record("{" + Self.head + #","steps":[],"complete":true}"#)) != nil)
     }
 
+    @Test("画素のハッシュと最後の枚を照らし、違えばそのフレームを名乗る。記録に無いハッシュは取らない")
+    func hashesAreChecked() throws {
+        let hash = String(repeating: "a", count: 64)
+        let other = String(repeating: "b", count: 64)
+        let text =
+            "{" + Self.head + #","steps":[{"step":0,"frame":60,"drew":true,"pixelHash":""# + hash
+            + #""}],"last":{"frame":60,"pixelHash":""# + hash + #""},"complete":true}"#
+        let record = try record(text)
+        let player = ReplayPlayer(record: record, source: "take.json", reportURL: nil)
+        player.beginStep(input: InputState(), registry: ParamRegistry(of: Empty()))
+        player.endStep(frame: 60, drew: true, drawFailed: false) { other }
+        let report = player.finish(frame: 60, lastHash: { other }, now: 0)
+        #expect(!report.matched && report.mismatches == 2)
+        #expect(report.firstMismatch?.what == "pixelHash" && report.firstMismatch?.frame == 60)
+
+        let quiet = ReplayPlayer(
+            record: try self.record("{" + Self.head + #","steps":[{"step":0,"frame":1,"drew":true}],"complete":true}"#),
+            source: "take.json", reportURL: nil)
+        quiet.beginStep(input: InputState(), registry: ParamRegistry(of: Empty()))
+        quiet.endStep(frame: 1, drew: true, drawFailed: false) {
+            Issue.record("記録に無いハッシュを取った")
+            return nil
+        }
+        #expect(quiet.finish(frame: 1, lastHash: { nil }, now: 0).matched)
+    }
+
+    private final class Empty: Sketch {
+        func draw() {}
+    }
+
     @Test("環境の合図は読んだら消し、絶対パスでない値・読めない記録は流さない理由を持つ")
     func theStartupSignal() {
         var unset: [String] = []
