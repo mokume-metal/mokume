@@ -851,17 +851,9 @@ struct DensityInvarianceTests {
 
     /// 小さい矩形の輪郭の約束の下限 (描く画素での短い辺)。これ未満の形は約束の外 (#3929・ADR-0039 決定 6)。
     ///
-    /// 表 (``smallRectTable()``) から読んだ。固定の seed で区間ごとに 500 件、`MOKUME_PROBE_FRESH=1` で 300 件を 3 回、
-    /// 2〜4 の区間を 1,500 件測った (太さ 0.07〜1・細かさ 0.25〜1・角度 [0, π/2)・ずらし [0, 2)²・縦横比 [1, 2))。
-    ///
-    /// - 距離関数の経路 (`shader()` なし): ±25% を越えたのは短い辺 2 未満だけ (1.75〜2 で約 1,700 件に 1 件。1〜1.25 は
-    ///   ×3.15 まで)
-    /// - 三角形の経路 (`shader()` あり): 2〜2.5 でも約 6,400 件のうち 2 件越えた (×0.711・×0.720)。2.5〜3 は越えなかったが
-    ///   最小は ×0.754 で、生成の検査を実行ごとに新しい seed で回すと境目すれすれの置き方を引きうる
-    /// - 3 以上は、どちらの経路も ×0.826〜×1.17 に収まった
-    ///
-    /// 2 つの経路で同じ値にするのは、経路は `shader()` の有無で切り替わり、書き手が選ぶものではないからである。額縁の
-    /// 下限 (描く画素で辺 4・``Canvas/framesThinRect(width:height:weight:join:drawn:)``) とは別の値である。
+    /// 値は ``smallRectTable()`` の表から読む (根拠の数は ADR-0039 決定 6)。2 つの経路で同じ値にするのは、経路は
+    /// `shader()` の有無で切り替わり、書き手が選ぶものではないからである。額縁の下限 (描く画素で辺 4・
+    /// ``Canvas/framesThinRect(width:height:weight:join:drawn:)``) とは別の値である。
     static let smallRectFloor: Float = 3
 
     /// 丸い周の口の形の座標 (#3863)。畳む境目 (描く画素で短い径 8・縦横比 0.5。``Canvas/ringFoldMinimumDiameter``・
@@ -1225,7 +1217,7 @@ struct DensityInvarianceTests {
     /// 固定の例: #3929 の再現。**細かさ 0.3203125 (描く面 41 画素) で、太さ 0.435512 の 6×4 の矩形の輪郭を、
     /// (64 + 1.397402, 64 + 1.3661197) に置いて 0.3848478 回す。** 描く画素で 1.92×1.28 の矩形で、短い辺が約束の下限
     /// (``smallRectFloor``) より短い。光の量は `shader()` を掛けた矩形 (三角形の経路) で期待の ×0.673、掛けない矩形
-    /// (距離関数の経路) で ×1.291 と ±25% を越えるが、約束の外に置き、描画は変えない (#3929 の完了条件 5)。
+    /// (距離関数の経路) で ×1.291 と ±25% を越えるが、約束の外に置き、描画は変えない (#3929)。
     nonisolated static let smallRectOf3929 = Pose(
         weight: 0.435512, density: 0.3203125, offset: SIMD2(1.397402, 1.3661197), angle: 0.3848478, squash: 1,
         size: SIMD2(6, 4))
@@ -1256,14 +1248,14 @@ struct DensityInvarianceTests {
         }
     }
 
-    /// 表: 小さい矩形の細い輪郭の光の量 (期待との比) を、描く画素での短い辺の区間ごとに測る (#3929 の完了条件 1)。
+    /// 表: 小さい矩形の細い輪郭の光の量 (期待との比) を、描く画素での短い辺の区間ごとに測る (#3929)。
     /// **`MOKUME_SMALL_RECT_TABLE=1` のときだけ走り、表を `MOKUME_SMALL_RECT_TABLE_OUT` のファイルへ書く** (区間 × 件数ぶん
     /// 描くので、PR・queue では回さない)。
     ///
     /// 区間ごとに、短い辺を区間から、縦横比を `[1, 2)`、太さ (出す画素) を `[0.07, 1)`、細かさを 0.25〜1 (1/128 刻み)、
     /// 角度を `[0, π/2)`、ずらしを `[0, 2)²` から選び、`MOKUME_SMALL_RECT_SAMPLES` 件 (既定 100) を測る。描く画素での太さが
     /// 0.07 未満の置き方は選び直す。区間の端は `MOKUME_SMALL_RECT_EDGES` (`2,2.5,3` の形) で替えられる。seed は固定で、`MOKUME_PROBE_FRESH=1` なら実行ごとに新しい。区間ごとの最小と最大の比と、
-    /// その置き方を出す。境目 (``smallRectFloor``) はこの表から読んだ。
+    /// その置き方を出す。``smallRectFloor`` はこの表から読む。
     @Test(
         "表: 小さい矩形の細い輪郭の光の量を、描く画素での短い辺ごとに測る (#3929)",
         .enabled(if: ProcessInfo.processInfo.environment["MOKUME_SMALL_RECT_TABLE"] == "1", "表を出すときだけ走る"))
@@ -1271,7 +1263,7 @@ struct DensityInvarianceTests {
         let environment = ProcessInfo.processInfo.environment
         let samples = environment["MOKUME_SMALL_RECT_SAMPLES"].flatMap { Int($0) } ?? 100
         let seed: UInt64 = environment["MOKUME_PROBE_FRESH"] == "1" ? .random(in: .min ... .max) : 0x3929
-        // 2 つの口を 1 つの検査で順に測り、表を 1 度に書く (引数で分けると、並んで走った片方の出力が落ちた)
+        // 2 つの口を 1 つの検査で順に測り、表を 1 つのファイルへ 1 度に書く
         let edges =
             environment["MOKUME_SMALL_RECT_EDGES"].map { $0.split(separator: ",").compactMap { Float($0) } }
             ?? [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.5, 4, 6, 10]
@@ -1279,7 +1271,7 @@ struct DensityInvarianceTests {
         for mouth in [Amount.smallShaderRect, .smallRect] {
             lines += try Self.smallRectRows(mouth, edges: edges, samples: samples, seed: seed)
         }
-        // 端末の出力は検査の出力と混ざって途中で切れることがあったので、ファイルへ書く
+        // 端末の出力は検査の出力と混ざって切れうるので、ファイルへ書く
         let path = try #require(environment["MOKUME_SMALL_RECT_TABLE_OUT"], "表を書くファイルを MOKUME_SMALL_RECT_TABLE_OUT で渡す")
         try (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
     }
