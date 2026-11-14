@@ -75,7 +75,7 @@
     "unreproducible": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "The reasons the record gives (under `unreproducible`) why it is not promised to replay frame for frame. The replay names them too, and they do not change `matched`."
+      "description": "Why the run is not promised to replay frame for frame: the reasons the record gives (under `unreproducible`), followed by those the replay found itself that the record does not give (a record written before a reason was noticed, or a sketch that changed since), each once. The replay names them too, and they do not change `matched`."
     },
     "problem": {
       "type": "string",

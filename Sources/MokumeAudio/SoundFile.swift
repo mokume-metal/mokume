@@ -155,7 +155,7 @@ import MokumeDiagnostics
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
-public final class SoundFile: Inlet, EffectInput, RealtimeSound {
+public final class SoundFile: Inlet, EffectInput {
     /// ファイルのサンプルレート (Hz)。帯域 `k` の中心は `k × sampleRate ÷ 1024` Hz。
     public let sampleRate: Float
 
@@ -191,7 +191,11 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     private var kernels: [UInt64: RateKernel] = [:]
     /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
     private var deferred = DeferredLevels()
-    private var levels: AudioLevels { deferred.levels() }
+    /// 解析の値。**公開の解析の口だけが読む** — 読んだことを、ウィンドウで録る記録へ名乗る (#3575)。
+    private var levels: AudioLevels {
+        ReplayNotice.soundAnalysis("SoundFile")
+        return deferred.levels()
+    }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
     /// 位置を進める時計。開くまで `nil`。
@@ -869,7 +873,10 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// サンプルは解析と同じもの (チャンネルを平均したもの。音量を掛けた後)。サンプル 0 より前は 0。サンプルが進まな
     /// かったフレームは前のまま。何も再生されていなければ 1024 個の 0。p5.sound の `waveform()` と
     /// Processing Sound の `Waveform` に当たる。
-    public var waveform: [Float] { deferred.waveform() }
+    public var waveform: [Float] {
+        ReplayNotice.soundAnalysis("SoundFile")
+        return deferred.waveform()
+    }
 
     /// このフレームの区間にビートがあったか。区間にビートが 1 つ以上あれば `true` (複数あっても 1 回にまとめる)。
     ///
@@ -897,7 +904,10 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     ///
     /// **判定は音量 (``amp(_:)``) を掛けた後のサンプルで行う** (``level``・``waveform`` と同じサンプル)。音量を急に変えると
     /// ビートが出る・消える (-60 dBFS 相当を越えない小さい音量では出ない)。
-    public var isBeat: Bool { deferred.isBeat }
+    public var isBeat: Bool {
+        ReplayNotice.soundAnalysis("SoundFile")
+        return deferred.isBeat
+    }
 
     /// 拍の状態が区間を処理した回数。検査が読む — 一度も読まれなければ 0。
     var beatSteps: Int { deferred.beatSteps }

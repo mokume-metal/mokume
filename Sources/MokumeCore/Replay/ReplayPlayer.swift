@@ -25,11 +25,17 @@ import MokumeDiagnostics
 /// 最初に食い違った回のフレーム番号を名乗り、結果を `.mokume/replay/report.json` (`Schemas/replay-report.schema.json`)
 /// に書く。照合がすべて一致すれば 0、食い違った・流せなかったなら 0 以外で終わる (終わらせるのは ``SketchApplication``)。
 ///
+/// ## 再現を保証しないもの (#3575)
+///
+/// 記録が名乗った理由を流す前に読み上げ、**流している間に自分でも見つける** (``UnreproducibleSink``・記録する係と同じ口)。
+/// 記録が持たない理由 (前の版の記録・記録の後に作品が変わった) も名乗れる。結果の `unreproducible` は、記録の理由に
+/// 流して見つけた理由を足したもので、照合の一致 (`matched`) は変えない。
+///
 /// ## 速さを測る
 ///
 /// フレームごとに `advance()` 1 回の時間 (CPU の側。描いた枚の組み立てと投入まで) を残し、いちばん重いフレームを名乗る。
 /// 全体の時間は、最初の枚の前から最後の枚の絵を読み戻し終える (GPU の完了) まで。
-final class ReplayPlayer {
+final class ReplayPlayer: UnreproducibleSink {
     /// 結果のファイルの名前 (区画 `replay` の下)。
     static let reportName = "report.json"
     /// 結果の書式の版。
@@ -102,6 +108,8 @@ final class ReplayPlayer {
     private var advances = 0
     private var frameTimes: [FrameTime] = []
     private var began: Double?
+    /// 流している間に見つけた、記録が名乗っていない再現を保証しない理由 (見つけた順)。
+    private(set) var noticed: [String] = []
     /// 書いた結果。**1 度だけ書く。**
     private(set) var report: Report?
 
@@ -189,6 +197,19 @@ final class ReplayPlayer {
         }
     }
 
+    /// 再現を保証しない理由のすべて: 記録が名乗ったものに、流して見つけたものを足す (重ねない)。
+    var unreproducible: [String] { (record?.unreproducible ?? []) + noticed }
+
+    /// 流しているのがウィンドウで録った記録か。
+    var soundRunsInRealTime: Bool { record?.window ?? false }
+
+    /// 流している間に、再現を保証しないものが使われた。**記録が既に名乗った理由と、同じ理由の 2 度目は名乗らない。**
+    func noteUnreproducible(_ reason: String) {
+        guard report == nil, !unreproducible.contains(reason) else { return }
+        noticed.append(reason)
+        Diagnostics.warn("Replaying: \(reason)")
+    }
+
     // MARK: - 当てる
 
     /// 開始のつまみの値を当てる。**保存を戻した後 (流す側は保存を持たない)・`setup()` の前。**
@@ -235,7 +256,11 @@ final class ReplayPlayer {
                     recorded: Self.describe(param.value), replayed: Self.describe(outcome)),
                 at: .step(ordinal))
         }
-        for event in step.inputs { input.enqueue(event) }
+        for event in step.inputs {
+            // 記録はパスだけを持ち、中身は持たない (記録する側の名乗りと同じ)
+            if event.carriesAFileByPath { noteUnreproducible(ReplayRecorder.Reason.fileByPath) }
+            input.enqueue(event)
+        }
     }
 
     /// `expose` された値。同じ名前は後のものが勝つ。
@@ -364,7 +389,7 @@ final class ReplayPlayer {
         let report = Report(
             schemaVersion: Self.reportVersion, record: source, id: record?.id,
             matched: problem == nil && mismatches == 0, steps: min(nextOrdinal, lastOrdinal + 1), frames: frame,
-            mismatches: mismatches, firstMismatch: firstMismatch, unreproducible: record?.unreproducible ?? [],
+            mismatches: mismatches, firstMismatch: firstMismatch, unreproducible: unreproducible,
             problem: problem,
             timing: Report.Timing(
                 seconds: max(0, now - (began ?? now)), heaviest: heaviest, frames: frameTimes))
@@ -373,10 +398,10 @@ final class ReplayPlayer {
         return report
     }
 
-    /// 結果を人へ 1 行で言う (道具の端末へ出る)。
+    /// 結果を人へ 1 行で言う (道具の端末へ出る)。再現を保証しない理由があれば、後ろに並べる (#3575)。
     static func summary(of report: Report) -> String {
         let place = report.record
-        if let problem = report.problem { return "Could not replay \(place): \(problem)" }
+        if let problem = report.problem { return "Could not replay \(place): \(problem)" + caveats(report) }
         let timing = report.timing
         let heaviest = timing.heaviest.map {
             "; the heaviest frame was \($0.frame) at \(Self.milliseconds($0.seconds))"
@@ -384,12 +409,18 @@ final class ReplayPlayer {
         let seconds = String(format: "%.2f", timing.seconds)
         guard let first = report.firstMismatch else {
             return "Replayed \(report.frames) frames of \(place) in \(seconds) s\(heaviest ?? ""): every check matched the record"
+                + caveats(report)
         }
         var what = first.what
         if let name = first.name { what += " \(name)" }
         let values = "recorded \(first.recorded ?? "nothing"), replayed \(first.replayed ?? "nothing")"
         return "The replay of \(place) first differed from the record at frame \(first.frame): \(what) (\(values)). "
-            + "\(report.mismatches) check\(report.mismatches == 1 ? "" : "s") differed in all"
+            + "\(report.mismatches) check\(report.mismatches == 1 ? "" : "s") differed in all" + caveats(report)
+    }
+
+    /// 再現を保証しない理由を、1 行の後ろに足す形にする。無ければ空。
+    private static func caveats(_ report: Report) -> String {
+        report.unreproducible.isEmpty ? "" : ". " + report.unreproducible.joined(separator: ". ")
     }
 
     // MARK: - 内側

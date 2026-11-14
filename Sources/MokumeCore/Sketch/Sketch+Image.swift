@@ -189,7 +189,6 @@ extension SketchPart {
     // shot: 3 snippet=1417ff4a
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
         noticeBlockingLoad("loadImage(_:)", instead: "requestImage(_:)")
-        noteWebImage(path)
         return try resourceCanvas(ImageFailure.self).loadImage(path)
     }
 
@@ -216,14 +215,7 @@ extension SketchPart {
     // shot: 参照 loadImage(_:)
     public func loadImage(_ path: String, extension: String) throws(ImageFailure) -> Image {
         noticeBlockingLoad("loadImage(_:extension:)", instead: "requestImage(_:extension:)")
-        noteWebImage(path)
         return try resourceCanvas(ImageFailure.self).loadImage(path, extension: `extension`)
-    }
-
-    /// URL の画像を読むなら、記録に「再現を保証しない」と書く。本文は記録に持たない (#3570)。
-    private func noteWebImage(_ path: String) {
-        guard (try? WebFile.url(path)) != nil else { return }
-        LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
     }
 
     /// 画像を読む。**読んでいる間、他の仕事を止めない。**
@@ -339,7 +331,6 @@ extension SketchPart {
     // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
         let canvas = try loadingCanvas(ImageFailure.self)
-        noteWebImage(path)
         return try await canvas.requestImage(path)
     }
 
@@ -364,7 +355,6 @@ extension SketchPart {
     // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String, extension: String) async throws(ImageFailure) -> Image {
         let canvas = try loadingCanvas(ImageFailure.self)
-        noteWebImage(path)
         return try await canvas.requestImage(path, extension: `extension`)
     }
 

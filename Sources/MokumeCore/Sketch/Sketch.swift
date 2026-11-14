@@ -835,10 +835,11 @@ enum LaunchingSketch {
     /// 後も、追加を実行へ要求できるようにする** — 追加は実行がフレームの頭で行い、ここが持ち越すのは要求の受付だけである
     /// (``AttachRequests``)。実行そのものは持ち越さないので、描画の API は `Task` から効かない。
     @TaskLocal static var attachments: AttachRequests?
-    /// 実行を記録する型 (``ReplayRecorder``・#3570)。**中で起動された `Task` の読み込み (``SketchPart/requestJSONObject(_:)``
-    /// など) が、URL から受け取ったこと (記録は本文を持たない) をその回に名乗れるようにする。** 名乗るだけで、
-    /// 実行の状態には触らない。記録していない実行は `nil`。
-    @TaskLocal static var replay: ReplayRecorder?
+    /// 再現を保証しないものを聞く係 (``UnreproducibleSink``)。記録している実行では記録する係 (#3570)、流している実行では
+    /// 流す係 (#3575)。**中で起動された `Task` の読み込み (``SketchPart/requestJSONObject(_:)`` など) が、URL から
+    /// 受け取ったこと (記録は本文を持たない) や待つ読み込みを使ったことを、その回に名乗れるようにする。** 名乗るだけで、
+    /// 実行の状態には触らない。記録も再生もしていない実行は `nil`。
+    @TaskLocal static var replay: (any UnreproducibleSink)?
 }
 
 extension SketchPart {

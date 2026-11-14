@@ -106,9 +106,14 @@ enum Command {
                     clock (clock: .frames) is recorded; on the wall clock it says why, does not
                     record, and keeps running. The previous run's file at that path is removed when
                     the sketch starts (also when it does not record), and a second run writing to the
-                    same path does not record. What comes from outside the sketch (a gamepad, MIDI,
-                    OSC, a camera, a dropped file, sound in the window) is not in the record, and the
-                    record names it under unreproducible
+                    same path does not record. What the record cannot hold is named under
+                    unreproducible with its reason, and mokume replay names it too: input from outside
+                    the sketch (a gamepad, MIDI, OSC, a camera or microphone, a movie; not the frames you
+                    give createCapture(frames:)), a dropped or chosen file, a file fetched from a URL,
+                    a request… load (the frame its result arrives at), a .metal fragment swapped in while
+                    it runs, and in a window, reading a sound's analysis (level, spectrum, waveform,
+                    isBeat; a sound that only plays is fine). Date() and Swift's own random numbers
+                    cannot be noticed: use random() and time instead to replay what they give
                     """
                 )
             case .watch:
@@ -180,6 +185,9 @@ enum Command {
                     and clock, and opens no facets, so nothing from outside gets in. Ends with 0 when every
                     check matched; otherwise it names the first frame that differed and ends with 1. Either way
                     it writes .mokume/replay/report.json, with the time each frame took and the heaviest frame.
+                    What is not promised to replay frame for frame (see run --record), as the record names it
+                    and as the replay finds it itself, is listed on its last line and under unreproducible in
+                    the report; it does not change whether the checks matched.
                     A relative <record> starts from where you run this
                     """
                 )

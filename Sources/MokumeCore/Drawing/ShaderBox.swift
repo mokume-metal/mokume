@@ -257,6 +257,8 @@ final class ShaderBox {
             failure = nil
             failedBody = nil
             generation += 1
+            // 走らせたまま絵が変わる。記録と再生は、差し替えた中身もその枚も持たない (#3575)
+            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.fragmentSwapped(bodyName))
         case .failure(let error):
             // **中身のせいと言える失敗だけを控える** (#1830 の 2 回目の反証 3)。組めなかった理由が
             // 中身と関係なければ、同じ中身でも次は組める。控えると、中身を変えるまで固着する

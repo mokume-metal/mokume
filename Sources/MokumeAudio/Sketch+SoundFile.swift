@@ -126,8 +126,10 @@ extension Sketch {
 
     /// 鳴らす流れを差し替えられる入口 (検査用)。`flow` を渡すと、時計によらずその流れで鳴らす。
     func requestSound(_ file: String, flow: SoundFlow?) async throws(AudioFailure) -> SoundFile {
+        // 届くフレームは記録に無い (#3575)
+        ReplayNotice.waitingLoad()
         // 頼める所かを、ファイルを読む前に確かめる (#2740・#3398)。名乗るのは利用者が呼ぶ口
-        try await attachedWaiting(
+        return try await attachedWaiting(
             AudioFailure.self, calledAs: "requestSound(_:)"
         ) { () async throws(AudioFailure) -> SoundFile in
             let url = try audioURL(file)

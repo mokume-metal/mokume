@@ -42,7 +42,7 @@ import MokumeDiagnostics
 /// 読み飛ばせる形にしてある (`Schemas/replay-record.schema.json`)。
 ///
 /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
-final class ReplayRecorder {
+final class ReplayRecorder: UnreproducibleSink {
     /// 記録の書式の版。
     static let schemaVersion = 1
     /// 画素のハッシュを取るフレーム番号の間隔。**そのフレーム番号が 60 の倍数のとき**に取る。
@@ -67,14 +67,24 @@ final class ReplayRecorder {
         static let pictureUnreadable =
             "Replay cannot be checked against every picture (a picture could not be read back to hash it)"
         static let drawFailed = "Replay is not guaranteed (a frame failed to draw)"
-        /// 外から値が届く入り口 (ゲームパッド・MIDI・OSC / TCP / UDP / WebSocket・シリアル・マイク・カメラ) を足した。
-        /// この段の記録は、入り口の値を持たない (#2603 の後段)。
+        /// 外から値が届く入り口 (ゲームパッド・MIDI・OSC / TCP / UDP / WebSocket・シリアル・マイク・カメラ・動画) を足した。
+        /// この段の記録は、入り口の値を持たない (#2603 の後段)。`Codable` でない外の値も、この入り口から届く。
         static func outsideInput(_ name: String) -> String {
             "Replay is not guaranteed (input from outside the sketch, which the record does not hold: \(name))"
         }
-        /// ウィンドウでは音が実時間で鳴り、ウィンドウなしで流すときは数で進む。音の解析値を絵に使う作品は割れうる。
-        static func realtimeSound(_ kind: String) -> String {
-            "Replay is not guaranteed (sound plays in real time in a window, and counts frames when replayed: \(kind))"
+        /// 音の解析の値を読んだ (ウィンドウで録った記録だけ)。ウィンドウでは音が実時間で鳴り、ウィンドウなしで流すときは数で
+        /// 進むので、解析の値は割れうる。鳴らすだけの音は名乗らない (#3575)。
+        static func soundAnalysis(_ kind: String) -> String {
+            "Replay is not guaranteed (the analysis of a sound was read, such as its level, spectrum, waveform or beat; "
+                + "in a window sound plays in real time, and a replay counts frames: \(kind))"
+        }
+        /// 待つ読み込み (`request…`) を使った。届くフレームは記録に無い (#3575)。
+        static let waitingLoad =
+            "Replay is not guaranteed (a request… load was used, and the frame its result arrives at depends on how "
+            + "long it takes, which the record does not hold)"
+        /// 走らせたまま、`.metal` の断片を差し替えた (#3575)。
+        static func fragmentSwapped(_ name: String) -> String {
+            "Replay is not guaranteed (a shader fragment was swapped in while the sketch ran: \(name))"
         }
     }
 
@@ -224,6 +234,9 @@ final class ReplayRecorder {
 
     /// フレームの頭で、差し出された値を捨てる (観測の `exposedValues` と同じ位置)。
     func clearExposed() { exposed.removeAll(keepingCapacity: true) }
+
+    /// ウィンドウに出しながら録っているか (``noteStart(seed:params:frameRate:width:height:window:)`` の `window`)。
+    var soundRunsInRealTime: Bool { start?.window ?? false }
 
     /// 再現を保証しないものが使われた。**同じ理由は 1 度だけ書く。**
     func noteUnreproducible(_ reason: String) {

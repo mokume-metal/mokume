@@ -35,6 +35,8 @@ extension Canvas {
     private func loadImage(_ path: String, kind: String?) throws(ImageFailure) -> Image {
         if let fresh = freshDecoded(for: path) { return try makeImage(fresh) }
         if let web = try ImageFile.webURL(path) {
+            // 本文は記録に持たない (#3570)。面を直に呼んでも名乗る (#3575)
+            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
             let decoded = try ImageFile.decode(ImageFile.fetchWaiting(web, path: path), name: path, kind: kind)
             remember(decoded, path: path, origin: .web)
             return try makeImage(decoded)
@@ -64,8 +66,11 @@ extension Canvas {
     }
 
     private func requestImage(_ path: String, kind: String?) async throws(ImageFailure) -> Image {
+        // 届くフレームは記録に無い (#3575)。スケッチの 2 本も面の 2 本もここを通る
+        ReplayNotice.waitingLoad()
         if let fresh = freshDecoded(for: path) { return try makeImage(fresh) }
         if let web = try ImageFile.webURL(path) {
+            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
             let body = try await ImageFile.fetch(web, path: path)
             let decoded = try await Self.away { () throws(ImageFailure) in
                 try ImageFile.decode(body, name: path, kind: kind)

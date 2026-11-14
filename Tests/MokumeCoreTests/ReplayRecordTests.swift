@@ -1248,11 +1248,6 @@ struct ReplayRecordingRuntimeTests {
         var report: SourceReport? { input.report }
     }
 
-    /// 音を鳴らす入り口 (ウィンドウでは実時間で鳴る)。
-    final class Chime: Inlet, RealtimeSound {
-        func supply() {}
-    }
-
     /// 入り口を登録する束。
     struct InletPlugin: Plugin {
         let inlets: [any Inlet]
@@ -1311,20 +1306,13 @@ struct ReplayRecordingRuntimeTests {
         #expect(third["unreproducible"] == nil)
     }
 
-    @Test("音を鳴らす入り口は、ウィンドウで録った記録にだけ名乗る (ウィンドウなしは数で進むので保証の内)")
-    func realtimeSoundIsNamedOnlyInAWindow() throws {
-        let directory = try scratch()
-        let headless = directory.appendingPathComponent("headless.json")
-        let quiet = try run(try makeRuntime(Wired([Chime()]), to: headless), at: headless)
-        #expect(quiet["unreproducible"] == nil, "ウィンドウなしの音は数で進む")
-        #expect(quiet["window"] as? Bool == false)
-
-        let windowed = directory.appendingPathComponent("windowed.json")
-        let runtime = try makeRuntime(Wired([Chime()]), to: windowed, onScreen: true)
-        let loud = try run(runtime, at: windowed)
-        #expect(loud["window"] as? Bool == true)
-        #expect(
-            reasons(of: loud) == [ReplayRecorder.Reason.realtimeSound("Chime")], "\(reasons(of: loud))")
+    @Test("作例 BricksAndBall (音は beep で鳴らすだけ) をウィンドウで録っても、音を記録の保証の外と名乗らない (#3575)")
+    func bricksAndBallInAWindowNamesNoSound() throws {
+        // 音の束 (合成の入り口) は `setup()` の `createTriOsc()` で足される。足しただけでは名乗らない
+        let windowed = try scratch().appendingPathComponent("windowed.json")
+        let record = try run(try makeRuntime(BricksAndBall(), to: windowed, onScreen: true), at: windowed)
+        #expect(record["window"] as? Bool == true)
+        #expect(record["unreproducible"] == nil, "\(reasons(of: record))")
     }
 
     @Test("記録している実行は、拡大した字の焼きを次のフレームへ送らない。記録を頼まないウィンドウは送ったまま")
