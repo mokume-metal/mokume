@@ -34,6 +34,11 @@ import Synchronization
 /// これが無いと新しい世代が別の秒で止めた直後に、前の世代の時計で上書きされうる。新しい世代の書き手が
 /// 居なくなっていれば、見送りは取り消されて書く。
 ///
+/// **本番の子と試聴の子が同時に生きている間、書き手は本番の子だけである。** 見張りは試聴の子にも本番と同じ場所を
+/// 渡すが、読むだけの合図 (``StartupReads/keepTimeReadOnly``) を添える。試聴の子は本番の時計を読んで始め、自分の
+/// 時計は書かない (``readsOnly``) — 世代の新しい試聴の子が本番の子を見送らせず、試聴を捨てた後の本番の次の版は、
+/// 本番の子の時計から始まる。試聴の中で進めた・止めた秒はどこにも残らない (#4070)。
+///
 /// 場所を受けない実行 (旗の無い `watch`・`run`・`render`) は、何も読まず何も書かない。
 ///
 /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
@@ -87,6 +92,8 @@ final class ClockHandover {
     private var lastWritten: Snapshot?
     /// この世代の番号。**生まれた時刻**なので、読めたかによらず後の世代ほど大きい。
     let generation: Double
+    /// 読むだけで書かないか (見張りの試聴の子・``StartupReads/keepTimeReadOnly``)。
+    let readsOnly: Bool
     /// フレームの時計の進み方を測るウィンドウの起点 (フレーム番号と時刻)。止めている間・種類が変わったときに捨てる。
     private var rateAnchor: (frames: Int, at: Double)?
     /// 測れた進み方。まだ測れていなければ `nil`。
@@ -106,11 +113,13 @@ final class ClockHandover {
     ///   - writer: 自分のプロセスの番号。
     ///   - generation: この世代の番号。
     ///   - path: ファイルの場所 (知らせの文面に入れる)。
+    ///   - readsOnly: 読むだけで書かないか。
     init(
         read: @escaping () -> Reading, write: @escaping (Snapshot) -> Void,
         isAlive: @escaping (Int32) -> Bool = ClockHandover.processIsAlive,
         warn: @escaping (String) -> Void = Diagnostics.warn,
-        writer: Int32 = getpid(), generation: Double = CACurrentMediaTime(), path: String? = nil
+        writer: Int32 = getpid(), generation: Double = CACurrentMediaTime(), path: String? = nil,
+        readsOnly: Bool = false
     ) {
         self.read = read
         self.write = write
@@ -119,13 +128,17 @@ final class ClockHandover {
         self.writer = writer
         self.generation = generation
         self.path = path
+        self.readsOnly = readsOnly
     }
 
-    /// ファイルを読み、同じファイルへ書く。置く段は main の外 (``FileSink``)。
-    convenience init(path: String, warn: @escaping @Sendable (String) -> Void = Diagnostics.warn) {
+    /// ファイルを読み、同じファイルへ書く (`readsOnly` なら書かない)。置く段は main の外 (``FileSink``)。
+    convenience init(
+        path: String, readsOnly: Bool = false, warn: @escaping @Sendable (String) -> Void = Diagnostics.warn
+    ) {
         let sink = FileSink(path: path, warn: warn)
         self.init(
-            read: { Self.read(path: path) }, write: { sink.submit($0) }, warn: warn, path: path)
+            read: { Self.read(path: path) }, write: { sink.submit($0) }, warn: warn, path: path,
+            readsOnly: readsOnly)
     }
 
     /// 起動の環境から作る。**無ければ `nil`。** 読んだら環境から消す (``ShaderOrigin/startup()`` と同じ) —
@@ -139,8 +152,11 @@ final class ClockHandover {
     ) -> ClockHandover? {
         let given = environment[StartupReads.keepTime.key]
         if given != nil { unset(StartupReads.keepTime.key) }
+        // 読むだけの合図は場所と一緒にだけ意味を持つが、場所が無くても孫へ継がせない
+        let readOnly = environment[StartupReads.keepTimeReadOnly.key]
+        if readOnly != nil { unset(StartupReads.keepTimeReadOnly.key) }
         guard let path = path(from: given) else { return nil }
-        return ClockHandover(path: path)
+        return ClockHandover(path: path, readsOnly: readOnly == "1")
     }
 
     /// 環境に載った場所を解く。空白だけの値と絶対パスでない値は渡されていないものとして扱う
@@ -222,7 +238,7 @@ final class ClockHandover {
         }
     }
 
-    /// この枚の作者の時計を書く。**必要なときだけ書く。**
+    /// この枚の作者の時計を書く。**必要なときだけ書く。** 読むだけの世代 (``readsOnly``) は何も書かない。
     ///
     /// - 止めているか・枚が止まっているかが変わったとき、止めている・止まっている間に秒が変わったとき
     /// - 止めていない間は、前に書いたものからの外挿 (``Snapshot/rate`` を掛ける) が実際の秒と
@@ -239,6 +255,7 @@ final class ClockHandover {
     func publish(
         seconds: Double, isHeld: Bool, isStill: Bool, kind: Kind, frames: Int, at moment: Double
     ) {
+        guard !readsOnly else { return }
         let rate = rate(of: kind, isHeld: isHeld || isStill, frames: frames, at: moment)
         let snapshot = Snapshot(
             seconds: seconds, isHeld: isHeld, isStill: isStill, rate: rate, at: moment, writer: writer,

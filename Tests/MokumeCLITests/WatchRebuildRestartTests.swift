@@ -583,14 +583,14 @@ struct WatchRebuildRestartTests {
     func theClockPlaceNamesEachIndexWithinItsDirectory() {
         let place = WatchSession.Hooks.ClockPlace("/tmp/mokume-keep-time-1/clock")
         #expect(place.path == "/tmp/mokume-keep-time-1/clock")
-        place.select(1)
+        place.select(.init(place: 1))
         #expect(place.path == "/tmp/mokume-keep-time-1/clock-1")
-        place.select(2)
+        place.select(.init(place: 2))
         #expect(place.path == "/tmp/mokume-keep-time-1/clock-2")
-        place.select(0)
+        place.select(.init(place: 0))
         #expect(place.path == "/tmp/mokume-keep-time-1/clock")
         let none = WatchSession.Hooks.ClockPlace(nil)
-        none.select(1)
+        none.select(.init(place: 1))
         #expect(none.path == nil)
     }
 }
