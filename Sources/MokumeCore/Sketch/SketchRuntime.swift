@@ -998,7 +998,25 @@ package final class SketchRuntime {
         // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
         // 止まっているスケッチも、居座っていることに変わりはない
         updatePresence()
-        try runFrame(displayTime: displayTime)
+        try runFrameInOwnPool(displayTime: displayTime)
+    }
+
+    /// ``runFrame(displayTime:)`` を、自分の autorelease の置き場の中で回す (#4081)。
+    ///
+    /// **フレームの区切りを呼び手の run loop に頼らない。** ウィンドウ・書き出し・流す経路は run loop の
+    /// 1 回ごとに進めるので、置き場はそこで空になる。検査や、`advance()` を自分のループで回す道具には
+    /// その区切りが無い。描き場所と面の持ち主が死んだ後も、フレームの中で autorelease されたものが捨てた
+    /// 描き場所の確保を掴み続けるので、区切りが無いと GPU のメモリが呼び手のループを抜けるまで伸び続ける。
+    private func runFrameInOwnPool(displayTime: Double? = nil) throws(RenderFailure) {
+        let failure: RenderFailure? = autoreleasepool {
+            do throws(RenderFailure) {
+                try runFrame(displayTime: displayTime)
+                return nil
+            } catch {
+                return error
+            }
+        }
+        if let failure { throw failure }
     }
 
     /// フレームを 1 つ進める本体。**名乗りの世話は含まない。**
@@ -2191,7 +2209,7 @@ package final class SketchRuntime {
             return
         }
         do throws(RenderFailure) {
-            try runFrame()
+            try runFrameInOwnPool()
         } catch {
             // **`setup()` が投げた失敗は捨てない** ([#2401])。直らない失敗なので、ウィンドウの経路へ知らせて終わらせる。
             // それ以外の失敗は、次の回でやり直す
