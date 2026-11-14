@@ -36,6 +36,9 @@
 # 全部対象」が持つ、判定の要らなさを失う。
 
 Sources/MokumeCore/
+# macOS の外枠 (#3804)。層の色空間・提示 (SketchSurface)・共有面の舞台・表示リンク・つまみの面は、
+# MokumeCore から切り出したもので、Core に居たときと同じく絵が動きうる
+Sources/MokumeMac/
 Sources/mokume/
 Sources/MokumeCamera/
 Sources/MokumeAudio/
@@ -48,3 +51,5 @@ Sources/MokumeVision/
 # sketch:<名前>@45 の行に持つ (#1377)。ここを変えると台帳の絵が動きうる。
 Sketches/
 Tests/MokumeCoreTests/
+# MokumeCoreTests から移した外枠の検査 (#3804)
+Tests/MokumeMacTests/
