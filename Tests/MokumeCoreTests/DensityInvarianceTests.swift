@@ -1552,11 +1552,12 @@ struct DensityInvarianceTests {
 
     /// 端の形 `cap` (既定は丸い端) の形 `form` を `pose` に置いて光の量を測る。`immediate` ならその場で引いた線、そうでなければ
     /// 保持した形を 1 つ作って置く。`prime` があれば、保持した形をまずその位相で 1 フレーム置いてから (控えを作ってから) `pose` で
-    /// 置き直す。出す面は 1 辺 `side` で、形は面の中心に置く。
+    /// 置き直す。出す面は 1 辺 `side` で、形は面の中心に置く。`join` は角の形、`mirror` なら回す前に左右を返す
+    /// (`scale(-1, 1)`)。
     @MainActor
     static func roundRetainedInk(
         _ form: RoundRetainedForm, pose: Pose, prime: Pose?, immediate: Bool = false, side: Int = size,
-        cap: StrokeCap = .round
+        cap: StrokeCap = .round, join: StrokeJoin = .miter, mirror: Bool = false
     ) throws -> Double {
         let canvas = try makeCanvas(density: pose.density, side: side)
         let center = Float(side) / 2
@@ -1566,10 +1567,12 @@ struct DensityInvarianceTests {
             canvas.noFill()
             canvas.stroke(255)
             canvas.strokeCap(cap)
+            canvas.strokeJoin(join)
             canvas.strokeWeight(at.weight)
             // 記録は置き場所の変換を掛ける前に (記録のときの変換は形が持つ)
             if !immediate, held == nil { held = canvas.createShape { form.draw(on: canvas) } }
             canvas.translate(center + at.offset.x, center + at.offset.y)
+            if mirror { canvas.scale(-1, 1) }
             if form.skew != 1 { canvas.scale(1, form.skew) }
             canvas.rotate(at.angle)
             if form.kind == .squashed { canvas.scale(1, 0.5) }
@@ -1632,9 +1635,14 @@ struct DensityInvarianceTests {
         #expect(report.failure == nil, "\(report.failure ?? "")")
     }
 
-    /// ``roundRetainedReusedAcrossPhases()`` の軸に、端の形 (0 = `.square`・1 = `.project`) を足したもの。
+    /// ``roundRetainedReusedAcrossPhases()`` の軸に、端の形 (0 = `.square`・1 = `.project`)・角の形 (0 = `miter`・1 = `bevel`・
+    /// 2 = `round`)・左右の鏡映 (1 なら回す前に `scale(-1, 1)`) を足したもの。
     nonisolated static let flatReuseAxes: [ProbeAxis] =
-        roundReuseAxes + [ProbeAxis("cap", 0..<2, simplest: 0, step: 1)]
+        roundReuseAxes + [
+            ProbeAxis("cap", 0..<2, simplest: 0, step: 1),
+            ProbeAxis("join", 0..<3, simplest: 0, step: 1),
+            ProbeAxis("mirror", 0..<2, simplest: 0, step: 1),
+        ]
 
     /// 四角い端・延ばす端の保持した形も、別の位相で置いた控えを使い回して、**その場で引いた線**の光の量の ±25% (#3859) に
     /// 収まる (#3903)。形・置き方の振り方と、この検査が ±25% の門であることは ``roundRetainedReusedAcrossPhases()`` と同じ。
@@ -1646,6 +1654,8 @@ struct DensityInvarianceTests {
         ) { input in
             let density = input.float("density")
             let cap: StrokeCap = input["cap"] < 1 ? .square : .project
+            let join = [StrokeJoin.miter, .bevel, .round][Int(input["join"])]
+            let mirror = input["mirror"] >= 1
             let form = RoundRetainedForm(
                 kind: RoundRetainedShape(rawValue: Int(input["kind"])) ?? .line,
                 length: input.float("length") / density, bend: input.float("bend"),
@@ -1657,14 +1667,81 @@ struct DensityInvarianceTests {
             if pose.weight * pose.density * form.skew * (form.kind == .squashed ? 0.5 : 1) < 0.07 { return .skip }
             var prime = pose
             prime.offset = SIMD2(input.float("px"), input.float("py"))
-            let direct = try Self.roundRetainedInk(form, pose: pose, prime: nil, immediate: true, side: 256, cap: cap)
-            let reused = try Self.roundRetainedInk(form, pose: pose, prime: prime, side: 256, cap: cap)
+            let direct = try Self.roundRetainedInk(
+                form, pose: pose, prime: nil, immediate: true, side: 256, cap: cap, join: join, mirror: mirror)
+            let reused = try Self.roundRetainedInk(
+                form, pose: pose, prime: prime, side: 256, cap: cap, join: join, mirror: mirror)
             if abs(reused - direct) > 0.25 * direct {
-                return .fail("光の量 \(reused) (その場で引いた線 \(direct)・\(form.kind)・\(cap))")
+                return .fail("光の量 \(reused) (その場で引いた線 \(direct)・\(form.kind)・\(cap)・\(join)・鏡映 \(mirror))")
             }
             return .pass
         }
         #expect(report.failure == nil, "\(report.failure ?? "")")
+    }
+
+    /// 固定の例: 四角い端・延ばす端の**長い** (描く画素で長さ 40) 線の保持した形を、別の位相で控えを作ってから置き直す (#3903 の
+    /// 反証 4)。端が列の境目をまたぐ置き直し (横の線を x = 0.95 で控え、1.05 に置く)・45°・描く画素で太さ 0.99 と 0.07・
+    /// 細かさ 0.25 を、角の形 3 つ・鏡映のあり・なしで置き、その場で引いた線の光の量の ±25% に収まる。
+    nonisolated static let longFlatRetainedPoses: [(pose: Pose, prime: SIMD2<Float>)] = [
+        (Pose(weight: 0.6, density: 0.5, offset: SIMD2(1.05, 0.3), angle: 0, squash: 1), SIMD2(0.95, 0.3)),
+        (Pose(weight: 0.6, density: 0.5, offset: SIMD2(0.4, 1.3), angle: .pi / 4, squash: 1), SIMD2(1.1, 0.2)),
+        (Pose(weight: 0.99 / 0.75, density: 0.75, offset: SIMD2(0.7, 0.9), angle: 0.6, squash: 1), SIMD2(0.1, 1.6)),
+        (Pose(weight: 0.07 / 0.75, density: 0.75, offset: SIMD2(1.3, 0.2), angle: 1.1, squash: 1), SIMD2(0.5, 0.5)),
+        (Pose(weight: 1, density: 0.25, offset: SIMD2(1.5, 0.75), angle: 0.81, squash: 1), SIMD2(0.25, 1.9)),
+    ]
+
+    @Test(
+        "固定の例: 四角い端・延ばす端の長い線の保持した形は、列の境目・45°・太さの両端・細かさ 0.25 で控えを使い回しても ±25% に収まる (#3903)",
+        arguments: [StrokeCap.square, .project], [StrokeJoin.miter, .bevel, .round])
+    func longFlatRetainedStaysWithinTolerance(cap: StrokeCap, join: StrokeJoin) throws {
+        var broken: [String] = []
+        for (pose, primeOffset) in Self.longFlatRetainedPoses {
+            for mirror in [false, true] {
+                for kind in [RoundRetainedShape.line, .bent] {
+                    // 描く画素で長さ 40 (折れ線は 2 本で 40)
+                    let form = RoundRetainedForm(
+                        kind: kind, length: (kind == .line ? 40 : 20) / pose.density, bend: 1.2)
+                    var prime = pose
+                    prime.offset = primeOffset
+                    let fresh = try Self.roundRetainedInk(
+                        form, pose: pose, prime: nil, immediate: true, side: 256, cap: cap, join: join, mirror: mirror)
+                    let reused = try Self.roundRetainedInk(
+                        form, pose: pose, prime: prime, side: 256, cap: cap, join: join, mirror: mirror)
+                    if abs(reused - fresh) > 0.25 * fresh {
+                        broken.append("\(kind)・鏡映 \(mirror)・\(pose): 光の量 \(reused) (その場で \(fresh))")
+                    }
+                }
+            }
+        }
+        #expect(broken.isEmpty, "\(cap)・\(join): \(broken.joined(separator: " / "))")
+    }
+
+    /// 固定の例: 長さの線引き (描く画素で 32・``ThinStrokeRecipe/phaseFreeMinimumLength``) のちょうど・すぐ手前・すぐ先と、その
+    /// すぐ上の区間 (33・36) の四角い端・延ばす端の線を、別の位相で控えを作ってから置き直す (#3903 の反証 3)。形は直線と、
+    /// 端だけ描く画素で 0.3 曲がる 4 点の折れ線 (端を切るかどうかが位相で変わる形)。長さは記録する周の長さ (折れ線は端の
+    /// 線分を含む)。その場で引いた線の光の量の ±25% に収まる。
+    @Test(
+        "固定の例: 長さの線引きの近く (31.9・32・32.1・33・36) の四角い端・延ばす端の保持した形も ±25% に収まる (#3903)",
+        arguments: [StrokeCap.square, .project], [Float(31.9), 32, 32.1, 33, 36])
+    func flatRetainedNearTheLengthFloor(cap: StrokeCap, drawnLength: Float) throws {
+        var broken: [String] = []
+        for (density, angle) in [(Float(0.5), Float(0.81)), (0.4, 2.9), (1, 1.3)] {
+            let pose = Pose(weight: 0.8 / density, density: density, offset: SIMD2(1.3, 0.4), angle: angle, squash: 1)
+            var prime = pose
+            prime.offset = SIMD2(0.35, 1.7)
+            let tiny: Float = 0.3
+            for form in [
+                RoundRetainedForm(kind: .line, length: drawnLength / density, bend: 0),
+                RoundRetainedForm(kind: .tinyEnds, length: (drawnLength - 2 * tiny) / density, bend: 1.7, tiny: tiny / density),
+            ] {
+                let fresh = try Self.roundRetainedInk(form, pose: pose, prime: nil, immediate: true, side: 256, cap: cap)
+                let reused = try Self.roundRetainedInk(form, pose: pose, prime: prime, side: 256, cap: cap)
+                if abs(reused - fresh) > 0.25 * fresh {
+                    broken.append("\(form.kind)・\(pose): 光の量 \(reused) (その場で \(fresh))")
+                }
+            }
+        }
+        #expect(broken.isEmpty, "\(cap)・長さ \(drawnLength): \(broken.joined(separator: " / "))")
     }
 
     /// 固定の例: 控えの使い回しが短い折れ線で ×1.26 になった置き方 (#3864 の生成の検査が見つけた入力)。描く画素で長さ 1.8 の線分 2 本
