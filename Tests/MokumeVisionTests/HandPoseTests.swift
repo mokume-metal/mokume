@@ -500,10 +500,10 @@ struct InferencePoseTests {
         #expect(await eventually { await trace.started == [1] })
         pictures.queue = [Self.picture(2)]
         pose.supply()  // 推論 1 が止まっている間に、絵 2 が待つ
-        #expect(source.worker?.waiting == Self.picture(2))
+        #expect(source.waiting == 2)
 
         pose.close()
-        #expect(source.worker?.waiting == nil, "止めたとき、待っている絵は捨てる")
+        #expect(source.waiting == nil, "止めたとき、待っている絵は捨てる")
         try pose.open()
         await trace.openGate()
         #expect(await eventually { await trace.finished == [1] })

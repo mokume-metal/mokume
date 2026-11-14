@@ -86,14 +86,26 @@ nonisolated final class VisionHandPoseEstimator: HandPoseEstimator {
         try handler.perform([request])
         return (request.results ?? []).map { observation in
             let points = (try? observation.recognizedPoints(.all)) ?? [:]
-            // Vision が返さなかった関節は埋めない (21 に満たない手として写しの側で捨てる)
-            let joints = jointNames.compactMap { name in
-                points[name].map {
-                    RawJoint(x: Float($0.location.x), y: Float($0.location.y), confidence: $0.confidence)
-                }
+            return rawHand(chirality: observation.chirality) { name in
+                points[name].map { (location: $0.location, confidence: $0.confidence) }
             }
-            return RawHand(handedness: handedness(observation.chirality), joints: joints)
         }
+    }
+
+    /// Vision の 1 つの手の点を、推論の結果の手にする。座標は Vision のまま (0〜1・左下が原点) 写す。
+    ///
+    /// `point` が `nil` を返した関節 (Vision が返さなかった関節) は埋めない — 21 に満たない手として、写しの側
+    /// (``HandPoseResult/converting(_:of:)``) で手ごと捨てる。
+    static func rawHand(
+        chirality: VNChirality,
+        point: (VNHumanHandPoseObservation.JointName) -> (location: CGPoint, confidence: Float)?
+    ) -> RawHand {
+        let joints = jointNames.compactMap { name in
+            point(name).map {
+                RawJoint(x: Float($0.location.x), y: Float($0.location.y), confidence: $0.confidence)
+            }
+        }
+        return RawHand(handedness: handedness(chirality), joints: joints)
     }
 
     static func handedness(_ chirality: VNChirality) -> Handedness {
