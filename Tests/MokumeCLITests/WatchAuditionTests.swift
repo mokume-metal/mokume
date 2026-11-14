@@ -34,6 +34,10 @@ struct WatchAuditionTests {
         var relinquished: [[Int32]] = []
         /// 台が戻れるか (番号ごと)。既定は戻れる。
         var canReturn: (Int32) -> Bool = { _ in true }
+        /// 送る要求が作品のウィンドウに採らせた世代の番号 (#3566)。
+        var adopted: [Int32] = []
+        /// 作品のウィンドウの台が、送る要求の世代を採れるか (#3566)。既定は採れる。
+        var canAdopt = true
         /// 作品のウィンドウが映している世代の番号。既定は、いま走っている本番 (映っている前の世代があればそれ)。
         var windowShows: (() -> Int32?)?
         /// 立てると、次の作り直しは ``releaseRebuild()`` まで終わらない。
@@ -46,8 +50,10 @@ struct WatchAuditionTests {
         private(set) var rebuilds = 0
         /// 起こした子ごとの、渡した時計の場所の番号 (``gens`` と同じ並び・#3428)。`0` は旗の場所。
         private(set) var clocks: [Int] = []
-        /// 見張りが最後に選んだ時計の場所の番号。
-        private var selectedClock = 0
+        /// 起こした子ごとの、時計を読むだけにしたか (``gens`` と同じ並び・#4070)。
+        private(set) var readOnlyClocks: [Bool] = []
+        /// 見張りが最後に選んだ時計。
+        private var selectedClock = WatchSession.Hooks.ClockChoice(place: 0)
         /// 作り直し (`build`) と子を起こした (`launch`) 順 (#3428)。
         private(set) var events: [String] = []
         /// 立てると、子を起こせない。
@@ -188,6 +194,10 @@ struct WatchAuditionTests {
                 return (session.outgoing ?? session.child)?.processIdentifier
             }
             session.relinquishesDisplay = { [unowned self] pids in relinquished.append(pids) }
+            session.windowAdoptsGeneration = { [unowned self] pid in
+                adopted.append(pid)
+                return canAdopt
+            }
             session.serveRequests()
         }
 
@@ -214,7 +224,8 @@ struct WatchAuditionTests {
                 throw .cannotLaunch(tool: "sh", place: "", reason: "\(error)")
             }
             gens.append(process)
-            clocks.append(selectedClock)
+            clocks.append(selectedClock.place)
+            readOnlyClocks.append(selectedClock.readsOnly)
             events.append("launch")
             return process
         }
@@ -347,10 +358,10 @@ struct WatchAuditionTests {
         #expect(pidOf(again["audition"]) == harness.gens.last?.processIdentifier, "試聴の子の pid も名乗る")
         #expect(stampOf(again["audition"]) == "s2")
 
-        // `send` は後の段が足す。この段は知らない動作として断る
-        let send = try await harness.ask("send")
-        #expect(send["reason"] as? String == "unknownAction")
-        #expect(send["action"] as? String == "send")
+        // 知らない動作は、名乗った綴りのまま断る
+        let unknown = try await harness.ask("promote")
+        #expect(unknown["reason"] as? String == "unknownAction")
+        #expect(unknown["action"] as? String == "promote")
 
         // 型の違う `action` は解けないが、`id` は読めるので応える
         let unreadable = try await harness.ask(json: #"{"id":"bad","action":5}"#)

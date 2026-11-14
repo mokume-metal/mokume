@@ -541,9 +541,11 @@ enum WatchCommand {
             firstFrame.promoted(.window)
             Task { @MainActor in await retire(after: session, pid: pid) }
         }
+        // **プレビューの合図はプレビューの合図として渡す** — 送った子の乗り換えを待つ間、前の本番を止めるのは作品のウィンドウの
+        // 合図だけである (#3566)
         preview.onGenerationPromoted = { [weak session] pid in
             firstFrame.promoted(.preview)
-            Task { @MainActor in await retire(after: session, pid: pid) }
+            Task { @MainActor in await retire(after: session, pid: pid, from: .preview) }
         }
         // **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具のウィンドウだけが知る
         // ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。名乗って、乗り換えたとみなす。
@@ -562,7 +564,7 @@ enum WatchCommand {
             let waiting = session?.waitingGeneration
             Task { @MainActor in
                 await retireUndeliverable(
-                    cause, session: session, waiting: waiting, pid: pid, viewer: viewer)
+                    cause, session: session, waiting: waiting, pid: pid, from: .preview, viewer: viewer)
             }
         }
         // **どちらのウィンドウが先に出しても畳む。** 2 つのウィンドウは独立に 1 枚目を出すので合図は 2 度来るが、
@@ -604,6 +606,8 @@ enum WatchCommand {
         }
         // 入る要求が、作品のウィンドウが番号を名乗る本番を映しているかを問う口
         session.windowShowsPID = { [weak window] in window?.displayedPID }
+        // 送る要求が、作品のウィンドウに試聴の子の目録を採らせる口 (関所は通らない・#3566)
+        session.windowAdoptsGeneration = { [weak window] pid in window?.returnToGeneration(pid: pid) ?? false }
     }
 
     /// 絵を渡す区画の場所。**見張っているスケッチの側の基準へ置く** — 道具自身の作業
@@ -660,8 +664,11 @@ enum WatchCommand {
     ///
     /// - Parameter pid: 合図が名乗った子の番号 ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
     ///   名乗らない子の合図は `nil` で、今までどおり待っている世代のものと読む。
-    static func retire(after session: WatchSession?, pid: Int32? = nil) async {
-        announce(await session?.generationPromoted(pid: pid))
+    /// - Parameter pane: 合図を出したウィンドウ (#3566)。
+    static func retire(
+        after session: WatchSession?, pid: Int32? = nil, from pane: FirstFrameWait.Pane = .window
+    ) async {
+        announce(await session?.generationPromoted(pid: pid, from: pane))
     }
 
     /// 道具のウィンドウが新しい世代の絵を受け取れないと知らされたとき、前の世代を畳み、端末とプレビューへ名乗る
@@ -673,21 +680,24 @@ enum WatchCommand {
     /// - Parameter waiting: 知らせを受けた時点で乗り換えを待っていた世代 (``WatchSession/waitingGeneration``)。
     /// - Parameter pid: 知らせが読めた目録の子の番号 (#2982)。待っている世代でなければ何もしない。
     ///   読めない目録・番号を名乗らない子なら `nil` で、今までの推定。
+    /// - Parameter pane: 知らせを出したウィンドウ (#3566)。
     /// - Parameter preview: プレビューへ出す口。検査から差し替える (``step(_:viewer:stopped:preview:)`` と同じ)。
     static func retireUndeliverable(
         _ cause: UndeliverableGeneration, session: WatchSession?, waiting: Process?,
-        pid: Int32? = nil, viewer: Viewer? = nil, preview: ((String?, Bool) -> Void)? = nil
+        pid: Int32? = nil, from pane: FirstFrameWait.Pane = .window, viewer: Viewer? = nil,
+        preview: ((String?, Bool) -> Void)? = nil
     ) async {
         let showInPreview = preview ?? { line, spinning in viewer?.preview.report(line, spinning: spinning) }
-        // **試聴の子の絵をプレビューが受け取れない回は、本番を畳まない** (#3565)。名乗って、本番はそのまま
-        if let session, session.isAuditionGeneration(pid: pid) {
+        // **試聴の子の絵をプレビューが受け取れない回は、本番を畳まない** (#3565)。送った子が作品のウィンドウの乗り換えを
+        // 待つ間のプレビューの知らせも同じ (#3566)。名乗って、本番はそのまま
+        if let session, session.isAuditionSignal(pid: pid, from: pane) {
             say(auditionUndeliverableLine)
             viewer?.firstFrame.settle()
             showInPreview(auditionUndeliverableLine, false)
             return
         }
         guard let session,
-            let undelivered = await session.retireAfterUndeliverable(waiting: waiting, pid: pid)
+            let undelivered = await session.retireAfterUndeliverable(waiting: waiting, pid: pid, from: pane)
         else { return }
         announce(undelivered.outcome)
         say(undeliverableLine(previous: undelivered.previous, cause: cause, inTerminal: true))
@@ -824,7 +834,14 @@ enum WatchCommand {
         // **書き残した入力の続きを、管に空きができたら書き切る** (`WatchSession.send(_:)`)
         session.flushPendingInput()
         if let departure = session.departed() {
-            if departure.failedToStart, let reason = departure.restartFailure {
+            if departure.sentWithdrawn {
+                // **送った子が作品のウィンドウの乗り換えの前に終わった回は、前の本番を残す** (#3566)。作品のウィンドウは
+                // 前の本番を映したまま回り続ける
+                let line = sentWithdrawnLine(departure)
+                say(line)
+                viewer?.firstFrame.settle()
+                showInPreview(line, false)
+            } else if departure.failedToStart, let reason = departure.restartFailure {
                 // **起こし直した子が最初の絵の前に落ちた回は、起こし直しの失敗として名乗る** (#3428)。記録は書いていない
                 // (作り直していない)。前の版を残せなかった回だけ畳む
                 if !departure.keptPrevious { await retire(after: session) }
@@ -1247,6 +1264,15 @@ enum WatchCommand {
             : "The version under audition exited on its own (code \(departure.status)) — the preview is "
                 + "frozen where it stopped, and the work's window keeps running the version it had. "
                 + "Save and the new version is tried in the preview again"
+    }
+
+    /// 送った版が、作品のウィンドウが乗り換える前に終わったことを名乗る行 (#3566)。前の本番は残っている。
+    static func sentWithdrawnLine(_ departure: WatchSession.Departure) -> String {
+        let how =
+            departure.wasSignalled
+            ? "crashed (signal \(departure.status))" : "exited on its own (code \(departure.status))"
+        return "The version sent to the work's window \(how) before the window switched to it — the work's "
+            + "window keeps running the version it had, and the audition goes on in the preview"
     }
 
     /// 試聴の間に、作品のウィンドウが映していた版が消えたことを名乗る行 (#3565)。

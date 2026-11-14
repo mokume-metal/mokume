@@ -793,6 +793,8 @@ enum RunCommand {
     ///   渡す)。子は最初の枚の前にここから前の世代の作者の時計を読み、必要なときに自分のを書く
     ///   (``StartupReads/keepTime``・[#2414](https://github.com/mokume-metal/mokume/issues/2414))。
     ///   **渡さなければ、親の環境に在っても落とす** — 旗の無い `watch`・`run`・`render` は 0 秒から始まる。
+    /// - Parameter keepTimeReadOnly: `keepTime` の時計を読むだけで書かせないか (`watch --keep-time` の試聴の子・
+    ///   ``StartupReads/keepTimeReadOnly``・#4070)。**立てなければ、親の環境に在っても落とす。**
     /// - Parameter recording: 実行を頭から終わりまで記録する行き先の絶対パス (`run --record`・`watch --record` だけが
     ///   渡す)。子は最初の枚の前から記録し、終わりで書き切って閉じる (``StartupReads/record``・
     ///   [#3570](https://github.com/mokume-metal/mokume/issues/3570))。**渡さなければ、親の環境に在っても落とす。**
@@ -811,8 +813,8 @@ enum RunCommand {
         _ base: [String: String] = ProcessInfo.processInfo.environment,
         stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil,
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil,
-        assetOrigin: String? = nil, keepTime: String? = nil, recording: String? = nil,
-        replaying: String? = nil
+        assetOrigin: String? = nil, keepTime: String? = nil, keepTimeReadOnly: Bool = false,
+        recording: String? = nil, replaying: String? = nil
     ) -> [String: String] {
         var environment = base
         if let workDirectory = WorkDirectory.given(environment: base) {
@@ -832,6 +834,8 @@ enum RunCommand {
         // **これも渡さなければ落とす。** 時計を運ぶ旗は `watch --keep-time` だけのもので、旗の無い実行や `render` の子へ
         // 継がせると、別の世代の時計から始まってしまう (#2414)
         environment[StartupReads.keepTime.key] = keepTime
+        // 読むだけの合図も同じ。継がせると、本番の子が自分の時計を書かなくなる (#4070)
+        environment[StartupReads.keepTimeReadOnly.key] = keepTime != nil && keepTimeReadOnly ? "1" : nil
         // **これも渡さなければ落とす。** 記録を頼む旗は `run --record` と `watch --record` だけのもので、`render` の子や
         // 旗の無い実行へ継がせると、頼んでいない実行が記録を始める (#3570)
         environment[StartupReads.record.key] = recording
