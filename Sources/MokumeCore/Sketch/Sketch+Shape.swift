@@ -442,6 +442,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙の立方体 24 個が、円周に等間隔で並ぶ -->
+    ///     ![橙の立方体 24 個が、円周に等間隔で並ぶ](https://i.gyazo.com/a8cc307555c4ae9faa804c86f67a6f20.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -506,7 +507,8 @@ extension SketchPart {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 紺の下地に、水色の細い三角錐 2 万個が輪になって渦を巻き、どれも回る向きの先を向いている -->
+    ///     <!-- shot: 紺の下地に、水色の細い三角錐 2 万個が輪になって渦を巻き、どれも回る向きの先を向いている | symmetric=xy -->
+    ///     ![紺の下地に、水色の細い三角錐 2 万個が輪になって渦を巻き、どれも回る向きの先を向いている](https://i.gyazo.com/afc7fc356211fc4f5b09136f6c7a4500.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -546,7 +548,8 @@ extension SketchPart {
     /// - バッファや計算の準備に失敗すると、その呼び出しは描かれず 1 度だけ警告する。失敗は一時的なことが
     ///   あるので、フレームを重ねながら間隔を延ばして (1・2・4…フレーム、上限 600 フレーム) 試し直す。
     ///   直れば、そのまま置かれるようになる
-    // shot: 後で撮る
+    // shot: 1 snippet=1db36a9b image=b36dd899fa0ea2cf
+    // shot: 2 snippet=6dd438cb image=b450e47da740507f
     public func shape(_ shape: Shape, at positions: Numbers, layout: Placement.Layout) {
         guard let canvas = liveCanvas() else { return }
         canvas.shape(shape, at: positions, layout: layout)
