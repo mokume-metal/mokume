@@ -50,7 +50,7 @@ enum Command {
     /// ``dispatch(_:)`` の網羅 `switch` と ``usageEntry`` の両方が**コンパイラに
     /// 問われる** — 案内に並べないなら、並べないと書くことになる。
     enum Verb: String, CaseIterable {
-        case new, examples, run, watch, render, mcp, bundle, doctor, help, version
+        case new, examples, run, watch, render, replay, mcp, bundle, doctor, help, version
 
         /// 慣習の綴り。名前とは別に受けるだけで、案内には並べない。
         var aliases: [String] {
@@ -167,6 +167,20 @@ enum Command {
                     sketch's coordinates: a 1920×1080 sketch is written at 3840×2160 with --scale 2.
                     Drawing targets from createGraphics are scaled too, and one whose size times n is
                     past 16384 pixels a side is refused where setup() or draw() creates it
+                    """
+                )
+            case .replay:
+                (
+                    "replay <record> [<directory>] [-c <configuration>] [--scratch-path <directory>]",
+                    """
+                    Build the sketch and play a record (from run --record or watch --record) back with no
+                    window, at full speed, checking every frame against what the record holds: the values the
+                    sketch exposed and the picture every 60 frames and at the end. It feeds the record's input,
+                    knob writes and timed observations to the same frames, starts from the record's knob values
+                    and clock, and opens no facets, so nothing from outside gets in. Ends with 0 when every
+                    check matched; otherwise it names the first frame that differed and ends with 1. Either way
+                    it writes .mokume/replay/report.json, with the time each frame took and the heaviest frame.
+                    A relative <record> starts from where you run this
                     """
                 )
             case .mcp:
@@ -292,6 +306,8 @@ enum Command {
             try WatchCommand.run(rest)
         case .render:
             try RenderCommand.run(rest)
+        case .replay:
+            try ReplayCommand.run(rest)
         case .mcp:
             try MCPCommand.run(rest)
         case .bundle:

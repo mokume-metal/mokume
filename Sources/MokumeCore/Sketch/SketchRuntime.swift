@@ -455,6 +455,9 @@ package final class SketchRuntime {
     ///
     /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
     private(set) var replay: ReplayRecorder?
+    /// 記録を流して照らす係 (#3571)。`mokume replay` の子だけが持ち、ほかの実行は `nil` で、当てる点・照らす点は
+    /// どれも `nil` の判定だけで通り過ぎる。
+    private(set) var player: ReplayPlayer?
     /// カーソルを捕まえる要求 (``SketchPart/requestPointerLock()``)。``SketchPart/exitPointerLock()`` まで残る。
     ///
     /// **読むのはウィンドウである** — 直に走らせたウィンドウは ``SketchApplication`` が毎リフレッシュ渡し、見張りの
@@ -808,6 +811,8 @@ package final class SketchRuntime {
         // **前の世代の作者の時計を入れるのも `setup()` より先** (`watch --keep-time`・#2414)。`setup()` の
         // `pauseTime()`・`playTime()`・`jumpTime(_:)` が、前の世代の状態によらず通常どおり効く
         timing.beginHandover()
+        // 流す側は**記録の開始のつまみの値をここで当てる** — 保存を持たないので、戻しの代わりになる (#3571)
+        player?.applyStart(to: paramRegistry)
         // 記録は**開始の状態をここで取る** — 保存の戻しと時計の受け渡しの後、`setup()` の前 (#3570)
         noteReplayStart()
         // `setup()` で置いたものは最初のフレームへ持ち越す (``carryingOver(_:)``)。
@@ -1054,6 +1059,13 @@ package final class SketchRuntime {
             }
             requestedTime = Float(observation.time!)
         }
+        // **流す側は、記録の時刻を指定した観測の枚を、観測の区画を開かずに描く** (#3571)。記録時の枚は上の分岐を通った
+        // ので、同じく `setup()` を先に走らせ、この枚だけ指定の秒で描く
+        if requestedTime == nil, let time = player?.upcomingObserveTime {
+            start()
+            try throwSetupFailure(answering: observation)
+            requestedTime = time
+        }
         // 閉じる口が控えの絵を決着させるのを待っている間も進めない (塞がずに見に来る閉じ方・#2743)
         guard closingRecorder == nil, !outletsClosing else { return }
         observingAtTime = requestedTime != nil
@@ -1230,6 +1242,8 @@ package final class SketchRuntime {
                 if !deliveredInput {
                     // 配る前に、溜まった入力をこの回へ持ち込む (記録の単位は `advance()` の 1 回・#3570)
                     replay?.beginStep()
+                    // 流す側は、記録のこの回の入力とつまみの値をここで当てる (記録が束を閉じたのと同じ点・#3571)
+                    player?.beginStep(input: input, registry: paramRegistry)
                     input.beginFrame { callback in
                         deliver(callback)
                         canvas.leaveInputCallbackInsideFrame()
@@ -1377,11 +1391,42 @@ package final class SketchRuntime {
 
     /// 記録の回を閉じる。入力を配った回だけが対象で、何も起きなかった止めた回は載らない。
     private func endReplayStep(drew: Bool, drawFailed: Bool = false) {
-        guard let replay else { return }
-        replay.endStep(frame: timing.frameCount, drew: drew, drawFailed: drawFailed) { [self] in
-            (try? target.encodeToImageAndRead(avoiding: outletStorageToAvoid()))
-                .map(ReplayRecorder.hash(of:))
+        replay?.endStep(frame: timing.frameCount, drew: drew, drawFailed: drawFailed) { [self] in
+            pictureHash()
         }
+        // 流す側は、記録のこの回と照らす (#3571)。ハッシュは記録がこの回に持つときだけ取る
+        player?.endStep(frame: timing.frameCount, drew: drew, drawFailed: drawFailed) { [self] in
+            pictureHash()
+        }
+    }
+
+    /// いま描く先にある絵の画素のハッシュ。読み戻せなければ `nil`。記録と流す側が同じ道で取る。
+    private func pictureHash() -> String? {
+        (try? target.encodeToImageAndRead(avoiding: outletStorageToAvoid())).map(ReplayRecorder.hash(of:))
+    }
+
+    // MARK: - 流す (#3571)
+
+    /// 記録を流して照らし始める。**``start()`` の前に呼ぶ** — 開始の状態は `setup()` の前に当てる。
+    ///
+    /// 記録の大きさと描く先の大きさが違えば、流さずに理由を持たせる (絵が一致しえない)。
+    func startReplaying(_ player: ReplayPlayer) {
+        guard self.player == nil, !hasSetUp else { return }
+        player.check(width: canvas.output.width, height: canvas.output.height)
+        self.player = player
+        // 記録している実行と同じ手順で描く (拡大した字の焼きを次のフレームへ送らない・#3570)
+        defersEnlargedGlyphBakes = false
+    }
+
+    /// 流し終えた (または止められた)。最後の枚を照らして結果を書く。**2 度目からは前の結果を返す。**
+    @discardableResult
+    func finishReplaying(stoppedEarly: String? = nil) -> ReplayPlayer.Report? {
+        guard let player else { return nil }
+        let drewLast = timing.frameCount > 0 && !lastFrameFailedToDraw
+        return player.finish(
+            frame: timing.frameCount,
+            lastHash: { [self] in drewLast ? (try? target.encodeToImageAndRead()).map(ReplayRecorder.hash(of:)) : nil },
+            now: CACurrentMediaTime(), stoppedEarly: stoppedEarly)
     }
 
     /// 記録を最後に描いた枚まで書いて閉じる。``closePlugins(_:)`` が呼ぶので、ウィンドウを閉じる・SIGTERM・
@@ -1518,6 +1563,7 @@ package final class SketchRuntime {
         // **コールバック 1 つが 1 つの区間である** (#3273)。変換と積み履歴は区間の出口で戻るので、続けて配る
         // 2 つ目のコールバックへ、1 つ目で書いた変換は漏れない
         replay?.beginStep()
+        player?.beginStep(input: input, registry: paramRegistry)
         withActiveRuntime { input.beginFrame { callback in carryingOver { deliver(callback) } } }
         // 描き直しの 1 枚の経過は ``runFrame()`` が決める
         return isLooping || redrawRequested
@@ -2186,6 +2232,7 @@ package final class SketchRuntime {
         target.gpu.markFrameStart()
         // 記録の差し出した値も、観測と同じ位置で捨てる (#3570)
         replay?.clearExposed()
+        player?.clearExposed()
         guard observer != nil else { return }
         exposedValues.removeAll(keepingCapacity: true)
         // **測った値はここで差し戻す。** 差し出した値はフレームごとに消えるが、測った値は
@@ -2502,7 +2549,7 @@ package final class SketchRuntime {
     /// 値はフレームの頭で差し戻されるので、その名前に非有限を差し出しても、載るのは測った値である。
     func expose(_ name: String, _ value: ExposedValue) {
         // 観測も記録も無ければ溜めない。記録は照合の値として、差し出された値を回ごとに残す (#3570)
-        guard observer != nil || replay != nil else { return }
+        guard observer != nil || replay != nil || player != nil else { return }
         guard value.paramValue.hasOnlyFiniteNumbers else {
             // 文面は言う回にしか組まない (毎フレーム差し出す口で、黙る回に文字列を確保しない)
             warnings.warnOnce(.nonFiniteExposed, Self.nonFiniteExposedNotice(name, value))
@@ -2510,6 +2557,7 @@ package final class SketchRuntime {
         }
         if observer != nil { exposedValues[name] = value }
         replay?.noteExposed(name, value)
+        player?.noteExposed(name, value)
     }
 
     /// 非有限の値を差し出されたときの 1 行。数は今は `.float` だけが持つ。

@@ -1,0 +1,19 @@
+{
+  "frames" : 3600,
+  "id" : "6f1d6b0e-52a7-4c9e-9a1d-3f58f1a3c0de",
+  "matched" : true,
+  "mismatches" : 0,
+  "record" : "/Users/someone/sketches/bricks/take.json",
+  "schemaVersion" : 1,
+  "steps" : 3600,
+  "timing" : {
+    "frames" : [
+      { "frame" : 1, "seconds" : 0.0312 },
+      { "frame" : 2, "seconds" : 0.0011 },
+      { "frame" : 3600, "seconds" : 0.0009 }
+    ],
+    "heaviest" : { "frame" : 1, "seconds" : 0.0312 },
+    "seconds" : 4.21
+  },
+  "unreproducible" : []
+}
