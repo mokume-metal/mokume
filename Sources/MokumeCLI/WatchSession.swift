@@ -270,6 +270,10 @@ final class WatchSession {
         /// #3428)。**この回は記録を書かない** (``report`` は `nil`) —
         /// 作り直していないので、区画 `build` の記録は前の作り直しのものである。端末とプレビューは起こし直しの失敗として名乗る。
         var restartFailure: String?
+        /// 送った子 (#3566) が、作品のウィンドウがその子へ乗り換える前に終わり、前の本番を現役に戻したか。**1 枚目を出したか
+        /// (プレビューが映したか) によらない** — 作品のウィンドウはまだ前の本番を映しているので、前の本番を止めない。
+        /// 立っていれば ``keptPrevious`` も立ち、記録は書かない (区画 `build` の記録は送る前のものへ戻す)。
+        var sentWithdrawn = false
     }
 
     /// 止まるのを待つ上限 (秒)。
@@ -548,9 +552,20 @@ final class WatchSession {
 
     /// 試聴に入っていない間に最後に書いた記録 — **本番の版の記録。** 試聴を出るとき、区画 `build` の記録をこれへ戻す。
     private var productionReport: BuildReport?
-    /// 最後に試聴の子を起こした作り直しの記録と、その作り直しの通し番号 (``launchBuilds`` と比べる)。送ると、送った子の版の
-    /// 記録が本番の版の記録になる (#3566)。起こし直した試聴の子は同じ作り直しの成果物なので、同じ記録を使う。
-    private var auditionLaunch: (build: Int, report: BuildReport)?
+    /// 試聴の子ごとの、その子の版を起こした作り直しの記録 (#3566)。送ると、送った子の記録が本番の版の記録になる。起こし直した
+    /// 試聴の子は同じ作り直しの成果物なので、前の子の記録を引き継ぐ。生きている子のぶんだけ持つ (``noteLaunched``)。
+    private var auditionReports: [Int32: BuildReport] = [:]
+
+    /// 送った子が、作品のウィンドウの乗り換えを待っている間の控え (#3566)。送る前の区画 `build` の記録を持ち、送った子が
+    /// 乗り換えの前に終わったら戻す (``withdrawSend(afterLosing:)``)。**待っているかは ``isAwaitingSentWindow(_:)`` で読む**
+    /// — 控えが残っていても、乗り換えが済んだ・本番の枠が入れ替わった後は待っていない。
+    private struct SentHandover {
+        /// 送った子。番号は使い回されるので、子そのもので比べる。
+        let process: Process
+        let productionReport: BuildReport?
+        let lastReport: BuildReport?
+    }
+    private var sentHandover: SentHandover?
 
     /// 1 枚目の絵を道具のウィンドウに出した世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
@@ -1129,6 +1144,13 @@ final class WatchSession {
         let drewFirstFrame = hasShownFirstFrame(gone)
         try? FileManager.default.removeItem(
             at: WorkDirectory.startingURL(forProcess: gone.processIdentifier, under: buildFacet))
+        // **送った子が、作品のウィンドウの乗り換えの前に終わった** (#3566)。プレビューが 1 枚目を映していても、作品の
+        // ウィンドウは前の本番を映したままなので、前の本番を残す (起動の失敗の扱いより先に決める)
+        if isAwaitingSentWindow(gone), withdrawSend(afterLosing: gone) {
+            departure.sentWithdrawn = true
+            departure.keptPrevious = true
+            return departure
+        }
         guard note != nil || (!drewFirstFrame && failed) else {
             // 映っている世代が消えた回も、乗り換えを待つ世代が消えて前の世代を畳む回も、台は手放した世代の
             // 頼みを持ち続ける (#2983)。**消えた子の番号を渡す** — 台はまだ採っていないその子の目録も、
@@ -2265,6 +2287,7 @@ final class WatchSession {
         let live = Set([child, outgoing, auditionChild].compactMap { $0?.processIdentifier })
         launchStamps = launchStamps.filter { live.contains($0.key) }
         launchBuilds = launchBuilds.filter { live.contains($0.key) }
+        auditionReports = auditionReports.filter { live.contains($0.key) }
         restartedChildren = restartedChildren.filter { live.contains($0.key) }
         guard let process else { return }
         launchStamps[process.processIdentifier] = stamp
@@ -2390,12 +2413,25 @@ final class WatchSession {
     ///
     /// 送る試聴の子が居ない回 — 入ってまだ保存していない・試聴の子が落ちた・作り直し (起こし直し) の最中 — と、本番が
     /// 乗り換えの途中の回は ``WatchReport/Reason/noTarget`` で断り、試聴に留まる。作り直しの完了を待ってから送ることはしない。
+    /// 終われと言われた後も断る (止める手順が持っている子を入れ替えない)。
+    ///
+    /// **前の本番を止めるのは、作品のウィンドウの合図だけである** (``generationPromoted(pid:from:)``)。プレビューの合図・
+    /// 知らせは送った子のものでも数えない。送った子が作品のウィンドウの乗り換えの前に終わったら、前の本番を残す
+    /// (``departed()``・``withdrawSend(afterLosing:)``)。
     private func sendAudition(_ request: WatchRequest, into answered: inout Answered) -> WatchReport {
         guard isAuditioning else {
             return refusal(id: request.id, action: request.action, .notAuditioning)
         }
-        guard let sent = auditionChild, sent.isRunning, sent !== stoppingAudition, !isBringingDown(sent),
-            !auditionIsUnidentified, !isRebuilding, !isRestarting, !isProductionSettling,
+        // 本番の乗り換えの途中は、送る子が居ても断る (案内は分ける)
+        guard !isProductionSettling else {
+            answered.lines = [Self.sendSettlingLine]
+            answered.notice = Self.sendSettlingLine
+            return refusal(id: request.id, action: request.action, .noTarget)
+        }
+        // **作品のウィンドウに採らせるのは最後** — 採らせた後に断ると、台が採った目録を戻せない
+        guard !stopRequested, let sent = auditionChild, sent.isRunning, sent !== stoppingAudition,
+            !isBringingDown(sent), !auditionIsUnidentified, !isRebuilding, !isRestarting,
+            var record = auditionReports[sent.processIdentifier],
             windowAdoptsGeneration(sent.processIdentifier)
         else {
             answered.lines = [Self.sendDeclinedLine]
@@ -2409,23 +2445,50 @@ final class WatchSession {
         hasNamedAuditionDeparture = false
         // 起こし直した試聴の子だったなら、最初の絵の前に落ちても試聴の時計の場所は戻さない (もう試聴の子ではない)
         restartedChildren.removeValue(forKey: pid)
-        // 前の本番は乗り換えまで映り続け、合図で止まる。プレビューは送った子を映したまま
+        sentHandover = SentHandover(process: sent, productionReport: productionReport, lastReport: lastReport)
+        // 前の本番は乗り換えまで映り続け、作品のウィンドウの合図で止まる。プレビューは送った子を映したまま
         outgoing = child
         child = sent
         awaitingPromotion = true
         firstFrameSince = nil
-        // 出るときの戻り先は、送った子 (いまの本番)
-        holdsPreviewGeneration([pid])
-        // **区画 `build` の記録とソースの世代の控えは、送った版が本番の版になる。** 出る要求は、この記録と世代へ戻す
-        if let launch = auditionLaunch, launch.build == launchBuilds[pid] {
-            var record = launch.report
-            record.audition = nil
-            productionReport = record
-            lastReport = record
-            write(record)
-        }
+        // 出るときの戻り先は、送った子 (いまの本番)。乗り換えの前に送った子が終わると前の本番へ戻るので、それも覚えさせる
+        holdsPreviewGeneration(
+            [child, outgoing].compactMap { $0 }.filter(\.isRunning).map(\.processIdentifier))
+        // **区画 `build` の記録は、送った子の版の記録が本番の版の記録になる。** 出る要求は、この記録へ戻す
+        record.audition = nil
+        productionReport = record
+        lastReport = record
+        write(record)
         answered.lines = [Self.sentNotice]
         return acceptance(request)
+    }
+
+    /// 送った子 `process` が、作品のウィンドウの乗り換えを待っているか (#3566)。
+    private func isAwaitingSentWindow(_ process: Process) -> Bool {
+        guard let handover = sentHandover, awaitingPromotion, process === child else { return false }
+        return handover.process === process
+    }
+
+    /// 作品のウィンドウが乗り換える前に終わった送った子を捨て、前の本番を現役に戻す (#3566)。**作品のウィンドウはまだ前の本番を
+    /// 映している** — 台には送った子へ乗り換えないと伝える。区画 `build` の記録は送る前のものへ戻す。
+    ///
+    /// - Returns: 戻したか。前の本番が居ない・止めている最中なら戻さず、普段の子の離脱として扱わせる。
+    private func withdrawSend(afterLosing gone: Process) -> Bool {
+        guard let previous = outgoing, previous.isRunning, previous !== stoppingChild, !isBringingDown(previous),
+            let handover = sentHandover
+        else { return false }
+        sentHandover = nil
+        relinquishesDisplay([gone.processIdentifier])
+        abandonsIncoming([gone.processIdentifier])
+        child = previous
+        outgoing = nil
+        awaitingPromotion = false
+        productionReport = handover.productionReport
+        if let restored = handover.lastReport {
+            lastReport = restored
+            write(restored)
+        }
+        return true
     }
 
     /// 送ったことを名乗る行。
@@ -2433,10 +2496,15 @@ final class WatchSession {
         "Sent: the work's window switches to the version under audition, and the version it had stops. "
         + "Still auditioning — saving changes only the preview"
 
-    /// 送れなかったことを名乗る行。
+    /// 送る試聴の子が居ないので断ったことを名乗る行。
     static let sendDeclinedLine =
-        "Nothing to send: no version under audition is ready (save to start one, or send again "
-        + "once it is running and no build is under way)"
+        "Not sent — no version under audition is running. Save to start one, or send again once its build "
+        + "has finished"
+
+    /// 本番の乗り換えの途中なので断ったことを名乗る行。
+    static let sendSettlingLine =
+        "Not sent — the work's window is still switching versions. Send again once the version it had "
+        + "has stopped"
 
     // MARK: - 作り直す・起こし直す (#3428)
 
@@ -2515,6 +2583,8 @@ final class WatchSession {
         let fresh = nextClock()
         if let role = restart.role {
             let previous = auditionChild
+            // 起こし直した子は同じ作り直しの成果物なので、送ったときの記録は前の子のものを引き継ぐ (#3566)。止めると控えから落ちる
+            let previousReport = previous.flatMap { auditionReports[$0.processIdentifier] }
             if let stopped = await retireAudition() { lastStop = stopped }
             // 止めた試聴の子の頼み (カーソルの捕まえ・隠し) を下ろす。プレビューは、起こし直した子が絵を出すまで最後の絵を映す
             if let previous { relinquishesDisplay([previous.processIdentifier]) }
@@ -2533,6 +2603,7 @@ final class WatchSession {
             if let started = auditionChild {
                 restartedChildren[started.processIdentifier] = RestartedChild(
                     audition: true, clock: fresh, previousClock: auditionClock)
+                auditionReports[started.processIdentifier] = previousReport
             }
             auditionClock = fresh
             restartOutcomes.append(.restarted(audition: true))
@@ -2778,6 +2849,15 @@ final class WatchSession {
         return auditionPIDs.contains(pid)
     }
 
+    /// ウィンドウ `pane` の合図・知らせを、本番の入れ替わりとして数えないか (#3565・#3566)。試聴の子の番号のもの (どちらの
+    /// ウィンドウでも) と、送った子が作品のウィンドウの乗り換えを待つ間の**プレビューの**もの。プレビューは送る前から試聴の子を
+    /// 映しているので、その合図は作品のウィンドウが前の本番を映し終えたことを指さない。
+    func isAuditionSignal(pid: Int32?, from pane: FirstFrameWait.Pane) -> Bool {
+        if isAuditionGeneration(pid: pid) { return true }
+        guard pane == .preview, let waiting = child else { return false }
+        return isAwaitingSentWindow(waiting)
+    }
+
     /// 試聴の子を止める。**何度呼んでもよい** (``retireOutgoing()`` と同じ)。
     ///
     /// 止め終えるまで ``auditionChild`` を残す。外すと、待っている間の入力の宛先が引けなくなる。
@@ -2817,7 +2897,7 @@ final class WatchSession {
                     timings: timings)
             }
         let written = finish(report, audition: true, requested: requested)
-        if launchFailure == nil { auditionLaunch = (build, written) }
+        if launchFailure == nil, let started = auditionChild { auditionReports[started.processIdentifier] = written }
         return written
     }
 
@@ -2962,12 +3042,14 @@ final class WatchSession {
     /// - 前の世代が乗り換わらずに生きているうちに差し替えた回 — どちらの合図か分からない
     /// - 起こした後に別の記録で上書きされた回
     ///
+    /// - Parameter pane: 合図を出したウィンドウ。送った子の乗り換えを待つ間は、作品のウィンドウの合図だけを受ける (#3566)。
     /// - Returns: 退役待ちを止めた結果。**名乗るのは口の側**である (``retireOutgoing()``)。
     @discardableResult
-    func generationPromoted(pid: Int32? = nil) async -> StopOutcome? {
+    func generationPromoted(pid: Int32? = nil, from pane: FirstFrameWait.Pane = .window) async -> StopOutcome? {
         // **試聴の子の合図は、本番の入れ替わりではない** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
-        // プレビューが試聴の子へ乗り換えても、待ちも前の世代も、記録の `firstFrameMs` も動かさない
-        if let pid, auditionPIDs.contains(pid) { return nil }
+        // プレビューが試聴の子へ乗り換えても、待ちも前の世代も、記録の `firstFrameMs` も動かさない。送った子の乗り換えを
+        // 待つ間のプレビューの合図も同じ (#3566)
+        if isAuditionSignal(pid: pid, from: pane) { return nil }
         // **合図が名乗った子が、待っている世代でなければ受けない** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
         // 保存を続けた回、前の世代 (C) が 1 枚焼いて乗り換えた合図は、待っている次の世代 (D) のものでは
         // ない。待ちを下ろして C を畳むと、D が倒れても受け取れなくても、見張りはもう待っていないので
@@ -2981,6 +3063,7 @@ final class WatchSession {
         let now = hooks.now()
         hasSeenPromotion = true
         awaitingPromotion = false
+        sentHandover = nil
         // **本番の昇格は、本番の版の記録に足す** (#3565)。試聴の間は区画の記録が試聴の版なので、書き換えず
         // (試聴を出るときに戻る) 控えだけを直す。試聴の作り直しの記録が、昇格を待つ測定を落とさない
         // **区画の最後の記録が本番の版のものなら、区画にも書く** (#3796)。試聴の中でも、入る前に読んだ版を起こした回は、
@@ -3047,8 +3130,10 @@ final class WatchSession {
     /// - Returns: 受けなかったなら `nil`。受けたなら、前の世代を畳んだかと、その結果
     ///   (**名乗るのは口の側**・``retireOutgoing()``)。
     func retireAfterUndeliverable(
-        waiting: Process?, pid: Int32? = nil
+        waiting: Process?, pid: Int32? = nil, from pane: FirstFrameWait.Pane = .window
     ) async -> (previous: FallbackPrevious, outcome: StopOutcome?)? {
+        // 試聴の子の知らせと、送った子の乗り換えを待つ間のプレビューの知らせは、作品のウィンドウのことを言わない (#3565・#3566)
+        if isAuditionSignal(pid: pid, from: pane) { return nil }
         // **知らせを受けた時点の世代と、いまの世代が同じときだけ。** 知らせは世代の印を持たず、`Task` で
         // 遅れて捌かれる — 作り直しの続きが先に走ると、前の世代 (C) の知らせが次の世代 (D) に当たる
         // (``waitingGeneration``)。**止めている最中・終えている最中も受けない** (``departed()`` と同じ関所):
@@ -3080,6 +3165,7 @@ final class WatchSession {
         previous: FallbackPrevious, outcome: StopOutcome?
     ) {
         awaitingPromotion = false
+        sentHandover = nil
         // **乗り換えたとみなした子は、台が何も言えない子として控える** (#3172・#3222)。倒れた子は自分のウィンドウに描き、
         // 受け取れない世代は描いていても台の合図が来ない。絵を出した扱いにはせず、後で終わったときは
         // 子の起動中の印で読む(印が残っていれば、1 枚目の前に終わった子)

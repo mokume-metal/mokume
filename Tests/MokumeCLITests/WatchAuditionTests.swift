@@ -36,6 +36,8 @@ struct WatchAuditionTests {
         var canReturn: (Int32) -> Bool = { _ in true }
         /// 送る要求が作品のウィンドウに採らせた世代の番号 (#3566)。
         var adopted: [Int32] = []
+        /// 作品のウィンドウの台が、送る要求の世代を採れるか (#3566)。既定は採れる。
+        var canAdopt = true
         /// 作品のウィンドウが映している世代の番号。既定は、いま走っている本番 (映っている前の世代があればそれ)。
         var windowShows: (() -> Int32?)?
         /// 立てると、次の作り直しは ``releaseRebuild()`` まで終わらない。
@@ -194,7 +196,7 @@ struct WatchAuditionTests {
             session.relinquishesDisplay = { [unowned self] pids in relinquished.append(pids) }
             session.windowAdoptsGeneration = { [unowned self] pid in
                 adopted.append(pid)
-                return true
+                return canAdopt
             }
             session.serveRequests()
         }
