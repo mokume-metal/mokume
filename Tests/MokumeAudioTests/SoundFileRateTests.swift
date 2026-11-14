@@ -241,6 +241,47 @@ struct SoundFileRateTests {
         #expect(Set(framesRun.map(\.position)).count > 20)
     }
 
+    /// 止めている間に、続く 2 フレームで速さを変えてから鳴らす操作の列。止めている間の速さは、鳴らす側が受けた点を
+    /// 主スレッドが読まないと、2 度目の速さを鳴らす側が受けない。
+    private static func pausedRateChanges(_ sound: SoundFile, _ frame: Int) {
+        switch frame {
+        case 1: sound.loop()
+        case 5: sound.rate(1.5)
+        case 10: sound.pause()
+        case 12: sound.rate(2)
+        case 13: sound.rate(0.75)
+        case 14: sound.play()
+        case 20: sound.stop()
+        case 21: sound.rate(3)
+        case 22: sound.rate(0.5)
+        case 23: sound.rate(1.25)
+        case 25: sound.loop()
+        default: break
+        }
+    }
+
+    @Test("止めている間に 2 フレーム続けて速さを変えてから鳴らしても、鳴らす経路・エフェクトへ通した経路と書き出しの時計で位置と解析の値が全フレームで一致する")
+    func rateChangedWhilePausedAgrees() throws {
+        let values = Self.sine(330, seconds: 0.8).enumerated().map { $0.element + Float($0.offset % 97) / 400 }
+        let framesRun = try run(
+            frames: 40, make: { _ in try Self.buffer(values) }, act: Self.pausedRateChanges)
+        // 鳴らし直した区間は、最後に頼んだ速さで進む
+        #expect(abs((framesRun[15].position - framesRun[14].position) - Float(0.75) / 60) < 1e-5)
+        #expect(abs((framesRun[26].position - framesRun[25].position) - Float(1.25) / 60) < 1e-5)
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        let speakerRun = try run(
+            frames: 40, flow: flow, make: { _ in try Self.buffer(values) }, act: Self.pausedRateChanges)
+        let routedRun = try run(
+            frames: 40, routed: true, make: { _ in try Self.buffer(values) }, act: Self.pausedRateChanges)
+        #expect(speakerRun.count == 40 && routedRun.count == 40)
+        for (index, pair) in zip(framesRun, speakerRun).enumerated() {
+            #expect(pair.0 == pair.1, "鳴らす経路のフレーム \(index + 1)")
+        }
+        for (index, pair) in zip(framesRun, routedRun).enumerated() {
+            #expect(pair.0 == pair.1, "エフェクトへ通した経路のフレーム \(index + 1)")
+        }
+    }
+
     @Test("エフェクトへ通しても、速さを変えた位置と解析の値は通さないときと全フレームで一致する (48 kHz のファイル)")
     func routedAgreesWithDirect() throws {
         let values = Self.sine(330, seconds: 0.8).enumerated().map { $0.element + Float($0.offset % 97) / 400 }

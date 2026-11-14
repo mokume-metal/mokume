@@ -943,6 +943,9 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             beginSegment()
         }
         guard playhead.isPlaying else {
+            // 止めている間も、鳴らす側が受けた速さ (錨) を毎フレーム読む。読まないと鳴らす側は次の速さを受けず、
+            // 止めている間に 2 度変えた速さが、鳴らし始めた区間に間に合わない
+            absorbRate()
             // 止める操作の時点で解析していなかった分があれば、それを見せてから無音にする (1 フレームだけ)
             if let tail = stoppedTail, !tail.isEmpty { deferred.hold(tail) } else { deferred.silence() }
             stoppedTail = nil
