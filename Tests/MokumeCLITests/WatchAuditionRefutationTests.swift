@@ -342,8 +342,10 @@ struct WatchAuditionRefutationTests {
 
     @Test("書き残した続きは子ごとに持つ: 片方のウィンドウの途中の行は、もう片方への入力で捨てられない")
     func unsentInputIsKeptPerChild() async throws {
-        // 標準入力を読まない子: 管が埋まって、大きな行は途中で短く書ける
-        let harness = try Harness(script: "exec sleep 30")
+        // 標準入力を読まない子: 管が埋まって、大きな行は途中で短く書ける。**自分では終わらない子** (止まるのは
+        // 道具が止めたときだけ)。秒で寿命を決めた子 (`sleep 30`) は、`await` の間に main が塞がれて検査の進みが
+        // 秒の桁で遅れると、続きを見る前に終わり、書き残しが「子が畳まれた」として捨てられる
+        let harness = try Harness(script: "exec tail -f /dev/null")
         let production = try #require(await harness.save())
         _ = try await harness.ask("audition")
         let audition = try #require(await harness.save())
