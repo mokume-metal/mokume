@@ -360,4 +360,24 @@ struct WatchKeepTimeTests {
         try #require(await harness.save())
         #expect(harness.clocks.last == 0 && harness.readOnlyClocks.last == false, "出た後の本番 s4")
     }
+
+    @Test("試聴中に本番を起こし直して時計が分かれた後の試聴の子は、本番と時計を分け持たないので書く")
+    @MainActor
+    func anAuditionAfterAProductionRestartWritesItsClock() async throws {
+        let harness = try WatchAuditionTests.Harness()
+        try #require(await harness.save())
+        // 本番の作り直しの最中に本番で起こし直しを頼み、済む前に試聴へ入る (起こし直しは本番の子に当たる)
+        let building = try await harness.holdBuild()
+        #expect(try await harness.ask("restart")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        harness.releaseRebuild()
+        await building.value
+        await harness.beat()
+        let restarted = try #require(harness.session.child)
+        await harness.session.generationPromoted(pid: restarted.processIdentifier)
+        try #require(await harness.save())
+        // 本番 s1・本番 s2・起こし直した本番 (新しい場所)・試聴 s3 (前の本番の場所に残る)
+        #expect(harness.clocks == [0, 0, 1, 0], "\(harness.clocks)")
+        #expect(harness.readOnlyClocks == [false, false, false, false], "\(harness.readOnlyClocks)")
+    }
 }

@@ -635,10 +635,16 @@ struct WatchSessionModelTests {
         private var clockCount = 0
         /// 見張りが最後に選んだ番号 (``WatchSession/Hooks/selectClock``)。
         private var selectedClock = 0
-        /// 見張りが最後に選んだ時計を、読むだけにしたか。**規則: 本番の場所を受ける試聴の子だけが読むだけ** (#4070)。
+        /// 見張りが最後に選んだ時計を、読むだけにしたか。**規則: 本番の子と時計を分け持つ試聴の子だけが読むだけ** (#4070)。
         private var selectedReadsOnly = false
+        /// この試聴の間に、試聴と本番の時計が分かれたか (操作の履歴から追う。場所の番号の比べからは導かない)。
+        /// 試聴の起こし直しの子・試聴中の本番の起こし直しの子が起きると立ち、出ると下りる。起こし直しの子が最初の絵の前に
+        /// 落ちたら、起こす前に戻す。
+        private var clocksSplit = false
         /// 起こし直しの子ごとの、渡した番号と、起こす前のその役の番号。
         private var restartClocks: [Int: (audition: Bool, fresh: Int, previous: Int?)] = [:]
+        /// 起こし直しの子ごとの、起こす前の ``clocksSplit``。
+        private var restartSplits: [Int: Bool] = [:]
         /// プレビューへ出した行。
         private var previewLog: [String] = []
         /// 作り直しの口が呼ばれたときの、ソースの世代 (呼ばれた順)。
@@ -794,13 +800,18 @@ struct WatchSessionModelTests {
                 restartRole = nil
                 restartGens.insert(gens.count)
                 // 子が起きたので、その役の時計の場所を新しい番号へ替える (表)
+                restartSplits[gens.count] = clocksSplit
                 if restarting == .production {
                     if auditioning, auditionClock == nil { auditionClock = productionClock }
                     restartClocks[gens.count] = (false, clockCount, productionClock)
                     productionClock = clockCount
+                    // 試聴の中で本番を起こし直すと、本番は新しい時計へ移り、試聴は前の時計に残る
+                    if auditioning { clocksSplit = true }
                 } else {
                     restartClocks[gens.count] = (true, clockCount, auditionClock)
                     auditionClock = clockCount
+                    // 起こし直した試聴の子は、自分の新しい時計を持つ
+                    clocksSplit = true
                 }
             } else if let noted = builtRoles[stamp] ?? stampRoles[stamp] {
                 role = noted
@@ -826,8 +837,9 @@ struct WatchSessionModelTests {
                     launchViolation = launchViolation ?? "\(isAudition ? "試聴" : "本番")の子 G\(gens.count) に時計の場所 \(selectedClock) を渡した (規則では \(expected))"
                 }
             }
-            // 本番の場所を受ける試聴の子だけが、時計を読むだけ (起こし直した試聴の子は自分の場所なので書く)
-            let readsOnly = isAudition && selectedClock == productionClock
+            // 本番の子と時計を分け持つ試聴の子だけが、時計を読むだけ。分け持つかは場所の番号でなく、この試聴の間の起こし直しの
+            // 履歴 (``clocksSplit``) で決める
+            let readsOnly = isAudition && !clocksSplit
             if selectedReadsOnly != readsOnly {
                 launchViolation = launchViolation ?? "\(isAudition ? "試聴" : "本番")の子 G\(gens.count) の時計を\(selectedReadsOnly ? "読むだけ" : "書く") にした (規則では\(readsOnly ? "読むだけ" : "書く"))"
             }
@@ -1336,6 +1348,7 @@ struct WatchSessionModelTests {
                 if accepted {
                     auditioning = false
                     auditionClock = nil
+                    clocksSplit = false
                     deferredStamp = nil
                     if !auditionAlive().isEmpty {
                         return Violation(number: 7, text: "出る要求の後に、試聴の子が残る (\(name(auditionAlive())))")
@@ -1667,10 +1680,15 @@ struct WatchSessionModelTests {
         private func revertRestartClock(of target: Int) -> Bool {
             // 1 枚目を出した子の終わりは、起動の失敗ではない
             guard !everShown.contains(target), let restarted = restartClocks.removeValue(forKey: target) else { return false }
+            let splitBefore = restartSplits.removeValue(forKey: target)
             if restarted.audition {
-                if auditionClock == restarted.fresh { auditionClock = restarted.previous }
+                if auditionClock == restarted.fresh {
+                    auditionClock = restarted.previous
+                    if let splitBefore { clocksSplit = splitBefore }
+                }
             } else if productionClock == restarted.fresh {
                 productionClock = restarted.previous ?? 0
+                if let splitBefore { clocksSplit = splitBefore }
             }
             return true
         }
@@ -1994,6 +2012,7 @@ struct WatchSessionModelTests {
                 if accepted {
                     auditioning = false
                     auditionClock = nil
+                    clocksSplit = false
                     deferredStamp = nil
                 }
             case .exitShown:
