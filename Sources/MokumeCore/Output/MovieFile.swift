@@ -596,6 +596,12 @@ nonisolated final class MovieFile: MovieOutput {
         while writerStatus == .writing, !soundInput.isReadyForMoreMediaData {
             try? await Task.sleep(for: .milliseconds(1))
         }
+        // **待ちは包みの外に置く。** 詰めて渡す同期の部分だけを autorelease の置き場で包む (``append(_:at:)`` と同じ形・#4081)
+        try drainingAutoreleased { () throws(MovieWriteFailure) in try handOverSound(window, to: soundInput) }
+    }
+
+    /// 音の 1 ウィンドウを標本の束にして書き手へ渡す。``appendSound(_:)`` の待ちの後の、待たない部分。
+    private func handOverSound(_ window: SoundWindow, to soundInput: AVAssetWriterInput) throws(MovieWriteFailure) {
         guard writerStatus == .writing else {
             throw .writeFailed(path: path, reason: failureReason)
         }

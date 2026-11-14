@@ -42,32 +42,55 @@ struct FrameAutoreleaseTests {
         weak var buffer: (any MTLBuffer)?
     }
 
-    /// 描き場所が持つ `MTLBuffer` を全部弱く覚える: 環に載る列の置き場 (``GrowableBuffer`` の全スロット) と、
-    /// 直に持つ置き場 (混ぜ方の番号・頁の印・空の数の並び)。
+    /// 描き場所が持つ `MTLBuffer` の覚え。
+    struct Watched {
+        /// 環に載る列の置き場 (``GrowableBuffer`` の全スロット) の覚えと、それを持つ列の名前。
+        var slots: [(name: String, buffers: [WeakBuffer])] = []
+        /// 直に持つ置き場 (混ぜ方の番号・頁の印・空の数の並び)。
+        var direct: [WeakBuffer] = []
+        /// 置き場を取った (`capacity > 0`) のに 1 本も拾えなかった列の名前。格納の形が変わったことを示す。
+        var missed: [String] = []
+        var all: [WeakBuffer] { slots.flatMap(\.buffers) + direct }
+    }
+
+    /// 描き場所が持つ `MTLBuffer` を全部弱く覚える。
     ///
     /// **`Mirror` で非公開の格納まで辿る。** 区切りが無いと残るのは、そのフレームで描くのに束ねた置き場
     /// (`coverages`・`flatInstances`・`formInstances`・`uniforms`・`matrices` のスロット 0 と直に持つ 3 本) で、
     /// どれも非公開である。種類を名指して並べると、置き場を足したときに見落とす。
-    static func watchBuffers(of graphics: Canvas) -> [WeakBuffer] {
-        var watched: [WeakBuffer] = []
-        func visit(_ value: Any, depth: Int) {
+    ///
+    /// 辿り方が格納の形の変更に黙って負けないよう、置き場を取った列 (``GrowableBuffer/capacity`` が正) が
+    /// 1 本も拾えなかったら ``Watched/missed`` に名前を残す。呼び手が空でないことと missed が空であることを見る。
+    static func watchBuffers(of graphics: Canvas) -> Watched {
+        var watched = Watched()
+        func visit(_ value: Any, name: String, depth: Int) {
             if let buffer = value as? any MTLBuffer {
-                watched.append(WeakBuffer(buffer: buffer))
+                watched.direct.append(WeakBuffer(buffer: buffer))
+                return
+            }
+            if let growable = value as? GrowableBuffer {
+                var found: [WeakBuffer] = []
+                for child in Mirror(reflecting: growable).children {
+                    if let buffers = child.value as? [any MTLBuffer] {
+                        found += buffers.map { WeakBuffer(buffer: $0) }
+                    }
+                }
+                if found.isEmpty, growable.capacity > 0 { watched.missed.append(name) }
+                if !found.isEmpty { watched.slots.append((name, found)) }
                 return
             }
             if let buffers = value as? [any MTLBuffer] {
-                watched += buffers.map { WeakBuffer(buffer: $0) }
+                watched.direct += buffers.map { WeakBuffer(buffer: $0) }
                 return
             }
-            // 辿るのは描き場所自身・列の置き場・値の型 (``ShadowBake`` など) だけ。ほかの参照の型 (装置・本体の面・
+            // 辿るのは描き場所自身・値の型 (``ShadowBake`` など) だけ。ほかの参照の型 (装置・本体の面・
             // 時刻の置き場) は描き場所の持ち物ではなく、生きていて当たり前の置き場を持つ
             let mirror = Mirror(reflecting: value)
-            let owned = depth == 0 || value is GrowableBuffer || mirror.displayStyle == .struct
-                || mirror.displayStyle == .optional
+            let owned = depth == 0 || mirror.displayStyle == .struct || mirror.displayStyle == .optional
             guard depth < 4, owned else { return }
-            for child in mirror.children { visit(child.value, depth: depth + 1) }
+            for child in mirror.children { visit(child.value, name: child.label ?? name, depth: depth + 1) }
         }
-        visit(graphics, depth: 0)
+        visit(graphics, name: "", depth: 0)
         return watched
     }
 
@@ -78,6 +101,8 @@ struct FrameAutoreleaseTests {
         let gpu = try RenderDevice()
         let main = try Canvas(target: try RenderTarget(gpu: gpu, width: 64, height: 32), gpu: gpu)
         var watched: [WeakBuffer] = []
+        var slotNames = Set<String>()
+        var missed: [String] = []
         for index in 0..<4 {
             try main.draw {
                 main.background(20, 20, 20)
@@ -87,12 +112,20 @@ struct FrameAutoreleaseTests {
                 graphics.circle(9, 7, 6)
                 graphics.endDraw()
                 main.image(graphics, Float(index * 16), 0)
-                watched += Self.watchBuffers(of: graphics)
+                let seen = Self.watchBuffers(of: graphics)
+                watched += seen.all
+                slotNames.formUnion(seen.slots.map(\.name))
+                missed += seen.missed
             }
         }
         // 投入した仕事を終わらせ、終わった番号のぶんの保持と常駐を手放させる
         try gpu.settle()
         try #require(!watched.isEmpty, "描き場所が列の置き場を取っていない")
+        try #require(missed.isEmpty, "置き場を取った列から 1 本も拾えていない (格納の形が変わった): \(Set(missed).sorted())")
+        // 症状の本体は環のスロット。直に持つ置き場だけで緑にならないよう、束ねる種類ごとに 1 本以上を求める
+        for kind in ["coverageStorage", "flatInstanceStorage", "uniformsStorage", "matrixStorage"] {
+            #expect(slotNames.contains(kind), "\(kind) の環のスロットを拾えていない (拾えた列: \(slotNames.sorted()))")
+        }
         let alive = watched.compactMap { $0.buffer.map { "\($0.label ?? "unlabeled") (\($0.allocatedSize) B)" } }
         #expect(alive.isEmpty, "捨てた描き場所の置き場が \(watched.count) 本のうち \(alive.count) 本生きている: \(alive)")
     }

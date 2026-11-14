@@ -3929,6 +3929,9 @@ public final class Canvas {
     /// **面を直に作って、run loop の外のループで `beginDraw()` / ``endDraw()`` を回すなら、1 回ごとに
     /// `autoreleasepool { }` で包む** — 対は 2 回の呼び出しに分かれるので、ここでは包めない。包まないと、捨てた
     /// グラフィックスの GPU のメモリがループを抜けるまで残る ([#4081])。``Canvas/draw(_:)`` は自分で包む。
+    /// スケッチの中でも、`draw()` の中で対を何百回も回すと、置き場が空になるのは 1 フレームの終わりなので、
+    /// フレームの中ではその回数ぶんが積み上がる (伸び続けはしないが、フレームの中の山は包まない限り下がらない)。
+    /// そのときも 1 回ごとに `autoreleasepool { }` で包む。
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
