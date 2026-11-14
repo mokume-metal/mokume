@@ -372,6 +372,8 @@ extension SketchPart {
     // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
         let surface = try loadingCanvas(DataFailure.self)
+        // 届くフレームは記録に無い (#3575)
+        ReplayNotice.waitingLoad()
         let url = try dataURL(path)
         let drawing = try await Self.readAway { () throws(DataFailure) in
             try SVGFile.parse(try TextFile.read(url, path: path), path: path)

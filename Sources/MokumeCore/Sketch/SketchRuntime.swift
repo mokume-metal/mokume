@@ -1465,19 +1465,19 @@ package final class SketchRuntime {
         replay.finish(last: last)
     }
 
-    /// 入り口を足した。**記録が持たない値の出どころなら、その種類を名乗る** (種類ごとに 1 度)。
+    /// 再現を保証しないものを聞く係。記録していれば記録する係、流していれば流す係 (#3575)。どちらでもなければ `nil`。
+    private var unreproducibleSink: (any UnreproducibleSink)? { replay ?? player }
+
+    /// 入り口を足した。**記録が持たない値の出どころなら、その種類を名乗る** (種類ごとに 1 度)。記録と再生の両方で名乗る。
     ///
-    /// - 外から値が届く入り口 (``Inlet/report`` を持つもの。ゲームパッド・MIDI・OSC / TCP / UDP / WebSocket・
-    ///   シリアル・マイク・カメラ・動画) は、届いた値が `InputState.enqueue` を通らず、記録に載らない (#2603 の後段)
-    /// - 音を実際に鳴らす入り口 (``RealtimeSound``) は、ウィンドウでは実時間で鳴り、ウィンドウなしで流すときは数で進む。ウィンドウで
-    ///   録った記録だけ名乗る (ウィンドウなしで録った記録は、流す側と同じ数え方である)
+    /// 外から値が届く入り口 (``Inlet/report`` を持つもの。ゲームパッド・MIDI・OSC / TCP / UDP / WebSocket・
+    /// シリアル・マイク・カメラ・動画) は、届いた値が `InputState.enqueue` を通らず、記録に載らない (#2603 の後段)。
+    /// 届く値がフレームの数え方だけで決まる入り口 (``FrameDeterminedSource``・`createCapture(frames:)`) は名乗らない。
+    /// 音を鳴らすだけの入り口も名乗らない — 名乗るのは解析の値を読んだとき (``SoundAnalysisNotice``)。
     private func noteReplaySource(_ inlet: any Inlet) {
-        guard let replay else { return }
-        if let report = inlet.report {
-            replay.noteUnreproducible(ReplayRecorder.Reason.outsideInput(report.name))
-        } else if isOnScreen, inlet is any RealtimeSound {
-            replay.noteUnreproducible(ReplayRecorder.Reason.realtimeSound("\(type(of: inlet))"))
-        }
+        guard let sink = unreproducibleSink, let report = inlet.report else { return }
+        if let source = inlet as? any FrameDeterminedSource, source.isDeterminedByFrames { return }
+        sink.noteUnreproducible(ReplayRecorder.Reason.outsideInput(report.name))
     }
 
     // MARK: - 音声トラック ([#3125])
@@ -3045,7 +3045,7 @@ package final class SketchRuntime {
         try LaunchingSketch.$canvas.withValue(canvas) {
             try LaunchingSketch.$selection.withValue(input.selection) {
                 try LaunchingSketch.$attachments.withValue(attachRequests) {
-                    try LaunchingSketch.$replay.withValue(replay, operation: body)
+                    try LaunchingSketch.$replay.withValue(unreproducibleSink, operation: body)
                 }
             }
         }

@@ -194,6 +194,7 @@ public final class Shader {
 
     /// この塗りを当てた面を覚える。**同じ面は 1 度だけ。** 覚えるついでに、死んだ面を落とす。
     func note(usedBy canvas: Canvas) {
+        box.noteUsed()
         guard !users.contains(where: { $0.canvas === canvas }) else { return }
         users.removeAll { $0.canvas == nil }
         users.append(Canvas.WeakCanvas(canvas: canvas))
