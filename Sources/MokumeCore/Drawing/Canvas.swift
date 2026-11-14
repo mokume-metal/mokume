@@ -1791,7 +1791,7 @@ public final class Canvas {
     /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
     var failPlacedPictureCopyForTesting: RenderFailure?
 
-    /// 合成の単位の中間面の置き場 (``CompositeSurfacePool``・[#4029])。**使うのは時刻の置き場の持ち主
+    /// 合成の単位の中間面の置き場 (``CompositeSurfacePool``・#4029)。**使うのは時刻の置き場の持ち主
     /// (``Timebase/owner``) のものだけで、スケッチに 1 つ** — 描き場所も入れ子の中間面も、持ち主の置き場を
     /// 使う (``sketchCompositeSurfaces``)。持ち越す量の上限はそこで 1 度だけ数える。面ごとに持つと、描き場所の
     /// 数と入れ子の深さだけ上限が増える。
@@ -1799,8 +1799,6 @@ public final class Canvas {
     /// **置き場は持ち主の面が持ち、時刻の置き場には置かない。** 置いた中間面は時刻の置き場を強く指すので、
     /// 時刻の置き場が置き場を持つと輪になり、スケッチを閉じても面が解放されない。持ち主の面は時刻の置き場から
     /// 弱くしか指されないので、持ち主が死ねば置き場ごと面も手放される。
-    ///
-    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
     let compositeSurfaces = CompositeSurfacePool()
 
     /// このスケッチの中間面の置き場 (持ち主の ``compositeSurfaces``)。持ち主を手放した後は `nil` で、
@@ -4040,10 +4038,8 @@ public final class Canvas {
 
     /// ``endDraw()`` そのもの。**このフレームを描き切れたときだけ真を返す** (閉じなかった・描き切れなかったときは偽)。
     ///
-    /// 合成の単位 (``withCompositeGroup(opacity:covering:placedWith:_:)``) が読む ([#4029])。描き切れなかった
+    /// 合成の単位 (``withCompositeGroup(opacity:covering:placedWith:_:)``) が読む (#4029)。描き切れなかった
     /// 中間面は塗り直しの予定ごと捨てられ、使い回した面なら前に描いた絵を持ったままなので、貼ってはならない。
-    ///
-    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
     @discardableResult
     func closeDrawing() -> Bool {
         // **組み立ての中でフレームを始めなかった ``beginDraw()`` と対の `endDraw()` は、何もしない** ([#2834])。

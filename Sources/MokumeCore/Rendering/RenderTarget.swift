@@ -365,9 +365,7 @@ import MokumeDiagnostics
     }
 
     /// 色と奥行きの面が確保しているバイト数 (`allocatedSize`)。型板は memoryless なので数えない。
-    /// 合成の単位の中間面の置き場が、持つ面の重さに数える ([#4029])。
-    ///
-    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+    /// 合成の単位の中間面の置き場が、持つ面の重さに数える (#4029)。
     var allocatedBytes: Int { texture.allocatedSize + depthTexture.allocatedSize }
 
     /// **色と奥行きの面を常駐から退かせる** ([#795])。

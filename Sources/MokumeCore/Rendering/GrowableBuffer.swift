@@ -77,9 +77,7 @@ import Metal
     }
 
     /// いま確保している置き場の大きさ (全スロットの `allocatedSize` の合計)。環の合計
-    /// (``FrameRing/bufferBytes``) へ、取り直すたびに差を書く ([#4029])。
-    ///
-    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+    /// (``FrameRing/bufferBytes``) へ、取り直すたびに差を書く (#4029)。
     private var allocatedBytes: Int { buffers.reduce(0) { $0 + $1.allocatedSize } }
 
     /// いまのスロットの置き場。`count` 個ぶんが必ず入る。

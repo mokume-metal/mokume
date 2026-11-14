@@ -137,9 +137,9 @@ extension Canvas {
         group.transform = Transform(matrix: shift * transform.matrix)
         if let failure = sketchCompositeSurfaces?.failSurfacesForTesting { group.failureForTesting = failure }
         body(group)
-        // **描き切れなかった中間面は貼らない** (#4029 の反証 5)。描き切れなかったフレームは塗り直しの予定ごと
-        // 捨てられるので、使い回した面は前に描いた別の置き場所の絵を持ったままである。作りたての面なら透明の
-        // まま貼られて何も出なかったので、貼らずに同じ「何も出ない」にする。面は置き場へ戻さずに手放す。
+        // **描き切れなかった中間面は貼らない** (#4029)。描き切れなかったフレームは塗り直しの予定ごと
+        // 捨てられるので、使い回した面は前に描いた別の置き場所の絵を持ったままである。作りたての面は透明
+        // なので貼っても何も出ない。それと同じ絵にするため貼らない。面は置き場へ戻さずに手放す。
         // 単位としては扱えた (呼ぶ側が子ごとに描き直さない) ので真を返す — 作りたての面のときと同じ
         guard group.closeDrawing() else {
             pool?.discard(group)
@@ -214,14 +214,12 @@ extension Canvas {
     }
 
     /// 中間面を 1 枚用意する。置き場 `pool` に読み終えた同じ形の面があれば使い回し (`reused` が真)、
-    /// 無ければ ``createGraphics(_:_:)`` で作って置き場に載せる ([#4029])。
+    /// 無ければ ``createGraphics(_:_:)`` で作って置き場に載せる (#4029)。
     ///
     /// **使い回すのは保持した形の範囲 (`pool` を渡す) だけ。** そこで中に描くのは記録した区間の置き直し
     /// (``replaying(_:_:)``) で、描き方を出入りで戻すので、面の描き方は既定のまま残る。ほかの `body` は
     /// 描き方 (塗り・線・断片など、フレームを越えて残るもの) を書き換えうるので、使い回すと次の単位が
-    /// 「既定から始まる」を破る。そちらは前と同じく毎回作る。
-    ///
-    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+    /// 「既定から始まる」を破る。そちらは毎回作る。
     private func compositeSurface(
         width: Int, height: Int, from pool: CompositeSurfacePool?
     ) throws(RenderFailure) -> (Canvas, reused: Bool) {
@@ -233,13 +231,11 @@ extension Canvas {
     }
 
     /// この面がいま確保している GPU のバイト数 — 色と奥行きの面・字形の焼き場の頁・環に載る置き場
-    /// (``FrameRing/bufferBytes``) の `allocatedSize` の合計。中間面の置き場が持ち越す重さに数える ([#4029])。
+    /// (``FrameRing/bufferBytes``) の `allocatedSize` の合計。中間面の置き場が持ち越す重さに数える (#4029)。
     ///
     /// 型板は memoryless なので数えない。ほかに面が持つもの (混ぜ方の番号の置き場・空の数の並び) は
     /// 数百バイトで、合計の検査 (`CompositeSurfacePoolTests`) が常駐の集合の増え方と突き合わせる。細かさを
     /// 下げた面の描く先も数える (中間面は細かさ 1 なので持たない)。
-    ///
-    /// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
     var allocatedBytes: Int {
         let drawn = target === output ? 0 : target.allocatedBytes
         return output.allocatedBytes + drawn + atlas.texture.allocatedSize + frameRing.bufferBytes
@@ -281,11 +277,11 @@ extension Canvas {
     }
 }
 
-/// 合成の単位の中間面の置き場 ([#4029])。**スケッチに 1 つ** — 時刻の置き場の持ち主の面が持ち
+/// 合成の単位の中間面の置き場 (#4029)。**スケッチに 1 つ** — 時刻の置き場の持ち主の面が持ち
 /// (``Canvas/compositeSurfaces``)、描き場所も入れ子の中間面も、その 1 つから取る (``Canvas/sketchCompositeSurfaces``)。
 ///
-/// 中間面は置き場所ごと・単位ごとに 1 枚要り、作るたびに描画先の確保・透明への塗り・面の組み立て
-/// (列の置き場) を払っていた (100 個で 1 フレーム約 41 ms)。**同じ形の面を、読み終えたら使い回す。**
+/// 中間面は置き場所ごと・単位ごとに 1 枚要り、作ると描画先の確保・透明への塗り・面の組み立て (列の置き場) を
+/// 払う。**同じ形の面を、読み終えたら使い回す。**
 ///
 /// - **置いた側が読み終えるまで使い回さない。** 置いた面の絵は置いた側の描き切りまで読まれるので、その前に
 ///   描き換えると置いた側に写しを取らせることになる (``Canvas/settlePlacersBeforeChange()``)。面は置いた側が
@@ -299,19 +295,13 @@ extension Canvas {
 ///   (``releaseAll()``・ランタイムが呼ぶ)
 /// - **上限: 置き場が持つ面の合計 (使用中と空きの両方) が ``byteLimit`` まで。** 面の重さは実際に確保した
 ///   バイト数 (``Canvas/allocatedBytes``) で、描いた後に数え直す。越えたら古い空きから手放し、それでも越えるなら
-///   その面を残さない (前と同じく、置き終えたら手放される)
-///
-/// [#4029]: https://github.com/mokume-metal/mokume/issues/4029
+///   その面を残さない (置き終えたら手放される)
 final class CompositeSurfacePool {
     /// 置き場が持つ中間面の合計の上限 (実際に確保したバイト数)。
     ///
-    /// **#4029 の例 (152×122 の面を 100 枚) が収まる値にした。** 中間面 1 枚の確保は色と奥行きの面 (約 0.33 MB) より、
-    /// 面ごとに持つ字形の焼き場の頁 (約 0.54 MB) と環に載る列の置き場 (描いた後で約 0.76 MB) のほうが重く、
-    /// 152×122 で約 1.6 MB になる。100 枚で約 163 MB。上限はそれに余裕を足した 192 MiB で、1920×1080 の
-    /// 中間面なら約 7 枚 (1 枚約 26 MB) にあたる。
-    ///
-    /// **使い回しが効かない置き方 (大きさが毎フレーム変わる) で、直す前より常駐が増えるのはこの上限まで。**
-    /// 直す前は、作った面を GPU が読み終えれば手放していた (持ち越し 0)。
+    /// 中間面 1 枚の確保は色と奥行きの面だけでなく、面ごとに持つ字形の焼き場の頁と環に載る列の置き場を含み、
+    /// 後の 2 つのほうが重い。上限は同じ形を 100 個置く例 (#4029) の面が全部収まる値で、使い回しが効かない
+    /// 置き方 (大きさが毎フレーム変わる) では、作るたびに手放す場合よりこの上限まで常駐が増えうる。
     static let defaultByteLimit = 192 << 20
 
     /// 持つ面の合計の上限。製品の経路では ``defaultByteLimit`` のままで、検査だけが小さくして越えたときを見る。
@@ -405,7 +395,7 @@ final class CompositeSurfacePool {
     }
 
     /// 全部手放す。次のフレームが来ない (止めた) ときにランタイムが呼ぶ。使用中の面を手放しても、置いた側の
-    /// 列は面を自分で抱えている (``HeldTexture``) ので、読む前に解放されることはない。
+    /// 列は貼る絵 (``Canvas/drawnPicture``) として面の描画先を持つので、読む前に解放されることはない。
     func releaseAll() {
         entries.removeAll()
         heldBytes = 0
