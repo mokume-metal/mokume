@@ -534,7 +534,16 @@ package final class SketchRuntime {
     /// メニューバーで名乗る係。**組み立てのときには何も出さない** — 出すのは
     /// `SketchPresence.grace` 秒ぶん進み続けてからである。名乗るのは OS の UI 部品で、外枠 (MokumeMac) が
     /// ``makePresence`` で差し込む。差し込まれていなければ名乗らない (#3804)。
-    private lazy var presence: (any PresenceAnnouncing)? = Self.makePresence(self)
+    ///
+    /// **作れなかった (`nil`) ことは覚えない** — 差し込みより先に触られても、差し込んだ後の次の読みで作る。
+    /// 作れた係は覚え、2 度は作らない。触れなければ建たない (``updatePresence()``)。
+    private var presence: (any PresenceAnnouncing)? {
+        if let madePresence { return madePresence }
+        madePresence = Self.makePresence(self)
+        return madePresence
+    }
+    /// ``presence`` が作った係。
+    private var madePresence: (any PresenceAnnouncing)?
     /// 名乗る係を作る口。**外枠 (MokumeMac の `MacPlatform.install()`) が差し込む** (#3804)。既定は名乗らない。
     package static var makePresence: (SketchRuntime) -> (any PresenceAnnouncing)? = { _ in nil }
     /// 絵を渡している相手 (受け手が名乗った名前)。メニューバーの名乗りに載り、空でなければ猶予を待たずに名乗る
@@ -2152,7 +2161,7 @@ package final class SketchRuntime {
     private func updatePresence() {
         // **ホストのアプリの中では名乗らない** (``SketchView``)。メニューバーの名乗りは、バンドルを持たない
         // 実行ファイルが Dock で名乗れないために置いたもので、ホストは自分の名前と Dock を持つ。`presence` は
-        // lazy なので、触れなければ建たない
+        // 読まれて初めて作るので、触れなければ建たない
         guard !isEmbedded else { return }
         guard firstAdvanceAt != nil else {
             firstAdvanceAt = now()
