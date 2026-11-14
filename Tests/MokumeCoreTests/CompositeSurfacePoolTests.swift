@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Metal
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -81,10 +83,10 @@ struct CompositeSurfacePoolTests {
 
     /// 置き場の数え方の不変条件: 持つ面の重さの合計は、面ごとにいま確保しているバイト数の合計と同じで、上限を越えない。
     private func expectWithinLimit(
-        _ pool: CompositeSurfacePool, _ comment: String = "", sourceLocation: SourceLocation = #_sourceLocation
+        _ pool: CompositeSurfacePool<Canvas>, _ comment: String = "", sourceLocation: SourceLocation = #_sourceLocation
     ) {
         #expect(
-            pool.heldBytes == pool.entries.reduce(0) { $0 + $1.canvas.allocatedBytes },
+            pool.heldBytes == pool.entries.reduce(0) { $0 + $1.surface.allocatedBytes },
             "数えた重さが面の確保と違う \(comment)", sourceLocation: sourceLocation)
         #expect(
             pool.heldBytes <= pool.byteLimit, "上限 \(pool.byteLimit) を越えて \(pool.heldBytes) 持つ \(comment)",
@@ -264,7 +266,7 @@ struct CompositeSurfacePoolTests {
         _ = try render([place], body: Self.nested, on: canvas)
         #expect(canvas.compositeSurfaces.entries.isEmpty)
         let before = try resident()
-        canvas.compositeSurfaces.byteLimit = CompositeSurfacePool.defaultByteLimit
+        canvas.compositeSurfaces.byteLimit = CompositeSurfacePool<Canvas>.defaultByteLimit
         _ = try render([place], body: Self.nested, on: canvas)
         let held = canvas.compositeSurfaces.heldBytes
         let grown = try resident() - before
@@ -292,7 +294,7 @@ struct CompositeSurfacePoolTests {
         let pool = main.compositeSurfaces
         // 本体の 2 か所・描き場所の 1 か所に、外側と入れ子が 1 枚ずつ
         #expect(pool.entries.count == 6, "\(pool.entries.count)")
-        #expect(pool.entries.allSatisfy { $0.canvas.compositeSurfaces.entries.isEmpty }, "中間面が自分の置き場を持った")
+        #expect(pool.entries.allSatisfy { $0.surface.compositeSurfaces.entries.isEmpty }, "中間面が自分の置き場を持った")
         #expect(graphics.compositeSurfaces.entries.isEmpty)
         expectWithinLimit(pool)
         // 上限を 1 枚ぶん下げると、どこの面でも合計で収める
@@ -351,20 +353,50 @@ struct CompositeSurfacePoolTests {
         #expect(pictures == (try freshPictures(frames)))
     }
 
-    @Test("単位を置かなかったフレームの後に、持ち越した面を手放す")
+    /// 常駐の集合が持つバイト数 (投入を待って、終わった番の解放を済ませてから数える)。
+    private func resident() throws -> Int {
+        try gpu.settle()
+        return gpu.residencySet.allAllocations.reduce(0) { $0 + $1.allocatedSize }
+    }
+
+    /// 置き場がいま持つ面を弱く覚える。帳簿から消えた後に、面そのものが解放されたかを見る。
+    private static func watch(_ pool: CompositeSurfacePool<Canvas>) -> [Canvas.WeakCanvas] {
+        pool.entries.map { Canvas.WeakCanvas(canvas: $0.surface) }
+    }
+
+    /// 覚えた面が全部解放され、常駐の集合が持っていた重さ (`held`) ぶん減ったこと。帳簿 (`entries`・`heldBytes`)
+    /// だけを見ると、置き場の外の強い参照が面を生かしていても通る。
+    private func expectFreed(
+        _ watched: [Canvas.WeakCanvas], held: Int, residentBefore: Int, _ comment: String = "",
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws {
+        #expect(!watched.isEmpty, "覚えた面が無い \(comment)", sourceLocation: sourceLocation)
+        let alive = watched.filter { $0.canvas != nil }.count
+        #expect(alive == 0, "手放したはずの面が \(alive) 枚生きている \(comment)", sourceLocation: sourceLocation)
+        let dropped = residentBefore - (try resident())
+        #expect(
+            dropped >= held - 4096 * watched.count, "常駐が \(dropped) バイトしか減らない (持っていた \(held)) \(comment)",
+            sourceLocation: sourceLocation)
+    }
+
+    @Test("単位を置かなかったフレームの後に、持ち越した面を手放し、面そのものも解放される")
     func unusedSurfacesAreReleasedAfterAFrame() throws {
         let canvas = try makeCanvas()
         let shape = try logo(on: canvas)
         try canvas.draw { canvas.shape(shape, at: [Placement(x: 0, y: 0), Placement(x: 40, y: 0)]) }
         #expect(canvas.compositeSurfaces.free.count == 2)
+        let watched = Self.watch(canvas.compositeSurfaces)
+        let held = canvas.compositeSurfaces.heldBytes
+        let before = try resident()
         try canvas.draw { canvas.rect(0, 0, 10, 10) }
         #expect(canvas.compositeSurfaces.entries.isEmpty, "使わなかったフレームの後は 1 枚も持たない")
         #expect(canvas.compositeSurfaces.heldBytes == 0)
+        try expectFreed(watched, held: held, residentBefore: before)
         // 大きさの違う置き方に替えたら、前の大きさの面は次のフレームで手放す
         try canvas.draw { canvas.shape(shape, at: [Placement(x: 0, y: 0)]) }
         try canvas.draw { canvas.shape(shape, at: [Placement(x: 0, y: 0, scale: 0.5)]) }
         #expect(canvas.compositeSurfaces.free.count == 1)
-        #expect(canvas.compositeSurfaces.free.first.map { Int($0.canvas.width) } != 152)
+        #expect(canvas.compositeSurfaces.free.first.map { Int($0.surface.width) } != 152)
     }
 
     @Test("持ち主のフレームの外で 1 度だけ描いた描き場所の面も、持ち主のフレームを 1 つ使われずに過ぎたら手放す")
@@ -380,41 +412,153 @@ struct CompositeSurfacePoolTests {
         // 描き場所の絵は持ち主の次のフレームに属するので、そのフレームでは持つ
         try main.draw { main.image(graphics, 0, 0) }
         #expect(main.compositeSurfaces.entries.count == 2)
+        let watched = Self.watch(main.compositeSurfaces)
+        let held = main.compositeSurfaces.heldBytes
+        let before = try resident()
         try main.draw { main.image(graphics, 0, 0) }
         #expect(main.compositeSurfaces.entries.isEmpty, "使われないまま持ち主のフレームを過ぎた面を持ち続けた")
+        try expectFreed(watched, held: held, residentBefore: before)
     }
 
     @Test("noLoop() で止めたスケッチは、止まったフレームの後に持つ面を全部手放す")
     func stoppedSketchReleasesItsSurfaces() throws {
-        let sketch = StoppingSketch()
+        let sketch = PlacingSketch()
+        sketch.stops = true
         let runtime = try SketchRuntime(sketch: sketch, gpu: gpu)
         sketch.canvas = runtime.canvas
         try runtime.advance()
         #expect(sketch.placed, "1 枚目で単位を置いていない")
         #expect(runtime.canvas.compositeSurfaces.made == 2)
-        #expect(runtime.canvas.compositeSurfaces.entries.isEmpty, "止まった後も \(runtime.canvas.compositeSurfaces.entries.count) 枚持つ")
+        #expect(
+            runtime.canvas.compositeSurfaces.entries.isEmpty,
+            "止まった後も \(runtime.canvas.compositeSurfaces.entries.count) 枚持つ")
         #expect(runtime.canvas.compositeSurfaces.heldBytes == 0)
+        let alive = sketch.watched.filter { $0.canvas != nil }.count
+        #expect(!sketch.watched.isEmpty && alive == 0, "止まった後も面が \(alive) 枚生きている")
     }
 
-    /// 1 枚目の `draw()` で単位を 2 つ置き、`noLoop()` で止まるスケッチ。
-    final class StoppingSketch: Sketch {
+    @Test("外から pause() で止めている回は、前のフレームの空きの面を全部手放す")
+    func pausedSketchReleasesItsSurfaces() throws {
+        let sketch = PlacingSketch()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: gpu)
+        sketch.canvas = runtime.canvas
+        let pool = runtime.canvas.compositeSurfaces
+        try runtime.advance()
+        try runtime.advance()
+        #expect(pool.made == 2 && pool.reused == 2, "回っている間は使い回す (作った \(pool.made)・使い回した \(pool.reused))")
+        #expect(pool.free.count == 2)
+        let watched = Self.watch(pool)
+        let held = pool.heldBytes
+        let before = try resident()
+        runtime.pause()
+        try runtime.advance()
+        #expect(pool.entries.isEmpty, "外から止めている間に \(pool.entries.count) 枚持つ")
+        #expect(pool.heldBytes == 0)
+        try expectFreed(watched, held: held, residentBefore: before)
+        // 再開したフレームは作り直して描く
+        runtime.resume()
+        try runtime.advance()
+        #expect(pool.made == 4)
+    }
+
+    @Test("止まっている間の入力のコールバックで置いた単位は、描かない回の後に面を 1 枚も残さない")
+    func inputWhileStoppedKeepsNoSurfaces() throws {
+        let facet = try TestScratch.directory("mokume-composite-pool")
+        let sketch = PlacingSketch()
+        sketch.stops = true
+        sketch.placesOnPress = true
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: gpu, clock: nil, now: { 0 }, observer: nil, inbox: InputInbox(directory: facet))
+        sketch.canvas = runtime.canvas
+        let pool = runtime.canvas.compositeSurfaces
+        try runtime.advance()
+        #expect(pool.entries.isEmpty)
+        try AtomicFile.write(
+            Data(
+                #"{"id":"press","events":[{"type":"mouseDown","x":4,"y":4,"button":0},{"type":"mouseUp","x":4,"y":4,"button":0}]}"#
+                    .utf8),
+            to: facet.appendingPathComponent("request.json"))
+        let made = pool.made
+        try runtime.advance()
+        #expect(sketch.pressed, "コールバックが配られていない")
+        #expect(runtime.frameCount == 1, "描き直していない回を見る")
+        // 本体が持ち越しの区間で置いた単位は置き場を通さない (入れ子と描き場所の単位は通す)
+        #expect(sketch.pooledByMainOnPress == 0, "持ち越しの区間で置いた単位の面を置き場が \(sketch.pooledByMainOnPress) 枚持った")
+        #expect(pool.made > made, "コールバックの中で置き場を通る単位を置いていない")
+        #expect(pool.entries.isEmpty, "描かない回の後に \(pool.entries.count) 枚持つ")
+        #expect(pool.heldBytes == 0)
+        let alive = sketch.watched.filter { $0.canvas != nil }.count
+        #expect(!sketch.watched.isEmpty && alive == 0, "描かない回の後も面が \(alive) 枚生きている")
+    }
+
+    @Test("renderFrame(to:) の 1 枚描きの後は、面を 1 枚も持ち越さない")
+    func renderFrameKeepsNoSurfaces() throws {
+        let sketch = PlacingSketch()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: gpu)
+        sketch.canvas = runtime.canvas
+        let pool = runtime.canvas.compositeSurfaces
+        let url = try TestScratch.directory("mokume-composite-pool").appendingPathComponent("frame.png")
+        try runtime.renderFrame(to: url)
+        #expect(sketch.placed)
+        #expect(pool.made == 2)
+        #expect(pool.entries.isEmpty, "1 枚描きの後に \(pool.entries.count) 枚持つ")
+        #expect(pool.heldBytes == 0)
+        let alive = sketch.watched.filter { $0.canvas != nil }.count
+        #expect(!sketch.watched.isEmpty && alive == 0, "1 枚描きの後も面が \(alive) 枚生きている")
+    }
+
+    /// `draw()` のたびに単位を 2 つ置くスケッチ。`stops` なら置いた後に `noLoop()` で止まる。`placesOnPress` なら、
+    /// 押したときのコールバック (止まっている間は持ち越しの区間) で、本体に入れ子の単位を 1 つ置き、描き場所の中に
+    /// 単位を 1 つ置く。置き場が持った面は `watched` に弱く覚える。
+    final class PlacingSketch: Sketch {
         var canvas: Canvas?
-        var shape: Shape?
-        var placed = false
+        var stops = false
+        var placesOnPress = false
+        private var shape: Shape?
+        private var nested: Shape?
+        private var graphics: Canvas?
+        private(set) var placed = false
+        private(set) var pressed = false
+        /// 押したときに本体が置いた単位のうち、置き場が使用中で持った面の数。
+        private(set) var pooledByMainOnPress = 0
+        private(set) var watched: [Canvas.WeakCanvas] = []
         var settings: SketchSettings { SketchSettings(width: 360, height: 240) }
+
+        private static func read(_ canvas: Canvas, _ body: String) -> Shape? {
+            guard
+                let read = try? SVGFile.parse(
+                    "<svg xmlns='http://www.w3.org/2000/svg' width='240' height='160'>\(body)</svg>", path: "pool.svg")
+            else { return nil }
+            return canvas.shape(of: read, readFrom: "pool.svg")
+        }
+
+        private func remember(_ canvas: Canvas) {
+            watched += CompositeSurfacePoolTests.watch(canvas.compositeSurfaces)
+        }
 
         func draw() {
             guard let canvas else { return }
-            noLoop()
-            if shape == nil, let read = try? SVGFile.parse(
-                "<svg xmlns='http://www.w3.org/2000/svg' width='240' height='160'>\(CompositeSurfacePoolTests.group)</svg>",
-                path: "pool.svg")
-            {
-                shape = canvas.shape(of: read, readFrom: "pool.svg")
+            if stops { noLoop() }
+            if shape == nil {
+                shape = Self.read(canvas, CompositeSurfacePoolTests.group)
+                nested = Self.read(canvas, CompositeSurfacePoolTests.nested)
+                graphics = try? canvas.createGraphics(300, 200)
             }
             guard let shape else { return }
             canvas.shape(shape, at: [Placement(x: 0, y: 0), Placement(x: 40, y: 0)])
             placed = true
+            remember(canvas)
+        }
+
+        func mousePressed() {
+            pressed = true
+            guard placesOnPress, let canvas, let nested, let shape, let graphics else { return }
+            canvas.shape(nested, at: [Placement(x: 10, y: 10)])
+            pooledByMainOnPress = canvas.compositeSurfaces.inUse.filter { $0.placer === canvas }.count
+            graphics.beginDraw()
+            graphics.shape(shape, at: [Placement(x: 3, y: 2)])
+            graphics.endDraw()
+            remember(canvas)
         }
     }
 
@@ -479,5 +623,112 @@ struct CompositeSurfacePoolTests {
         }
         #expect(canvas.compositeSurfaces.made == 0)
         #expect(canvas.compositeSurfaces.entries.isEmpty)
+    }
+}
+
+/// 中間面の置き場の帳簿だけを、GPU を使わずに回す (#4029)。面は中身を持たない印で、重さは決め打ちにする。
+@Suite("合成の単位の中間面の置き場の帳簿")
+struct CompositeSurfacePoolLedgerTests {
+    /// 面の代わり (同一性だけを持つ)。
+    final class Surface {}
+
+    private static func shape(_ width: Int) -> CompositeSurfaceShape {
+        CompositeSurfaceShape(
+            width: width, height: 1, outputScale: 1, placesGlyphs: true, gpu: ObjectIdentifier(Surface.self))
+    }
+
+    /// 置き方 1 つ: 置いた側 (`placer`) と面の形。
+    private struct Unit {
+        let placer: AnyObject
+        let width: Int
+        /// 置いた側が、置いた直後にフレームを出るか (描き場所が閉じる・入れ子の外側が描き切る)。
+        let placerLeaves: Bool
+    }
+
+    /// 持ち主 `owner` のフレームを 1 つ回す。製品の経路 (``Canvas/withCompositeGroup(opacity:covering:placedWith:_:)``) と
+    /// 同じ順で、取る (無ければ作って載せる) → 面が描き切る (面自身がフレームを出る) → 重さを数え直す → 置いた側が
+    /// フレームを出る、を単位ごとに行い、最後に持ち主のフレームの終わりを告げる。
+    private static func frame(
+        _ pool: CompositeSurfacePool<Surface>, owner: AnyObject, _ units: [Unit], bytes: Int = 100
+    ) {
+        for unit in units {
+            let shape = shape(unit.width)
+            let surface: Surface
+            if let kept = pool.take(shape, for: unit.placer) {
+                surface = kept
+            } else {
+                surface = Surface()
+                pool.keep(surface, shape: shape, for: unit.placer)
+            }
+            pool.leaveFrame(of: surface, sweeping: false)
+            pool.measure(surface, bytes: bytes)
+            if unit.placerLeaves { pool.leaveFrame(of: unit.placer, sweeping: false) }
+        }
+        pool.leaveFrame(of: owner, sweeping: true)
+    }
+
+    @Test("上限の際では、このフレームでまだ使われていない空きから手放すので、2 フレーム目より後は面を作らない")
+    func theLimitReleasesSurfacesNotYetUsedThisFrameFirst() {
+        let pool = CompositeSurfacePool<Surface>()
+        pool.byteLimit = 200  // 面 2 枚ぶん
+        let owner = Surface()
+        let graphics = Surface()
+        // 1 フレーム目は A と C。2 フレーム目からは A と B で、C はもう使わない
+        func place(_ widths: [Int]) -> [Unit] {
+            widths.map { Unit(placer: graphics, width: $0, placerLeaves: true) }
+        }
+        Self.frame(pool, owner: owner, place([10, 30]))
+        Self.frame(pool, owner: owner, place([10, 20]))
+        #expect(pool.made == 3, "1 フレーム目の 2 枚と 2 フレーム目の B")
+        for index in 0..<4 {
+            Self.frame(pool, owner: owner, place([10, 20]))
+            #expect(pool.heldBytes <= pool.byteLimit)
+            #expect(pool.made == 3, "\(index + 3) フレーム目に作り直した: このフレームで使った A を、使わない C より先に手放した")
+        }
+        #expect(pool.entries.count == 2)
+    }
+
+    @Test("上限を越えても、使用中の面は手放さない")
+    func theLimitNeverReleasesSurfacesInUse() {
+        let pool = CompositeSurfacePool<Surface>()
+        pool.byteLimit = 200
+        let owner = Surface()
+        // 本体が置いた面は持ち主のフレームの終わりまで使用中。3 枚目は越えるので残さない
+        let units = (0..<3).map { Unit(placer: owner, width: 10 + $0, placerLeaves: false) }
+        Self.frame(pool, owner: owner, units)
+        let kept = pool.entries.map(\.shape.width).sorted()
+        #expect(kept == [10, 11], "\(kept)")
+        #expect(pool.heldBytes == 200)
+    }
+
+    /// `units` 個を 1 フレームに置く書き方で、使い回すフレームを `frames` 回回した時間 (5 回のうち最短)。
+    private static func ledgerTime(units count: Int, frames: Int = 10) -> Duration {
+        var best: Duration = .seconds(1_000)
+        for _ in 0..<5 {
+            let pool = CompositeSurfacePool<Surface>()
+            let owner = Surface()
+            // 入れ子の外側の面のように、単位ごとに置いた側が違う形も混ぜる
+            let inner = (0..<count / 4).map { _ in Surface() }
+            let units =
+                (0..<count).map { Unit(placer: owner, width: 10 + $0 % 3, placerLeaves: false) }
+                + inner.map { Unit(placer: $0, width: 5, placerLeaves: true) }
+            frame(pool, owner: owner, units)
+            let clock = ContinuousClock()
+            let elapsed = clock.measure {
+                for _ in 0..<frames { frame(pool, owner: owner, units) }
+            }
+            #expect(pool.made == units.count - inner.count + 1, "2 フレーム目からは使い回す")
+            best = min(best, elapsed)
+        }
+        return best
+    }
+
+    @Test("帳簿の仕事は単位の数に比例する: 1,000 個の時間は 100 個の 10 倍ほど (2 乗なら 100 倍)")
+    func ledgerWorkGrowsLinearly() {
+        let small = Self.ledgerTime(units: 100)
+        let large = Self.ledgerTime(units: 1_000)
+        let ratio = large / small
+        print("CompositeSurfacePoolLedgerTests: 100 units \(small), 1,000 units \(large), ratio \(ratio)")
+        #expect(ratio < 30, "1,000 個が 100 個の \(ratio) 倍かかる (100 個 \(small)・1,000 個 \(large))")
     }
 }

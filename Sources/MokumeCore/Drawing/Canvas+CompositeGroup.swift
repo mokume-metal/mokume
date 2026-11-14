@@ -108,8 +108,8 @@ extension Canvas {
         case .box(let found): box = found
         }
 
-        // **使い回すのは保持した形の範囲 (`settings` を渡す経路) だけ** (``compositeSurface(width:height:from:)``)
-        let pool = settings != nil ? sketchCompositeSurfaces : nil
+        // **使い回すのは保持した形の範囲 (`settings` を渡す経路) で、フレームの中だけ** (``compositeSurface(width:height:from:)``)
+        let pool = settings != nil && isDrawing ? sketchCompositeSurfaces : nil
         let group: Canvas
         let reused: Bool
         do {
@@ -146,7 +146,7 @@ extension Canvas {
             return true
         }
         // 描いて伸びた置き場まで含めて、持ち越す重さを数え直す (上限を越えたら古い面から手放す)
-        pool?.measure(group)
+        pool?.measure(group, bytes: group.allocatedBytes)
 
         placeCompositeGroup(group, in: box, opacity: min(opacity, 1), placedWith: settings)
         return true
@@ -220,13 +220,18 @@ extension Canvas {
     /// (``replaying(_:_:)``) で、描き方を出入りで戻すので、面の描き方は既定のまま残る。ほかの `body` は
     /// 描き方 (塗り・線・断片など、フレームを越えて残るもの) を書き換えうるので、使い回すと次の単位が
     /// 「既定から始まる」を破る。そちらは毎回作る。
+    ///
+    /// **フレームの外 (止まっている間のコールバックの持ち越しの区間) でも使い回さない。** 置いた面が空きへ戻るのは
+    /// 置いた側がフレームを出るときで、持ち越しの区間は次に描くフレームまで続くので、面を丸ごとそこまで抱える
+    /// ことになる。作った面は置いた後に手放され、置いた側の列が描画先だけを持つ。
     private func compositeSurface(
-        width: Int, height: Int, from pool: CompositeSurfacePool?
+        width: Int, height: Int, from pool: CompositeSurfacePool<Canvas>?
     ) throws(RenderFailure) -> (Canvas, reused: Bool) {
         guard let pool else { return (try createGraphics(width, height), false) }
-        if let kept = pool.take(width: width, height: height, for: self) { return (kept, true) }
+        let shape = compositeSurfaceShape(width: width, height: height)
+        if let kept = pool.take(shape, for: self) { return (kept, true) }
         let made = try createGraphics(width, height)
-        pool.keep(made, for: self)
+        pool.keep(made, shape: shape, for: self)
         return (made, false)
     }
 
@@ -281,7 +286,8 @@ extension Canvas {
 /// (``Canvas/compositeSurfaces``)、描き場所も入れ子の中間面も、その 1 つから取る (``Canvas/sketchCompositeSurfaces``)。
 ///
 /// 中間面は置き場所ごと・単位ごとに 1 枚要り、作ると描画先の確保・透明への塗り・面の組み立て (列の置き場) を
-/// 払う。**同じ形の面を、読み終えたら使い回す。**
+/// 払う。**同じ形の面を、読み終えたら使い回す。** 置き場が知るのは面の同一性・形 (``CompositeSurfaceShape``)・
+/// 重さだけで、面の中身には触れない (`Surface` は製品の経路では ``Canvas``)。
 ///
 /// - **置いた側が読み終えるまで使い回さない。** 置いた面の絵は置いた側の描き切りまで読まれるので、その前に
 ///   描き換えると置いた側に写しを取らせることになる (``Canvas/settlePlacersBeforeChange()``)。面は置いた側が
@@ -291,35 +297,58 @@ extension Canvas {
 ///   大きい面の一部を使うと、四角の貼り方 (uv) が変わり絵が 1 ビットでも変わりうる
 /// - **寿命: 持ち主のフレームを 1 つ使われずに過ぎた面は、そのフレームの終わりに手放す。** 描き場所の中の面も
 ///   持ち主のフレームで数えるので、`setup()` で 1 度だけ描いた描き場所の面も持ち主の 2 フレーム目の終わりに
-///   手放す。止めたスケッチ (`noLoop()`) は次のフレームが来ないので、止まったフレームの後に全部手放す
-///   (``releaseAll()``・ランタイムが呼ぶ)
+///   手放す。描かない回 (止めている間・外から止められている間・1 枚描きの後) は次のフレームがいつ来るか
+///   分からないので、ランタイムが空きを全部手放す (``releaseIdle()``)
 /// - **上限: 置き場が持つ面の合計 (使用中と空きの両方) が ``byteLimit`` まで。** 面の重さは実際に確保した
-///   バイト数 (``Canvas/allocatedBytes``) で、描いた後に数え直す。越えたら古い空きから手放し、それでも越えるなら
-///   その面を残さない (置き終えたら手放される)
-final class CompositeSurfacePool {
+///   バイト数 (``Canvas/allocatedBytes``) で、描いた後に数え直す。越えたら、このフレームでまだ使われていない
+///   空きから先に手放し (空きになった順)、それでも越えるならその面を残さない (置き終えたら手放される)
+/// - **帳簿の仕事は面の数に比例する。** 取る・載せる・数え直す・手放す・置いた側が出るのはどれも面 1 枚あたり
+///   定数の手間で、全部を見渡すのは持ち主のフレームの終わりと描かない回の 1 度ずつだけ。空きの列と置いた側ごとの
+///   列は、面が離れても消さずに印 (``Entry/serial``) で見分け、見渡すときに詰める
+final class CompositeSurfacePool<Surface: AnyObject> {
     /// 置き場が持つ中間面の合計の上限 (実際に確保したバイト数)。
     ///
     /// 中間面 1 枚の確保は色と奥行きの面だけでなく、面ごとに持つ字形の焼き場の頁と環に載る列の置き場を含み、
     /// 後の 2 つのほうが重い。上限は同じ形を 100 個置く例 (#4029) の面が全部収まる値で、使い回しが効かない
     /// 置き方 (大きさが毎フレーム変わる) では、作るたびに手放す場合よりこの上限まで常駐が増えうる。
-    static let defaultByteLimit = 192 << 20
+    static var defaultByteLimit: Int { 192 << 20 }
 
     /// 持つ面の合計の上限。製品の経路では ``defaultByteLimit`` のままで、検査だけが小さくして越えたときを見る。
     var byteLimit = CompositeSurfacePool.defaultByteLimit
 
     struct Entry {
-        let canvas: Canvas
+        let surface: Surface
+        let shape: CompositeSurfaceShape
         /// 描いた後に数え直した重さ (``Canvas/allocatedBytes``)。作って描く前は 0。
         var bytes: Int
         /// 置いた面。読み終える (置いた面がフレームを出る) まで `inUse` が立つ。
-        weak var placer: Canvas?
+        weak var placer: AnyObject?
         var inUse: Bool
         /// 最後に取った (作った) ときの持ち主のフレームの番号 (``epoch``)。
         var stamp: Int
+        /// 最後に空きになった印 (置き場の中で増え続ける番号)。空きの列の項目は、この印が同じときだけ今も空きを指す。
+        var serial = 0
     }
 
-    /// 持っている面。古いものほど前にある (手放すのは前から)。
-    private(set) var entries: [Entry] = []
+    /// 空きの列・置いた側ごとの列の項目。面が離れた後も残り、``Entry/serial`` で見分ける。
+    private struct Ticket {
+        let id: ObjectIdentifier
+        let serial: Int
+    }
+
+    /// 持っている面 (面の同一性で引く)。
+    private var slots: [ObjectIdentifier: Entry] = [:]
+    /// 形ごとの空き。後ろほど新しく空いた面。
+    private var freeByShape: [CompositeSurfaceShape: [Ticket]] = [:]
+    /// 手放す順の空き。**前にあるのは、持ち主のフレームの頭で既に空きだった (このフレームでまだ使われていない) 面で、
+    /// その後ろにこのフレームで空いた面が空いた順に並ぶ。** ``releaseHead`` より前は読み終えた項目。
+    private var releaseOrder: [Ticket] = []
+    private var releaseHead = 0
+    /// 置いた側ごとの使用中の面。置いた側が死んでいれば同じ番地を別の面が使いうるので、引いた後に
+    /// ``Entry/placer`` の同一性で確かめる。
+    private var placedBy: [ObjectIdentifier: [ObjectIdentifier]] = [:]
+    private var serials = 0
+
     /// 持っている面の重さの合計。**上限と比べるのはこれ 1 つ。**
     private(set) var heldBytes = 0
     /// 持ち主のフレームの番号。持ち主のフレームの終わり (``leaveFrame(of:sweeping:)``) で進む。
@@ -333,86 +362,152 @@ final class CompositeSurfacePool {
     /// 製品の経路では常に `nil`。
     var failSurfacesForTesting: RenderFailure?
 
+    /// 持っている面 (順は決まらない)。
+    var entries: [Entry] { Array(slots.values) }
     /// 空き (読み終えた面)。
     var free: [Entry] { entries.filter { !$0.inUse } }
     /// 使用中 (置いた側がまだ読む面)。
     var inUse: [Entry] { entries.filter(\.inUse) }
 
-    /// `placer` が置く `width` × `height` (座標) の中間面に使える空きを、`placer` の使用中にして返す。
-    func take(width: Int, height: Int, for placer: Canvas) -> Canvas? {
-        guard
-            let index = entries.firstIndex(where: { entry in
-                !entry.inUse && entry.canvas.fits(width: width, height: height, placedBy: placer)
-            })
-        else { return nil }
-        entries[index].inUse = true
-        entries[index].placer = placer
-        entries[index].stamp = epoch
-        reused += 1
-        return entries[index].canvas
+    /// `placer` が置く形 `shape` の中間面に使える空きを、`placer` の使用中にして返す。
+    func take(_ shape: CompositeSurfaceShape, for placer: AnyObject) -> Surface? {
+        while let ticket = freeByShape[shape]?.popLast() {
+            guard var entry = slots[ticket.id], !entry.inUse, entry.serial == ticket.serial else { continue }
+            entry.inUse = true
+            entry.placer = placer
+            entry.stamp = epoch
+            slots[ticket.id] = entry
+            placedBy[ObjectIdentifier(placer), default: []].append(ticket.id)
+            reused += 1
+            return entry.surface
+        }
+        return nil
     }
 
-    /// 作った面を `placer` の使用中として載せる。重さは描いた後に数える (``measure(_:)``)。
-    func keep(_ canvas: Canvas, for placer: Canvas) {
+    /// 作った面を `placer` の使用中として載せる。重さは描いた後に数える (``measure(_:bytes:)``)。
+    func keep(_ surface: Surface, shape: CompositeSurfaceShape, for placer: AnyObject) {
         made += 1
-        entries.append(Entry(canvas: canvas, bytes: 0, placer: placer, inUse: true, stamp: epoch))
+        let id = ObjectIdentifier(surface)
+        slots[id] = Entry(surface: surface, shape: shape, bytes: 0, placer: placer, inUse: true, stamp: epoch)
+        placedBy[ObjectIdentifier(placer), default: []].append(id)
     }
 
-    /// 描き切った面の重さを数え直す。合計が上限を越えたら古い空きから手放し、それでも越えるならこの面を
-    /// 残さない。
-    func measure(_ canvas: Canvas) {
-        guard let index = entries.firstIndex(where: { $0.canvas === canvas }) else { return }
-        let bytes = canvas.allocatedBytes
-        heldBytes += bytes - entries[index].bytes
-        entries[index].bytes = bytes
-        while heldBytes > byteLimit, let oldest = entries.firstIndex(where: { !$0.inUse }) {
-            remove(at: oldest)
-        }
-        if heldBytes > byteLimit, let index = entries.firstIndex(where: { $0.canvas === canvas }) {
-            remove(at: index)
-        }
+    /// 描き切った面の重さを `bytes` に数え直す。合計が上限を越えたら空きを手放す順に手放し、それでも越えるなら
+    /// この面を残さない。
+    func measure(_ surface: Surface, bytes: Int) {
+        let id = ObjectIdentifier(surface)
+        guard let previous = slots[id]?.bytes else { return }
+        heldBytes += bytes - previous
+        slots[id]?.bytes = bytes
+        while heldBytes > byteLimit, let oldest = nextReleasable() { remove(oldest) }
+        if heldBytes > byteLimit { remove(id) }
     }
 
     /// 描き切れなかった面を手放す (置いた側へ貼らない面は、前の絵を持ったまま次に使わせない)。
-    func discard(_ canvas: Canvas) {
-        guard let index = entries.firstIndex(where: { $0.canvas === canvas }) else { return }
-        remove(at: index)
+    func discard(_ surface: Surface) {
+        remove(ObjectIdentifier(surface))
     }
 
     /// `placer` がフレームを出た (置いた面を読み終えた)。`placer` の使用中の面を空きへ戻す。`sweeping` (持ち主の
-    /// フレームの終わり) なら、このフレームで使わなかった面と置いた面が死んだ面を手放し、番号を進める。
-    func leaveFrame(of placer: Canvas, sweeping: Bool) {
-        for index in entries.indices where entries[index].inUse && entries[index].placer === placer {
-            entries[index].inUse = false
-            entries[index].placer = nil
+    /// フレームの終わり) なら、このフレームで使わなかった面と置いた側が死んだ面を手放し、番号を進める。
+    func leaveFrame(of placer: AnyObject, sweeping: Bool) {
+        if let placed = placedBy.removeValue(forKey: ObjectIdentifier(placer)) {
+            for id in placed {
+                guard var entry = slots[id], entry.inUse, entry.placer === placer else { continue }
+                serials += 1
+                entry.inUse = false
+                entry.placer = nil
+                entry.serial = serials
+                slots[id] = entry
+                let ticket = Ticket(id: id, serial: serials)
+                freeByShape[entry.shape, default: []].append(ticket)
+                releaseOrder.append(ticket)
+            }
         }
         guard sweeping else { return }
-        for index in entries.indices.reversed() {
-            let entry = entries[index]
-            if entry.stamp < epoch || (entry.inUse && entry.placer == nil) { remove(at: index) }
-        }
+        let current = epoch
+        release { entry in entry.stamp < current || (entry.inUse && entry.placer == nil) }
         epoch += 1
     }
 
-    /// 全部手放す。次のフレームが来ない (止めた) ときにランタイムが呼ぶ。使用中の面を手放しても、置いた側の
-    /// 列は貼る絵 (``Canvas/drawnPicture``) として面の描画先を持つので、読む前に解放されることはない。
-    func releaseAll() {
-        entries.removeAll()
-        heldBytes = 0
+    /// 空きと、置いた側が死んだ面を全部手放す。描かない回 (止めている間・外から止められている間・1 枚描きの後) に
+    /// ランタイムが呼ぶ — 次の持ち主のフレームがいつ来るか分からないので、持ち越さない。
+    ///
+    /// **使用中の面は手放さない** (置いた側がまだ読む)。手放した面も、置いた側の列は貼る絵
+    /// (``Canvas/drawnPicture``) として面の描画先を持つので、GPU が読む前に解放されることはない。
+    func releaseIdle() {
+        release { entry in !entry.inUse || entry.placer == nil }
     }
 
-    private func remove(at index: Int) {
-        heldBytes -= entries[index].bytes
-        entries.remove(at: index)
+    /// `condition` に当たる面を手放し、空きの列と置いた側ごとの列を、今も指す項目だけに詰める。
+    private func release(where condition: (Entry) -> Bool) {
+        guard !slots.isEmpty else {
+            if !releaseOrder.isEmpty || !freeByShape.isEmpty || !placedBy.isEmpty { resetLists() }
+            return
+        }
+        let doomed = slots.compactMap { id, entry in condition(entry) ? id : nil }
+        for id in doomed { remove(id) }
+        // 手放す順は空いた順のまま、今も空きを指す項目だけを残す。残った空きは、次の持ち主のフレームでは
+        // 「まだ使われていない面」として前に並ぶ
+        releaseOrder = releaseOrder[releaseHead...].filter(isFree)
+        releaseHead = 0
+        freeByShape = freeByShape.compactMapValues { tickets in
+            let kept = tickets.filter(isFree)
+            return kept.isEmpty ? nil : kept
+        }
+        placedBy = placedBy.compactMapValues { ids in
+            let kept = ids.filter { slots[$0]?.inUse == true }
+            return kept.isEmpty ? nil : kept
+        }
+    }
+
+    private func resetLists() {
+        releaseOrder.removeAll()
+        releaseHead = 0
+        freeByShape.removeAll()
+        placedBy.removeAll()
+    }
+
+    private func isFree(_ ticket: Ticket) -> Bool {
+        guard let entry = slots[ticket.id] else { return false }
+        return !entry.inUse && entry.serial == ticket.serial
+    }
+
+    /// 手放す順で次の空き。読み進めた項目は戻らない。
+    private func nextReleasable() -> ObjectIdentifier? {
+        while releaseHead < releaseOrder.count {
+            let ticket = releaseOrder[releaseHead]
+            releaseHead += 1
+            if isFree(ticket) { return ticket.id }
+        }
+        return nil
+    }
+
+    private func remove(_ id: ObjectIdentifier) {
+        guard let entry = slots.removeValue(forKey: id) else { return }
+        heldBytes -= entry.bytes
     }
 }
 
+/// 中間面の形 — 置き場がこれが完全に一致する面だけを使い回す (``CompositeSurfacePool``)。
+struct CompositeSurfaceShape: Hashable {
+    /// 座標の大きさ。
+    let width: Int
+    let height: Int
+    /// 書き出しの倍率 (画素の大きさ)。
+    let outputScale: Int
+    /// 字形を置くか。
+    let placesGlyphs: Bool
+    /// 面を作った GPU。
+    let gpu: ObjectIdentifier
+}
+
 extension Canvas {
-    /// この面を、`placer` が置く `width` × `height` (座標) の中間面として使えるか — `placer` の
-    /// ``createGraphics(_:_:)`` が作る面と同じ形か。
-    fileprivate func fits(width: Int, height: Int, placedBy placer: Canvas) -> Bool {
-        outputScale == placer.outputScale && Int(self.width) == width && Int(self.height) == height
-            && placesGlyphs == placer.placesGlyphs && gpu === placer.gpu
+    /// `placer` の ``createGraphics(_:_:)`` が作る `width` × `height` (座標) の面の形。
+    fileprivate func compositeSurfaceShape(width: Int, height: Int) -> CompositeSurfaceShape {
+        CompositeSurfaceShape(
+            width: width, height: height, outputScale: outputScale, placesGlyphs: placesGlyphs,
+            gpu: ObjectIdentifier(gpu))
     }
 }
 

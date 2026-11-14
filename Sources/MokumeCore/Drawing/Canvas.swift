@@ -1799,11 +1799,11 @@ public final class Canvas {
     /// **置き場は持ち主の面が持ち、時刻の置き場には置かない。** 置いた中間面は時刻の置き場を強く指すので、
     /// 時刻の置き場が置き場を持つと輪になり、スケッチを閉じても面が解放されない。持ち主の面は時刻の置き場から
     /// 弱くしか指されないので、持ち主が死ねば置き場ごと面も手放される。
-    let compositeSurfaces = CompositeSurfacePool()
+    let compositeSurfaces = CompositeSurfacePool<Canvas>()
 
     /// このスケッチの中間面の置き場 (持ち主の ``compositeSurfaces``)。持ち主を手放した後は `nil` で、
     /// 中間面は使い回さずに毎回作る。
-    var sketchCompositeSurfaces: CompositeSurfacePool? { timebase.owner?.compositeSurfaces }
+    var sketchCompositeSurfaces: CompositeSurfacePool<Canvas>? { timebase.owner?.compositeSurfaces }
 
     /// 弱く持つ面ひとつぶん。
     struct WeakCanvas {
