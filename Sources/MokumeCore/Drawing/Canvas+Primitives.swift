@@ -288,7 +288,7 @@ extension Canvas {
         // - 一周・`.pie`・輪郭を引かない既定: 扇の周 1 つ (塗りも輪郭も)
         // - `.chord`・輪郭を引かない `.open`: 弦で結んだ形の周 1 つ (輪郭を引かない `.open` は `.chord` と同じ雛形に畳む)
         // - 輪郭を引く既定・`.open`: 塗りの周 (扇か弦で結んだ形) と、輪郭の周 (開いた弧) の 2 つ
-        // 畳んだ絵が畳まない道 (``placeArcInParts``) と許容 0 で一致することは `ArcClosureFoldingTests`・
+        // 畳んだ絵が畳まない道 (周を順に `draw(_:)` へ渡す) と許容 0 で一致することは `ArcClosureFoldingTests`・
         // `FoldedPlacementTests` が見る。貼る絵と輪郭が同居する弧・破線の輪郭は、畳む口が畳まずに置く
         if !isFullTurn, mode != .pie, mode != nil || drawsStroke {
             func ring(_ segments: Int, _ piece: Outline.Ring.Piece) -> Outline {

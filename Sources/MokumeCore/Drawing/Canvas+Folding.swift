@@ -213,7 +213,7 @@ extension Canvas {
 
     /// 塗りと輪郭を別の周で出す形を畳む (#3759)。`makeOutline` の周は塗りだけを、`makeLine` の周は輪郭だけを出す
     /// (既定・`.open` の弧: 塗りは扇か弦で結んだ形、輪郭は開いた弧)。畳まずに置くときは 2 つの周をこの順に `draw(_:)` へ
-    /// 渡す — ``placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)`` と同じ順で、雛形も塗りの後に輪郭を積む。
+    /// 渡し、雛形も塗りの後に輪郭を積む (塗りの上に輪郭)。
     /// `makeLine` が `nil` なら、``draw(folding:at:outline:)`` と同じ (1 つの周が塗りも輪郭も出す)。
     func draw(
         folding form: FlatForm, at anchor: SIMD2<Float>,
