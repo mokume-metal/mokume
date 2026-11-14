@@ -250,7 +250,8 @@ struct SoundFileRateBaselineTests {
         arguments: [false, true])
     func exportMatchesTheOldTree(routed: Bool) async throws {
         // 0.75 秒 (45 フレーム) の、位置ごとに違う値
-        let values = (0..<36_000).map { Float((($0 &* 7919 &+ 5) % 2003) - 1001) / 1200 }
+        // 下限の Swift 6.3 が推論しきれないので、閉包の型を書く
+        let values = (0..<36_000).map { (index: Int) -> Float in Float(((index &* 7919 &+ 5) % 2003) - 1001) / 1200 }
         let wav = try writeWAV(values, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: wav) }
         let url = TestScratch.path("mokume-rate-baseline", pathExtension: "mov")
