@@ -9,7 +9,7 @@ import simd
 // **切り抜きは型板 (stencil) の下位 7 ビットに入れ子の段数として描く** ([ADR-0046])。閉包の中で描いた塗りを
 // 三角形の層 (``Canvas/ClipLayer``) として集め、``Canvas/Style/clipShape`` に段を積む。描くときは、列ごとに
 // 「型板に入っている段の積み」と列の積みの差分だけを型板へ描き直し、列は自分の段数と等しい画素だけを通す
-// (``Canvas/encodeClipLayers(to:from:…)``)。型板はパスごとに 0 から始まる (`RenderTarget.makeRenderPass`) ので、
+// (``Canvas/encodeBatches(into:prepared:)`` の中の `moveStencil(to:)`)。型板はパスごとに 0 から始まる (`RenderTarget.makeRenderPass`) ので、
 // 切り抜きは描き切りをまたいで運ばず、パスの頭で描き直す。
 //
 // **記録は形の組み立て (``Canvas/createShape(_:)``) の中で行う** — ``Canvas/createPath(_:)`` と同じ作り。
