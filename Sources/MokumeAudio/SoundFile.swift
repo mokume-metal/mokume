@@ -1449,6 +1449,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         if !player.flow.start() {
             player.leave()
             pace = .realTime(origin: now())
+            // 手放した player がまだ受けていない速さも、ここからの位置と解析の速さにする (区切りの頭から)
+            adoptRate()
             notice(
                 .noOutput,
                 "The audio output stopped and could not be restarted, so \"\(name)\" is no longer "
