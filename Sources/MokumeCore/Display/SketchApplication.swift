@@ -100,6 +100,11 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
         /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
         case render(RenderRequest)
+        /// 画面へは出さず、記録を流して照らして終わる (`mokume replay`・[#3571])。**ウィンドウも共有面も持たない** —
+        /// 書き出しと同じく、画面を持たない全速の駆動で回る。
+        ///
+        /// [#3571]: https://github.com/mokume-metal/mokume/issues/3571
+        case replay(ReplayPlayer)
     }
     private var outlet: ScreenOutlet
 
@@ -131,7 +136,7 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     var endsAfterLastWindowClosed: Bool {
         switch outlet {
-        case .shared, .render: false
+        case .shared, .render, .replay: false
         case .pendingWindow, .window: true
         // 最後のウィンドウを数えるのはホストで、`NSApplication` を回すのもホストである
         case .embedded: false
@@ -145,7 +150,7 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 検査はこの値だけを読む。
     var activationPolicy: NSApplication.ActivationPolicy {
         switch outlet {
-        case .shared, .render: .accessory
+        case .shared, .render, .replay: .accessory
         // ウィンドウはまだ建っていないが、建てると決まっている
         // 据えるのは ``run()`` だけで、埋め込んだ経路は据えない (ホストのアプリの方針)
         case .pendingWindow, .window, .embedded: .regular
@@ -461,12 +466,15 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         _ = ShaderOrigin.startup()
         // **作り直しをまたぐ時計の合図も同じ** (#2414)。書き出しの頼みが在れば使わない (下の `render`)
         let render = try RenderRequest.startup()
-        // **記録の合図も同じ** (#3570)。ホストのアプリの中 (``SketchView``) と書き出しの子は記録しない。**使わなくても、
+        // **流す合図も同じ** (#3571)。ホストのアプリの中と書き出しの子は流さないが、合図は環境から消す
+        let replaying = ReplayPlayer.startup()
+        let play = embedded || render != nil ? nil : replaying
+        // **記録の合図も同じ** (#3570)。ホストのアプリの中 (``SketchView``)・書き出しの子・流す子は記録しない。**使わなくても、
         // 環境からは必ず消す** — 残れば、そこから起こす子が継いで、頼んでいない実行が記録を始める
-        let record = ReplayRequest.startup(forRun: !(embedded || render != nil))
+        let record = ReplayRequest.startup(forRun: !(embedded || render != nil || play != nil))
         try self.init(
             sketch: sketch, gpu: gpu, render: render,
-            handover: ClockHandover.startup(), embedded: embedded, record: record)
+            handover: ClockHandover.startup(), embedded: embedded, record: record, replay: play)
     }
 
     /// 書き出しの頼みを渡せる入口。**検査から渡す** — 本番は起動の瞬間に環境から読む
@@ -484,13 +492,18 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///   - embedded: ホストのアプリの中 (``SketchView``) で走らせるか (``SketchRuntime/isEmbedded``)。
     ///   - record: 実行を頭から終わりまで記録する頼み (`mokume run --record`・``StartupReads/record``・#3570)。
     ///     **書き出しの頼みが在れば使わない。** フレームの時計のスケッチだけを記録する。
+    ///   - replay: 記録を流して照らす係 (`mokume replay`・``StartupReads/replay``・#3571)。**書き出しの頼みが在れば使わない。**
+    ///     在ればウィンドウも区画も開かず、つまみの保存も読まず、時計は記録の刻みのフレーム番号、作者の時計の開始は記録の
+    ///     秒と止めているかにする。記録は取らない。
     init(
         sketch: any Sketch, gpu: RenderDevice, render: RenderRequest?,
         displays: () -> [Display] = { Display.connected },
         handover: ClockHandover? = nil,
         embedded: Bool = false,
-        record: ReplayRequest? = nil
+        record: ReplayRequest? = nil,
+        replay: ReplayPlayer? = nil
     ) throws(RenderFailure) {
+        let replay = render == nil ? replay : nil
         self.gpu = gpu
         // **設定は 1 度だけ読む。** 計算型の設定は読むたびに別の値を返しうるので、題名と断る口を別々に読むと、組み立て
         // (`SketchRuntime`) が読む前に読みが増える (#1642・`SetupValueRangeTests` の `Fickle`)
@@ -501,26 +514,34 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // ので、`--fps` が作品の宣言と違っても最後の 1 枚まで揃う。頼みが無ければ、ランタイムが
         // 組み立てで読んだ作品の時計 (`SketchSettings.clock`) で、既定は実時間 (#2601)。**ここで
         // 設定を読み直さない** — 計算型の設定は読むたびに別の値を返しうる (#1642)
-        let clock: Clock? = render.map { .frameIndex(frameRate: $0.frameRate) }
-        self.outlet = render.map(ScreenOutlet.render) ?? .pendingWindow
+        // 流すときは記録の刻み。読めない記録 (流さずに終わる) は作品の刻みのまま
+        let clock: Clock? =
+            render.map { .frameIndex(frameRate: $0.frameRate) }
+            ?? replay?.record.map { .frameIndex(frameRate: $0.frameRate) }
+        self.outlet = render.map(ScreenOutlet.render) ?? replay.map(ScreenOutlet.replay) ?? .pendingWindow
+        // 画面に出さない経路 (書き出し・流す)。同じ引数から同じ絵を出す側で組む
+        let offScreen = render != nil || replay != nil
         // **利用者の断片の保存を裏で組むのも、ウィンドウ・共有面の経路だけ** ([#2365])。書き出しは保存の
         // 次のフレームの頭で組み、同じ引数から同じ絵が出る。ウィンドウの経路はもともと実時間の時計で、
         // 保存のたびにウィンドウが止まるほうが害が大きい ([ADR-0025] 追補 2026-10-14)
         //
         // [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
         // [#2365]: https://github.com/mokume-metal/mokume/issues/2365
-        gpu.rebuildsShadersInBackground = render == nil
+        gpu.rebuildsShadersInBackground = !offScreen
+        // **流す子は区画を開かず (#1619)、つまみの保存も読まない** — 開始のつまみの値は記録が持つ (#3571)
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
-            displays: displays, onScreen: render == nil, opensFacets: render == nil,
-            handover: Self.handover(given: handover, render: render),
+            displays: displays, onScreen: !offScreen, persistsParams: replay == nil, opensFacets: !offScreen,
+            handover: replay != nil ? replay?.clockStart : Self.handover(given: handover, render: render),
             outputScale: render?.scale ?? 1, embedded: embedded)
         self.clock = runtime.clock
-        // **記録は最初の枚の前に始める** (途中から始める口は無い・#3570)。実時間の時計なら始めず、理由を言って走り続ける
-        if let record { runtime.startRecording(record) }
+        // **記録は最初の枚の前に始める** (途中から始める口は無い・#3570)。実時間の時計なら始めず、理由を言って走り続ける。
+        // 流す子は記録しない
+        if let record, replay == nil { runtime.startRecording(record) }
+        if let replay { runtime.startReplaying(replay) }
         // 先送りを許すのは、ウィンドウ・共有面で回すときだけ。書き出す経路は絵が残るので、焼き切る (#2446)
         // **記録している実行は送らない** (ウィンドウなしで流す側と同じ手順で描くので、画素のハッシュが割れない・#3570)
-        runtime.defersEnlargedGlyphBakes = render == nil && runtime.replay == nil
+        runtime.defersEnlargedGlyphBakes = !offScreen && runtime.replay == nil
         self.runtime = runtime
         self.driverDeparted = { runtime.takeDriverDeparture() }
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
@@ -607,8 +628,10 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// ([#3474](https://github.com/mokume-metal/mokume/issues/3474))。**検査が読む** — 据えるのは ``run()`` だけである。
     var holdsDisplayAwake: Bool {
         guard blocksDisplaySleep else { return false }
-        if case .render = outlet { return false }
-        return true
+        switch outlet {
+        case .render, .replay: return false
+        default: return true
+        }
     }
 
     /// 席を求めるもの。**席は 1 プロセスに 1 つ**で、``run()`` (``Sketch/main()``) と ``SketchView`` が同じ席を取り合う。
@@ -1104,6 +1127,13 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             // 合図も AppKit の終わりの経路も回る
             fullSpeedDriver.start()
             return
+        case .replay(let player):
+            // **流せない頼み (記録が読めない・大きさが違う) は、作品を 1 枚も進めずに結果を書いて終わる**
+            if player.isFinished { return finishReplayIfDone() }
+            player.announceUnreproducible()
+            // 書き出しと同じ全速の駆動で回す (#3474)。run loop の 1 回ごとに 1 枚進めて戻るので、Control + C も効く
+            fullSpeedDriver.start()
+            return
         // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る。埋め込んだ経路は
         // ここを通らず、ホストのウィンドウに載ったとき ``attachEmbeddedDriver()`` が繋ぐ
         case .window, .embedded: return
@@ -1335,6 +1365,33 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
         // **書けたかは最後に言う** — 撮る係の答えは閉じ終えてはじめて揃う
         concludeRender()
+        concludeReplay()
+    }
+
+    /// 流し終えたら、最後の枚を照らして結果を書き、終わりを頼む。**流す経路でなければ何もしない。**
+    private func finishReplayIfDone() {
+        guard case .replay(let player) = outlet, !isTerminating, player.isFinished else { return }
+        fullSpeedDriver.invalidate()
+        if let report = runtime.finishReplaying() { announceReplay(report) }
+        onRenderFinished()
+    }
+
+    /// 流す経路を締めくくる。**照合がすべて一致したときだけ 0 で終わる** — 道具 (`mokume replay`) と作品の CI は
+    /// 終了コードと `report.json` で読む。終わりきる前に止められた回 (Control + C・SIGTERM) も、そこまでの結果を書く。
+    private func concludeReplay() {
+        guard case .replay(let player) = outlet else { return }
+        if player.report == nil, let report = runtime.finishReplaying(stoppedEarly: Self.replayStoppedEarly) {
+            announceReplay(report)
+        }
+        if player.report?.matched != true { exitProcess(1) }
+    }
+
+    /// 終わりきる前に止められた回の理由。
+    static let replayStoppedEarly = "The replay was stopped before it reached the end of the record"
+
+    private func announceReplay(_ report: ReplayPlayer.Report) {
+        let line = ReplayPlayer.summary(of: report)
+        if report.matched { print(line) } else { Diagnostics.warn(line) }
     }
 
     /// 書き出しを締めくくる。**書き出す経路でなければ何もしない。**
@@ -1400,6 +1457,18 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // run loop で回っても発火中のタイマーは入れ子では再発火しないので (CFRunLoop の振る舞いによる)、
         // ここへは来ない
         guard !rendersNoMore else { return fullSpeedDriver.invalidate() }
+        // 流す経路は、`advance()` 1 回の時間をフレームごとに測る (#3571)
+        if case .replay(let player) = outlet {
+            guard !isTerminating, !player.isFinished else { return fullSpeedDriver.invalidate() }
+            let began = CACurrentMediaTime()
+            let frameBefore = runtime.frameCount
+            player.beginAdvance(at: began)
+            advanceAndPresent(displayTime: displayTime)
+            if runtime.frameCount != frameBefore {
+                player.noteFrameTime(frame: runtime.frameCount, seconds: CACurrentMediaTime() - began)
+            }
+            return finishReplayIfDone()
+        }
         advanceAndPresent(displayTime: displayTime)
         followPointerLockRequest()
         finishRenderIfDone()
@@ -1596,6 +1665,10 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
         isTerminating = true
         reportStartFailure(failure, note: noteStartFailure)
+        // 流す経路は、流せなかったことを結果にも書く (道具は結果のファイルも読む・#3571)
+        if case .replay = outlet {
+            runtime.finishReplaying(stoppedEarly: "The sketch could not start: \(failure.headline)")
+        }
         runtime.closePlugins()
         // **目録から下ろす** ([ADR-0049] 決定 3)。信号で落ちた実行の項目は、次に名乗る送り手が掃除する
         frameAnnouncement?.withdraw()
@@ -1654,8 +1727,8 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             if try presentToSurface(surface, hasPresented: hasPresented), !hasPresented {
                 outlet = .embedded(surface, hasPresented: true)
             }
-        // 書き出す経路の出口は撮る係だけで、絵はランタイムが配っている
-        case .pendingWindow, .render:
+        // 書き出す経路の出口は撮る係だけで、絵はランタイムが配っている。流す経路はどこへも出さない
+        case .pendingWindow, .render, .replay:
             return
         }
     }

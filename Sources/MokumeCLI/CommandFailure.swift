@@ -97,6 +97,16 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 古い版の子 (道具と依存の版のずれ) がこちらに来る。
     case renderOutputShort(
         destination: String, expected: Int, shortfall: RenderRequest.Shortfall)
+    /// 流そうとした記録が読めない (`replay`・[#3571](https://github.com/mokume-metal/mokume/issues/3571))。
+    /// `reason` は記録の読み手 (`ReplayRecord`) の 1 文。**ビルドの前に断る。**
+    case recordUnreadable(reason: String)
+    /// 流した子が、照合の食い違い・流せなかったことを名乗って 0 以外で終わった (`replay`・#3571)。
+    ///
+    /// **`sketchExited` と分ける。** `replay` の終了コードは「照合がすべて一致したか」を意味し、読みたいのは
+    /// どこで食い違ったか (子が名乗り、`report` に書いた) であって、スケッチの成否ではない。
+    case replayDiffered(report: String, ending: ChildEnding)
+    /// 子は 0 で終わったが、今回の結果のファイルが無い (`replay`・#3571)。合図を読まない古い版の子が来る。
+    case replayReportMissing(path: String)
     case noExecutable(path: String)
     /// 起こそうとした実行ファイルが、起こす時点で無かった。
     ///
@@ -214,6 +224,8 @@ nonisolated enum CommandFailure: Error, Equatable {
         case .sketchExited(let status): status
         case .sketchSignalled(let signal): 128 + signal
         case .stopped(let signal): 128 + signal
+        // 子の終わり方をそのまま返す (照合の食い違いは 1)
+        case .replayDiffered(_, let ending): ending.shellStatus
         default: 1
         }
     }
@@ -444,6 +456,18 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
             Rendering did not complete: \(Self.describe(shortfall, expected: expected, destination: destination))
             \(Self.advice(for: shortfall))
+            """
+        case .recordUnreadable(let reason):
+            "Cannot replay it: \(reason)"
+        case .replayDiffered(let report, let ending):
+            """
+            The replay did not match the record, or could not run to its end. The sketch said where above —
+            it \(ending.phrase). The report is \(report)
+            """
+        case .replayReportMissing(let path):
+            """
+            The replay ended without writing its report (\(path)).
+            The sketch may depend on a version of mokume that does not replay; build it against this tool's version
             """
         case .noExecutable(let path):
             """

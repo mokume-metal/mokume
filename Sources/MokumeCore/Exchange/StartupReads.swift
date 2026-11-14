@@ -272,9 +272,27 @@ nonisolated package enum StartupReads {
         // 一方通行の面で、応答を持たない。仕様が名乗るのは記録そのもの
         schemaName: "replay-record")
 
+    /// 記録を流して照らすか (`mokume replay <記録>`・[#3571])。
+    ///
+    /// **在るとウィンドウを開かない。** 値は記録のファイルの絶対パスで、道具が `replay` の子にだけ渡す (渡さなければ親の
+    /// 環境に在っても落とす)。子はウィンドウも利用者の区画 (`observe` / `input` / `params`) も開かず、つまみの保存も
+    /// 読まずに、画面を持たない全速の駆動で記録の回を流し、結果を `.mokume/replay/report.json` に書いて終わる。
+    /// 照合がすべて一致すれば 0、食い違った・流せなかったなら 0 以外で終わる。**受け取った子は読んだ時点で自分の環境から消す。**
+    ///
+    /// [#3571]: https://github.com/mokume-metal/mokume/issues/3571
+    public static let replay = Entry(
+        name: "Replay", origin: .environment, key: "MOKUME_REPLAY", decidedBy: .tool,
+        note: "Plays a record back with no window, at full speed, and checks it against the values the "
+            + "record holds. The value is the absolute path of the record, and the tool passes it only for "
+            + "replay. It does not open the observation, input or knob facets, does not read the saved knob "
+            + "values, writes .mokume/replay/report.json and ends with 0 only when every check matched. "
+            + "The sketch takes it out of its own environment once read",
+        readSite: "Sources/MokumeCore/Replay/ReplayPlayer.swift",
+        schemaName: "replay-report")
+
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        assetOrigin, keepTime, record, observe, input, params, viewport,
+        assetOrigin, keepTime, record, replay, observe, input, params, viewport,
     ]
 }

@@ -796,6 +796,9 @@ enum RunCommand {
     /// - Parameter recording: 実行を頭から終わりまで記録する行き先の絶対パス (`run --record`・`watch --record` だけが
     ///   渡す)。子は最初の枚の前から記録し、終わりで書き切って閉じる (``StartupReads/record``・
     ///   [#3570](https://github.com/mokume-metal/mokume/issues/3570))。**渡さなければ、親の環境に在っても落とす。**
+    /// - Parameter replaying: 流す記録の絶対パス (`replay` だけが渡す)。子はウィンドウも区画も開かずに記録を流して照らし、
+    ///   結果を書いて終わる (``StartupReads/replay``・[#3571](https://github.com/mokume-metal/mokume/issues/3571))。
+    ///   **渡さなければ、親の環境に在っても落とす。**
     ///
     /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**
     /// 相対の値は読む側の作業ディレクトリから解かれる (`WorkDirectory.given`) が、子は作業
@@ -808,7 +811,8 @@ enum RunCommand {
         _ base: [String: String] = ProcessInfo.processInfo.environment,
         stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil,
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil,
-        assetOrigin: String? = nil, keepTime: String? = nil, recording: String? = nil
+        assetOrigin: String? = nil, keepTime: String? = nil, recording: String? = nil,
+        replaying: String? = nil
     ) -> [String: String] {
         var environment = base
         if let workDirectory = WorkDirectory.given(environment: base) {
@@ -831,6 +835,9 @@ enum RunCommand {
         // **これも渡さなければ落とす。** 記録を頼む旗は `run --record` と `watch --record` だけのもので、`render` の子や
         // 旗の無い実行へ継がせると、頼んでいない実行が記録を始める (#3570)
         environment[StartupReads.record.key] = recording
+        // **これも渡さなければ落とす。** 流す頼みは `replay` だけのもので、ほかの実行へ継がせると、ウィンドウを開かずに
+        // 記録を流し始める (#3571)
+        environment[StartupReads.replay.key] = replaying
         return environment
     }
 
