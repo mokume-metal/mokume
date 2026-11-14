@@ -39,11 +39,17 @@ import Synchronization
 /// 時計は書かない (``readsOnly``) — 世代の新しい試聴の子が本番の子を見送らせず、試聴を捨てた後の本番の次の版は、
 /// 本番の子の時計から始まる。試聴の中で進めた・止めた秒はどこにも残らない (#4070)。
 ///
-/// **読むだけの世代は、ファイルの書き手が居なくなったら書き手になる** (#3566)。試聴の版を作品のウィンドウへ送ると、
-/// 前の本番が止まり、読むだけで起きた送った子が本番の時計を書き始める — 見張りは値を渡し直さない。居なくなったかは、
-/// 既存の見送りと同じく、ファイルの書き手の番号が生きているかで読む。書き手が生きている間・ファイルが無い・使えない間は
-/// 読むだけのままで、書き手が生きたまま止まりかけている間に 2 つの書き手が同じファイルへ書く順は無い。1 度書き手になったら
-/// 戻らない (以後は世代の規則だけで見送る)。代償: 試聴の間に本番の子が自分で落ちたときも、試聴の子が書き始める。
+/// **読むだけの世代は、従う本番の子が居なくなったら書き手になる** (#3566)。見張りは読むだけの合図と一緒に、起こした
+/// 時点の本番の子の番号 (``StartupReads/keepTimeFollows``・``follows``) を渡す。試聴の版を作品のウィンドウへ送ると、
+/// 前の本番が止まり、それに従っていた送った子が本番の時計を書き始める — 見張りは値を渡し直さない。送った後に起きた
+/// 試聴の子は送った子に従うので、送った子が生きている間は書かない (読むだけの子が 2 つ居ても、書き手になるのは従う相手を
+/// 失った方だけ)。**ファイルに残る書き手の印では決めない** — 読むだけの子が 2 つ居ると、どちらも同じ死んだ書き手を見る。
+/// 従う子が生きている間は読むだけのままで、その子が生きたまま止まりかけている間に 2 つの書き手が同じファイルへ書く順は
+/// 無い。従う子の番号が渡されていなければ (古い mokume の見張り) 書き手にならない。1 度書き手になったら戻らない (以後は
+/// 世代の規則だけで見送る)。枚が止まっている (`noLoop()`) 間は枚が来ないので、読むだけで止まっている間だけ
+/// ``refreshInterval`` ごとに従う子の生死を見直し、書き手になったらウィンドウに出ている枚の秒を書く。代償: 試聴の間に
+/// 本番の子が自分で落ちたときも、試聴の子が書き始める (試聴を出ると本番は出た時点のソースで同じ場所から起きるので、
+/// 試聴の子が最後に書いた秒から始まる)。番号が使い回されて別のプロセスが生きて見える間は、書き手にならない側に倒れる。
 ///
 /// 場所を受けない実行 (旗の無い `watch`・`run`・`render`) は、何も読まず何も書かない。
 ///
@@ -100,10 +106,19 @@ final class ClockHandover {
     let generation: Double
     /// 読むだけで起きたか (見張りの試聴の子・``StartupReads/keepTimeReadOnly``)。書き手になったかは ``tookOver``。
     let readsOnly: Bool
-    /// 読むだけで起きた世代が、ファイルの書き手が居なくなったのを見て書き手になったか。戻らない。
+    /// 読むだけで起きた世代が従う、起きた時点の本番の子の番号 (``StartupReads/keepTimeFollows``)。`nil` なら従う子が
+    /// 分からず、書き手にならない。`0` は従う本番が居なかった (すぐ書き手になる)。
+    let follows: Int32?
+    /// 読むだけで起きた世代が、従う子が居なくなったのを見て書き手になったか。戻らない。
     private(set) var tookOver = false
-    /// 読むだけの間に、ファイルの書き手を最後に見た時刻 (``refreshInterval`` ごとに見る)。
-    private var lastWriterCheck: Double?
+    /// 読むだけの間に、従う子の生死を最後に見た時刻 (``refreshInterval`` ごとに見る)。
+    private var lastLeaderCheck: Double?
+    /// 読むだけで枚が止まっている間の、最後に頼まれた時計 (見直しで書き手になったら、これを書く)。
+    private var stillRequest: (seconds: Double, isHeld: Bool, kind: Kind, frames: Int)?
+    /// 止まっている間の見直しを頼んでいるか。
+    private var recheckArmed = false
+    private let now: () -> Double
+    private let schedule: (Double, @escaping @MainActor () -> Void) -> Void
     /// フレームの時計の進み方を測るウィンドウの起点 (フレーム番号と時刻)。止めている間・種類が変わったときに捨てる。
     private var rateAnchor: (frames: Int, at: Double)?
     /// 測れた進み方。まだ測れていなければ `nil`。
@@ -123,13 +138,18 @@ final class ClockHandover {
     ///   - writer: 自分のプロセスの番号。
     ///   - generation: この世代の番号。
     ///   - path: ファイルの場所 (知らせの文面に入れる)。
-    ///   - readsOnly: 読むだけで書かないか。
+    ///   - readsOnly: 読むだけで起きたか。
+    ///   - follows: 読むだけの世代が従う本番の子の番号 (``follows``)。
+    ///   - now: いまの時刻 (止まっている間の見直しで書く時刻)。**検査から差し替える。**
+    ///   - schedule: 秒の後に main で仕事を走らせる (止まっている間の見直し)。**検査から差し替える。**
     init(
         read: @escaping () -> Reading, write: @escaping (Snapshot) -> Void,
         isAlive: @escaping (Int32) -> Bool = ClockHandover.processIsAlive,
         warn: @escaping (String) -> Void = Diagnostics.warn,
         writer: Int32 = getpid(), generation: Double = CACurrentMediaTime(), path: String? = nil,
-        readsOnly: Bool = false
+        readsOnly: Bool = false, follows: Int32? = nil,
+        now: @escaping () -> Double = { CACurrentMediaTime() },
+        schedule: @escaping (Double, @escaping @MainActor () -> Void) -> Void = ClockHandover.after
     ) {
         self.read = read
         self.write = write
@@ -139,16 +159,28 @@ final class ClockHandover {
         self.generation = generation
         self.path = path
         self.readsOnly = readsOnly
+        self.follows = follows
+        self.now = now
+        self.schedule = schedule
     }
 
-    /// ファイルを読み、同じファイルへ書く (`readsOnly` なら書かない)。置く段は main の外 (``FileSink``)。
+    /// ファイルを読み、同じファイルへ書く (`readsOnly` なら、従う子が居なくなるまで書かない)。置く段は main の外 (``FileSink``)。
     convenience init(
-        path: String, readsOnly: Bool = false, warn: @escaping @Sendable (String) -> Void = Diagnostics.warn
+        path: String, readsOnly: Bool = false, follows: Int32? = nil,
+        warn: @escaping @Sendable (String) -> Void = Diagnostics.warn
     ) {
         let sink = FileSink(path: path, warn: warn)
         self.init(
             read: { Self.read(path: path) }, write: { sink.submit($0) }, warn: warn, path: path,
-            readsOnly: readsOnly)
+            readsOnly: readsOnly, follows: follows)
+    }
+
+    /// 秒の後に main で走らせる (止まっている間の見直し)。
+    nonisolated static func after(_ delay: Double, _ work: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(delay))
+            work()
+        }
     }
 
     /// 起動の環境から作る。**無ければ `nil`。** 読んだら環境から消す (``ShaderOrigin/startup()`` と同じ) —
@@ -165,8 +197,21 @@ final class ClockHandover {
         // 読むだけの合図は場所と一緒にだけ意味を持つが、場所が無くても孫へ継がせない
         let readOnly = environment[StartupReads.keepTimeReadOnly.key]
         if readOnly != nil { unset(StartupReads.keepTimeReadOnly.key) }
+        let follows = environment[StartupReads.keepTimeFollows.key]
+        if follows != nil { unset(StartupReads.keepTimeFollows.key) }
         guard let path = path(from: given) else { return nil }
-        return ClockHandover(path: path, readsOnly: readOnly == "1")
+        let readsOnly = readOnly == "1"
+        return ClockHandover(
+            path: path, readsOnly: readsOnly,
+            follows: readsOnly ? leader(from: follows) : nil)
+    }
+
+    /// 環境に載った従う子の番号を解く。0 以上の整数だけを受け、それ以外は渡されていないもの (従う子が分からない) とする。
+    static func leader(from given: String?) -> Int32? {
+        guard let value = given.flatMap({ Int32($0.trimmingCharacters(in: .whitespaces)) }), value >= 0 else {
+            return nil
+        }
+        return value
     }
 
     /// 環境に載った場所を解く。空白だけの値と絶対パスでない値は渡されていないものとして扱う
@@ -249,7 +294,7 @@ final class ClockHandover {
     }
 
     /// この枚の作者の時計を書く。**必要なときだけ書く。** 読むだけの世代 (``readsOnly``) は、書き手になるまで
-    /// (``takesOverIfWriterGone(at:)``) 何も書かない。
+    /// (``takesOverIfLeaderGone(at:)``) 何も書かない。
     ///
     /// - 止めているか・枚が止まっているかが変わったとき、止めている・止まっている間に秒が変わったとき
     /// - 止めていない間は、前に書いたものからの外挿 (``Snapshot/rate`` を掛ける) が実際の秒と
@@ -266,7 +311,13 @@ final class ClockHandover {
     func publish(
         seconds: Double, isHeld: Bool, isStill: Bool, kind: Kind, frames: Int, at moment: Double
     ) {
-        guard !readsOnly || takesOverIfWriterGone(at: moment) else { return }
+        if readsOnly, !takesOverIfLeaderGone(at: moment) {
+            // 枚が止まっている間は次の頼みが来ないので、従う子が居なくなるのを見直す
+            stillRequest = isStill ? (seconds, isHeld, kind, frames) : nil
+            if isStill { armRecheck() }
+            return
+        }
+        stillRequest = nil
         let rate = rate(of: kind, isHeld: isHeld || isStill, frames: frames, at: moment)
         let snapshot = Snapshot(
             seconds: seconds, isHeld: isHeld, isStill: isStill, rate: rate, at: moment, writer: writer,
@@ -276,18 +327,31 @@ final class ClockHandover {
         write(snapshot)
     }
 
-    /// 読むだけで起きた世代が、いま書き手か。まだなら ``refreshInterval`` ごとにファイルを読み、書き手 (自分でない) が
-    /// もう居なければ書き手になる。**ファイルが無い・使えない間は書き手にならない** — 書き手が分からないので、生きている
-    /// 本番の子がまだ書いていないだけかもしれない。
-    private func takesOverIfWriterGone(at moment: Double) -> Bool {
+    /// 読むだけで起きた世代が、いま書き手か。まだなら ``refreshInterval`` ごとに従う子 (``follows``) の生死を見て、
+    /// 居なくなっていれば書き手になる。従う子が分からなければ書き手にならない。
+    private func takesOverIfLeaderGone(at moment: Double) -> Bool {
         if tookOver { return true }
-        if let last = lastWriterCheck, moment - last < Self.refreshInterval, moment >= last { return false }
-        lastWriterCheck = moment
-        guard case .found(let existing) = read(), existing.writer != writer, !isAlive(existing.writer) else {
-            return false
-        }
+        guard let follows else { return false }
+        if let last = lastLeaderCheck, moment - last < Self.refreshInterval, moment >= last { return false }
+        lastLeaderCheck = moment
+        guard !isAlive(follows) else { return false }
         tookOver = true
         return true
+    }
+
+    /// 読むだけで枚が止まっている間、``refreshInterval`` の後に止まった枚の時計をもう 1 度頼む (1 つだけ頼む)。
+    /// 動き出した・書き手になった後は何もしない。
+    private func armRecheck() {
+        guard !recheckArmed, follows != nil else { return }
+        recheckArmed = true
+        schedule(Self.refreshInterval) { [weak self] in
+            guard let self else { return }
+            recheckArmed = false
+            guard let request = stillRequest, !tookOver else { return }
+            publish(
+                seconds: request.seconds, isHeld: request.isHeld, isStill: true, kind: request.kind,
+                frames: request.frames, at: now())
+        }
     }
 
     /// 止めていない間の作者の時計の進み方。実時間の時計は 1、フレームの時計は `refreshInterval` ごとに測り直し、

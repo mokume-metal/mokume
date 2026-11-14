@@ -689,6 +689,9 @@ struct WatchSessionModelTests {
         private var selectedClock = 0
         /// 見張りが最後に選んだ時計を、読むだけにしたか。**規則: 本番の子と時計を分け持つ試聴の子だけが読むだけ** (#4070)。
         private var selectedReadsOnly = false
+        /// 見張りが最後に選んだ、読むだけの子が従う本番の子の番号 (#3566)。**規則: いま生きている本番の側の子 (居なければ 0)。
+        /// 書く子には渡さない。**
+        private var selectedFollows: Int32?
         /// この試聴の間に、試聴と本番の時計が分かれたか (操作の履歴から追う。場所の番号の比べからは導かない)。
         /// 試聴の起こし直しの子・試聴中の本番の起こし直しの子が起きると立ち、出ると下りる。起こし直しの子が最初の絵の前に
         /// 落ちたら、起こす前に戻す。
@@ -764,6 +767,7 @@ struct WatchSessionModelTests {
                     selectClock: { choice in
                         box.driver?.selectedClock = choice.place
                         box.driver?.selectedReadsOnly = choice.readsOnly
+                        box.driver?.selectedFollows = choice.follows
                     }),
                 stopTimeout: 0.5, finishTimeout: 0.5)
             session.overlapsGenerations = true
@@ -894,6 +898,13 @@ struct WatchSessionModelTests {
             // 本番の子と時計を分け持つ試聴の子だけが、時計を読むだけ。分け持つかは場所の番号でなく、この試聴の間の起こし直しの
             // 履歴 (``clocksSplit``) で決める
             let readsOnly = isAudition && !clocksSplit
+            // 読むだけの子が従うのは、起こした時点で生きている本番の側の子 (模型が追った世代の生死から)
+            let living = productionAlive()
+            let expectedFollows: Int32? =
+                readsOnly ? living.count == 1 ? living.first.map { gens[$0].processIdentifier } : living.isEmpty ? 0 : -1 : nil
+            if selectedFollows != expectedFollows {
+                launchViolation = launchViolation ?? "\(isAudition ? "試聴" : "本番")の子 G\(gens.count) に従う子 \(selectedFollows.map { "\($0)" } ?? "なし") を渡した (規則では \(expectedFollows.map { "\($0)" } ?? "なし")・生きている本番の側 \(name(living)))"
+            }
             if selectedReadsOnly != readsOnly {
                 launchViolation = launchViolation ?? "\(isAudition ? "試聴" : "本番")の子 G\(gens.count) の時計を\(selectedReadsOnly ? "読むだけ" : "書く") にした (規則では\(readsOnly ? "読むだけ" : "書く"))"
             }

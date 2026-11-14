@@ -52,6 +52,8 @@ struct WatchAuditionTests {
         private(set) var clocks: [Int] = []
         /// 起こした子ごとの、時計を読むだけにしたか (``gens`` と同じ並び・#4070)。
         private(set) var readOnlyClocks: [Bool] = []
+        /// 起こした子ごとの、読むだけの子が従う本番の子の番号 (``gens`` と同じ並び・#3566)。
+        private(set) var followedClocks: [Int32?] = []
         /// 見張りが最後に選んだ時計。
         private var selectedClock = WatchSession.Hooks.ClockChoice(place: 0)
         /// 作り直し (`build`) と子を起こした (`launch`) 順 (#3428)。
@@ -226,6 +228,7 @@ struct WatchAuditionTests {
             gens.append(process)
             clocks.append(selectedClock.place)
             readOnlyClocks.append(selectedClock.readsOnly)
+            followedClocks.append(selectedClock.follows)
             events.append("launch")
             return process
         }

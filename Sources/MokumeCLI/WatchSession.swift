@@ -79,6 +79,9 @@ final class WatchSession {
             var place: Int
             /// 読むだけで書かないか (``StartupReads/keepTimeReadOnly``)。本番の場所を受ける試聴の子だけが立てる。
             var readsOnly = false
+            /// 読むだけの子が従う本番の子の番号 (``StartupReads/keepTimeFollows``・#3566)。読むだけの子にだけ渡す。
+            /// `0` は走っている本番が居なかった。
+            var follows: Int32? = nil
         }
 
         /// 呼ばれ方から、導き手ごと組む。
@@ -171,7 +174,7 @@ final class WatchSession {
                         // **置き場の断片は元から読ませる** (#2517)。写しを読むと、元を保存しても
                         // 走らせたまま差し替わらない
                         assetOrigin: resolved?.context.assets.url?.path,
-                        keepTime: clock.path, keepTimeReadOnly: clock.readsOnly,
+                        keepTime: clock.path, keepTimeReadOnly: clock.readsOnly, keepTimeFollows: clock.follows,
                         recording: generations?.next())
                     do {
                         try process.run()
@@ -210,6 +213,8 @@ final class WatchSession {
             private(set) var path: String?
             /// 次に起こす子が読むだけか。
             private(set) var readsOnly = false
+            /// 次に起こす読むだけの子が従う本番の子の番号。
+            private(set) var follows: Int32?
 
             init(_ path: String?) {
                 original = path
@@ -220,6 +225,7 @@ final class WatchSession {
             func select(_ choice: ClockChoice) {
                 path = original.map { choice.place == 0 ? $0 : $0 + "-\(choice.place)" }
                 readsOnly = choice.readsOnly
+                follows = choice.readsOnly ? choice.follows : nil
             }
         }
     }
@@ -2679,7 +2685,8 @@ final class WatchSession {
     // | 送る (#3566) | 送った子の場所 | 本番と同じ | — | 読むだけ |
     // | 送った子が作品のウィンドウの乗り換えの前に終わった | 送る前へ戻す | 試聴中なら送る前へ戻す | — | 送る前のまま |
     //
-    // 送った子は読むだけで起きていても、前の本番が止まると書き手になる (`ClockHandover`)。値は渡し直さない。
+    // 読むだけの子には、起こした時点で走っている本番の子の番号を添え、その子が居なくなったら書き手になる (`ClockHandover`)。
+    // 送った子は前の本番が止まると書き始め、送った後に起きた試聴の子は送った子に従うので書かない。値は渡し直さない。
     //
     // 試聴の子が読むだけなのは、受ける場所が本番の場所と同じとき (本番の子と時計を分け持つとき) だけである。本番の子は
     // いつも書く。
@@ -2957,7 +2964,13 @@ final class WatchSession {
         var launchFailure: CommandFailure?
         // **本番の場所を受ける試聴の子は読むだけ** — 本番の時計は本番の子だけが進める (#4070)。起こし直して自分の場所を
         // 持った試聴の子は、本番と分け持たないので書く
-        hooks.selectClock(.init(place: clock, readsOnly: clock == productionClock))
+        //
+        // 読むだけの子には、いま走っている本番の子の番号を添える (#3566)。その子が居なくなったら書き手になる — 送ると前の本番が
+        // 止まって送った子が書き始め、送った後に起きた試聴の子は送った子に従う。試聴の子を起こすのは本番が落ち着いた後
+        // (``isProductionSettling``) なので、走っている本番の側は 1 つまで。居なければ `0` (すぐ書き手になる)
+        let readsOnly = clock == productionClock
+        let leader = [child, outgoing].lazy.compactMap { $0 }.first { $0.isRunning }?.processIdentifier ?? 0
+        hooks.selectClock(.init(place: clock, readsOnly: readsOnly, follows: readsOnly ? leader : nil))
         do throws(CommandFailure) {
             auditionChild = try hooks.launch(
                 executable, directory, stamp, reportsRate ? configurationName : nil)

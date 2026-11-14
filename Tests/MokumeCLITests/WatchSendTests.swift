@@ -443,6 +443,28 @@ struct WatchSendTests {
         #expect(try await harness.ask("send")["accepted"] as? Bool == true)
     }
 
+    @Test("読みの最中 (控えはまだ空) の送る要求は受け、その読みが拾った保存は送った子の乗り換えの後に次の試聴の版になる")
+    func sendingDuringAReadIsHarmless() async throws {
+        let harness = try Harness()
+        let production = try #require(await harness.save())
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        let sent = try #require(await harness.save())
+        // 保存 s3 を置き、それを拾う読みを止めている間に送る
+        let reading = try await harness.holdRead()
+        let report = try await harness.ask("send")
+        harness.releaseStamp()
+        await reading.value
+        #expect(report["accepted"] as? Bool == true, "\(report)")
+        // 乗り換えて前の本番が止まり終えると、読みが拾った s3 が試聴の子になる。本番は送った子のまま
+        await harness.session.generationPromoted(pid: sent.processIdentifier, from: .window)
+        harness.wait(production)
+        await harness.beat()
+        await harness.beat()
+        let next = try #require(harness.session.auditionChild)
+        #expect(next !== sent && harness.session.child === sent && sent.isRunning)
+        #expect(try status(harness)["stamp"] as? String == "s3" && (try status(harness)["audition"] as? Bool) == true)
+    }
+
     @Test("起こし直した試聴の子を送った後に、その子が最初の絵の前に落ちても、起こし直しの失敗とは名乗らない")
     func aSentRestartedChildIsNoLongerARestart() async throws {
         let harness = try Harness()
