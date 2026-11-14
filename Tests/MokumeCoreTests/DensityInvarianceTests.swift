@@ -472,10 +472,12 @@ struct DensityInvarianceTests {
                     throw NotFolded(description: "丸い周の 2 つ目が雛形に畳まれていない (置き場所 \(placed)): \(pose)")
                 }
             case .smallShaderRect, .smallRect:
-                // 矩形の中心を (64, 64 + ずらし) に置き、`angle` だけ回す。1 つだけ置く (畳む相手を置かない)。角は既定の `miter`
+                // 矩形の中心を (64, 64 + ずらし) に置き、`angle` だけ回してから `scale` を掛ける。1 つだけ置く (畳む相手を置かない)
                 if self == .smallShaderRect { canvas.shader(try Self.plainShader(canvas)) }
+                canvas.strokeJoin(pose.join)
                 canvas.translate(64, 64 + offset)
                 canvas.rotate(angle)
+                canvas.scale(pose.scale)
                 canvas.rect(-pose.size.x / 2, -pose.size.y / 2, pose.size.x, pose.size.y)
             case .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 // 帯の中心を (64, 64 + ずらし) に置き、`angle` だけ回す (``diagonalLine`` と同じ置き方)
@@ -734,12 +736,17 @@ struct DensityInvarianceTests {
         var join: StrokeJoin = .miter
         /// 矩形の輪郭の口 (``Amount/diagonalFoldedRect``・``Amount/smallShaderRect``・``Amount/smallRect``) の幅と高さ (出す画素)。
         var size = SIMD2<Float>(40, 20)
+        /// 小さい矩形の輪郭の口 (``Amount/smallShaderRect``・``Amount/smallRect``) が回した後に掛ける縦横同率の `scale`。
+        /// 表 (``DensityInvarianceTests/smallRectTable()``) だけが 1 以外にする。
+        var scale: Float = 1
 
         /// 矩形の周の長さ (出す画素)。
         var framePerimeter: Double { 2 * Double(size.x + size.y) }
 
         var description: String {
-            let frame = join == .miter && size == SIMD2(40, 20) ? "" : "・角 \(join)・矩形 \(size.x)×\(size.y)"
+            let frame =
+                join == .miter && size == SIMD2(40, 20) && scale == 1
+                ? "" : "・角 \(join)・矩形 \(size.x)×\(size.y)" + (scale == 1 ? "" : "・scale \(scale)")
             let base = "太さ \(weight)・細かさ \(density)・ずらし (\(offset.x), \(offset.y))・角度 \(angle)・倍率 \(squash)" + frame
             guard let ring else { return base }
             return base + "・周 (短い径 \(ring.minor)・縦横比 \(ring.aspect)・縦の倍率 \(ring.squash)・1 つ目 \(ring.first))"
@@ -836,13 +843,27 @@ struct DensityInvarianceTests {
 
     /// 小さい矩形の輪郭の口 (#3929) の形の座標。
     ///
-    /// - 短い辺: 描く画素で ``smallRectFloor`` から 10 まで。上端は、細かさ 0.25 でも長い辺 (下の縦横比 2 未満) が出す画素で
-    ///   80 未満になり、回しても形が出す面 (128) に収まる長さ
+    /// - 短い辺: `side` の [0, 1) から描く画素の短い辺を作る (``smallRectSide(_:)``)
     /// - 縦横比 (長い辺 / 短い辺): `[1, 2)`
     static let smallRectAxes: [ProbeAxis] = [
-        ProbeAxis("side", Double(smallRectFloor)..<10, simplest: Double(smallRectFloor)),
+        ProbeAxis("side", 0..<1, simplest: 0),
         ProbeAxis("aspect", 1..<2, simplest: 1.5),
     ]
+
+    /// `side` の座標 `unit` ([0, 1)) から作る、描く画素での短い辺。
+    ///
+    /// - 半分 (`unit` < 0.5) は下限のすぐ上から 4 まで。額縁 (描く画素で辺 4 以上・
+    ///   ``Canvas/framesThinRect(width:height:weight:join:drawn:)``) を通らず一般の細い輪郭の帯で組む区間で、
+    ///   4 以上は ``Amount/diagonalFoldedRect`` も見る
+    /// - 残りの半分は 4 から 10 まで。上端は、細かさ 0.25 でも長い辺 (縦横比 2 未満) が出す画素で 80 未満になり、
+    ///   回しても形が出す面 (128) に収まる長さ
+    /// - 下端は ``smallRectFloor`` より 0.01 だけ内側から始める。下限ちょうどは、出す画素へ割って描く画素へ掛け戻す
+    ///   単精度の丸めで下限のすぐ下へ落ちうる (``isBelowSmallRectFloor(_:)``)
+    static func smallRectSide(_ unit: Float) -> Float {
+        let low = smallRectFloor + 0.01
+        let knee = max(low, 4)
+        return unit < 0.5 ? low + unit * 2 * (knee - low) : knee + (unit - 0.5) * 2 * (10 - knee)
+    }
 
     /// 描く画素での短い辺 `side`・縦横比 `aspect` の矩形を、細かさ `density` で置く出す画素の幅と高さ。
     static func smallRectSize(side: Float, aspect: Float, density: Float) -> SIMD2<Float> {
@@ -854,7 +875,17 @@ struct DensityInvarianceTests {
     /// 値は ``smallRectTable()`` の表から読む (根拠の数は ADR-0039 決定 6)。2 つの経路で同じ値にするのは、経路は
     /// `shader()` の有無で切り替わり、書き手が選ぶものではないからである。額縁の下限 (描く画素で辺 4・
     /// ``Canvas/framesThinRect(width:height:weight:join:drawn:)``) とは別の値である。
+    ///
+    /// 定期の検査がこの値以上の形で ±25% を越えたら、値を上げずに Bug として起票する (ADR-0039 決定 6)。
     static let smallRectFloor: Float = 3
+
+    /// 置き方 `pose` の矩形が、小さい矩形の輪郭の約束の下限 (``smallRectFloor``) 未満か。
+    ///
+    /// 量は名乗りの文 (ADR-0039 決定 6・`strokeWeight(_:)` の説明) と同じで、輪郭の中心線 (`rect` に渡した幅と高さ) の
+    /// 短い方に `scale` と細かさを掛けた描く画素の長さ。太さは含めず、回転では変わらない。
+    static func isBelowSmallRectFloor(_ pose: Pose) -> Bool {
+        pose.size.min() * pose.scale * pose.density < smallRectFloor
+    }
 
     /// 丸い周の口の形の座標 (#3863)。畳む境目 (描く画素で短い径 8・縦横比 0.5。``Canvas/ringFoldMinimumDiameter``・
     /// ``Canvas/ringFoldMinimumAspect``) のすぐ内側から振る。
@@ -949,11 +980,12 @@ struct DensityInvarianceTests {
         _ mouth: Amount, _ pose: Pose, ignoringFloor: Bool = false
     ) throws -> (measured: Double, expected: Double)? {
         let (weight, density) = (pose.weight, pose.density)
-        let drawn = Double(weight * density)
+        // 描く画素での太さ。`scale` は小さい矩形の輪郭の口だけが 1 以外にする (``Pose/scale``)
+        let drawn = Double(weight * pose.scale * density)
         // 描く画素で 0.07 より細い線は約束の外 (``axes`` の注釈)。丸い周の口は、縦の倍率で最も細る帯で測る
         if drawn * Double(pose.ring?.squash ?? 1) < 0.07 { return nil }
-        // 描く画素で短い辺が下限未満の矩形の輪郭は約束の外 (#3929・``smallRectFloor``)
-        if mouth.isSmallRect, !ignoringFloor, pose.size.min() * density < Self.smallRectFloor { return nil }
+        // 描く画素で短い辺が下限未満の矩形の輪郭は約束の外 (``isBelowSmallRectFloor(_:)``)
+        if mouth.isSmallRect, !ignoringFloor, Self.isBelowSmallRectFloor(pose) { return nil }
         // 点は描く画素で 1 画素より小さいときだけ見る。1 画素以上の点の形は経路ごとの
         // 量子化で、この約束の外 (ADR-0039 決定 3)。縦横で倍率の違う点は、面積の倍率で縮む
         let areaFactor = mouth.areaFactor(squash: pose.squash)
@@ -971,9 +1003,15 @@ struct DensityInvarianceTests {
         }
         let pixels = try canvas.target.readPixels()
         if mouth == .diagonalFoldedRect || mouth.isSmallRect {
-            // 額縁は周 × 太さ。面取りの角は、外の角の直角を落とした直角二等辺三角形 4 つ (描く画素で 太さ² / 2) だけ欠ける
-            let bevel = pose.join == .bevel ? drawn * drawn / 2 : 0
-            return (totalSum(pixels), pose.framePerimeter * drawn * Double(density) - bevel)
+            // 額縁は周 × 太さ (どちらも `scale` を掛けた描く画素)。外の角は、面取りなら直角二等辺三角形 4 つ (太さ² / 2)、
+            // 丸めなら 1 辺 太さ / 2 の正方形と 4 分円の差 4 つ (太さ² × (1 − π/4)) だけ欠ける
+            let corners =
+                switch pose.join {
+                case .bevel: drawn * drawn / 2
+                case .round: drawn * drawn * (1 - Double.pi / 4)
+                default: 0.0
+                }
+            return (totalSum(pixels), pose.framePerimeter * Double(pose.scale * density) * drawn - corners)
         }
         if var area = mouth.fillArea {
             if mouth == .diagonalFoldedRing { area = pose.ringArea }
@@ -1014,7 +1052,8 @@ struct DensityInvarianceTests {
             }
             if mouth.isSmallRect {
                 pose.size = Self.smallRectSize(
-                    side: input.float("side"), aspect: input.float("aspect"), density: input.float("density"))
+                    side: Self.smallRectSide(input.float("side")), aspect: input.float("aspect"),
+                    density: input.float("density"))
             }
             return try Self.measure(mouth, pose)
         }
@@ -1248,40 +1287,97 @@ struct DensityInvarianceTests {
         }
     }
 
+    /// 約束の下限の値そのもの: ``smallRectFloor`` から導かず、名乗りの文 (ADR-0039 決定 6・`strokeWeight(_:)` の説明・
+    /// changelog) の数をリテラルで書く。下限を動かすと、名乗りの文と同時にここを直すことになる。細かさ 1 で置くので、
+    /// 出す画素と描く画素の行き来に丸めが入らない。
+    @Test("小さい矩形の輪郭の約束の下限は、描く画素で短い辺 3 (2.99 は約束の外、3 は約束の内で判定する) (#3929)")
+    func smallRectFloorIsThreeDrawnPixels() throws {
+        for mouth in [Amount.smallShaderRect, .smallRect] {
+            var pose = Pose(weight: 0.5, density: 1, offset: SIMD2(0.3, 0.7), angle: 0.4, squash: 1)
+            pose.size = SIMD2(4.5, 2.99)
+            #expect(try Self.measure(mouth, pose) == .skip, "\(mouth.rawValue): 短い辺 2.99 の \(pose) を判定した")
+            pose.size = SIMD2(4.5, 3)
+            #expect(try Self.measure(mouth, pose) == .pass, "\(mouth.rawValue): 短い辺 3 の \(pose) が約束の内で通らない")
+        }
+    }
+
+    /// 生成する短い辺 (``smallRectSide(_:)``) は、どの細かさでも下端が約束の下限から落ちず、半分を下限から 4 までの
+    /// 区間 (額縁を通らない小さい矩形) に置く。GPU を使わず、生成の式と下限の判定だけを見る。
+    @Test("小さい矩形の口の生成は、下端が下限から落ちず、半分を下限〜4 に置く (#3929)")
+    func smallRectSidesStartAboveTheFloorAndLeanBelowFour() {
+        let low = Self.smallRectSide(0)
+        for step in 32...128 {
+            let density = Float(step) / 128
+            for aspect: Float in [1, 1.5, 1.999] {
+                var pose = Pose(weight: 0.5, density: density, offset: .zero, angle: 0, squash: 1)
+                pose.size = Self.smallRectSize(side: low, aspect: aspect, density: density)
+                #expect(!Self.isBelowSmallRectFloor(pose), "生成の下端 \(low) が細かさ \(density) で下限の外へ落ちた: \(pose)")
+            }
+        }
+        for unit: Float in [0, 0.1, 0.25, 0.4, 0.499] {
+            let side = Self.smallRectSide(unit)
+            #expect(side >= Self.smallRectFloor && side < 4, "side=\(unit) → \(side) が下限〜4 の外")
+        }
+        for unit: Float in [0.5, 0.75, 0.999] {
+            let side = Self.smallRectSide(unit)
+            #expect(side >= 4 && side < 10, "side=\(unit) → \(side) が 4〜10 の外")
+        }
+    }
+
     /// 表: 小さい矩形の細い輪郭の光の量 (期待との比) を、描く画素での短い辺の区間ごとに測る (#3929)。
     /// **`MOKUME_SMALL_RECT_TABLE=1` のときだけ走り、表を `MOKUME_SMALL_RECT_TABLE_OUT` のファイルへ書く** (区間 × 件数ぶん
     /// 描くので、PR・queue では回さない)。
     ///
     /// 区間ごとに、短い辺を区間から、縦横比を `[1, 2)`、太さ (出す画素) を `[0.07, 1)`、細かさを 0.25〜1 (1/128 刻み)、
     /// 角度を `[0, π/2)`、ずらしを `[0, 2)²` から選び、`MOKUME_SMALL_RECT_SAMPLES` 件 (既定 100) を測る。描く画素での太さが
-    /// 0.07 未満の置き方は選び直す。区間の端は `MOKUME_SMALL_RECT_EDGES` (`2,2.5,3` の形) で替えられる。seed は固定で、`MOKUME_PROBE_FRESH=1` なら実行ごとに新しい。区間ごとの最小と最大の比と、
-    /// その置き方を出す。``smallRectFloor`` はこの表から読む。
+    /// 0.07 未満の置き方は選び直す。区間の端は `MOKUME_SMALL_RECT_EDGES` (`2,2.5,3` の形) で替えられる。seed は固定で、
+    /// `MOKUME_PROBE_FRESH=1` なら実行ごとに新しい。区間ごとの最小と最大の比と、その置き方を出す。``smallRectFloor`` は
+    /// この表から読む。
+    ///
+    /// 角の形は `MOKUME_SMALL_RECT_JOIN` (`miter`・`bevel`・`round`。既定 `miter`) で、回した後に掛ける縦横同率の
+    /// `scale` は `MOKUME_SMALL_RECT_SCALE` (`0.5,3` の形の範囲。既定 1) で替えられる。`scale` を掛けても、短い辺と
+    /// 太さは描く画素で同じ分布から選ぶ (出す画素の値を `scale` で割って置く)。
     @Test(
         "表: 小さい矩形の細い輪郭の光の量を、描く画素での短い辺ごとに測る (#3929)",
         .enabled(if: ProcessInfo.processInfo.environment["MOKUME_SMALL_RECT_TABLE"] == "1", "表を出すときだけ走る"))
     func smallRectTable() throws {
         let environment = ProcessInfo.processInfo.environment
+        // 端末の出力は検査の出力と混ざって切れうるので、ファイルへ書く。描く前に書き先を確かめる
+        let path = try #require(environment["MOKUME_SMALL_RECT_TABLE_OUT"], "表を書くファイルを MOKUME_SMALL_RECT_TABLE_OUT で渡す")
         let samples = environment["MOKUME_SMALL_RECT_SAMPLES"].flatMap { Int($0) } ?? 100
         let seed: UInt64 = environment["MOKUME_PROBE_FRESH"] == "1" ? .random(in: .min ... .max) : 0x3929
-        // 2 つの口を 1 つの検査で順に測り、表を 1 つのファイルへ 1 度に書く
         let edges =
             environment["MOKUME_SMALL_RECT_EDGES"].map { $0.split(separator: ",").compactMap { Float($0) } }
             ?? [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.5, 4, 6, 10]
+        let join: StrokeJoin =
+            switch environment["MOKUME_SMALL_RECT_JOIN"] {
+            case "bevel": .bevel
+            case "round": .round
+            default: .miter
+            }
+        let scales = environment["MOKUME_SMALL_RECT_SCALE"].map { $0.split(separator: ",").compactMap { Float($0) } }
+        let scale = try scales.map { bounds in
+            try #require(bounds.count == 2 && 0 < bounds[0] && bounds[0] < bounds[1], "MOKUME_SMALL_RECT_SCALE は `下端,上端`")
+            return bounds[0]..<bounds[1]
+        }
+        // 2 つの口を 1 つの検査で順に測り、表を 1 つのファイルへ 1 度に書く
         var lines: [String] = []
         for mouth in [Amount.smallShaderRect, .smallRect] {
-            lines += try Self.smallRectRows(mouth, edges: edges, samples: samples, seed: seed)
+            lines += try Self.smallRectRows(mouth, edges: edges, samples: samples, seed: seed, join: join, scale: scale)
         }
-        // 端末の出力は検査の出力と混ざって切れうるので、ファイルへ書く
-        let path = try #require(environment["MOKUME_SMALL_RECT_TABLE_OUT"], "表を書くファイルを MOKUME_SMALL_RECT_TABLE_OUT で渡す")
         try (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
     }
 
-    /// ``smallRectTable()`` の 1 つの口の表。
+    /// ``smallRectTable()`` の 1 つの口の表。`scale` が `nil` なら `scale` を掛けない。
     @MainActor
-    static func smallRectRows(_ mouth: Amount, edges: [Float], samples: Int, seed: UInt64) throws -> [String] {
+    static func smallRectRows(
+        _ mouth: Amount, edges: [Float], samples: Int, seed: UInt64, join: StrokeJoin = .miter,
+        scale: Range<Float>? = nil
+    ) throws -> [String] {
         var random = ProbeRandom(seed: seed)
         func unit() -> Float { Float(random.nextUnit()) }
-        var lines = ["\(mouth.rawValue)・seed 0x\(String(seed, radix: 16))・区間ごと \(samples) 件"]
+        let scaleText = scale.map { "・scale [\($0.lowerBound), \($0.upperBound))" } ?? ""
+        var lines = ["\(mouth.rawValue)・角 \(join)\(scaleText)・seed 0x\(String(seed, radix: 16))・区間ごと \(samples) 件"]
         for (low, high) in zip(edges, edges.dropFirst()) {
             var (lowest, highest) = (Double.infinity, -Double.infinity)
             var (lowestPose, highestPose) = ("", "")
@@ -1294,7 +1390,13 @@ struct DensityInvarianceTests {
                         weight: 0.07 + unit() * 0.93, density: density, offset: SIMD2(unit() * 2, unit() * 2),
                         angle: unit() * .pi / 2, squash: 1)
                 } while pose.weight * pose.density < 0.07
+                pose.join = join
                 pose.size = Self.smallRectSize(side: low + unit() * (high - low), aspect: 1 + unit(), density: pose.density)
+                if let scale {
+                    pose.scale = scale.lowerBound + unit() * (scale.upperBound - scale.lowerBound)
+                    pose.weight /= pose.scale
+                    pose.size /= pose.scale
+                }
                 let (measured, expected) = try #require(try Self.measurement(mouth, pose, ignoringFloor: true))
                 let ratio = measured / expected
                 if abs(ratio - 1) > mouth.tolerance { over += 1 }
