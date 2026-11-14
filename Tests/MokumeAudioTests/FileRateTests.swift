@@ -213,7 +213,8 @@ struct FileRateTests {
         // 速さ 2 は低域通過を掛けて読む (係数なしで頼むと、整数の位置の器の標本そのまま)
         player.rate(2, kernel: nil)
         let fast = try render(flow, 300)
-        #expect(fast == (0..<300).map { values[200 + 2 * $0] })
+        let even: [Float] = (0..<300).map { values[200 + 2 * $0] }
+        #expect(fast == even)
     }
 
     @Test("速くするときは低域通過を掛けて読む: 15 kHz の正弦を速さ 2 で鳴らすと (30 kHz は出せない)、折り返さずにほぼ消える")
