@@ -1550,12 +1550,13 @@ struct DensityInvarianceTests {
         }
     }
 
-    /// 丸い端の形 `form` を `pose` に置いて光の量を測る。`immediate` ならその場で引いた線、そうでなければ保持した形を
-    /// 1 つ作って置く。`prime` があれば、保持した形をまずその位相で 1 フレーム置いてから (控えを作ってから) `pose` で置き直す。
-    /// 出す面は 1 辺 `side` で、形は面の中心に置く。
+    /// 端の形 `cap` (既定は丸い端) の形 `form` を `pose` に置いて光の量を測る。`immediate` ならその場で引いた線、そうでなければ
+    /// 保持した形を 1 つ作って置く。`prime` があれば、保持した形をまずその位相で 1 フレーム置いてから (控えを作ってから) `pose` で
+    /// 置き直す。出す面は 1 辺 `side` で、形は面の中心に置く。
     @MainActor
     static func roundRetainedInk(
-        _ form: RoundRetainedForm, pose: Pose, prime: Pose?, immediate: Bool = false, side: Int = size
+        _ form: RoundRetainedForm, pose: Pose, prime: Pose?, immediate: Bool = false, side: Int = size,
+        cap: StrokeCap = .round
     ) throws -> Double {
         let canvas = try makeCanvas(density: pose.density, side: side)
         let center = Float(side) / 2
@@ -1564,7 +1565,7 @@ struct DensityInvarianceTests {
             canvas.background(0)
             canvas.noFill()
             canvas.stroke(255)
-            canvas.strokeCap(.round)
+            canvas.strokeCap(cap)
             canvas.strokeWeight(at.weight)
             // 記録は置き場所の変換を掛ける前に (記録のときの変換は形が持つ)
             if !immediate, held == nil { held = canvas.createShape { form.draw(on: canvas) } }
@@ -1598,9 +1599,9 @@ struct DensityInvarianceTests {
 
     /// 丸い端の保持した形は、別の位相で置いた控えを使い回しても、**その場で引いた線**の光の量の ±25% (#3859) に収まる (#3864)。
     ///
-    /// **この検査が ±25% の門である** (``ThinEndCutTests`` の `retainedRoundEndsReuseAcrossPhases` の光の量の上限は、
+    /// **この検査が ±25% の門である** (``ThinEndCutTests`` の `retainedEndsReuseAcrossPhases` の光の量の上限は、
     /// 環境差に余裕を持たせた粗い見張り)。控えを使い回したかどうかは見ない (戻した条件を拾うのは同じ検査の組み直しの回数と、
-    /// 線引きの両側を踏む `retainedRoundEndsPhaseFreeBoundary`)。控えを作る位相 (`px`・`py`) は測る位相 (`dx`・`dy`) と
+    /// 線引きの両側を踏む `retainedEndsPhaseFreeBoundary`)。四角い端・延ばす端は ``flatRetainedReusedAcrossPhases()`` が見る。控えを作る位相 (`px`・`py`) は測る位相 (`dx`・`dy`) と
     /// 独立に生成する。形 (端だけ短く曲がる折れ線・小さい半径の弧・`curveVertex` を含む)・長さ・折れ角・向き・回す前の
     /// 縦の倍率 (せん断) も振る。比べる基準は #3859 の物差しどおり、その場で引いた同じ線である。
     @Test("丸い端の保持した形は、別の位相で置いた控えを使い回しても、その場で引いた線の光の量の ±25% に収まる (#3864)")
@@ -1631,6 +1632,41 @@ struct DensityInvarianceTests {
         #expect(report.failure == nil, "\(report.failure ?? "")")
     }
 
+    /// ``roundRetainedReusedAcrossPhases()`` の軸に、端の形 (0 = `.square`・1 = `.project`) を足したもの。
+    nonisolated static let flatReuseAxes: [ProbeAxis] =
+        roundReuseAxes + [ProbeAxis("cap", 0..<2, simplest: 0, step: 1)]
+
+    /// 四角い端・延ばす端の保持した形も、別の位相で置いた控えを使い回して、**その場で引いた線**の光の量の ±25% (#3859) に
+    /// 収まる (#3903)。形・置き方の振り方と、この検査が ±25% の門であることは ``roundRetainedReusedAcrossPhases()`` と同じ。
+    @Test("四角い端・延ばす端の保持した形は、別の位相で置いた控えを使い回しても、その場で引いた線の光の量の ±25% に収まる (#3903)")
+    func flatRetainedReusedAcrossPhases() throws {
+        let report = try Probe.run(
+            "density", suite: "DensityInvarianceTests", key: "reuse/flat", axes: Self.flatReuseAxes,
+            cases: Self.generatedCases * 4
+        ) { input in
+            let density = input.float("density")
+            let cap: StrokeCap = input["cap"] < 1 ? .square : .project
+            let form = RoundRetainedForm(
+                kind: RoundRetainedShape(rawValue: Int(input["kind"])) ?? .line,
+                length: input.float("length") / density, bend: input.float("bend"),
+                tiny: input.float("tiny") / density, radius: input.float("radius") / density,
+                skew: input.float("skew"))
+            let pose = Pose(
+                weight: input.float("weight"), density: density,
+                offset: SIMD2(input.float("dx"), input.float("dy")), angle: input.float("angle"), squash: 1)
+            if pose.weight * pose.density * form.skew * (form.kind == .squashed ? 0.5 : 1) < 0.07 { return .skip }
+            var prime = pose
+            prime.offset = SIMD2(input.float("px"), input.float("py"))
+            let direct = try Self.roundRetainedInk(form, pose: pose, prime: nil, immediate: true, side: 256, cap: cap)
+            let reused = try Self.roundRetainedInk(form, pose: pose, prime: prime, side: 256, cap: cap)
+            if abs(reused - direct) > 0.25 * direct {
+                return .fail("光の量 \(reused) (その場で引いた線 \(direct)・\(form.kind)・\(cap))")
+            }
+            return .pass
+        }
+        #expect(report.failure == nil, "\(report.failure ?? "")")
+    }
+
     /// 固定の例: 控えの使い回しが短い折れ線で ×1.26 になった置き方 (#3864 の生成の検査が見つけた入力)。描く画素で長さ 1.8 の線分 2 本
     /// を約 100° に折った形は、端を切るかどうかが位相で変わる (``Canvas/thinEnds(_:outline:thin:offset:)`` の両端の片の重なり)。
     /// 十分に長い線だけ控えを使い回す (``ThinStrokeRecipe/endsAreFreeOfPhase(drawnBy:)``) と収まる。
@@ -1644,6 +1680,21 @@ struct DensityInvarianceTests {
         let fresh = try Self.roundRetainedInk(form, pose: pose, prime: nil)
         let reused = try Self.roundRetainedInk(form, pose: pose, prime: prime)
         #expect(abs(reused - fresh) <= 0.25 * fresh, "光の量 \(reused) (その場で \(fresh))")
+    }
+
+    /// 固定の例: ``shortBentRoundRetainedStaysWithinTolerance()`` と同じ置き方を、四角い端・延ばす端で (#3903)。
+    @Test(
+        "固定の例: 短い折れ線の四角い端・延ばす端も、別の位相で置いた控えを使い回さず、その場で組んだ光の量の ±25% に収まる (#3903)",
+        arguments: [StrokeCap.square, .project])
+    func shortBentFlatRetainedStaysWithinTolerance(_ cap: StrokeCap) throws {
+        let pose = Pose(
+            weight: 1, density: 0.3359375, offset: SIMD2(1.8640598, 1.3252786), angle: 2.5, squash: 1)
+        var prime = pose
+        prime.offset = SIMD2(0.34997286, 0.90107313)
+        let form = RoundRetainedForm(kind: .bent, length: 5.338, bend: 1.7879679)
+        let fresh = try Self.roundRetainedInk(form, pose: pose, prime: nil, cap: cap)
+        let reused = try Self.roundRetainedInk(form, pose: pose, prime: prime, cap: cap)
+        #expect(abs(reused - fresh) <= 0.25 * fresh, "\(cap): 光の量 \(reused) (その場で \(fresh))")
     }
 
     /// 固定の例: #3385 で落ちた box の稜線の置き方 (専用機の定期の回が生成した入力を縮めたもの。#2251 の追記)。
