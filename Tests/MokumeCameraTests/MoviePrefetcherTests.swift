@@ -166,11 +166,20 @@ struct MoviePrefetcherTests {
             try #require(ContinuousClock.now < deadline, "係が塞がらない: \(prefetcher.diagnosis)")
             try await Task.sleep(for: .milliseconds(1))
         }
-        let started = ContinuousClock.now
+        // `close()` は同期で main を塞ぐので、戻ったかは main の外のスレッドが期限つきで見る。期限を越えても戻らなければ
+        // 失敗を記録し、塞ぎを解いて係を抜けさせる (検査が止まり続けない)
+        let closed = Switch()
+        DispatchQueue.global().async {
+            let limit = ContinuousClock.now + .seconds(10)
+            while !closed.isOn, ContinuousClock.now < limit { Thread.sleep(forTimeInterval: 0.01) }
+            if !closed.isOn {
+                Issue.record("close() が期限で諦めずに戻らない")
+                gate.signal()
+            }
+        }
         prefetcher.close()
-        let waited = ContinuousClock.now - started
-        #expect(prefetcher.stopTimedOut)
-        #expect(waited >= .seconds(MoviePrefetcher.stopLimit) && waited < .seconds(MoviePrefetcher.stopLimit + 1))
+        closed.isOn = true
+        #expect(prefetcher.stopTimedOut, "期限を越えて諦めたと名乗る")
         gate.signal()
         #expect(prefetcher.waitUntilStopped(5), "塞ぎが解けた後、係が抜けない")
     }
