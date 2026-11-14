@@ -16,9 +16,14 @@ struct WatchRequest: ExchangeRequest, Equatable {
     let action: String
 
     /// この段で受ける動作。`send` は後の段 (#3566) が足す。
-    enum Action: String {
+    enum Action: String, CaseIterable {
         case audition
         case leave
+        /// ソースの中身が変わっていなくても、保存したときと同じ作り直しと差し替えを 1 回起こす
+        /// (#3428)。
+        case rebuild
+        /// 作り直さずに、いまの版を最初から起こし直す (#3428)。
+        case restart
     }
 
     var known: Action? { Action(rawValue: action) }
@@ -61,6 +66,13 @@ struct WatchReport: Encodable, Equatable {
         /// 作品のウィンドウが映している本番の子が、目録で自分の番号を名乗らない (古いライブラリ)。試聴の版と本番を、番号で
         /// 区別して別のウィンドウに出し分けられない。入ると、試聴の版が作品のウィンドウにも出て、ウィンドウの入力は本番へ届く。
         case unidentifiedGeneration
+        /// 起こし直す要求で、当たる子が走っていない (試聴中なら試聴の子、そうでなければ本番の子が居ない。最初の作り直しが
+        /// 失敗した後など) (#3428)。
+        case noTarget
+        /// 起こし直す要求で、当たる子の版の組み上がりがもう無い (#3428)。
+        /// 本番の版も試聴の版も同じ置き場の同じ実行ファイルへ組むので、最後に通った作り直しの版が当たる子の版でなければ、
+        /// その版では起こし直せない。作り直す要求を使う。
+        case notBuilt
         /// 知らない動作。
         case unknownAction
         /// 要求の形として解けなかった (`id` だけ読めた)。

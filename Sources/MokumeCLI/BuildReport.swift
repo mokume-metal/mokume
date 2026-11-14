@@ -171,6 +171,17 @@ struct BuildReport: Encodable, Equatable {
     /// 「プレビューに起こした」で、「作品のウィンドウが映す版」ではない。試聴を出ると記録は本番の版に戻り、この欄は無くなる。
     /// 試聴に入っていない記録は、欄ごと持たない。
     var audition: Bool?
+    /// 区画 `watch` の作り直す要求 (`rebuild`) で起きた作り直しか (#3428)。
+    ///
+    /// **頼まれた作り直しの記録だけが持つ。** 保存で起きた回は欄ごと持たない。作り直しの最中に中身を変えた保存を読むと、
+    /// 頼みはその保存に追い越され (後から読んだものが 1 回の作り直しになる)、その回は保存の回として書く。
+    var requested: Requested?
+
+    /// 頼まれた作り直しの種類。**綴りは `Schemas/build-status.schema.json` の `enum` と揃える。**
+    enum Requested: String, Encodable, CaseIterable {
+        /// 区画 `watch` の `rebuild` の要求。
+        case rebuild
+    }
 
     /// 1 行の要約。端末に出す形で、測定の道具もこれを読める。
     var summary: String {
@@ -179,6 +190,8 @@ struct BuildReport: Encodable, Equatable {
         if let relaunch = timings.relaunchMs { parts.append("relaunch_ms=\(round(relaunch))") }
         parts.append("configuration=\(configuration)")
         if let stamp { parts.append("stamp=\(stamp)") }
+        // **頼まれた作り直しは、そう名乗る** (#3428)。保存による回の行は変えない
+        if let requested { parts.append("requested=\(requested.rawValue)") }
         // **起こせなかった回を「作り直した」で終わらせない。** そこが最も分かりにくい
         // 壊れ方 (絵が止まっているのに成功と出る) だからである (#1066)
         //

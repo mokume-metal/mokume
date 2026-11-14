@@ -44,6 +44,14 @@ struct WatchAuditionTests {
 
         /// 作り直しの口が呼ばれた回数。
         private(set) var rebuilds = 0
+        /// 起こした子ごとの、渡した時計の場所の番号 (``gens`` と同じ並び・#3428)。`0` は旗の場所。
+        private(set) var clocks: [Int] = []
+        /// 見張りが最後に選んだ時計の場所の番号。
+        private var selectedClock = 0
+        /// 作り直し (`build`) と子を起こした (`launch`) 順 (#3428)。
+        private(set) var events: [String] = []
+        /// 立てると、子を起こせない。
+        var launchFails = false
         /// 立てると、作り直しは通らない (終了コード 1)。**門の後で読む** — 門で止めた作り直しを、開ける前に失敗させられる。
         var buildFails = false
 
@@ -142,6 +150,7 @@ struct WatchAuditionTests {
                 hooks: WatchSession.Hooks(
                     rebuild: { directory in
                         box.harness?.rebuilds += 1
+                        box.harness?.events.append("build")
                         // 作り直しの途中で止めておく (作り直しの最中の出来事を演じる)
                         if let harness = box.harness, harness.holdRebuild { await harness.waitForRebuildGate() }
                         let fails = box.harness?.buildFails ?? false
@@ -164,7 +173,8 @@ struct WatchAuditionTests {
                         let early = harness.stamp
                         if harness.holdStamp { await harness.waitForStampGate() }
                         return harness.stampReadsAtEnd ? harness.stamp : early
-                    }),
+                    },
+                    selectClock: { box.harness?.selectedClock = $0 }),
                 stopTimeout: stopTimeout, finishTimeout: 0.5)
             session.overlapsGenerations = overlapsGenerations
             box.harness = self
@@ -193,6 +203,7 @@ struct WatchAuditionTests {
 
         /// 1 行読んで、`crash` なら信号 (KILL) で、`fail` なら終了コード 3 で、それ以外は 0 で終わる子。
         private func launch(_ executable: URL) throws(CommandFailure) -> Process {
+            if launchFails { throw .cannotLaunch(tool: "sh", place: "", reason: "the harness refuses to start a child") }
             let process = Process()
             process.executableURL = executable
             process.arguments = ["-c", script]
@@ -203,6 +214,8 @@ struct WatchAuditionTests {
                 throw .cannotLaunch(tool: "sh", place: "", reason: "\(error)")
             }
             gens.append(process)
+            clocks.append(selectedClock)
+            events.append("launch")
             return process
         }
 
