@@ -121,7 +121,7 @@ public final class Canvas {
 
     /// 溜めている頂点と、その置き場。
     var vertices: [ShapeVertex] = []
-    private let vertexStorage: GrowableBuffer
+    let vertexStorage: GrowableBuffer
     /// 平面の頂点ごとの被覆の置き場 (``coverageSpans``)。区間が無いフレームは書かず、置き場も取らない。
     let coverageStorage: GrowableBuffer
 
@@ -130,7 +130,7 @@ public final class Canvas {
     /// **添字 0 は常に何も動かさない置き場所**で、畳めない列 (字・画像・その場で並べた
     /// 頂点) はここを指す。毎フレーム置き直すので、溜め場を捨てても消えない。
     var flatInstances: [FlatInstance] = [.identity]
-    private let flatInstanceStorage: GrowableBuffer
+    let flatInstanceStorage: GrowableBuffer
     /// 細い塗りの雛形の記述の置き場 (#2208)。**置き場所の記述は ``thinFillSpans`` が引く**ので、1 つの
     /// 置き場所が持つ記述は 1 つとは限らない (いまは塗りの 1 つだけ。線の片は、同じ置き場所の続きの
     /// 記述になる)。細い塗りの雛形が無いフレームは空。
@@ -2931,11 +2931,14 @@ public final class Canvas {
     /// 側 (`pixelDensity` < 1) と同じ経路を、逆向きに通って倍率を掛けて読まれる。
     ///
     /// - Parameter outputScale: 1 以上の整数。`output` の幅と高さはどちらもこの数で割り切れる。
+    /// - Parameter defersStorage: 字形の焼き場の頁と列の置き場を、使うときまで取らないか (#4082)。
+    ///   描き場所 (``createGraphics(_:_:)``・合成の単位の中間面) だけが立てる。**本体の面は立てない** —
+    ///   最初の字や新しい種類の図形を描くフレームに、確保を乗せない。
     ///
     /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
     init(
         output: RenderTarget, gpu: RenderDevice, pixelDensity: Float, upscale: Upscale,
-        outputScale: Int
+        outputScale: Int, defersStorage: Bool = false
     ) throws(RenderFailure) {
         precondition(
             outputScale >= 1 && output.width % outputScale == 0 && output.height % outputScale == 0,
@@ -2966,7 +2969,7 @@ public final class Canvas {
         func storage(stride: Int, minimum: Int, label: String) -> GrowableBuffer {
             GrowableBuffer(
                 gpu: gpu, ring: ring, stride: stride, minimumCapacity: minimum,
-                label: "mokume.\(label)")
+                label: "mokume.\(label)", lendsEmptyBuffer: defersStorage)
         }
         self.vertexStorage = storage(
             stride: MemoryLayout<ShapeVertex>.stride, minimum: 1024, label: "vertices")
@@ -3021,9 +3024,9 @@ public final class Canvas {
         self.emptyNumbers = try Numbers(gpu: gpu, count: 1)
         self.projection = Self.makeProjection(width: self.width, height: self.height)
 
-        // **字を焼くまでは白い区画だけの頁を持つ** (#4082)。最初の字は頁を広げる道で替える
-        // (``bakedGlyph(for:font:reportsFull:)``)
-        let atlas = try GlyphAtlas(gpu: gpu, whiteOnly: true)
+        // **描き場所は、字を焼くまで白い区画だけの頁を持つ** (#4082)。最初の字は頁を広げる道で替える
+        // (``replaceGlyphPage()``)。本体の面は最初から字の頁を持つ
+        let atlas = try GlyphAtlas(gpu: gpu, whiteOnly: defersStorage)
         self.atlas = atlas
         self.currentTexture = atlas.held
         self.whiteUV = atlas.whiteUV
