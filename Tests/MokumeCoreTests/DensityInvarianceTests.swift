@@ -1430,6 +1430,223 @@ struct DensityInvarianceTests {
         return lines
     }
 
+    /// 矩形のほかの小さい閉じた輪郭 (#4078)。どれも一般の細い輪郭の帯 (`thinCarving`) を通る。
+    enum SmallClosedShape: String, CaseIterable, Sendable {
+        case ellipse
+        case triangle
+        case quad
+        /// `beginShape` の閉じた 5 角形
+        case polygon
+        /// 4 つの角を同じ半径で丸めた `rect`
+        case roundedRect
+    }
+
+    /// 小さい閉じた輪郭の置き方 (#4078)。大きさは描く画素で選び、出す画素へは細かさで割って置く。
+    struct SmallClosedPose: Sendable, CustomStringConvertible {
+        var shape: SmallClosedShape
+        /// 太さ・細かさ・ずらし・角度・角の形 (``Pose`` の同じ名前の値)
+        var base: Pose
+        /// 囲む矩形 (回す前) の短い辺 (描く画素)。楕円は短い径
+        var side: Float
+        /// 囲む矩形の長い辺 / 短い辺 (`[1, 2)`)
+        var aspect: Float
+        /// 三角形の頂点の横の位置・平行四辺形のずれ (`[-0.5, 0.5)`)
+        var skew: Float
+        /// 角丸の半径 / 短い辺の半分 (`[0.1, 1)`)
+        var round: Float
+
+        var description: String {
+            "\(shape)・短い辺 \(side)・縦横比 \(aspect)・ずれ \(skew)・角丸 \(round)・\(base)"
+        }
+
+        /// 出す画素での幅と高さ (囲む矩形)。
+        var size: SIMD2<Float> { SIMD2(side * aspect, side) / base.density }
+
+        /// 多角形の頂点 (出す画素・中心が原点・回す前)。曲線の形は `nil`。
+        var vertices: [SIMD2<Float>]? {
+            let (w, h) = (size.x, size.y)
+            switch shape {
+            case .triangle:
+                return [SIMD2(-w / 2, h / 2), SIMD2(w / 2, h / 2), SIMD2(skew * w, -h / 2)]
+            case .quad:
+                // 囲む矩形にちょうど収まる平行四辺形
+                let t = abs(skew) * w / 2
+                return [SIMD2(-w / 2 + t, -h / 2), SIMD2(w / 2, -h / 2), SIMD2(w / 2 - t, h / 2), SIMD2(-w / 2, h / 2)]
+            case .polygon:
+                // 正 5 角形を、囲む矩形にちょうど収まるよう縦横に伸ばす
+                let unit = (0..<5).map { k -> SIMD2<Float> in
+                    let a = 2 * Float.pi * Float(k) / 5 - .pi / 2
+                    return SIMD2(cos(a), sin(a))
+                }
+                let (lo, hi) = (unit.reduce(unit[0], simd_min), unit.reduce(unit[0], simd_max))
+                return unit.map { ($0 - (lo + hi) / 2) / (hi - lo) * SIMD2(w, h) }
+            case .ellipse, .roundedRect:
+                return nil
+            }
+        }
+
+        /// 中心線の周の長さ (出す画素)。
+        var perimeter: Double {
+            let (w, h) = (Double(size.x), Double(size.y))
+            switch shape {
+            case .ellipse:
+                let (a, b) = (w / 2, h / 2)
+                return Double.pi * (3 * (a + b) - ((3 * a + b) * (a + 3 * b)).squareRoot())
+            case .roundedRect:
+                let r = Double(round) * h / 2
+                return 2 * (w + h) - 8 * r + 2 * Double.pi * r
+            default:
+                let points = vertices ?? []
+                return zip(points, points.dropFirst() + points.prefix(1)).reduce(0) {
+                    $0 + Double(simd_length($1.1 - $1.0))
+                }
+            }
+        }
+
+        /// 期待する光の量 (描く画素の和)。周 × 太さから、多角形の角の外側が尖りより欠ける分を引く。
+        ///
+        /// 外角 φ の角で、外側の縁を延ばした尖り (面積 h² tan(φ/2)・h は半分の太さ) に対し、`bevel` は三角形
+        /// (h² sin φ / 2)、`round` は扇 (h² φ / 2)、`miter` は尖りが角から太さ × √2 / 2 より先へ出る (φ > π/2) とき
+        /// その位置で切った分だけ欠ける (`strokeJoin(_:)` の説明)。内側の重なりは数えない (矩形の表 ``smallRectRows`` と同じ)。
+        var expected: Double {
+            let drawn = Double(base.weight * base.density)
+            var total = perimeter * Double(base.density) * drawn
+            guard let points = vertices else { return total }
+            let h = drawn / 2
+            for index in points.indices {
+                let previous = points[(index + points.count - 1) % points.count]
+                let next = points[(index + 1) % points.count]
+                let (a, b) = (simd_normalize(points[index] - previous), simd_normalize(next - points[index]))
+                let phi = Double(acos(max(-1, min(1, simd_dot(a, b)))))
+                let spike = h * h * tan(phi / 2)
+                let kept: Double
+                switch base.join {
+                case .bevel: kept = h * h * sin(phi) / 2
+                case .round: kept = h * h * phi / 2
+                default:
+                    if phi <= Double.pi / 2 {
+                        kept = spike
+                    } else {
+                        // 二等分線を x 軸に、尖り (h / cos(φ/2), 0) の手前 L = √2 h で切る。切り落とすのは 2 つの小さい三角形
+                        let (c, s) = (cos(phi / 2), sin(phi / 2))
+                        let (tip, cut, ax, ay) = (h / c, 2.0.squareRoot() * h, h * c, h * s)
+                        kept = spike - (tip - cut) * (tip - cut) * ay / (tip - ax)
+                    }
+                }
+                total -= spike - kept
+            }
+            return total
+        }
+
+        @MainActor
+        func draw(on canvas: Canvas, shaded: Bool) throws {
+            if shaded { canvas.shader(try Amount.plainShader(canvas)) }
+            canvas.strokeWeight(base.weight)
+            canvas.strokeJoin(base.join)
+            canvas.translate(base.offset.x, 0)
+            canvas.translate(64, 64 + base.offset.y)
+            canvas.rotate(base.angle)
+            let (w, h) = (size.x, size.y)
+            switch shape {
+            case .ellipse: canvas.ellipse(0, 0, w, h)
+            case .roundedRect: canvas.rect(-w / 2, -h / 2, w, h, round * h / 2)
+            case .triangle:
+                let p = vertices!
+                canvas.triangle(p[0].x, p[0].y, p[1].x, p[1].y, p[2].x, p[2].y)
+            case .quad:
+                let p = vertices!
+                canvas.quad(p[0].x, p[0].y, p[1].x, p[1].y, p[2].x, p[2].y, p[3].x, p[3].y)
+            case .polygon:
+                canvas.beginShape()
+                for p in vertices! { canvas.vertex(p.x, p.y) }
+                canvas.endShape(.close)
+            }
+        }
+    }
+
+    /// 表: 矩形のほかの小さい閉じた輪郭の細い輪郭の光の量 (期待との比) を、描く画素での短い辺 (短い径) の区間ごとに測る
+    /// (#4078)。**`MOKUME_SMALL_CLOSED_TABLE=1` のときだけ走り、表を `MOKUME_SMALL_CLOSED_TABLE_OUT` のファイルへ書く**。
+    ///
+    /// 形は ``SmallClosedShape`` の 5 つ (`MOKUME_SMALL_CLOSED_SHAPES` に `ellipse,triangle` の形で絞れる) で、`shader()` を
+    /// 掛けた経路と掛けない経路の両方を測る。置き方の選び方・件数 (`MOKUME_SMALL_CLOSED_SAMPLES`。既定 100)・区間の端
+    /// (`MOKUME_SMALL_CLOSED_EDGES`)・角の形 (`MOKUME_SMALL_CLOSED_JOIN`)・seed は矩形の表 (``smallRectTable()``) と揃える。
+    /// 形ごとに、縦横比 `[1, 2)`・三角形の頂点と平行四辺形のずれ `[-0.5, 0.5)`・角丸の半径 (短い辺の半分の `[0.1, 1)`) も選ぶ。
+    /// 期待は ``SmallClosedPose/expected`` (周 × 太さ − 角の欠け)。
+    @Test(
+        "表: 矩形のほかの小さい閉じた輪郭の細い輪郭の光の量を、描く画素での短い辺ごとに測る (#4078)",
+        .enabled(if: ProcessInfo.processInfo.environment["MOKUME_SMALL_CLOSED_TABLE"] == "1", "表を出すときだけ走る"))
+    func smallClosedTable() throws {
+        let environment = ProcessInfo.processInfo.environment
+        let path = try #require(
+            environment["MOKUME_SMALL_CLOSED_TABLE_OUT"], "表を書くファイルを MOKUME_SMALL_CLOSED_TABLE_OUT で渡す")
+        let samples = environment["MOKUME_SMALL_CLOSED_SAMPLES"].flatMap { Int($0) } ?? 100
+        let seed: UInt64 = environment["MOKUME_PROBE_FRESH"] == "1" ? .random(in: .min ... .max) : 0x4078
+        let edges =
+            environment["MOKUME_SMALL_CLOSED_EDGES"].map { $0.split(separator: ",").compactMap { Float($0) } }
+            ?? [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.5, 4, 6, 10]
+        let join: StrokeJoin =
+            switch environment["MOKUME_SMALL_CLOSED_JOIN"] {
+            case "bevel": .bevel
+            case "round": .round
+            default: .miter
+            }
+        let shapes =
+            environment["MOKUME_SMALL_CLOSED_SHAPES"].map { $0.split(separator: ",").compactMap { SmallClosedShape(rawValue: String($0)) } }
+            ?? SmallClosedShape.allCases
+        var lines: [String] = []
+        for shape in shapes {
+            for shaded in [true, false] {
+                lines += try Self.smallClosedRows(
+                    shape, shaded: shaded, edges: edges, samples: samples, seed: seed, join: join)
+            }
+        }
+        try (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    /// ``smallClosedTable()`` の 1 つの形と経路の表。
+    @MainActor
+    static func smallClosedRows(
+        _ shape: SmallClosedShape, shaded: Bool, edges: [Float], samples: Int, seed: UInt64, join: StrokeJoin
+    ) throws -> [String] {
+        var random = ProbeRandom(seed: seed)
+        func unit() -> Float { Float(random.nextUnit()) }
+        let route = shaded ? "shader() あり" : "shader() なし"
+        var lines = ["\(shape)・\(route)・角 \(join)・seed 0x\(String(seed, radix: 16))・区間ごと \(samples) 件"]
+        for (low, high) in zip(edges, edges.dropFirst()) {
+            var (lowest, highest) = (Double.infinity, -Double.infinity)
+            var (lowestPose, highestPose) = ("", "")
+            var over = 0
+            for _ in 0..<samples {
+                var base: Pose
+                repeat {
+                    let density = (32 + Float(Int(unit() * 97))) / 128
+                    base = Pose(
+                        weight: 0.07 + unit() * 0.93, density: density, offset: SIMD2(unit() * 2, unit() * 2),
+                        angle: unit() * .pi / 2, squash: 1)
+                } while base.weight * base.density < 0.07
+                base.join = join
+                let pose = SmallClosedPose(
+                    shape: shape, base: base, side: low + unit() * (high - low), aspect: 1 + unit(),
+                    skew: unit() - 0.5, round: 0.1 + unit() * 0.9)
+                let canvas = try makeCanvas(density: base.density)
+                try draw(on: canvas) {
+                    canvas.background(0)
+                    canvas.noFill()
+                    canvas.stroke(255)
+                    try pose.draw(on: canvas, shaded: shaded)
+                }
+                let ratio = totalSum(try canvas.target.readPixels()) / pose.expected
+                if abs(ratio - 1) > 0.25 { over += 1 }
+                if ratio < lowest { (lowest, lowestPose) = (ratio, "\(pose)") }
+                if ratio > highest { (highest, highestPose) = (ratio, "\(pose)") }
+            }
+            lines.append(
+                "[\(low), \(high))\t×\(String(format: "%.3f", lowest))\t×\(String(format: "%.3f", highest))\t±25% 越え \(over)/\(samples)"
+                    + "\t最小: \(lowestPose)\t最大: \(highestPose)")
+        }
+        return lines
+    }
+
     /// 潰れた・有限でない 2x2 の回転に依らない鍵 (#3932)。対角の和が 0 以下・有限でない 2x2 は 0 の鍵、潰れた 2x2
     /// (行列式 0) は数でない値を持たず、比が決まらないのでビット列で比べる。
     @Test("潰れた・有限でない 2x2 の畳みの鍵は 0 か有限の値で、潰れた鍵はビット列で比べる (#3932)")
