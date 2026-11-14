@@ -79,11 +79,7 @@ struct MovieResizedFrameTests {
 
     /// 係が列を埋め終えるまで待つ。期限 (60 秒) を越えたら落とす。
     private func settle(_ prefetcher: MoviePrefetcher) async throws {
-        let deadline = ContinuousClock.now + .seconds(60)
-        while !prefetcher.isSettled {
-            try #require(ContinuousClock.now < deadline, "係が 60 秒で列を埋め終えない")
-            try await Task.sleep(for: .milliseconds(1))
-        }
+        try await PrefetcherSettle.wait(prefetcher)
     }
 
     /// 復号器が実際に届けるコマを、読み手を通さずに全部引く。**検査の前提を確かめる。**
@@ -117,7 +113,8 @@ struct MovieResizedFrameTests {
             case .failure(.tablePending): break
             case .failure(let refusal): Issue.record("表を作れない: \(refusal)"); return
             }
-            try #require(ContinuousClock.now < deadline, "表が 60 秒で出来ない")
+            // 先読みの係の状態は無い (表は共有で、係を通さない) ので、診断は載せず、待っている相手を名乗る
+            try #require(ContinuousClock.now < deadline, "表が 60 秒で出来ない (応答は tablePending のまま)")
             try await Task.sleep(for: .milliseconds(10))
         }
     }

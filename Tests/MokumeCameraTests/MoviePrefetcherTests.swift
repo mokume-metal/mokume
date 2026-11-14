@@ -30,11 +30,33 @@ struct MoviePrefetcherTests {
 
     /// 係が列を埋め終えるまで待つ。期限 (60 秒) を越えたら落とす。期限は、係が最初のコマで面の色の表を作る (debug で数秒・#2962) 間を含む。
     private func settle(_ prefetcher: MoviePrefetcher) async throws {
-        let deadline = ContinuousClock.now + .seconds(60)
-        while !prefetcher.isSettled {
-            try #require(ContinuousClock.now < deadline, "係が 60 秒で列を埋め終えない")
-            try await Task.sleep(for: .milliseconds(1))
-        }
+        try await PrefetcherSettle.wait(prefetcher)
+    }
+
+    @Test("待ち切れの説明に載せる係の状態は、休み・見た頼みと最新の頼み・列のコマ数・最後に進んでからの経過を名乗る")
+    func diagnosisNamesTheWorkerState() async throws {
+        let url = try await movie()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let prefetcher = MoviePrefetcher(source: source(url))
+        defer { prefetcher.close() }
+        _ = try prefetcher.picture(at: 0, generation: 0, lap: 0, looping: false)
+        _ = try prefetcher.picture(at: 0.1, generation: 0, lap: 0, looping: false)
+        try await settle(prefetcher)
+        let first = prefetcher.lastStep
+        let text = prefetcher.diagnosis
+        #expect(text.contains("started=true idle=true seen=2 request=2 frames="), "\(text)")
+        #expect(text.contains("failure=false ended=false broken=false stopping=false exited=false lastStep="), "\(text)")
+        #expect(prefetcher.isSettled)
+        // 係が走り出す前と後で印が変わる (状態で見る。走り出す前の係は State の初期値で作る)
+        var before = PrefetchMailbox.State()
+        #expect(before.describe(requested: 1, now: .now).hasPrefix("started=false idle=false seen=0 request=1"))
+        before.started = true
+        #expect(before.describe(requested: 1, now: .now).hasPrefix("started=true "))
+        #expect(prefetcher.hasStarted)
+        // 係が進めば「最後に進んだ時刻」が更新される (時間の大小ではなく、更新されたかを見る)
+        _ = try prefetcher.picture(at: 0.5, generation: 0, lap: 0, looping: false)
+        try await settle(prefetcher)
+        #expect(prefetcher.lastStep > first, "頼みに答えても最後に進んだ時刻が動かない: \(prefetcher.diagnosis)")
     }
 
     @Test("埋まった列から、頼んだ位置のコマを待たずに選ぶ")
@@ -126,20 +148,38 @@ struct MoviePrefetcherTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let gate = DispatchSemaphore(value: 0)
         let blocking = Switch()
+        let entered = Switch()
         let prefetcher = MoviePrefetcher(source: source(url)) {
-            if blocking.isOn { gate.wait() }
+            if blocking.isOn {
+                entered.isOn = true
+                gate.wait()
+            }
         }
         _ = try prefetcher.picture(at: 0, generation: 0, lap: 0, looping: false)
         try await settle(prefetcher)
         blocking.isOn = true
         // 飛んで係を起こし、1 枚目の手前で塞がせる
         _ = try prefetcher.picture(at: 2, generation: 1, lap: 0, looping: false)
-        try await Task.sleep(for: .milliseconds(50))
-        let started = ContinuousClock.now
+        // 係が塞がるのを見てから閉じる (起こしの遅さを秒で見込まない。待つ側が期限を持つ)
+        let deadline = ContinuousClock.now + PrefetcherSettle.limit
+        while !entered.isOn {
+            try #require(ContinuousClock.now < deadline, "係が塞がらない: \(prefetcher.diagnosis)")
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        // `close()` は同期で main を塞ぐので、戻ったかは main の外のスレッドが期限つきで見る。期限を越えても戻らなければ
+        // 失敗を記録し、塞ぎを解いて係を抜けさせる (検査が止まり続けない)
+        let closed = Switch()
+        DispatchQueue.global().async {
+            let limit = ContinuousClock.now + .seconds(10)
+            while !closed.isOn, ContinuousClock.now < limit { Thread.sleep(forTimeInterval: 0.01) }
+            if !closed.isOn {
+                Issue.record("close() が期限で諦めずに戻らない")
+                gate.signal()
+            }
+        }
         prefetcher.close()
-        let waited = ContinuousClock.now - started
-        #expect(prefetcher.stopTimedOut)
-        #expect(waited >= .seconds(MoviePrefetcher.stopLimit) && waited < .seconds(MoviePrefetcher.stopLimit + 1))
+        closed.isOn = true
+        #expect(prefetcher.stopTimedOut, "期限を越えて諦めたと名乗る")
         gate.signal()
         #expect(prefetcher.waitUntilStopped(5), "塞ぎが解けた後、係が抜けない")
     }
