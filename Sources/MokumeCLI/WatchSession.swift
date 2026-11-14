@@ -579,6 +579,9 @@ final class WatchSession {
     /// 見張りを終えるときに、止まるのを待つ上限 (秒)。**検査から縮める** (``stopTimeout`` と
     /// 同じ理由)。
     let finishTimeout: TimeInterval
+    /// 強制終了した後に、消えるのを待つ上限 (秒)。**検査から渡す** — 回収の遅れで ``StopOutcome/abandoned`` に
+    /// 倒れる検査が、負荷で赤にならないようにする。既定は ``killGrace`` (静的) のまま。
+    let killGrace: TimeInterval
     /// 直前に子を止めたときの結果。**差し替えのときも入る。**
     ///
     /// 名乗るのは口の側である — このクラスは判断だけを持ち、出力を持たない。期限に
@@ -622,7 +625,8 @@ final class WatchSession {
         reportsRate: Bool = false, hooks: Hooks? = nil,
         invocation: Invocation = Invocation(),
         stopTimeout: TimeInterval = WatchSession.defaultStopTimeout,
-        finishTimeout: TimeInterval = WatchSession.defaultFinishTimeout
+        finishTimeout: TimeInterval = WatchSession.defaultFinishTimeout,
+        killGrace: TimeInterval = WatchSession.killGrace
     ) {
         self.directory = directory
         self.facetBase = facetBase ?? directory
@@ -631,6 +635,7 @@ final class WatchSession {
         self.hooks = hooks ?? .live(in: directory, invocation: invocation)
         self.stopTimeout = stopTimeout
         self.finishTimeout = finishTimeout
+        self.killGrace = killGrace
     }
 
     /// 見張りを終える手続き (``WatchCommand/finish(_:)``) がどこまで進んだか。
@@ -1567,7 +1572,7 @@ final class WatchSession {
         // 呼び手へ制御が戻る前に、別の口が同じ子を止めに入れる
         let runner = ShutdownRunner(
             Shutdown(
-                running, timeout: timeout, stopTimeout: stopTimeout, killGrace: Self.killGrace,
+                running, timeout: timeout, stopTimeout: stopTimeout, killGrace: killGrace,
                 interrupting: interrupting))
         let task = Task { () -> StopOutcome in
             let outcome = await runner.run { remaining in
@@ -1591,7 +1596,7 @@ final class WatchSession {
     ) -> StopOutcome {
         guard let running, running.isRunning else { return .notRunning }
         var shutdown = Shutdown(
-            running, timeout: timeout, stopTimeout: stopTimeout, killGrace: Self.killGrace,
+            running, timeout: timeout, stopTimeout: stopTimeout, killGrace: killGrace,
             interrupting: interrupting)
         while true {
             switch shutdown.poll(now: DispatchTime.now()) {

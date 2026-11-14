@@ -12,6 +12,13 @@ import mokume
 
 @Suite("保存したら作り直して差し替える", .signalStateKept)
 struct WatchSessionTests {
+    /// 強制終了した後に、消えるのを待つ猶予 (``WatchSession/killGrace``) を、検査の長さでは切れない値にする。
+    ///
+    /// 強制終了から回収までの遅れは Foundation 側の別スレッドで進み、負荷で本番の 0.5 秒を越えると
+    /// `.abandoned` に倒れる。**`.killed` を期待する検査が見たいのは強制終了まで進んだこと** で、回収の速さではない。
+    /// 猶予が尽きたら `.abandoned` と名乗る本番の約束は、この検査では見ない (本番の既定は変えていない)
+    static let reapNeverExpires: TimeInterval = 3600
+
     /// 差し替えた外側の記録。
     @MainActor
     final class Recorder {
@@ -272,8 +279,8 @@ struct WatchSessionTests {
     func aLaunchFailureHoldsThePreviousOnlyWhenItRuns(overlapping: Bool) async throws {
         let recorder = Recorder()
         let previous = Process()
-        previous.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        previous.arguments = ["30"]
+        previous.executableURL = URL(fileURLWithPath: "/usr/bin/tail")
+        previous.arguments = ["-f", "/dev/null"]
         // **待つ側が期限を持つ。** 残ったら殺す
         defer { if previous.isRunning { kill(previous.processIdentifier, SIGKILL) } }
         var hooks = recorder.hooks()
@@ -511,8 +518,8 @@ struct WatchSessionTests {
     func aLaterFailureHoldsTheRunningVersion() async throws {
         let recorder = Recorder()
         let previous = Process()
-        previous.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        previous.arguments = ["30"]
+        previous.executableURL = URL(fileURLWithPath: "/usr/bin/tail")
+        previous.arguments = ["-f", "/dev/null"]
         // **待つ側が期限を持つ。** 残ったら殺す
         defer { if previous.isRunning { kill(previous.processIdentifier, SIGKILL) } }
         var hooks = recorder.hooks()
@@ -1002,7 +1009,7 @@ struct WatchSessionTests {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: true, ready: ready),
-            stopTimeout: 0.2)
+            stopTimeout: 0.2, killGrace: Self.reapNeverExpires)
         await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
@@ -1022,7 +1029,7 @@ struct WatchSessionTests {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: true, ready: ready),
-            stopTimeout: 0.2)
+            stopTimeout: 0.2, killGrace: Self.reapNeverExpires)
         await session.start()
         let first = try #require(session.child)
         ready.waitForLast()
@@ -1121,7 +1128,7 @@ struct WatchSessionTests {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
-            hooks: hooksNeverFinishingCleanup(ready: ready), stopTimeout: 0.2, finishTimeout: 3)
+            hooks: hooksNeverFinishingCleanup(ready: ready), stopTimeout: 0.2, finishTimeout: 3, killGrace: Self.reapNeverExpires)
         var waits = 0
         session.willWaitForFinish = { _ in waits += 1 }
         await session.start()
@@ -2950,7 +2957,7 @@ struct WatchSessionTests {
         // この 1 人で済む (既定のヘルパが眠りを避けているのは、置き去りを作らないため)
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
-            hooks: hooks(running: "echo ready; exec sleep 30", ready: ready), stopTimeout: 1)
+            hooks: hooks(running: "echo ready; exec tail -f /dev/null", ready: ready), stopTimeout: 1)
         defer { session.stopBlocking() }
 
         await session.start()

@@ -526,7 +526,7 @@ struct WatchStopOffMainTests {
         defer { stubborn.killAll() }
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: stubborn.hooks(),
-            stopTimeout: 0.3, finishTimeout: 0.3)
+            stopTimeout: 0.3, finishTimeout: 0.3, killGrace: WatchSessionTests.reapNeverExpires)
         await session.start()
         stubborn.waitUntilReady()
         let child = try #require(session.child)
