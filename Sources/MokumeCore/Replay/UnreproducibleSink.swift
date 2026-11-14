@@ -23,14 +23,34 @@ package enum ReplayNotice {
         LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.waitingLoad)
     }
 
-    /// 音の解析の値 (`level`・`spectrum`・`waveform`・`isBeat` など) を読んだ。**鳴らすだけの音は名乗らない** —
-    /// 鳴った音は絵にも `expose` の値にも返らないので、照合を崩さない。名乗るのはウィンドウで録った記録だけ
-    /// (``UnreproducibleSink/soundRunsInRealTime``)。
-    ///
-    /// - Parameter kind: 読んだ音の型の名前 (理由に載る)。
-    package static func soundAnalysis(_ kind: @autoclosure () -> String) {
-        guard let sink = LaunchingSketch.replay, sink.soundRunsInRealTime else { return }
-        sink.noteUnreproducible(ReplayRecorder.Reason.soundAnalysis(kind()))
+}
+
+/// 音 1 つの、解析の値 (`level`・`spectrum`・`waveform`・`isBeat` など) を読んだことの名乗り (#3575)。
+///
+/// **鳴らすだけの音は名乗らない** — 鳴った音は絵にも `expose` の値にも返らないので、照合を崩さない。名乗るのは
+/// ウィンドウで録った記録 (流す側では、それを流しているとき) だけ (``UnreproducibleSink/soundRunsInRealTime``)。
+///
+/// 解析の値を読むたびに通る。**同じ受け手へは 1 度しか理由を組まない** — 2 度目からは受け手を比べるだけで返る
+/// (帯ごとに何百回も読む作品で、読むたびに文字列を組んで走査しない)。
+package struct SoundAnalysisNotice {
+    /// 読んだ音の型の名前 (理由に載る)。
+    private let kind: String
+    /// 既に名乗った (または名乗らないと決めた) 受け手。受け手の寿命は実行が決めるので弱く持つ。
+    private weak var settled: (any UnreproducibleSink)?
+    /// 理由を組んで受け手へ渡した回数。検査が読む。
+    package private(set) var reasonsBuilt = 0
+
+    package init(kind: String) {
+        self.kind = kind
+    }
+
+    /// 解析の値を読んだ。
+    package mutating func noteRead() {
+        guard let sink = LaunchingSketch.replay, sink !== settled else { return }
+        settled = sink
+        guard sink.soundRunsInRealTime else { return }
+        reasonsBuilt += 1
+        sink.noteUnreproducible(ReplayRecorder.Reason.soundAnalysis(kind))
     }
 }
 

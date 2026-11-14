@@ -110,6 +110,8 @@ final class ReplayPlayer: UnreproducibleSink {
     private var began: Double?
     /// 流している間に見つけた、記録が名乗っていない再現を保証しない理由 (見つけた順)。
     private(set) var noticed: [String] = []
+    /// 記録が名乗った理由と ``noticed`` の和。同じ理由を重ねないかを、並びを連結・走査せずに見る。
+    private var named: Set<String> = []
     /// 書いた結果。**1 度だけ書く。**
     private(set) var report: Report?
 
@@ -121,6 +123,7 @@ final class ReplayPlayer: UnreproducibleSink {
         for step in record.steps { byOrdinal[step.step] = step }
         self.byOrdinal = byOrdinal
         self.lastOrdinal = record.steps.last?.step ?? -1
+        self.named = Set(record.unreproducible)
     }
 
     /// 流せない頼み。最初の回の前に結果を書いて終わる。
@@ -205,7 +208,7 @@ final class ReplayPlayer: UnreproducibleSink {
 
     /// 流している間に、再現を保証しないものが使われた。**記録が既に名乗った理由と、同じ理由の 2 度目は名乗らない。**
     func noteUnreproducible(_ reason: String) {
-        guard report == nil, !unreproducible.contains(reason) else { return }
+        guard report == nil, named.insert(reason).inserted else { return }
         noticed.append(reason)
         Diagnostics.warn("Replaying: \(reason)")
     }

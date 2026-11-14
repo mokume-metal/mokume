@@ -1473,7 +1473,7 @@ package final class SketchRuntime {
     /// 外から値が届く入り口 (``Inlet/report`` を持つもの。ゲームパッド・MIDI・OSC / TCP / UDP / WebSocket・
     /// シリアル・マイク・カメラ・動画) は、届いた値が `InputState.enqueue` を通らず、記録に載らない (#2603 の後段)。
     /// 届く値がフレームの数え方だけで決まる入り口 (``FrameDeterminedSource``・`createCapture(frames:)`) は名乗らない。
-    /// 音を鳴らすだけの入り口も名乗らない — 名乗るのは解析の値を読んだとき (``ReplayNotice/soundAnalysis(_:)``)。
+    /// 音を鳴らすだけの入り口も名乗らない — 名乗るのは解析の値を読んだとき (``SoundAnalysisNotice``)。
     private func noteReplaySource(_ inlet: any Inlet) {
         guard let sink = unreproducibleSink, let report = inlet.report else { return }
         if let source = inlet as? any FrameDeterminedSource, source.isDeterminedByFrames { return }

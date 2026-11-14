@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
-import MokumeCore
 import MokumeDiagnostics
 
 /// 合成音 (オシレータ・ノイズ・エフェクト) に共通の、再生中の音の解析値。
@@ -82,14 +81,13 @@ public class SynthSound: EffectInput {
     var isActive = false
 
     /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
+    /// 読まれたら、ウィンドウで録る記録へ名乗る (#3575)。鳴らすだけなら名乗らない。
     private var deferred = DeferredLevels()
-    /// 解析の値。**公開の解析の口だけが読む** — 読んだことを、ウィンドウで録る記録へ名乗る (#3575)。鳴らすだけなら名乗らない。
-    private var levels: AudioLevels {
-        ReplayNotice.soundAnalysis(name)
-        return deferred.levels()
-    }
+    private var levels: AudioLevels { deferred.levels() }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
+    /// 解析を読んだことの名乗りの理由を組んだ回数。**検査が読む** — 読んだ回数によらず、実行ごとに 1 回まで。
+    var replayReasonsBuilt: Int { deferred.replayReasonsBuilt }
     /// 前のフレームの区間の終わり (出口の標本の通し番号)。
     private var covered = 0
     private var noticed: Set<String> = []
@@ -98,6 +96,7 @@ public class SynthSound: EffectInput {
         self.stage = stage
         self.node = node
         self.name = name
+        deferred = DeferredLevels(replayKind: name)
         // 鳴らし始める前の出口は無音 (ラックが 0 を書いている)。最初の区間の始まりが出口の標本 0 でなくても、
         // 最初の立ち上がりを拍にする
         deferred.beginsSilent = true
@@ -173,10 +172,7 @@ public class SynthSound: EffectInput {
     /// サンプルは解析と同じもの (チャンネルを平均したもの。音量を掛けた後)。サンプル 0 より前は 0。サンプルが進まな
     /// かったフレームは前のまま。何も再生されていなければ 1024 個の 0。p5.sound の `waveform()` と
     /// Processing Sound の `Waveform` に当たる。
-    public var waveform: [Float] {
-        ReplayNotice.soundAnalysis(name)
-        return deferred.waveform()
-    }
+    public var waveform: [Float] { deferred.waveform() }
 
     /// このフレームの区間にビートがあったか。区間にビートが 1 つ以上あれば `true` (複数あっても 1 回にまとめる)。
     ///
@@ -198,10 +194,7 @@ public class SynthSound: EffectInput {
     /// 1 フレームに数 µs)。再生前は無音なので、最初のアタックもビートになる。停止しても履歴は続き、再生し直せば
     /// 続きから判定する。サンプルを取りこぼしたとき (区間の上限を越えたとき) は、履歴を捨ててやり直し、取りこぼした区間では
     /// ビートを出さない。区間の上限があるので、約 7.8 fps (48 kHz) より遅いフレームでは区間の先頭が切り捨てられ続け、ビートは fps に依存する。
-    public var isBeat: Bool {
-        ReplayNotice.soundAnalysis(name)
-        return deferred.isBeat
-    }
+    public var isBeat: Bool { deferred.isBeat }
 
     /// 拍の状態が区間を処理した回数。検査が読む — 一度も読まれなければ 0。
     var beatSteps: Int { deferred.beatSteps }

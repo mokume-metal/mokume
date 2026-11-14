@@ -112,6 +112,8 @@ final class ReplayRecorder: UnreproducibleSink {
     private var pendingObserveTime: Float?
     private var exposed: [String: ExposedValue] = [:]
     private var notes: [Note] = []
+    /// ``notes`` の理由。同じ理由を書き重ねないかを、並びを走査せずに見る。
+    private var notedReasons: Set<String> = []
     private var openStep: Open?
     private var nextOrdinal = 0
 
@@ -240,7 +242,7 @@ final class ReplayRecorder: UnreproducibleSink {
 
     /// 再現を保証しないものが使われた。**同じ理由は 1 度だけ書く。**
     func noteUnreproducible(_ reason: String) {
-        guard !isFinished, !failed, !notes.contains(where: { $0.reason == reason }) else { return }
+        guard !isFinished, !failed, notedReasons.insert(reason).inserted else { return }
         notes.append(Note(step: openStep?.ordinal ?? nextOrdinal, reason: reason))
         Diagnostics.warn("Recording: \(reason). The record says so")
     }

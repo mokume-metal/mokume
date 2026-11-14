@@ -190,14 +190,13 @@ public final class SoundFile: Inlet, EffectInput {
     /// 速さが 1 を越えるときの低域通過の係数の置き場 (読む比ごと)。解析・``FileVoice``・``FileNode`` が同じ係数を読む。
     private var kernels: [UInt64: RateKernel] = [:]
     /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
-    private var deferred = DeferredLevels()
-    /// 解析の値。**公開の解析の口だけが読む** — 読んだことを、ウィンドウで録る記録へ名乗る (#3575)。
-    private var levels: AudioLevels {
-        ReplayNotice.soundAnalysis("SoundFile")
-        return deferred.levels()
-    }
+    /// 読まれたら、ウィンドウで録る記録へ名乗る (#3575)。
+    private var deferred = DeferredLevels(replayKind: "SoundFile")
+    private var levels: AudioLevels { deferred.levels() }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
+    /// 解析を読んだことの名乗りの理由を組んだ回数。**検査が読む** — 読んだ回数によらず、実行ごとに 1 回まで。
+    var replayReasonsBuilt: Int { deferred.replayReasonsBuilt }
     /// 位置を進める時計。開くまで `nil`。
     private var pace: Pace?
     /// 最後に見たフレームが、時計の上で何フレーム目に並ぶか (最初のフレームが 0)。操作はこの
@@ -873,10 +872,7 @@ public final class SoundFile: Inlet, EffectInput {
     /// サンプルは解析と同じもの (チャンネルを平均したもの。音量を掛けた後)。サンプル 0 より前は 0。サンプルが進まな
     /// かったフレームは前のまま。何も再生されていなければ 1024 個の 0。p5.sound の `waveform()` と
     /// Processing Sound の `Waveform` に当たる。
-    public var waveform: [Float] {
-        ReplayNotice.soundAnalysis("SoundFile")
-        return deferred.waveform()
-    }
+    public var waveform: [Float] { deferred.waveform() }
 
     /// このフレームの区間にビートがあったか。区間にビートが 1 つ以上あれば `true` (複数あっても 1 回にまとめる)。
     ///
@@ -904,10 +900,7 @@ public final class SoundFile: Inlet, EffectInput {
     ///
     /// **判定は音量 (``amp(_:)``) を掛けた後のサンプルで行う** (``level``・``waveform`` と同じサンプル)。音量を急に変えると
     /// ビートが出る・消える (-60 dBFS 相当を越えない小さい音量では出ない)。
-    public var isBeat: Bool {
-        ReplayNotice.soundAnalysis("SoundFile")
-        return deferred.isBeat
-    }
+    public var isBeat: Bool { deferred.isBeat }
 
     /// 拍の状態が区間を処理した回数。検査が読む — 一度も読まれなければ 0。
     var beatSteps: Int { deferred.beatSteps }
