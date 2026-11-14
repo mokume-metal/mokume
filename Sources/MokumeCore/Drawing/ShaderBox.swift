@@ -70,9 +70,15 @@ final class ShaderBox {
     ///
     /// 差し替えを扱うのは印を取った側で、プロセスで生きているどの面のフレームの頭でも、main actor を譲ったときの
     /// `Task` でもありうる (``FileWatcher`` の「扱うのは、印を取った側」)。扱った所の ``LaunchingSketch/replay`` を
-    /// 引くと、別の実行の記録・再生に載り、自分の記録・再生からは落ちる。だから読み込んだときに控える。
-    /// 受け手の寿命は実行が決めるので弱く持つ。
+    /// 引くと、別の実行の記録・再生に載り、自分の記録・再生からは落ちる。だから断片の側で控える。
+    ///
+    /// 控えるのは、読み込んだとき (``watch(_:)``) か、まだなら描くときに使われたとき (``noteUsed()``) の受け手で、
+    /// 1 度控えたら変えない。タスクローカル値を継がない所 (`Task.detached` など) で読み込んだ断片も、記録している実行の
+    /// `draw()` で使えばその実行へ名乗る。どの記録・再生の中でも使われない断片は名乗らない。受け手の寿命は実行が
+    /// 決めるので弱く持ち、その実行が終わった後の差し替えは名乗らない。
     private weak var replaySink: (any UnreproducibleSink)?
+    /// ``replaySink`` を控えたか (控えた受け手が終わって `nil` になっても、控え直さない)。
+    private var hasReplaySink = false
     /// 裏で組んでいる 1 本 (型の説明の「裏で組む」)。
     private var inFlight: InFlight?
     /// 診断: 裏で組みに行った回数。
@@ -107,8 +113,21 @@ final class ShaderBox {
     /// いない持ち主の `reload` が走る。
     func watch(_ onChange: @escaping () -> Void) {
         guard let url else { return }
-        replaySink = LaunchingSketch.replay
+        adoptReplaySink()
         watcher = FileWatcher(url: url, onChange: onChange)
+    }
+
+    /// 持ち主が、描くために使われた (塗りを当てた・効果を掛けた・計算を走らせた)。**利用者の API の中で呼ぶ** — そこでは
+    /// 使った実行の受け手が引ける。
+    func noteUsed() {
+        if !hasReplaySink { adoptReplaySink() }
+    }
+
+    /// いま記録・再生している実行があれば、それを名乗る先に控える (``replaySink``)。見張らない断片は差し替わらないので控えない。
+    private func adoptReplaySink() {
+        guard !hasReplaySink, url != nil, let sink = LaunchingSketch.replay else { return }
+        replaySink = sink
+        hasReplaySink = true
     }
 
     /// 宣言と照らして値を書き換える。受け付けたら `true`。

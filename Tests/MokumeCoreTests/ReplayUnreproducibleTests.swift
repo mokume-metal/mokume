@@ -273,6 +273,48 @@ struct ReplayUnreproducibleTests {
         #expect(found.unreproducible == [Reason.fragmentSwapped("paint.metal")], "\(found.unreproducible)")
     }
 
+    /// 受け手を継がない所 (`Task.detached` に当たる) で断片を読み込み、`draw()` で使うスケッチ。
+    final class PaintedAway: Sketch {
+        var path = ""
+        var paint: Shader?
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        init() {}
+        convenience init(_ path: String) {
+            self.init()
+            self.path = path
+        }
+        func setup() throws {
+            paint = try LaunchingSketch.$replay.withValue(nil) { try loadShader(path) }
+        }
+        func draw() {
+            background(0.1)
+            if let paint { shader(paint) }
+            rect(0, 0, 8, 8)
+        }
+    }
+
+    @Test("受け手の無い所で読み込んだ断片も、記録している実行の draw() で使えば、差し替えをその実行が名乗る")
+    func aFragmentLoadedWithoutASinkIsNamedByTheRunThatUsesIt() async throws {
+        let directory = try scratch()
+        let fragment = directory.appendingPathComponent("paint.metal")
+        func write(_ green: Float) throws {
+            try """
+                float4 paint(Fragment in, Values values) {
+                    return float4(0.0, \(green), 0.0, 1.0);
+                }
+                """.write(to: fragment, atomically: true, encoding: .utf8)
+        }
+        let swap: (Int, SketchRuntime) async throws -> Void = { frame, runtime in
+            guard frame == 2 else { return }
+            try write(0.8)
+            (runtime.sketch as? PaintedAway)?.paint?.watcher?.keepPending()
+        }
+        try write(0.2)
+        let url = directory.appendingPathComponent("take.json")
+        let recorded = try await record(PaintedAway(fragment.path), frames: 4, to: url, between: swap)
+        #expect(recorded.unreproducible == [Reason.fragmentSwapped("paint.metal")], "\(recorded.unreproducible)")
+    }
+
     @Test("断片の差し替えを別の実行のフレームの頭が扱っても、名乗りは断片を読み込んだ実行の記録に載り、扱った側には載らない")
     func aSwapTakenByAnotherRunIsNamedByItsOwner() throws {
         let directory = try scratch()
