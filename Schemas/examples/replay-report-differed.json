@@ -2,8 +2,8 @@
   "firstMismatch" : {
     "frame" : 100,
     "name" : "paddleX",
-    "recorded" : "155",
-    "replayed" : "150",
+    "recorded" : "{\"type\":\"float\",\"value\":155}",
+    "replayed" : "{\"type\":\"float\",\"value\":150}",
     "step" : 99,
     "what" : "expose"
   },

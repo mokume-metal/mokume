@@ -36,7 +36,7 @@
     "mismatches": {
       "type": "integer",
       "minimum": 0,
-      "description": "How many checks differed (at most one per step, plus the start's knobs and the last frame)."
+      "description": "How many checks differed: at most one for each step (its knob writes and its checks together), one for the start's knobs and one for the last frame."
     },
     "firstMismatch": {
       "type": "object",
@@ -56,7 +56,7 @@
         },
         "what": {
           "enum": ["frame", "drew", "expose", "pixelHash", "step", "last", "params"],
-          "description": "What differed: the frame number the step ended on, whether it drew, an exposed value, the picture hash, a step the record has nothing for but the replay drew or exposed in, the last frame (its number or its hash), or a knob the sketch no longer declares."
+          "description": "What differed: the frame number the step ended on, whether it drew, an exposed value, the picture hash, a step the record has nothing for but the replay drew or exposed in, the last frame (its number or its hash), or a knob value the sketch did not take as the record has it (it no longer declares the knob, refused the value, or clamped it to another one)."
         },
         "name": {
           "type": "string",
@@ -64,11 +64,11 @@
         },
         "recorded": {
           "type": "string",
-          "description": "The record's side, written for a person (a value is its JSON, as in `{\"type\", \"value\"}`). Omitted when the record has nothing there."
+          "description": "The record's side, written for a person. A value is its JSON with its type, as in `{\"type\":\"int\",\"value\":155}`, so an int and a float of the same number read differently. Omitted when the record has nothing there."
         },
         "replayed": {
           "type": "string",
-          "description": "The replay's side, written the same way. Omitted when the replay has nothing there."
+          "description": "The replay's side, written the same way; for a knob, what became of the write (`refused: …`, `clamped to …`). Omitted when the replay has nothing there."
         }
       }
     },
@@ -79,7 +79,7 @@
     },
     "problem": {
       "type": "string",
-      "description": "Why the replay could not run to the end: the record could not be read, it was taken at another size, the sketch could not start, it stopped reaching the input, or it was stopped. Omitted when it ran to the end."
+      "description": "Why the replay could not run to the end: the record could not be read (including a record with no steps), it was taken at another size, the sketch could not start, it stopped reaching the input, or it was stopped or ended before the record's last step. Omitted when it ran to the end."
     },
     "timing": {
       "type": "object",

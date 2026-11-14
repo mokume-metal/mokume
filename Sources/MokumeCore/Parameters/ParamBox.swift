@@ -414,8 +414,9 @@ extension ParamValue {
     /// 同じ型で、数の成分のビット列まで同じか (`0` と `-0.0` を見分ける)。`==` は数として比べるので見分けない。
     ///
     /// ``ParamBox`` が、面に出る姿が同じ代入でも置いた値が変わったかを数えるのに使う
-    /// ([#2618](https://github.com/mokume-metal/mokume/issues/2618))。
-    fileprivate func hasSameBits(as other: ParamValue) -> Bool {
+    /// ([#2618](https://github.com/mokume-metal/mokume/issues/2618))。記録を流して照らす側 (`ReplayPlayer`) も、
+    /// 同じ見分け方で記録の値と照らす (#3571)。
+    func hasSameBits(as other: ParamValue) -> Bool {
         switch (self, other) {
         case (.float(let a), .float(let b)): a.bitPattern == b.bitPattern
         case (.int(let a), .int(let b)): a == b

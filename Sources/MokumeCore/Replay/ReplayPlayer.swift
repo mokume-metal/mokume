@@ -74,6 +74,7 @@ final class ReplayPlayer {
         let matched: Bool
         let steps: Int
         let frames: Int
+        /// 食い違った照合の数。記録の回ごと・開始のつまみ・最後の枚のそれぞれで高々 1。
         let mismatches: Int
         let firstMismatch: Mismatch?
         let unreproducible: [String]
@@ -191,13 +192,20 @@ final class ReplayPlayer {
     // MARK: - 当てる
 
     /// 開始のつまみの値を当てる。**保存を戻した後 (流す側は保存を持たない)・`setup()` の前。**
+    ///
+    /// 宣言の値が記録とビット列まで同じなら書かない (範囲の外に宣言した既定値を、書き込みで範囲へ収めない)。
     func applyStart(to registry: ParamRegistry) {
         guard let record, problem == nil else { return }
-        for param in record.startParams where registry.write(param.value, to: param.name) == nil {
+        for param in record.startParams {
+            let current = registry.declarations.first { $0.name == param.name }?.value
+            if let current, current.hasSameBits(as: param.value) { continue }
+            let outcome = registry.write(param.value, to: param.name)
+            guard outcome != .applied else { continue }
             differ(
                 Mismatch(
                     step: nil, frame: 0, what: "params", name: param.name, recorded: Self.describe(param.value),
-                    replayed: nil))
+                    replayed: Self.describe(outcome)),
+                at: .start)
         }
     }
 
@@ -208,17 +216,24 @@ final class ReplayPlayer {
     }
 
     /// 入力を配る回が始まった。**記録のこの回のつまみの値を書き、入力を合流点へ積む。** 1 回の `advance()` で 1 度だけ。
+    ///
+    /// 記録が持つのは置かれた書き込み (収めた後の値) だけ (`ReplayRecorder.noteParam` は `ParamBox.write` が値を
+    /// 置いた後にしか呼ばれない)。だから流す側では、そのまま置かれる (`.applied`) ほかは食い違いである — 名前が無い・
+    /// 型が違う・候補の外・有限でない・範囲が変わって収め直された。
     func beginStep(input: InputState, registry: ParamRegistry) {
         guard openOrdinal == nil, problem == nil else { return }
         let ordinal = nextOrdinal
         openOrdinal = ordinal
         nextOrdinal += 1
         guard let step = byOrdinal[ordinal] else { return }
-        for param in step.params where registry.write(param.value, to: param.name) == nil {
+        for param in step.params {
+            let outcome = registry.write(param.value, to: param.name)
+            guard outcome != .applied else { continue }
             differ(
                 Mismatch(
                     step: ordinal, frame: step.frame, what: "params", name: param.name,
-                    recorded: Self.describe(param.value), replayed: nil))
+                    recorded: Self.describe(param.value), replayed: Self.describe(outcome)),
+                at: .step(ordinal))
         }
         for event in step.inputs { input.enqueue(event) }
     }
@@ -247,7 +262,8 @@ final class ReplayPlayer {
                 differ(
                     Mismatch(
                         step: ordinal, frame: frame, what: "step", name: nil, recorded: "nothing happened",
-                        replayed: drew ? "drew frame \(frame)" : "exposed \(values.keys.sorted().joined(separator: ", "))"))
+                        replayed: drew ? "drew frame \(frame)" : "exposed \(values.keys.sorted().joined(separator: ", "))"),
+                    at: .step(ordinal))
             }
             return
         }
@@ -255,13 +271,15 @@ final class ReplayPlayer {
             return differ(
                 Mismatch(
                     step: ordinal, frame: expected.frame, what: "frame", name: nil, recorded: "\(expected.frame)",
-                    replayed: "\(frame)"))
+                    replayed: "\(frame)"),
+                at: .step(ordinal))
         }
         if expected.drew != drew {
             return differ(
                 Mismatch(
                     step: ordinal, frame: expected.frame, what: "drew", name: nil, recorded: "\(expected.drew)",
-                    replayed: "\(drew)"))
+                    replayed: "\(drew)"),
+                at: .step(ordinal))
         }
         for name in Set(expected.expose.keys).union(values.keys).sorted() {
             let recorded = expected.expose[name]
@@ -270,7 +288,8 @@ final class ReplayPlayer {
             return differ(
                 Mismatch(
                     step: ordinal, frame: expected.frame, what: "expose", name: name,
-                    recorded: recorded.map(Self.describe), replayed: replayed.map(Self.describe)))
+                    recorded: recorded.map(Self.describe), replayed: replayed.map(Self.describe)),
+                at: .step(ordinal))
         }
         if let recorded = expected.pixelHash {
             let replayed = hash()
@@ -278,7 +297,8 @@ final class ReplayPlayer {
                 return differ(
                     Mismatch(
                         step: ordinal, frame: expected.frame, what: "pixelHash", name: nil, recorded: recorded,
-                        replayed: replayed ?? "could not be read back"))
+                        replayed: replayed ?? "could not be read back"),
+                    at: .step(ordinal))
             }
         }
     }
@@ -315,20 +335,28 @@ final class ReplayPlayer {
     @discardableResult
     func finish(frame: Int, lastHash: () -> String?, now: Double, stoppedEarly: String? = nil) -> Report {
         if let report { return report }
-        if problem == nil, let stoppedEarly, !isFinished { problem = stoppedEarly }
+        // 記録の終わりまで流していない結果を、一致と書かない。理由を渡されなければ、届かなかった回を名乗る
+        if problem == nil, !isFinished {
+            problem =
+                stoppedEarly
+                ?? "The replay did not reach the end of the record (it stopped at step \(nextOrdinal) of "
+                + "\(lastOrdinal + 1))"
+        }
         if problem == nil, let last = record?.last {
             if last.frame != frame {
                 differ(
                     Mismatch(
                         step: nil, frame: last.frame, what: "last", name: nil, recorded: "frame \(last.frame)",
-                        replayed: "frame \(frame)"))
+                        replayed: "frame \(frame)"),
+                    at: .last)
             } else {
                 let replayed = lastHash()
                 if replayed != last.pixelHash {
                     differ(
                         Mismatch(
                             step: nil, frame: last.frame, what: "last", name: nil, recorded: last.pixelHash,
-                            replayed: replayed ?? "could not be read back"))
+                            replayed: replayed ?? "could not be read back"),
+                        at: .last)
                 }
             }
         }
@@ -366,9 +394,21 @@ final class ReplayPlayer {
 
     // MARK: - 内側
 
-    private func differ(_ mismatch: Mismatch) {
+    /// 食い違いを数える単位。**単位ごとに高々 1 つ** (``Report/mismatches``)。
+    private enum Check: Hashable {
+        /// 開始のつまみの値。
+        case start
+        /// 記録の回 (`step`)。つまみの書き込みと回の終わりの照合を合わせて 1 つ。
+        case step(Int)
+        /// 最後の枚。
+        case last
+    }
+
+    private var differed: Set<Check> = []
+
+    private func differ(_ mismatch: Mismatch, at check: Check) {
         if firstMismatch == nil { firstMismatch = mismatch }
-        mismatches += 1
+        if differed.insert(check).inserted { mismatches += 1 }
     }
 
     private func write(_ report: Report) {
@@ -382,19 +422,36 @@ final class ReplayPlayer {
         }
     }
 
-    /// 値が同じか。**有限でない数は記録に残らない** (``SketchRuntime/expose(_:_:)`` が溜めない) ので、数はそのまま比べる。
-    private static func same(_ recorded: ParamValue?, _ replayed: ParamValue?) -> Bool {
-        recorded == replayed
+    /// 値が同じか。**型と、数の成分のビット列まで比べる** — `==` は数として比べるので `-0.0` と `0` を同じと数えるが、
+    /// `draw()` が読む値は違う (`ParamBox` が値の変化を数えるのと同じ見分け方)。同じビット列の NaN どうしは同じ。
+    static func same(_ recorded: ParamValue?, _ replayed: ParamValue?) -> Bool {
+        switch (recorded, replayed) {
+        case (nil, nil): true
+        case (let recorded?, let replayed?): recorded.hasSameBits(as: replayed)
+        default: false
+        }
     }
 
-    /// 値を人に読む形にする (`{"type", "value"}` の値だけ)。
+    /// 値を人に読む形にする: 型を名乗る `{"type", "value"}` の JSON (`.int(155)` と `.float(155)` を書き分ける)。
     static func describe(_ value: ParamValue) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         encoder.nonConformingFloatEncodingStrategy = .convertToString(
             positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
-        guard let data = try? encoder.encode(ParamValue.Body(value)) else { return "\(value)" }
+        guard let data = try? encoder.encode(value) else { return "\(value)" }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// 流す側で、つまみの書き込みが置かれなかった (または収め直された) ことを人に読む形にする。
+    static func describe(_ outcome: ParamOutcome?) -> String {
+        switch outcome {
+        case nil: "the sketch does not declare it"
+        case .applied: "applied"
+        case .clamped(_, let applied): "clamped to \(describe(applied))"
+        case .typeMismatch: "refused: a different type from the declaration"
+        case .notInChoices: "refused: outside the choices that are allowed"
+        case .notFinite: "refused: not a finite number"
+        }
     }
 
     private static func milliseconds(_ seconds: Double) -> String {

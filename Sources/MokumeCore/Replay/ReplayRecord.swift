@@ -8,7 +8,11 @@ import MokumeDiagnostics
 ///
 /// **読めない記録は流さない。** 版が違う・完成の印が無い・この mokume が知らない入力を持つ記録は、理由を 1 文で
 /// 返して断る (``Unreadable``)。流してから食い違ったと名乗ると、記録の誤りと作品の変化の見分けが付かない。
-/// 道具 (`mokume replay`) もビルドの前に同じ型で読み、断る理由を先に言う。
+/// 道具 (`mokume replay`) もビルドの前に同じ型で読み、断る理由を先に言う。回を 1 つも持たない記録も断る。
+///
+/// **同じ版の中の知らない鍵は読み飛ばす** (`JSONDecoder` の既定)。だから、流す側が当てるべきもの (外から届く入力など) を
+/// 記録に足す変更は `schemaVersion` を上げる — 同じ版のまま足すと、この読み手は当てずに流して偽の一致を名乗る。同じ版の
+/// 中で足してよいのは、読み飛ばしても照合の結果が変わらない欄だけである。
 package struct ReplayRecord {
     /// 読めない理由 (1 文・英語)。
     package struct Unreadable: Error, Equatable {
@@ -99,6 +103,10 @@ package struct ReplayRecord {
         }
         guard file.clock.kind == "frames", file.clock.frameRate > 0 else {
             throw Unreadable(reason: "\(place) is not on the frame clock, so it cannot be replayed")
+        }
+        // 回を 1 つも持たない記録は、流しても何も照らさない。一致と書かずに断る
+        guard !file.steps.isEmpty else {
+            throw Unreadable(reason: "\(place) has no steps (the run it records drew no frame), so there is nothing to check")
         }
         var steps: [Step] = []
         steps.reserveCapacity(file.steps.count)

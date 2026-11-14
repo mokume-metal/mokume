@@ -54,8 +54,114 @@ struct ReplayRecordReadingTests {
         } catch {
             #expect(error.reason.contains("version 2"), "\(error.reason)")
         }
+        // 回を 1 つも持たない記録は、流しても何も照らさないので断る
+        do {
+            _ = try record("{" + Self.head + #","steps":[],"complete":true}"#)
+            Issue.record("回の無い記録を読んだ")
+        } catch {
+            #expect(error.reason.contains("no steps"), "\(error.reason)")
+        }
         // 読める最小の記録
-        #expect((try? record("{" + Self.head + #","steps":[],"complete":true}"#)) != nil)
+        #expect((try? record("{" + Self.head + #","steps":[{"step":0,"frame":1,"drew":true}],"complete":true}"#)) != nil)
+    }
+
+    /// 記録の `steps` だけを差し替えた記録。
+    private func steps(_ steps: String, last: String = "") throws -> ReplayPlayer {
+        let text = "{" + Self.head + #","steps":["# + steps + "]" + last + #","complete":true}"#
+        return ReplayPlayer(record: try record(text), source: "take.json", reportURL: nil)
+    }
+
+    private final class Knobbed: Sketch {
+        @Param(0...300) var radius: Double = 100
+        func draw() {}
+    }
+
+    @Test("記録の終わりまで流さずに理由なしで締めても、一致と書かない")
+    func anUnfinishedReplayIsNotAMatch() throws {
+        let player = try steps(#"{"step":0,"frame":1,"drew":true},{"step":1,"frame":2,"drew":true}"#)
+        player.beginStep(input: InputState(), registry: ParamRegistry(of: Empty()))
+        player.endStep(frame: 1, drew: true, drawFailed: false) { nil }
+        #expect(!player.isFinished)
+        let report = player.finish(frame: 1, lastHash: { nil }, now: 0)
+        #expect(!report.matched && report.problem?.contains("step 1 of 2") == true, "\(String(describing: report.problem))")
+    }
+
+    @Test("expose は型とビット列まで照らす: -0 と 0、int と float は食い違い、同じビット列の NaN どうしは一致")
+    func exposedValuesAreComparedByBits() throws {
+        func check(_ recorded: String, _ replayed: ExposedValue) throws -> ReplayPlayer.Report {
+            let player = try steps(#"{"step":0,"frame":1,"drew":true,"expose":{"v":"# + recorded + "}}")
+            player.beginStep(input: InputState(), registry: ParamRegistry(of: Empty()))
+            player.noteExposed("v", replayed)
+            player.endStep(frame: 1, drew: true, drawFailed: false) { nil }
+            return player.finish(frame: 1, lastHash: { nil }, now: 0)
+        }
+        let zero = try check(#"{"type":"float","value":0}"#, .float(-0.0))
+        #expect(!zero.matched && zero.firstMismatch?.what == "expose")
+        #expect(try check(#"{"type":"float","value":0}"#, .float(0)).matched)
+        #expect(try check(#"{"type":"float","value":"nan"}"#, .float(.nan)).matched)
+        // 型を書き分ける: 数として同じ 155 でも、型が違えば食い違いで、表示も型を名乗る
+        let typed = try check(#"{"type":"int","value":155}"#, .float(155))
+        #expect(!typed.matched)
+        #expect(typed.firstMismatch?.recorded == #"{"type":"int","value":155}"#)
+        #expect(typed.firstMismatch?.replayed == #"{"type":"float","value":155}"#)
+    }
+
+    @Test("回のフレーム番号・描いたか・記録に無い回で描いた、を食い違いとして名乗る")
+    func stepChecksAreNamed() throws {
+        let frame = try steps(#"{"step":0,"frame":1,"drew":true}"#)
+        frame.beginStep(input: InputState(), registry: ParamRegistry(of: Empty()))
+        frame.endStep(frame: 2, drew: true, drawFailed: false) { nil }
+        #expect(frame.firstMismatch?.what == "frame" && frame.firstMismatch?.frame == 1)
+
+        let drew = try steps(#"{"step":0,"frame":1,"drew":true}"#)
+        drew.beginStep(input: InputState(), registry: ParamRegistry(of: Empty()))
+        drew.endStep(frame: 1, drew: false, drawFailed: false) { nil }
+        #expect(drew.firstMismatch?.what == "drew")
+
+        // step 1 は記録に無い (止めた作品で何も起きなかった回)。流した側が描けば食い違い
+        let gap = try steps(#"{"step":0,"frame":1,"drew":true},{"step":2,"frame":2,"drew":true}"#)
+        gap.beginStep(input: InputState(), registry: ParamRegistry(of: Empty()))
+        gap.endStep(frame: 1, drew: true, drawFailed: false) { nil }
+        #expect(gap.firstMismatch == nil)
+        gap.beginStep(input: InputState(), registry: ParamRegistry(of: Empty()))
+        gap.endStep(frame: 2, drew: true, drawFailed: false) { nil }
+        #expect(gap.firstMismatch?.what == "step" && gap.firstMismatch?.step == 1)
+    }
+
+    @Test("記録の書き込みが流す側で置かれない (宣言が無い・型が違う・収め直された) と食い違い。回ごとに数えるのは 1 つ")
+    func refusedKnobWritesDiffer() throws {
+        let cases: [(String, String)] = [
+            (#"{"name":"gone","type":"float","value":1}"#, "does not declare"),
+            (#"{"name":"radius","type":"string","value":"x"}"#, "different type"),
+            (#"{"name":"radius","type":"float","value":500}"#, "clamped to"),
+        ]
+        for (param, said) in cases {
+            let player = try steps(#"{"step":0,"frame":1,"drew":true,"params":["# + param + "]}")
+            player.beginStep(input: InputState(), registry: ParamRegistry(of: Knobbed()))
+            // 同じ回の照合も食い違う (expose が記録に無い) が、数えるのは回ごとに 1 つ
+            player.noteExposed("extra", .int(1))
+            player.endStep(frame: 1, drew: true, drawFailed: false) { nil }
+            let report = player.finish(frame: 1, lastHash: { nil }, now: 0)
+            #expect(!report.matched && report.firstMismatch?.what == "params", "\(param)")
+            #expect(report.firstMismatch?.replayed?.contains(said) == true, "\(String(describing: report.firstMismatch))")
+            #expect(report.mismatches == 1)
+        }
+        // 置かれた書き込みは一致
+        let applied = try steps(#"{"step":0,"frame":1,"drew":true,"params":[{"name":"radius","type":"float","value":250}]}"#)
+        let sketch = Knobbed()
+        applied.beginStep(input: InputState(), registry: ParamRegistry(of: sketch))
+        applied.endStep(frame: 1, drew: true, drawFailed: false) { nil }
+        #expect(applied.finish(frame: 1, lastHash: { nil }, now: 0).matched && sketch.radius == 250)
+    }
+
+    @Test("入力を配る回に届かないまま進み続けると、流せないと名乗って止める")
+    func aStallIsNamed() throws {
+        let player = try steps(#"{"step":0,"frame":1,"drew":true}"#)
+        for time in 1...ReplayPlayer.stallLimit { player.beginAdvance(at: Double(time)) }
+        #expect(!player.isFinished, "上限ちょうどまでは待つ")
+        player.beginAdvance(at: 0)
+        #expect(player.isFinished && player.problem?.contains("stopped reaching") == true)
+        #expect(!player.finish(frame: 0, lastHash: { nil }, now: 0).matched)
     }
 
     @Test("画素のハッシュと最後の枚を照らし、違えばそのフレームを名乗る。記録に無いハッシュは取らない")
@@ -195,6 +301,8 @@ struct ReplayPlaybackTests {
             try runtime.advance()
             advances += 1
         }
+        // 回数の上限で抜けたなら、記録の終わりまで流せていない (理由なしで締めると一致と読み違える)
+        try #require(player.isFinished, "記録の終わりまで流せなかった: step \(player.nextOrdinal) / \(record.steps.count)")
         let result = try #require(runtime.finishReplaying())
         runtime.closePlugins()
         return (result, runtime)
@@ -264,6 +372,20 @@ struct ReplayPlaybackTests {
         #expect(differed.firstMismatch?.frame == 100, "\(String(describing: differed.firstMismatch))")
         #expect(differed.firstMismatch?.what == "expose")
         #expect(ReplayPlayer.summary(of: differed).contains("at frame 100"))
+    }
+
+    @Test("開始のつまみの値が宣言の既定値と違う記録 (保存から戻した値) は、setup() の前にその値を当てて一致する")
+    func theStartKnobsAreApplied() throws {
+        let url = try scratch().appendingPathComponent("take.json")
+        // 最初の枚の前 (`setup()` の前) に置いた値は、外からの書き込みでなく開始の値として記録に載る
+        try record(Playground(), frames: 5, to: url) { frame, runtime in
+            if frame == 1 { _ = runtime.paramRegistry.write(.float(200), to: "radius") }
+        }
+        let read = try ReplayRecord.read(from: url)
+        try #require(read.startParams.contains { $0.name == "radius" && $0.value == .float(200) })
+        try #require(read.steps.allSatisfy { $0.params.isEmpty })
+        let (result, _) = try replay(Playground(), url)
+        #expect(result.matched, "\(String(describing: result.firstMismatch))")
     }
 
     @Test("止めた作品の記録 (回の欠けを含む) が一致する")
