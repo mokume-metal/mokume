@@ -223,6 +223,8 @@ struct WatchSessionModelTests {
         .overlap([.save, .audition, .rebuild]), .overlap([.audition, .save, .leave, .rebuild]),
         .overlap([.rebuild, .audition, .save]), .overlap([.rebuild, .restart]), .overlap([.restart, .rebuild]),
         .rebuildOverlap([.restart, .rebuild]), .overlap([.audition, .rebuild, .save]),
+        // 出る要求が本番の版へ寄せた試聴の頼みを、次の試聴の保存が捨てる (#3428 の 2 回目の反証 5)
+        .overlap([.rebuild, .leaveStuck, .audition, .save]),
     ]
 
     /// 列の長さ。縮めると `none` が並ぶので、実際の長さはこれ以下。
@@ -480,8 +482,12 @@ struct WatchSessionModelTests {
             // 置き場の版が当たる子の版でない (決定の例: 試聴で作った版 Z の後に本番を起こし直す・起こせなかった版の後)
             [.save, .promoteWaiting, .audition, .save, .leave, .restart],
             [.save, .promoteWaiting, .saveLaunchFail, .restart],
-            // 試聴の中で同じ中身を作り直した後は、置き場の版が本番の版と同じなので起こし直せる
+            // 試聴の中で同じ中身を作り直した後も、置き場の実行ファイルは本番の子を起こした成果物でないので notBuilt (2 回目の反証 1:
+            // 世代に入らない資材を変えて頼んだ作り直しは、同じ世代で中身の違う実行ファイルを作る)
             [.save, .promoteWaiting, .audition, .rebuild, .leave, .restart],
+            [.save, .promoteWaiting, .audition, .save, .rebuild, .leave, .restart],
+            // 本番の中で同じ中身を作り直した後は、その成果物の子が本番なので起こし直せる
+            [.save, .promoteWaiting, .rebuild, .promoteWaiting, .restart],
             // 作り直しの最中の起こし直しは、済んでから決める (受けて名乗る)。試聴の中で頼んで出たら捨てる
             [.save, .promoteWaiting, .overlap([.restart])],
             [.save, .promoteWaiting, .audition, .save, .overlap([.restart, .leave])],
@@ -505,6 +511,18 @@ struct WatchSessionModelTests {
             [.save, .promoteWaiting, .audition, .save, .restart, .exitAuditionFailing, .save, .leave],
             // 反証 7: 通らなかった作り直しの後の起こし直しは notBuilt
             [.save, .promoteWaiting, .saveBuildFail, .restart],
+            // 2 回目の反証 2・3: まとめた作り直しの記録は、最後に読んだものの回 (頼みの後の保存は保存の回・保存の後の頼みは
+            // 頼まれた回)
+            [.save, .promoteWaiting, .overlap([.rebuild, .save])],
+            [.save, .promoteWaiting, .overlap([.save, .rebuild])],
+            [.save, .promoteWaiting, .rebuildOverlap([.save])],
+            [.save, .promoteWaiting, .rebuildOverlap([.save, .rebuild])],
+            // 2 回目の反証 4: 終わった試聴で頼んだ作り直しだけを捨てた回は、頼みを捨てたと名乗る (進行中は上の
+            // `rebuildOverlap([.leave])`・ここは取りかかる前)。保存も捨てた回は保存の版を捨てたと名乗る
+            [.save, .promoteWaiting, .overlap([.audition, .rebuild, .leave])],
+            [.save, .promoteWaiting, .overlap([.audition, .rebuild, .save, .leave])],
+            // 2 回目の反証 5: 出る要求が本番の版へ寄せた試聴の頼みを、次の試聴の保存が捨てる (作品のウィンドウの頼みと名乗る)
+            [.save, .promoteWaiting, .audition, .overlap([.rebuild, .leaveStuck, .audition, .save])],
         ])
     @MainActor
     func rebuildAndRestartColumnsKeepTheirRules(_ ops: [Op]) async {
@@ -574,10 +592,16 @@ struct WatchSessionModelTests {
         /// 中身ごとの、最後の保存の役。模型が「見張りがこの保存を読む」と分かる時点で控える (``noteRead(_:)``)。
         /// 作り直す要求 (#3428) も、頼みを読んだ時点の役でいまの中身を上書きする (中身の変わらない保存)。
         private var stampRoles: [String?: Role] = [:]
-        /// 置き場に在る実行ファイルの版 — 作り直しの替え玉が最後に通した作り直しの中身 (#3428)。起こし直す要求が当たれるのは、
-        /// これと同じ版の子だけ (規則)。1 度も通していなければ `hasBuilt` が偽。
-        private var builtStamp: String?
-        private var hasBuilt = false
+        /// 置き場に在る実行ファイル — 作り直しの替え玉が最後に通した作り直しの成果物の番号 (#3428)。起こし直す要求が当たれるのは、
+        /// この成果物から起こした子だけ (規則)。**中身 (世代) では比べない** — 世代に入らない変化を拾う作り直しは、同じ世代でも
+        /// 別の成果物を作る。1 度も通していない・作り直している間・通らなかった後は `nil`。
+        private var builtArtifact: Int?
+        /// 通した作り直しの数。成果物ごとの番号 (実行ファイルの名前 `build-<番号>` に載せて、起こされた子がどの成果物かを読む)。
+        private var artifactCount = 0
+        /// 起こした子ごとの、起こした実行ファイルの成果物の番号 (見張りが起こす口へ渡した実行ファイルから読む)。
+        private var launchArtifacts: [Int: Int] = [:]
+        /// 成果物の実行ファイルを置く場所。
+        private let artifacts: URL
         /// 起こし直す要求で起きる子の役 (規則: 頼みを読んだ時点の役)。模型が「この拍の起こす子は起こし直しの子」と分かる
         /// 拍だけ立てる (#3428)。起こし直しは作り直さないので、版の役 (``stampRoles``) では決めない。
         private var restartRole: Role?
@@ -653,6 +677,7 @@ struct WatchSessionModelTests {
 
         init() throws {
             let directory = try TestScratch.directory("mokume-watch-model")
+            artifacts = try TestScratch.directory("mokume-watch-model-artifacts")
             // 値を持つ前に自分を捕まえられないので、箱を挟む
             let box = Box()
             session = WatchSession(
@@ -665,9 +690,9 @@ struct WatchSessionModelTests {
                         let held = box.driver?.holdRebuild ?? false
                         await box.driver?.waitForRebuildGate()
                         let status: Int32 = held && box.driver?.heldFails == true ? 1 : box.driver?.buildStatus ?? 0
-                        if status == 0, let building { box.driver?.noteBuilt(building) }
+                        let executable = status == 0 && building != nil ? box.driver?.noteBuilt() : nil
                         return RunCommand.Rebuilt(
-                            status: status, output: "", executable: status == 0 ? URL(fileURLWithPath: "/bin/sh") : nil,
+                            status: status, output: "", executable: executable,
                             binPath: directory, product: "sketch")
                     },
                     launch: { executable, _, stamp, _ throws(CommandFailure) in
@@ -713,14 +738,22 @@ struct WatchSessionModelTests {
             builtRoles[stamp] = pendingBuildRoles.isEmpty ? stampRoles[stamp] : pendingBuildRoles.removeFirst()
             if launchFails, let stamp { refusedStamps.insert(stamp) }
             // 作り直している間・通らなかった後は、置き場の版が分からない (規則・#3428 の反証 7)
-            hasBuilt = false
+            builtArtifact = nil
             return .some(stamp)
         }
 
-        /// 作り直しが通った。置き場の実行ファイルは、この中身の版になる (#3428)。
-        private func noteBuilt(_ built: String?) {
-            builtStamp = built
-            hasBuilt = true
+        /// 作り直しが通った。置き場の実行ファイルは、この作り直しの成果物になる (#3428)。成果物ごとに別の名前の実行ファイル
+        /// (`/bin/sh` を指す記号のリンク) を返す。作れなければ `nil` (通ったが実行ファイルが無い回になる)。
+        private func noteBuilt() -> URL? {
+            artifactCount += 1
+            let executable = artifacts.appendingPathComponent("build-\(artifactCount)")
+            do {
+                try FileManager.default.createSymbolicLink(atPath: executable.path, withDestinationPath: "/bin/sh")
+            } catch {
+                return nil
+            }
+            builtArtifact = artifactCount
+            return executable
         }
 
         private func launch(_ executable: URL, stamp: String?) throws(CommandFailure) -> Process {
@@ -790,6 +823,11 @@ struct WatchSessionModelTests {
             }
             launchRoles[gens.count] = role
             launchBuilds[gens.count] = rebuilds
+            if let artifact = Int(executable.lastPathComponent.replacingOccurrences(of: "build-", with: "")) {
+                launchArtifacts[gens.count] = artifact
+            } else {
+                launchViolation = launchViolation ?? "作り直しの成果物でない実行ファイル \(executable.path) で G\(gens.count) を起こした"
+            }
             if isAudition { auditionGens.insert(gens.count) }
             // **本番の子は、どの口で起こしても、起こした時点から乗り換えを待つ** (``WatchSession`` は新しい子を起こすたびに
             // 待ち印を立てる)。保存だけでなく、試聴を出る要求が本番を起こし直す回 (本番が居ない・#3565) や、
@@ -913,7 +951,8 @@ struct WatchSessionModelTests {
         }
 
         /// 規則: 役 `role` の起こし直しが当たる子は、試聴の版なら (その試聴が続いていれば) 試聴の子、本番の版なら本番の側の
-        /// 新しい子。居なければ noTarget。置き場の最後に通った作り直しの版 (``builtStamp``) が、当たる子の版でなければ notBuilt。
+        /// 新しい子。居なければ noTarget。置き場の実行ファイル (``builtArtifact``) が、当たる子を起こした作り直しの成果物で
+        /// なければ notBuilt (中身が同じでも、別の作り直しの成果物なら断る)。
         private func expectedRestart(_ role: Role) -> RestartExpectation {
             let target: Int?
             switch role {
@@ -924,7 +963,7 @@ struct WatchSessionModelTests {
                 target = productionAlive().max()
             }
             guard let target else { return .declined(.noTarget) }
-            guard hasBuilt, builtStamp == launchStamps[target] else { return .declined(.notBuilt) }
+            guard let builtArtifact, builtArtifact == launchArtifacts[target] else { return .declined(.notBuilt) }
             return .restarted(role, stamp: launchStamps[target], target: target)
         }
 
@@ -1700,7 +1739,8 @@ struct WatchSessionModelTests {
             defer { self.heldFails = false }
             guard let held = try await holdAtGate() else { return nil }
             var queue: [Pending] = []
-            var droppedRebuilds = 0
+            /// 捨てた作り直す要求ごとの、名乗りの向き (いまの扱いが試聴の頼みか)
+            var droppedRebuilds: [Bool] = []
             for step in steps {
                 switch step {
                 case .save:
@@ -1709,9 +1749,11 @@ struct WatchSessionModelTests {
                     await beat()
                     let role = currentRole
                     queue.removeAll { $0.kind == .save }
-                    let before = queue.count
-                    queue.removeAll { $0.kind == .rebuild && !buildEnded($0.role) && effective($0.role) != effective(role) }
-                    droppedRebuilds += before - queue.count
+                    let superseded = { [self] (item: Pending) in
+                        item.kind == .rebuild && !buildEnded(item.role) && effective(item.role) != effective(role)
+                    }
+                    droppedRebuilds += queue.filter(superseded).map { effective($0.role) != .production }
+                    queue.removeAll(where: superseded)
                     queue.append(Pending(kind: .save, role: role))
                 case .rebuild, .restart:
                     let kind: Pending.Kind = step == .rebuild ? .rebuild : .restart
@@ -1737,7 +1779,14 @@ struct WatchSessionModelTests {
             }
             // 終わった試聴の項目を捨てる (門で止めた版を捨てるときと一緒に 1 行・起こし直しは 1 行)
             let heldDropped = buildEnded(heldRole)
+            // 記録は、門で止めた作り直しが頼みで起きたなら頼まれた作り直しの回 (`requested`)
+            if !heldDropped, let violation = checkRequested(session.lastReport, expected: requested, what: "門で止めた作り直し") {
+                return violation
+            }
             let endedBuilds = queue.contains { $0.kind != .restart && buildEnded($0.role) }
+            // 捨てたものに保存が 1 つも無ければ、頼んだ作り直しを捨てたと名乗る (2 回目の反証 4)
+            let discardsSaved =
+                (heldDropped && !requested) || queue.contains { $0.kind == .save && buildEnded($0.role) }
             let endedRestarts = queue.contains { $0.kind == .restart && restartEnded($0.role) }
             queue.removeAll { ($0.kind != .restart && buildEnded($0.role)) || ($0.kind == .restart && restartEnded($0.role)) }
             // 列の順に 1 つずつ。続けて並ぶ同じ役の作り直しは 1 回
@@ -1781,6 +1830,10 @@ struct WatchSessionModelTests {
                 }
                 var end = index + 1
                 while end < queue.count, queue[end].kind != .restart, effective(queue[end].role) == effective(item.role) { end += 1 }
+                // まとめた中で最後に読んだものが頼みなら、頼まれた作り直しの回 (頼みの後に読んだ保存は頼みを追い越す・スキーマの
+                // `requested`)
+                let groupRequested = queue[end - 1].kind == .rebuild
+                let group = queue[index..<end].map { "\($0.kind)" }
                 index = end
                 builds += 1
                 if effective(item.role) != .production { auditionBuilt = true }
@@ -1790,6 +1843,11 @@ struct WatchSessionModelTests {
                 pendingBuildRoles = []
                 if rebuiltStamps.count == before {
                     return Violation(number: 7, text: "控えた作り直し (役 \(item.role)) が行われない (列 \(queue))")
+                }
+                if let violation = checkRequested(
+                    session.lastReport, expected: groupRequested, what: "控えた作り直し \(group)")
+                {
+                    return violation
                 }
             }
             if !gated { for _ in 0..<2 { await beat() } }
@@ -1810,16 +1868,27 @@ struct WatchSessionModelTests {
                     text: "作り直しが \(rebuiltStamps.count - rebuildsBefore) 回 (規則では門で止めた 1 回と列の \(builds) 回。作り直した順 \(rebuiltStamps[rebuildsBefore...].map { $0 ?? "-" }))")
             }
             func count(_ line: String) -> Int { previewLog[linesBefore...].filter { $0 == line }.count }
-            let discards =
+            let savedDiscards =
                 count(WatchCommand.auditionDiscardedLine(productionRunning: true))
                 + count(WatchCommand.auditionDiscardedLine(productionRunning: false))
-            if discards != (heldDropped || endedBuilds ? 1 : 0) {
-                return Violation(number: 7, text: "捨てた試聴の版を名乗った行が \(discards) 行 (規則では \(heldDropped || endedBuilds ? 1 : 0) 行)")
+            let requestDiscards =
+                count(WatchCommand.auditionRebuildDiscardedLine(productionRunning: true))
+                + count(WatchCommand.auditionRebuildDiscardedLine(productionRunning: false))
+            let discarded = heldDropped || endedBuilds
+            let expectedDiscards = (saved: discarded && discardsSaved ? 1 : 0, requests: discarded && !discardsSaved ? 1 : 0)
+            if savedDiscards != expectedDiscards.saved || requestDiscards != expectedDiscards.requests {
+                return Violation(
+                    number: 7,
+                    text: "捨てた試聴の版を名乗った行が 保存の版 \(savedDiscards) 行・頼み \(requestDiscards) 行 (規則では \(expectedDiscards.saved) 行・\(expectedDiscards.requests) 行)")
             }
-            let rebuildDrops =
-                count(WatchSession.rebuildDroppedLine(audition: false)) + count(WatchSession.rebuildDroppedLine(audition: true))
-            if rebuildDrops != droppedRebuilds {
-                return Violation(number: 7, text: "捨てた作り直す要求を名乗った行が \(rebuildDrops) 行 (規則では \(droppedRebuilds) 行)")
+            // 捨てた作り直す要求は、頼みのいまの扱いの向きで名乗る (2 回目の反証 5)
+            let rebuildDrops = (
+                audition: count(WatchSession.rebuildDroppedLine(audition: true)),
+                production: count(WatchSession.rebuildDroppedLine(audition: false)))
+            let expectedDrops = (
+                audition: droppedRebuilds.filter { $0 }.count, production: droppedRebuilds.filter { !$0 }.count)
+            if rebuildDrops != expectedDrops {
+                return Violation(number: 7, text: "捨てた作り直す要求を名乗った行が \(rebuildDrops) (規則では \(expectedDrops))")
             }
             if count(WatchSession.restartLine(.dropped)) != (endedRestarts ? 1 : 0) {
                 return Violation(number: 7, text: "捨てた起こし直しを名乗った行が \(count(WatchSession.restartLine(.dropped))) 行 (規則では \(endedRestarts ? 1 : 0) 行)")
@@ -1835,6 +1904,15 @@ struct WatchSessionModelTests {
                 return Violation(number: 7, text: "落ち着いた後の拍で子が起きた (\(extra.sorted().map(label)))")
             }
             return nil
+        }
+
+        /// 作り直しの記録が、規則どおりに頼まれた作り直しの回か (`requested`) を見る。
+        private func checkRequested(_ report: BuildReport?, expected: Bool, what: String) -> Violation? {
+            let actual = report?.requested == .rebuild
+            guard actual != expected else { return nil }
+            return Violation(
+                number: 7,
+                text: "\(what) の記録の requested が \(actual ? "rebuild" : "無い") (規則では \(expected ? "rebuild" : "無い"))")
         }
 
         /// 作り直しが門に着くまで拍を回し、止めた拍の `Task` を返す。保留していた試聴の子を起こした拍は作り直しに取りかからない

@@ -136,8 +136,27 @@ struct WatchRebuildRestartTests {
         #expect(harness.gens.count == launched, "捨てた版の子を起こした")
         #expect(harness.session.child === production && production.isRunning)
         #expect(!audition.isRunning)
-        #expect(harness.previewLines.contains(WatchCommand.auditionDiscardedLine(productionRunning: true)))
+        // 捨てたのは頼みだけ (試聴の中の保存 s2 は作って起こした後) なので、保存した版を捨てたとは言わない (2 回目の反証 4)
+        #expect(harness.previewLines.contains(WatchCommand.auditionRebuildDiscardedLine(productionRunning: true)))
+        #expect(!harness.previewLines.contains(WatchCommand.auditionDiscardedLine(productionRunning: true)))
         #expect(try statusObject(harness)["audition"] == nil, "記録は本番の版のまま")
+    }
+
+    @Test("終わった試聴で頼んだ作り直しを取りかかる前に捨てた回も、頼みを捨てたと名乗る (2 回目の反証 4)")
+    func aRebuildAskedInAnEndedAuditionIsNamedAsARequestWhenDroppedBeforeItStarts() async throws {
+        let harness = try Harness()
+        let production = try #require(await harness.save())
+        let building = try await harness.holdBuild()  // s2 (本番)
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        harness.releaseRebuild()
+        await building.value
+        for _ in 0..<2 { await harness.beat() }
+        #expect(harness.rebuilds == 2, "s1・s2 (本番)。試聴の頼みは作らない")
+        #expect(harness.previewLines.contains(WatchCommand.auditionRebuildDiscardedLine(productionRunning: true)))
+        #expect(!harness.previewLines.contains(WatchCommand.auditionDiscardedLine(productionRunning: true)))
+        #expect(harness.session.child !== production, "s2 が本番になる")
     }
 
     @Test("本番で頼んだ作り直しは、その最中に試聴へ入っても本番の版になる (#3796 の規則)")
@@ -249,6 +268,60 @@ struct WatchRebuildRestartTests {
         #expect(try statusObject(harness)["audition"] as? Bool == true)
     }
 
+    @Test("出る要求が本番の版へ寄せた試聴の頼みを、次の試聴の保存が捨てたら、作品のウィンドウの頼みとして名乗る (2 回目の反証 5)")
+    func aRebuildTakenOverAsProductionIsNamedAsTheWorksWhenDropped() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        let building = try await harness.holdBuild()  // s2 (試聴 1)
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        // プレビューを戻せない出方は、試聴 1 の版を本番の版として作る (頼みも本番の頼みになる)
+        harness.canReturn = { _ in false }
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        harness.canReturn = { _ in true }
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        harness.placeSave()
+        await harness.beat()  // s3 を試聴 2 の役で読む
+        #expect(harness.previewLines.last == WatchSession.rebuildDroppedLine(audition: false), "\(harness.previewLines)")
+        harness.releaseRebuild()
+        await building.value
+        for _ in 0..<2 { await harness.beat() }
+    }
+
+    @Test("作り直しの最中に頼みの後に読んだ中身の変わる保存は頼みを追い越し、記録は保存の回になる (2 回目の反証 2)")
+    func aSaveReadAfterARebuildRequestRecordsTheSave() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        let building = try await harness.holdBuild()  // s2
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        harness.placeSave()
+        await harness.beat()  // s3 を頼みの後に読む
+        harness.releaseRebuild()
+        await building.value
+        for _ in 0..<2 { await harness.beat() }
+        #expect(harness.rebuilds == 3, "s1・s2・s3 を 1 回")
+        let record = try statusObject(harness)
+        #expect(record["stamp"] as? String == "s3")
+        #expect(record["requested"] == nil, "\(record)")
+    }
+
+    @Test("作り直しの最中に保存の後で頼んだ作り直しは、まとめた 1 回の記録を頼まれた作り直しの回にする (2 回目の反証 2)")
+    func aRebuildRequestReadAfterASaveRecordsTheRequest() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        let building = try await harness.holdBuild()  // s2
+        harness.placeSave()
+        await harness.beat()  // s3 を頼みの前に読む
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        harness.releaseRebuild()
+        await building.value
+        for _ in 0..<2 { await harness.beat() }
+        #expect(harness.rebuilds == 3, "s1・s2・s3 を 1 回")
+        let record = try statusObject(harness)
+        #expect(record["stamp"] as? String == "s3")
+        #expect(record["requested"] as? String == "rebuild", "\(record)")
+    }
+
     @Test("作り直しの最中に頼んだ作り直しと起こし直しは、頼んだ順に行う (反証 3)", arguments: [true, false])
     func rebuildAndRestartRunInTheOrderAsked(rebuildFirst: Bool) async throws {
         let harness = try Harness()
@@ -278,6 +351,36 @@ struct WatchRebuildRestartTests {
         #expect(report["accepted"] as? Bool == false)
         #expect(report["reason"] as? String == "notBuilt")
         #expect(harness.gens.count == 1 && running.isRunning)
+    }
+
+    @Test("試聴の中で同じ中身を作り直して出た後は、本番の子を起こした成果物が置き場に無いので notBuilt で断る (2 回目の反証 1)")
+    func aRestartAfterAnAuditionRebuildOfTheSameSourcesIsDeclinedWithNotBuilt() async throws {
+        let harness = try Harness()
+        let production = try #require(await harness.save())
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        // 世代に入らない資材を変えて頼んだ作り直し — ソースの世代は s1 のままでも、置き場には試聴の成果物ができる
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        let audition = try #require(harness.session.auditionChild)
+        #expect(audition !== production)
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        let launched = harness.gens.count
+        let report = try await harness.ask("restart")
+        #expect(report["accepted"] as? Bool == false)
+        #expect(report["reason"] as? String == "notBuilt")
+        #expect(harness.gens.count == launched, "試聴の成果物で本番を起こし直した")
+        #expect(harness.session.child === production && production.isRunning)
+    }
+
+    @Test("本番の中で同じ中身を作り直した後は、その成果物の子を起こし直せる")
+    func aRestartAfterAProductionRebuildOfTheSameSourcesStartsIt() async throws {
+        let harness = try Harness()
+        try #require(await harness.save())
+        #expect(try await harness.ask("rebuild")["accepted"] as? Bool == true)
+        let rebuilt = try #require(harness.session.child)
+        await harness.session.generationPromoted(pid: rebuilt.processIdentifier)
+        let report = try await harness.ask("restart")
+        #expect(report["accepted"] as? Bool == true)
+        #expect(harness.session.child !== rebuilt)
     }
 
     // MARK: - 起こし直した子が最初の絵の前に落ちる (反証 6)

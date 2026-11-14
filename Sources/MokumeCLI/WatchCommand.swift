@@ -914,7 +914,11 @@ enum WatchCommand {
             // **終わった試聴の版を捨てた回は、捨てたことを名乗り、プレビューの回る印を止める** (#3796)。作り直しの始まりを
             // 名乗った回も、取りかかる前に捨てた回も同じ行
             guard !session.stopRequested else { return true }
-            let line = auditionDiscardedLine(productionRunning: discarded.productionRunning)
+            // 捨てたのが作り直す要求だけなら、保存した版を捨てたと言わない (#3428)
+            let line =
+                discarded.savedVersion
+                ? auditionDiscardedLine(productionRunning: discarded.productionRunning)
+                : auditionRebuildDiscardedLine(productionRunning: discarded.productionRunning)
             say(line)
             viewer?.firstFrame.settle()
             showInPreview(line, false)
@@ -1275,6 +1279,16 @@ enum WatchCommand {
                 + "version it has. Change the source and save to show it there"
             : "Dropped the version saved during an audition that has ended — nothing is running in the "
                 + "work's window. Change the source and save to start it there"
+    }
+
+    /// 試聴の中で頼んだ作り直し (`rebuild`) を、その試聴が終わったので捨てたことを名乗る行 (#3428)。捨てたものに保存した版が
+    /// 無い回だけに出す (あれば ``auditionDiscardedLine(productionRunning:)``)。案内は保存でなく、要れば頼み直すこと。
+    static func auditionRebuildDiscardedLine(productionRunning: Bool) -> String {
+        productionRunning
+            ? "Dropped the rebuild asked for during an audition that has ended — the work's window keeps the "
+                + "version it has. Ask for rebuild again to rebuild it there"
+            : "Dropped the rebuild asked for during an audition that has ended — nothing is running in the "
+                + "work's window. Ask for rebuild again to start it there"
     }
 
     /// 試聴の版を起こしたことを名乗る行 (#3565)。端末の要約 (`Rebuilt: …`) の次に出す。

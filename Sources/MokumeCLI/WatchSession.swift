@@ -471,6 +471,9 @@ final class WatchSession {
 
     /// 起こした子ごとの、ソースの世代の刻印。応答 (``WatchReport``) が名乗る。生きている子のぶんだけ持つ。
     private var launchStamps: [Int32: String] = [:]
+    /// 起こした子ごとの、その子を起こした実行ファイルを建てた作り直しの通し番号 (``buildCount``)。生きている子のぶんだけ持つ。
+    /// 起こし直す要求は、これが置き場の版 (``built``) の番号と同じ子だけを起こし直す。
+    private var launchBuilds: [Int32: Int] = [:]
 
     /// 本番の世代の目録を、プレビューの台に押し出させず覚えさせる口 (``returnsPreviewToGeneration`` の戻り先)。
     /// 空で外す。ウィンドウを出せた見張りだけが繋ぐ (``WatchCommand``)。
@@ -502,6 +505,8 @@ final class WatchSession {
     private struct PendingAudition {
         let executable: URL
         let stamp: String?
+        /// `executable` を建てた作り直しの通し番号。
+        let build: Int
         let buildOutput: String
         let detectMs: Double?
         let buildMs: Double
@@ -517,7 +522,7 @@ final class WatchSession {
     /// **控えるのは、見張りが試聴の中で読んだ版である** ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
     /// 見張りがまだ読み始めていない保存は控えに入らない — 出た後に読むので本番の版になる (保存の役は、その保存を拾った読みを
     /// 始めた時点で決まる・``readingRole``)。読みや作り直しの最中に出た回は、その読んだ版を控える。試聴の中で読んだ版を、
-    /// その試聴が終わった後で捨てるときも、その版へ寄せる (``discardAudition()``)。控えを下ろすのは、作り直しに取りかかる
+    /// その試聴が終わった後で捨てるときも、その版へ寄せる (``discardAudition(saved:)``)。控えを下ろすのは、作り直しに取りかかる
     /// ときと、ソースが本番の版へ戻ったときである。
     ///
     /// **入り直しても下ろさない** — 下ろすと、入った拍の ``tick()`` が出た時点の版を試聴の子として起こす (入る要求は
@@ -533,7 +538,7 @@ final class WatchSession {
     /// **「絵を出す前に終わった」の根拠はこれである。** 乗り換えの合図 (``hasSeenPromotion``) は使えない —
     /// 出している世代が無い台は 1 枚目を待たずに乗り換えるので、最初の世代の合図は「目録が読めた」で、
     /// `setup()` の前に来る。起こした世代が生きている間だけ覚える (``generationShown(pid:)``・
-    /// ``rebuildAndReplace(stamp:audition:initial:)``・
+    /// ``rebuildAndReplace(stamp:audition:initial:requested:saved:)``・
     /// ``launchAudition(executable:stamp:buildOutput:detectMs:buildMs:relaunchStarted:)``)。
     private var shownPIDs: Set<Int32> = []
     /// 道具のウィンドウが知らせてくれない世代として扱った子の番号 ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
@@ -666,7 +671,7 @@ final class WatchSession {
     /// **保存の役 (本番の版か試聴の版か) は、その保存を拾った読みを始めた時点で決める** ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。
     /// 読みの最中・作り直しの最中に試聴を出入りしても、役は変わらない (``readingRole``)。作り直しの最中に読んだ保存は、
     /// 取りかかれないので役を控え (``pending``)、作り直しが済んだ後の拍が控えた役のまま取りかかる。控えた役の試聴が
-    /// もう終わっていれば、その版は捨てて名乗る (本番にしない・``discardAudition()``)。ただし出る要求が本番の版へ寄せた
+    /// もう終わっていれば、その版は捨てて名乗る (本番にしない・``discardAudition(saved:)``)。ただし出る要求が本番の版へ寄せた
     /// 試聴の版は、本番の版として取りかかる (``effectiveRole(_:)``)。
     ///
     /// **作り直す要求 (`rebuild`)・起こし直す要求 (`restart`) も、同じ控えの列に頼みを読んだ順で並ぶ** (#3428)。
@@ -701,15 +706,17 @@ final class WatchSession {
         }
         guard let first = pending.first, first.kind != .restart else { return nil }
         // **続けて並ぶ同じ役の作り直し (保存・作り直す要求) は、1 回にまとめる** — 置き場の中身は 1 つなので、続けて作っても同じ版
-        // になる。どれか 1 つでも頼みなら、記録は頼まれた作り直しと名乗る
+        // になる。記録はまとめた中で最後に読んだものの回として書く: 頼みの後に読んだ中身の変わる保存は頼みを追い越して保存の回、
+        // 保存の後に読んだ頼みは頼まれた作り直しの回 (`Schemas/build-status.schema.json` の `requested`)
         let group = pending.prefix(while: {
             $0.kind != .restart && effectiveRole($0.role) == effectiveRole(first.role)
         })
-        let requested = group.contains { $0.kind == .rebuild }
+        let requested = group.last?.kind == .rebuild
+        let saved = group.contains(where: \.isSave)
         pending.removeFirst(group.count)
         unadoptedStamp = nil
         if noticedAt == nil { noticedAt = hooks.now() }
-        return await rebuildAndReplace(stamp: stamp, audition: first.role, requested: requested)
+        return await rebuildAndReplace(stamp: stamp, audition: first.role, requested: requested, saved: saved)
     }
 
     /// 世代を読んだ結果を、控えの列に写す。
@@ -719,7 +726,7 @@ final class WatchSession {
     ///   前の中身はもう作れない (#3796 の 1 枠)。同じ中身が続く間は、それを拾った読みの役を保つ
     /// - **その保存より前に頼んだ、役の違う作り直しは、捨てて名乗る** (#3428)。行えば、別の役で保存した中身をその役に出す —
     ///   本番で頼んだ作り直しが、試聴の中で保存した版を作品のウィンドウに出す。終わった試聴の頼みは、ここでは捨てない
-    ///   (``discardAudition()`` が名乗る)
+    ///   (``discardAudition(saved:)`` が名乗る)
     private func noteRead(_ stamp: String?, role: Int?, order: Int) {
         if let held = unadoptedStamp {
             if stamp == held {
@@ -742,7 +749,8 @@ final class WatchSession {
         }
         if !superseded.isEmpty {
             pending.removeAll { item in superseded.contains { $0.order == item.order } }
-            droppedRebuilds.append(contentsOf: superseded.map { $0.role != nil })
+            // 名乗りは頼みのいまの扱いで選ぶ — 出る要求が本番の版へ寄せた試聴の頼みは、作品のウィンドウの頼み
+            droppedRebuilds.append(contentsOf: superseded.map { effectiveRole($0.role) != nil })
         }
         let index = pending.firstIndex { $0.order > order } ?? pending.endIndex
         pending.insert(Pending(kind: .save(stamp), role: role, order: order), at: index)
@@ -791,6 +799,7 @@ final class WatchSession {
     ///
     /// **受けた頼みは黙って消えない。** 役の違う項目は互いを消さない (本番で読んだ保存の後に試聴で頼んだ作り直しは、本番の作り直しと
     /// 試聴の作り直しの 2 回)。同じ役の中では、後から来た保存が前の保存に代わり、続けて頼んだ同じ頼みは 1 つにまとめる。
+    /// 続けて並ぶ同じ役の作り直しは 1 回で、記録は最後に読んだものの回 (最後が頼みなら `requested`)。
     private struct Pending {
         enum Kind: Equatable {
             /// 中身の変わった読み。世代を持つ。
@@ -815,11 +824,14 @@ final class WatchSession {
     /// ``isRebuilding`` とは別の印にする — 出る要求はあれを「作り直しの最中に出た」 (``Left/building``) と読む。
     private var isRestarting = false
 
-    /// 置き場に在る実行ファイルと、それを建てた作り直しの版 (ソースの世代) (#3428)。
+    /// 置き場に在る実行ファイルと、それを建てた作り直しの通し番号 (``buildCount``) とソースの世代 (#3428)。
     /// **分かっていなければ `nil`** で、起こし直す要求は ``WatchReport/Reason/notBuilt`` で断る。
     ///
-    /// **本番の版も試聴の版も同じ置き場の同じ実行ファイルへ組む** ので、起こし直せるのは、最後に通った作り直しの版の子だけ
-    /// である。分かっているのは、最後の作り直しが通って実行ファイルがあり、その後に疑いが無いときだけ:
+    /// **本番の版も試聴の版も同じ置き場の同じ実行ファイルへ組む** ので、起こし直せるのは、最後に通った作り直しの成果物から
+    /// 起こした子だけである。**ソースの世代では比べない** — 世代に入らない変化 (見張る範囲の外の資材・`Package.resolved`・
+    /// ローカルの依存) を作り直す要求が拾うので、同じ世代でも中身の違う実行ファイルができる。比べるのは作り直しの通し番号で、
+    /// 約束が及ぶのは見張りが自分で作った成果物についてだけ (置き場を見張りの外の誰かが書き換えたことは分からない)。
+    /// 分かっているのは、最後の作り直しが通って実行ファイルがあり、その後に疑いが無いときだけ:
     ///
     /// | 出来事 | 置き場の版 |
     /// | --- | --- |
@@ -831,7 +843,9 @@ final class WatchSession {
     ///
     /// **通らなかった作り直しの後も不明にする** — SwiftPM は資材の束をコンパイルと別に組むので、コンパイルや繋ぎで止まっても
     /// 置き場は新しくなりうる。前の値へ戻すと、古い実行ファイルと新しい資材の組み合わせを、名乗った版として起こす。
-    private var built: (stamp: String?, executable: URL)?
+    private var built: (build: Int, stamp: String?, executable: URL)?
+    /// 通って実行ファイルを建てた作り直しの数 (作り直しの通し番号)。
+    private var buildCount = 0
 
     /// 最初の 1 回。変化を待たずに作って走らせる。
     ///
@@ -853,7 +867,7 @@ final class WatchSession {
                     timings: .init(detectMs: nil, buildMs: 0, relaunchMs: nil)),
                 audition: false)
         }
-        // 最初の 1 回は本番の版で、捨てられることは無い (``rebuildAndReplace(stamp:audition:initial:)`` が `nil` を
+        // 最初の 1 回は本番の版で、捨てられることは無い (``rebuildAndReplace(stamp:audition:initial:requested:saved:)`` が `nil` を
         // 返すのは試聴の版だけ)。型の上で残る `nil` は、起こさなかった回として書く
         return await rebuildAndReplace(stamp: stamp, audition: nil, initial: true)
             ?? finish(
@@ -1727,10 +1741,12 @@ final class WatchSession {
     ///   本番の版として引き継ぐ (同じ版を 2 度作り直さない)。
     /// - Parameter requested: 作り直す要求 (`rebuild`) で起きた回か (#3428)。
     ///   記録に `requested` を書く。
+    /// - Parameter saved: まとめた作り直しに保存 (中身の変わった読み) が含まれるか。捨てるときの名乗りを選ぶ
+    ///   (``discardAudition(saved:)``)。作り直す要求だけなら、保存した版ではなく頼みを捨てたと名乗る。
     /// - Returns: 記録。**試聴の版で、その試聴を作り直しの最中に出た回は `nil`** — 版は捨てて名乗り
-    ///   (``discardAudition()``)、記録も書かない (出る要求が本番の版の記録へ戻している)。
+    ///   (``discardAudition(saved:)``)、記録も書かない (出る要求が本番の版の記録へ戻している)。
     private func rebuildAndReplace(
-        stamp: String?, audition: Int?, initial: Bool = false, requested: Bool = false
+        stamp: String?, audition: Int?, initial: Bool = false, requested: Bool = false, saved: Bool = true
     ) async -> BuildReport? {
         isRebuilding = true
         rebuildingAudition = audition
@@ -1793,8 +1809,10 @@ final class WatchSession {
         isBuilding = false
         // 通ったなら、置き場の実行ファイルはこの版である — 捨てる試聴の版でも (起こし直す要求が見る・#3428)。通らなかった・
         // 途中で止めた回は不明のまま — 資材の束は組み立てと別に組まれるので、置き場は書き換わっているかもしれない
+        if rebuilt.status == 0, rebuilt.executable != nil { buildCount += 1 }
+        let build = buildCount
         if rebuilt.status == 0, stoppedReport == nil, rebuildStop == nil {
-            built = rebuilt.executable.map { (stamp, $0) }
+            built = rebuilt.executable.map { (build, stamp, $0) }
         }
 
         // **止めている最中なら、止め終えてから見る。** 止めた子は終了コードを持って戻るので、
@@ -1810,7 +1828,7 @@ final class WatchSession {
         // **試聴の版で、その試聴を作り直しの最中に出た回は、結果で何も決めない** (#3796)。通っても起こさず、通らなくても
         // 記録を書かない — 区画 `build` の記録とソースの世代の控えは、出る要求が本番の版へ戻している
         // (``leaveAudition(_:into:)``)。本番は動かさない
-        if discarded { return discardAudition() }
+        if discarded { return discardAudition(saved: saved) }
 
         // **在るのに起こせない成果物を「建っていない」と言わない** (#2521)。作り直しは実行
         // できるものだけを「建った」と返すので、実行ビットの無い成果物は下の「建っていない」へ
@@ -1875,7 +1893,7 @@ final class WatchSession {
             if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
                 return early
             }
-            if discarded { return discardAudition() }
+            if discarded { return discardAudition(saved: saved) }
             // 止めている間に出る要求がこの版を本番の版として引き継いだら、下の通常の差し替えへ続ける (#3796)
             if forAudition {
                 // **本番が乗り換えを待っている間は、試聴の子を起こさない** (保留する)。前の本番 (``outgoing``) を
@@ -1884,7 +1902,7 @@ final class WatchSession {
                 // (映った・落ちて前の版に戻った) 起こす (``resumePendingAudition()``)。生きている子は 2 つまで
                 if isProductionSettling {
                     pendingAudition = PendingAudition(
-                        executable: executable, stamp: stamp, buildOutput: rebuilt.output,
+                        executable: executable, stamp: stamp, build: build, buildOutput: rebuilt.output,
                         detectMs: detectMs, buildMs: buildMs, requested: requested)
                     return finish(
                         .notStarted(
@@ -1895,13 +1913,16 @@ final class WatchSession {
                 }
                 pendingAudition = nil
                 return launchAudition(
-                    executable: executable, stamp: stamp, buildOutput: rebuilt.output,
+                    executable: executable, stamp: stamp, build: build, buildOutput: rebuilt.output,
                     detectMs: detectMs, buildMs: buildMs, relaunchStarted: auditionStarted,
                     requested: requested)
             }
         }
 
-        guard let swap = await swapProduction(executable: executable, stamp: stamp, clock: productionClock) else {
+        guard
+            let swap = await swapProduction(
+                executable: executable, stamp: stamp, build: build, clock: productionClock)
+        else {
             return interruptedWhileStopping(notStarted: notStartedForStopping) ?? notStartedForStopping()
         }
         let relaunchStarted = swap.relaunchStarted
@@ -1929,14 +1950,17 @@ final class WatchSession {
 
     /// 本番の子を、新しく起こした子へ差し替える (#3428 で作り直しから切り出した)。
     ///
-    /// **作り直しの後の差し替え (``rebuildAndReplace(stamp:audition:initial:requested:)``) と、起こし直し
+    /// **作り直しの後の差し替え (``rebuildAndReplace(stamp:audition:initial:requested:saved:)``) と、起こし直し
     /// (``performRestart(_:)``) が同じ手順を通る** — 前の世代を重ねる・起こせなかったら前の役へ戻す・台へ伝える、の規律を
     /// 2 か所に分けない。
     ///
+    /// - Parameter build: `executable` を建てた作り直しの通し番号 (``launchBuilds``)。
     /// - Parameter clock: 新しい子へ渡す時計の場所の番号 (``Hooks/selectClock``)。
     /// - Returns: 差し替えた結果。**前の子を止めている間に、作り直しを止める・見張りを終える頼みが来たら `nil`**
     ///   (起こさずに抜ける・``interruptedWhileStopping(notStarted:)``)。
-    private func swapProduction(executable: URL, stamp: String?, clock: Int) async -> ProductionSwap? {
+    private func swapProduction(
+        executable: URL, stamp: String?, build: Int, clock: Int
+    ) async -> ProductionSwap? {
         let relaunchStarted = hooks.now()
         // **起こせなかった回に、前の世代を元の役へ戻すための控え。** 重ねる見張りは、起こす前に
         // 走っている世代を `outgoing` へ回す (下)。その乗り換えの待ち印もここで控える
@@ -1997,7 +2021,7 @@ final class WatchSession {
             launchFailure = error
             forgetBuiltIfVanished(error)
         }
-        noteLaunched(child, stamp: stamp)
+        noteLaunched(child, stamp: stamp, build: build)
         // **試聴に入っていない通常の差し替えは、試聴の覚えを捨てる** (#3565)。子の番号は使い回されるので、
         // 残すと、同じ番号を得た本番の子の目録を作品のウィンドウが採らない
         // **試聴を出る要求が子を止めている最中に来た通常の保存でも、ここで止まりきらない試聴の子の番号を落とさない。**
@@ -2042,7 +2066,7 @@ final class WatchSession {
         if case .executableVanished = failure { built = nil }
     }
 
-    /// 本番の子を差し替えた結果 (``swapProduction(executable:stamp:clock:)``)。
+    /// 本番の子を差し替えた結果 (``swapProduction(executable:stamp:build:clock:)``)。
     private struct ProductionSwap {
         /// 差し替えを始めた時刻。
         let relaunchStarted: Double
@@ -2055,7 +2079,7 @@ final class WatchSession {
     }
 
     /// 終わった試聴の版を捨てる ([#3796](https://github.com/mokume-metal/mokume/issues/3796))。**捨てる経路はどれもここを通る** —
-    /// 作り直しが済んだ後 (``rebuildAndReplace(stamp:audition:initial:)``) も、取りかかる前 (``tick()``) も。
+    /// 作り直しが済んだ後 (``rebuildAndReplace(stamp:audition:initial:requested:saved:)``) も、取りかかる前 (``tick()``) も。
     ///
     /// **捨てたことを名乗らせる** (``takeDiscardedAudition()``)。名乗らないと、作り直しの始まりを名乗った回は端末が
     /// 「作り直している」で止まってプレビューは回る印のまま残り、取りかかる前に捨てた回は、試聴の中で保存した版が黙って
@@ -2063,8 +2087,12 @@ final class WatchSession {
     ///
     /// 終わった試聴の中で読んで控えた版と頼んだ作り直し (``pending``) も、ここで一緒に捨てる — 次の拍が同じ判断で捨てるので、
     /// 名乗りを 1 行にまとめる。控え (``unadoptedStamp``) は捨てた保存の版へ寄せ、次の拍が本番へ作り直さない。
-    private func discardAudition() -> BuildReport? {
+    ///
+    /// - Parameter saved: 進行中の作り直しを捨てる回で、その作り直しに保存が含まれていたか。取りかかる前に捨てる回は `false`
+    ///   (控えの列の中身で決まる)。捨てたものに保存が 1 つも無ければ、頼んだ作り直しを捨てたと名乗る。
+    private func discardAudition(saved: Bool = false) -> BuildReport? {
         let ended = { [self] (item: Pending) in item.kind != .restart && hasEnded(item.role) }
+        let savedVersion = saved || pending.contains { ended($0) && $0.isSave }
         if case .save(let stamp)? = pending.first(where: { ended($0) && $0.isSave })?.kind {
             unadoptedStamp = stamp
         }
@@ -2072,7 +2100,7 @@ final class WatchSession {
             pending.removeAll(where: ended)
             noticedAt = nil
         }
-        discardedAudition = DiscardedAudition(productionRunning: production != nil)
+        discardedAudition = DiscardedAudition(productionRunning: production != nil, savedVersion: savedVersion)
         return nil
     }
 
@@ -2080,6 +2108,8 @@ final class WatchSession {
     struct DiscardedAudition: Equatable {
         /// 捨てたときに作品のウィンドウで本番が走っていたか。**走っていなければ「本番はそのまま」と言わない。**
         let productionRunning: Bool
+        /// 捨てたものに、試聴の中で保存した版があったか。無ければ捨てたのは作り直す要求だけで、「保存せよ」と案内しない。
+        let savedVersion: Bool
     }
 
     /// 終わった試聴の版を捨てたか。**読むと下りる** — 口の側 (``WatchCommand/step(_:viewer:stopped:preview:)``) が 1 度だけ名乗る。
@@ -2210,13 +2240,15 @@ final class WatchSession {
             pid: process.processIdentifier, stamp: launchStamps[process.processIdentifier])
     }
 
-    /// 起こした子の刻印を控える。生きている子のぶんだけ持つ (番号は使い回される)。
-    private func noteLaunched(_ process: Process?, stamp: String?) {
+    /// 起こした子の刻印と作り直しの通し番号を控える。生きている子のぶんだけ持つ (番号は使い回される)。
+    private func noteLaunched(_ process: Process?, stamp: String?, build: Int) {
         let live = Set([child, outgoing, auditionChild].compactMap { $0?.processIdentifier })
         launchStamps = launchStamps.filter { live.contains($0.key) }
+        launchBuilds = launchBuilds.filter { live.contains($0.key) }
         restartedChildren = restartedChildren.filter { live.contains($0.key) }
         guard let process else { return }
         launchStamps[process.processIdentifier] = stamp
+        launchBuilds[process.processIdentifier] = build
     }
 
     /// 試聴に入る。
@@ -2298,7 +2330,7 @@ final class WatchSession {
         //   世代の控えをその版にする — 捨てたと名乗らず、同じ版を 2 度作り直さない。この試聴までに読んだ版も本番の版として
         //   作る (``sourceRebuildThrough``)
         // - `.kept` (あ): 本番は動かない。試聴の中で読んだ版は、作り直しの最中のものも、取りかかる前のものも捨てて名乗る
-        //   (``discardAudition()``)。控えは進行中の版の世代 (作り直しが始めるときに置いた ``lastStamp``) で、捨てた版を
+        //   (``discardAudition(saved:)``)。控えは進行中の版の世代 (作り直しが始めるときに置いた ``lastStamp``) で、捨てた版を
         //   次の拍が本番へ作り直さない
         let left: Left
         if isRebuilding, effectiveRole(rebuildingAudition) == nil {
@@ -2343,8 +2375,9 @@ final class WatchSession {
     /// 起こし直す要求 (#3428)。
     ///
     /// **作り直さずに、いまの版を最初から起こし直す。** 当たる子は頼みを読んだ時点の試聴の状態で決める — 試聴中なら試聴の子、
-    /// そうでなければ本番の子。当たる子が居なければ ``WatchReport/Reason/noTarget``、置き場の最後に通った作り直しの版が
-    /// 当たる子の版でなければ ``WatchReport/Reason/notBuilt`` で断り、何もしない。**作り直し・起こし直し・読みの最中か、
+    /// そうでなければ本番の子。当たる子が居なければ ``WatchReport/Reason/noTarget``、置き場の実行ファイルが当たる子を
+    /// 起こした作り直しの成果物でなければ (``built``・作り直しの通し番号で比べる) ``WatchReport/Reason/notBuilt`` で断り、
+    /// 何もしない。**作り直し・起こし直し・読みの最中か、
     /// 前に控えた項目があれば、その順を待って決める** (受けて控え、できなければ端末とプレビューで名乗る)。行うのは拍の頭である
     /// (``performRestart(_:)``)。
     private func askRestart(_ request: WatchRequest, into answered: inout Answered) -> WatchReport {
@@ -2368,10 +2401,11 @@ final class WatchSession {
         return [child, outgoing].lazy.compactMap { $0 }.first { $0.isRunning }
     }
 
-    /// 役 `role` の起こし直しを断る理由。起こし直せるなら `nil`。
+    /// 役 `role` の起こし直しを断る理由。起こし直せるなら `nil`。**置き場の版と当たる子は、ソースの世代でなく作り直しの
+    /// 通し番号で比べる** (``built``)。
     private func restartRefusal(for role: Int?) -> WatchReport.Reason? {
         guard let target = restartTarget(for: role) else { return .noTarget }
-        guard let built, built.stamp == launchStamps[target.processIdentifier] else { return .notBuilt }
+        guard let built, built.build == launchBuilds[target.processIdentifier] else { return .notBuilt }
         return nil
     }
 
@@ -2410,7 +2444,9 @@ final class WatchSession {
                 restartOutcomes.append(.dropped)
                 return
             }
-            if let failure = startAuditionChild(executable: built.executable, stamp: built.stamp, clock: fresh) {
+            if let failure = startAuditionChild(
+                executable: built.executable, stamp: built.stamp, build: built.build, clock: fresh)
+            {
                 restartOutcomes.append(.failed(failure.message))
                 return
             }
@@ -2427,7 +2463,7 @@ final class WatchSession {
             firstFrameSince = nil
             guard
                 let swap = await swapProduction(
-                    executable: built.executable, stamp: built.stamp, clock: fresh)
+                    executable: built.executable, stamp: built.stamp, build: built.build, clock: fresh)
             else { return }
             if let failure = swap.launchFailure {
                 restartOutcomes.append(.failed(failure.message))
@@ -2680,11 +2716,11 @@ final class WatchSession {
     /// 呼ぶ前に、前の試聴の子を止め終えている (試聴の子は重ねない)。記録は通常の回と同じ形で書くが、
     /// 新しい絵が出るまでは測らない (作品のウィンドウに出る絵ではない)。
     private func launchAudition(
-        executable: URL, stamp: String?, buildOutput: String, detectMs: Double?, buildMs: Double,
+        executable: URL, stamp: String?, build: Int, buildOutput: String, detectMs: Double?, buildMs: Double,
         relaunchStarted: Double, requested: Bool
     ) -> BuildReport {
         let launchFailure = startAuditionChild(
-            executable: executable, stamp: stamp, clock: auditionClock ?? productionClock)
+            executable: executable, stamp: stamp, build: build, clock: auditionClock ?? productionClock)
         let timings = BuildReport.Timings(
             detectMs: detectMs, buildMs: buildMs, relaunchMs: (hooks.now() - relaunchStarted) * 1000)
         let report: BuildReport =
@@ -2702,9 +2738,12 @@ final class WatchSession {
 
     /// 試聴の子を起こす手順 (記録は書かない)。作り直しの後 (``launchAudition``) と起こし直し (``performRestart(_:)``) が通る。
     ///
+    /// - Parameter build: `executable` を建てた作り直しの通し番号 (``launchBuilds``)。
     /// - Parameter clock: 子へ渡す時計の場所の番号 (``Hooks/selectClock``)。
     /// - Returns: 起こせなかった理由。起こせたら `nil`。
-    private func startAuditionChild(executable: URL, stamp: String?, clock: Int) -> CommandFailure? {
+    private func startAuditionChild(
+        executable: URL, stamp: String?, build: Int, clock: Int
+    ) -> CommandFailure? {
         // 乗り換えを待つ本番の倒れた知らせの目印は残す (``sweepFellBackMarkers(keeping:)`` が試聴の子のぶんも残す)
         sweepFellBackMarkers(keeping: awaitingPromotion ? child?.processIdentifier : nil)
         prepareStartFailureNotes()
@@ -2729,7 +2768,7 @@ final class WatchSession {
             // **プレビューは、この子の目録だけを採る。** 起こせなかった回は据え置く (止めた前の子の最後の絵のまま)
             previewFollowing = started.processIdentifier
         }
-        noteLaunched(auditionChild, stamp: stamp)
+        noteLaunched(auditionChild, stamp: stamp, build: build)
         expectsGeneration(generationPIDs(of: auditionChild))
         return launchFailure
     }
@@ -2751,7 +2790,8 @@ final class WatchSession {
         pendingAudition = nil
         let started = hooks.now()
         return launchAudition(
-            executable: pending.executable, stamp: pending.stamp, buildOutput: pending.buildOutput,
+            executable: pending.executable, stamp: pending.stamp, build: pending.build,
+            buildOutput: pending.buildOutput,
             detectMs: pending.detectMs, buildMs: pending.buildMs, relaunchStarted: started,
             requested: pending.requested)
     }
