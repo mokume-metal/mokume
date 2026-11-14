@@ -131,9 +131,9 @@ enum Command {
                     from the carried second while frameCount starts at 1 again, and a pauseTime(), playTime()
                     or jumpTime() in setup() wins. If the old version crashed or had stopped drawing
                     with noLoop(), the new one starts from the second it last wrote or last showed,
-                    without the time that passed. A version under audition starts from the clock of the
-                    version in the work's window but never moves it, so after a leave the next build
-                    continues from that version's clock. run and render always start at 0.
+                    without the time that passed. A version under audition starts from the clock of
+                    the version in the work's window but never moves it, so after a leave the next
+                    build continues from that version's clock. run and render always start at 0.
                     What it watches: Package.swift, every .swift under Sources/, and the regular files
                     under Sources/<target>/assets/ (not hidden files or symbolic links). A .metal
                     fragment is not rebuilt: it swaps in while the sketch keeps running.
