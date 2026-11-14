@@ -16,10 +16,12 @@ import simd
 /// [#3581]: https://github.com/mokume-metal/mokume/issues/3581
 @Suite("数の並びを置き場所として読む (値)")
 struct PositionLayoutValueTests {
-    @Test("型の名前は Placement.Layout で、この段は .position だけを持つ")
-    func layoutHasOnlyPosition() {
-        let layout: Placement.Layout = .position
-        #expect(layout == .position)
+    @Test("型の名前は Placement.Layout で、.position は 3 つ・.positionAndHeading は 6 つで 1 か所を読む")
+    func layoutsAndTheirStrides() {
+        let layouts: [Placement.Layout] = [.position, .positionAndHeading]
+        #expect(layouts.map(\.stride) == [3, 6])
+        // 計算の入口 (`Particles.metal` の `mokume_positionStride`) は 1 を 6 つ、ほかを 3 つと読む
+        #expect(layouts.map(\.kernelCode) == [0, 1])
     }
 
     @Test("失敗の記憶は、間隔を 1・2・4…と倍にし、上限 600 フレームで止める")
@@ -1167,6 +1169,385 @@ struct PositionLayoutDrawingTests {
         #expect(target.contains("beginDraw() and endDraw()"), Comment(rawValue: target))
         #expect(target.contains("draw { }"), Comment(rawValue: target))
         #expect(!target.contains("from draw()"), Comment(rawValue: target))
+    }
+}
+
+// MARK: - 進む向きへ回して置く (.positionAndHeading・#3582)
+
+/// `.positionAndHeading` の検査。向きの約束は「形の +x を進む向きへ・+y は x と y の面に留める」で、
+/// CPU の比べる相手は **方位 φ だけ `rotateZ`、続けて仰角 θ だけ `rotateY(−θ)`** と、変換を積んで独立に組む
+/// (計算の入口の、三角関数を使わない組み方は写さない)。
+///
+/// 画素の一致は、軸に沿う向きと 45° の向きで見る。一般の向きは、GPU が書いた置き場所の行列を CPU で組んだ
+/// 行列と相対 1e-5 で比べる — 単精度の積和は 1 回の丸めにまとめられうるので、ビット一致は求めない
+/// (`ParticleForceTests` と同じ)。
+extension PositionLayoutDrawingTests {
+    /// 3 つの軸で大きさの違う箱を、原点から 3 つの軸のどれにもずらしたもの。どの軸まわりに半周回しても
+    /// 自分に重ならないので、どの軸の取り違え (ひねり・裏返し) も絵に出る。
+    private func slab(_ canvas: Canvas) -> Shape {
+        canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(.linear(red: 0.8, green: 0.6, blue: 0.4))
+            canvas.translate(6, 4, 2)
+            canvas.box(28, 10, 4)
+        }
+    }
+
+    /// 方位と仰角。CPU が `atan2` で独立に求める。
+    private static func angles(_ heading: SIMD3<Float>) -> (azimuth: Float, elevation: Float) {
+        let flat = (heading.x * heading.x + heading.y * heading.y).squareRoot()
+        return (atan2(heading.y, heading.x), atan2(heading.z, flat))
+    }
+
+    /// 1 か所を、移して向きへ回して置く (`push`・`translate`・回転・`shape`・`pop`)。
+    private static func placeOne(
+        _ canvas: Canvas, _ shape: Shape, at position: SIMD3<Float>, heading: SIMD3<Float>
+    ) {
+        canvas.pushMatrix()
+        canvas.translate(position.x, position.y, position.z)
+        if heading != .zero {
+            let (azimuth, elevation) = angles(heading)
+            canvas.rotateZ(azimuth)
+            if heading.z != 0 { canvas.rotateY(-elevation) }
+        }
+        canvas.shape(shape)
+        canvas.popMatrix()
+    }
+
+    /// 位置と向きを CPU が書いた並びで置いた絵と、1 つずつ置いた絵。
+    private func headingPictures(
+        _ places: [(position: SIMD3<Float>, heading: SIMD3<Float>)], lit: Bool = true,
+        setup: (Canvas) -> Void = { _ in }
+    ) throws -> (numbers: PixelBuffer, oneByOne: PixelBuffer) {
+        let canvas = try makeCanvas()
+        let numbers = try canvas.makeNumbers(count: places.count * 6)
+        numbers.set(
+            places.flatMap {
+                [$0.position.x, $0.position.y, $0.position.z, $0.heading.x, $0.heading.y, $0.heading.z]
+            })
+        let shape = slab(canvas)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            if lit { canvas.lights() }
+            setup(canvas)
+            canvas.shape(shape, at: numbers, layout: .positionAndHeading)
+        }
+        let other = try makeCanvas()
+        let otherShape = slab(other)
+        try other.draw {
+            other.background(.linear(red: 0, green: 0, blue: 0))
+            if lit { other.lights() }
+            setup(other)
+            for place in places {
+                Self.placeOne(other, otherShape, at: place.position, heading: place.heading)
+            }
+        }
+        return (try canvas.target.readPixels(), try other.target.readPixels())
+    }
+
+    /// 3 列 × 4 段に並べた 12 か所。
+    private static func grid(_ headings: [SIMD3<Float>]) -> [(position: SIMD3<Float>, heading: SIMD3<Float>)] {
+        headings.enumerated().map { index, heading in
+            (SIMD3<Float>(40 + Float(index % 3) * 60, 40 + Float(index / 3) * 70, 0), heading)
+        }
+    }
+
+    @Test("画面の面の中の、軸に沿う向きと 45° の向きで置いた絵は、rotateZ で 1 つずつ置いた絵と画素で一致する")
+    func axisAndDiagonalHeadingsInThePlaneMatch() throws {
+        let headings: [SIMD3<Float>] = [
+            [1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0],
+            [1, 1, 0], [-1, 1, 0], [-1, -1, 0], [1, -1, 0],
+            // 長さは問わない (速度をそのまま渡せる)
+            [3, 0, 0], [0, 0.25, 0], [5, 5, 0], [-0.5, 0.5, 0],
+        ]
+        let (numbers, oneByOne) = try headingPictures(Self.grid(headings))
+        let gap = differingPixels(numbers, oneByOne)
+        #expect(gap == 0, "進む向きで置いた絵が、1 つずつ回して置いた絵と \(gap) 画素違う")
+        #expect(coveredPixels(oneByOne) > 0, "何も描かれていない (検査の前提)")
+
+        // 回さずに置いた絵とは違う (向きが効いていることの前提)
+        let (_, unturned) = try headingPictures(Self.grid(headings.map { _ in [1, 0, 0] }))
+        #expect(differingPixels(numbers, unturned) > 0, "向きが効いていない — 検査の前提")
+    }
+
+    @Test("奥行きの軸に沿う向きと、奥行きへ 45° の向きで置いた絵は、rotateZ・rotateY で 1 つずつ置いた絵と画素で一致する")
+    func axisAndDiagonalHeadingsOutOfThePlaneMatch() throws {
+        let headings: [SIMD3<Float>] = [
+            [0, 0, 1], [0, 0, -1], [1, 0, 1], [1, 0, -1],
+            [-1, 0, 1], [0, 1, 1], [0, -1, -1], [0, 1, -1],
+            [2, 0, 2], [0, 0, 7], [-3, 0, -3], [0, -4, 4],
+        ]
+        // 斜めから見て、奥行きへの傾きを絵に出す
+        let tilt: (Canvas) -> Void = { canvas in
+            canvas.translate(100, 150, 0)
+            canvas.rotateX(0.5)
+            canvas.translate(-100, -150, 0)
+        }
+        let (numbers, oneByOne) = try headingPictures(Self.grid(headings), setup: tilt)
+        let gap = differingPixels(numbers, oneByOne)
+        #expect(gap == 0, "奥行きへ向けて置いた絵が、1 つずつ回して置いた絵と \(gap) 画素違う")
+        #expect(coveredPixels(oneByOne) > 0, "何も描かれていない (検査の前提)")
+    }
+
+    @Test("長さ 0 の向きは回さずに置く")
+    func zeroHeadingIsNotTurned() throws {
+        let places = Self.grid([[0, 0, 0], [0, 0, 0], [-0.0, 0, -0.0], [1, 0, 0]])
+        let (numbers, oneByOne) = try headingPictures(places)
+        #expect(differingPixels(numbers, oneByOne) == 0)
+        #expect(coveredPixels(oneByOne) > 0, "何も描かれていない (検査の前提)")
+        // 回さない = .position で同じ位置に置いた行列と、行列のビットまで同じ
+        let matrices = try placedMatrices(places, layout: .positionAndHeading)
+        let plain = try placedMatrices(places, layout: .position)
+        #expect(matrices.count == 4 && plain.count == 4)
+        for (turned, unturned) in zip(matrices, plain) {
+            #expect(turned.map(\.bitPattern) == unturned.map(\.bitPattern), "長さ 0 の向きで回した")
+        }
+    }
+
+    /// GPU が書いた置き場所 (行列 16 と面の向き 12) を、置いた順に返す。並びは位置と向きを `layout` で書く。
+    private func placedMatrices(
+        _ places: [(position: SIMD3<Float>, heading: SIMD3<Float>)], layout: Placement.Layout,
+        setup: (Canvas) -> Void = { _ in }
+    ) throws -> [[Float]] {
+        let canvas = try makeCanvas()
+        let values = places.flatMap { place -> [Float] in
+            let position = [place.position.x, place.position.y, place.position.z]
+            return layout == .position ? position : position + [place.heading.x, place.heading.y, place.heading.z]
+        }
+        let numbers = try canvas.makeNumbers(count: values.count)
+        numbers.set(values)
+        let shape = slab(canvas)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            setup(canvas)
+            canvas.shape(shape, at: numbers, layout: layout)
+        }
+        let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers))
+        let draw = placer.draws[0]
+        let placed = Int(canvas.read(draw.arguments)[1].bitPattern)
+        let instances = canvas.read(draw.instances)
+        return (0..<placed).map { Array(instances[($0 * 32)..<($0 * 32 + 28)]) }
+    }
+
+    @Test("一般の向きでは、GPU が書いた置き場所の行列と面の向きが、CPU で組んだものと相対 1e-5 で一致する")
+    func generalHeadingsMatchTheCPUMatrices() throws {
+        var randomness = OutputSplitMix(seed: 3582)
+        // 0…1 の一様な値 (上位 24 ビット)
+        func unit() -> Float { Float(randomness.next() >> 40) / Float(1 << 24) }
+        var places: [(position: SIMD3<Float>, heading: SIMD3<Float>)] = []
+        for index in 0..<200 {
+            let position = SIMD3<Float>(unit() * 200, unit() * 300, unit() * 100 - 50)
+            // 長さは 1e-3 から 1e3 まで散らす
+            let length = Float(pow(10, Double(index % 7) - 3))
+            let heading = SIMD3<Float>(unit() * 2 - 1, unit() * 2 - 1, unit() * 2 - 1) * length
+            places.append((position, heading))
+        }
+        // 移す・軸ごとに違う倍率・回す、のまざった変換の下で比べる (面の向きは逆転置で移る)
+        let setup: (Canvas) -> Void = { canvas in
+            canvas.translate(30, 20, 5)
+            canvas.rotateX(0.3)
+            canvas.scale(1.5, 0.75, 2)
+        }
+        let world: Transform = {
+            var built = Transform.identity
+            built.translate(x: 30, y: 20, z: 5)
+            built.rotateX(by: Float(0.3))
+            built.scale(x: 1.5, y: 0.75, z: 2)
+            return built
+        }()
+        let placed = try placedMatrices(places, layout: .positionAndHeading, setup: setup)
+        #expect(placed.count == places.count)
+        var worst: Float = 0
+        for (gpu, place) in zip(placed, places) {
+            var built = world
+            built.translate(x: place.position.x, y: place.position.y, z: place.position.z)
+            let (azimuth, elevation) = Self.angles(place.heading)
+            built.rotateZ(by: azimuth)
+            built.rotateY(by: -elevation)
+            let matrix = built.matrix
+            let normal = built.normalMatrix
+            for column in 0..<4 {
+                let expected = matrix[column]
+                let scale = max(simd_length(expected), 1)
+                for row in 0..<4 {
+                    worst = max(worst, abs(gpu[column * 4 + row] - expected[row]) / scale)
+                }
+            }
+            for column in 0..<3 {
+                let expected = normal[column]
+                let scale = max(simd_length(expected), 1e-30)
+                for row in 0..<3 {
+                    worst = max(worst, abs(gpu[16 + column * 4 + row] - expected[row]) / scale)
+                }
+            }
+        }
+        #expect(worst <= 1e-5, "GPU と CPU の置き場所の行列が相対 \(worst) ずれる")
+    }
+
+    @Test("成分の 2 乗が溢れる大きい向きと、小さい向きも、同じ向きの長さ 1 の向きと同じ行列になる")
+    func extremeHeadingLengthsKeepTheirDirection() throws {
+        let headings: [SIMD3<Float>] = [[1e30, 1e30, 0], [1, 1, 0], [-3e37, 0, 3e37], [-1, 0, 1], [1e-30, 0, 0], [1, 0, 0]]
+        let placed = try placedMatrices(
+            headings.map { (SIMD3<Float>(100, 150, 0), $0) }, layout: .positionAndHeading)
+        #expect(placed.count == headings.count, "大きい向きの 1 か所が外れた")
+        for pair in stride(from: 0, to: placed.count - 1, by: 2) {
+            let (extreme, unit) = (placed[pair], placed[pair + 1])
+            #expect(extreme.allSatisfy { $0.isFinite }, "\(headings[pair]) の行列が数でない")
+            let gap = zip(extreme, unit).map { abs($0 - $1) }.max() ?? 0
+            #expect(gap <= 1e-6, "\(headings[pair]) の行列が、長さ 1 の向きと \(gap) 違う")
+        }
+    }
+
+    @Test("位置か向きに数でない値・無限を含む 1 か所は描かれず、ほかは並びの順に置かれる")
+    func nonFiniteHeadingsAreSkipped() throws {
+        let nan = Float.nan
+        let infinity = Float.infinity
+        let places: [(position: SIMD3<Float>, heading: SIMD3<Float>)] = Self.grid([
+            [1, 0, 0], [nan, 1, 0], [0, 1, 0], [1, infinity, 0], [-1, 0, 0], [0, 0, -infinity],
+            [1, 1, 0], [0, 0, 0], [-1, -1, 0],
+        ]) + [
+            (position: SIMD3<Float>(nan, 100, 0), heading: SIMD3<Float>(1, 0, 0)),
+            (position: SIMD3<Float>(100, 100, infinity), heading: SIMD3<Float>(0, 1, 0)),
+        ]
+        let usable = places.filter {
+            [$0.position.x, $0.position.y, $0.position.z, $0.heading.x, $0.heading.y, $0.heading.z]
+                .allSatisfy(\.isFinite)
+        }
+        #expect(usable.count == 6, "検査の前提: 5 か所が外れる")
+
+        let canvas = try makeCanvas()
+        let numbers = try canvas.makeNumbers(count: places.count * 6)
+        numbers.set(
+            places.flatMap {
+                [$0.position.x, $0.position.y, $0.position.z, $0.heading.x, $0.heading.y, $0.heading.z]
+            })
+        let shape = slab(canvas)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            canvas.shape(shape, at: numbers, layout: .positionAndHeading)
+        }
+        let picture = try canvas.target.readPixels()
+
+        let (_, oneByOne) = try headingPictures(usable)
+        #expect(differingPixels(picture, oneByOne) == 0, "外した後の絵が、使える分だけ置いた絵と違う")
+
+        let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers))
+        let instances = canvas.read(placer.draws[0].instances)
+        #expect(canvas.read(placer.draws[0].arguments)[1].bitPattern == 6)
+        for (slot, place) in usable.enumerated() {
+            #expect(instances[slot * 32 + 12] == place.position.x, "\(slot) 番目が並びの順ではない")
+            #expect(instances[slot * 32 + 13] == place.position.y, "\(slot) 番目が並びの順ではない")
+        }
+    }
+
+    @Test("6 で割り切れない長さは、count / 6 個だけ置き、端数を 1 度知らせる")
+    func headingRemainderIsDroppedAndReported() throws {
+        let canvas = try makeCanvas()
+        // 2 か所と、端数 4 つ (3 で割り切れても 6 では割り切れない長さを含めて見る)
+        let numbers = try canvas.makeNumbers(count: 15)
+        numbers.set([60, 100, 0, 0, 1, 0, 140, 200, 0, -1, 1, 0, 99, 99, 0])
+        let shape = slab(canvas)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            canvas.shape(shape, at: numbers, layout: .positionAndHeading)
+            canvas.shape(shape, at: numbers, layout: .positionAndHeading)
+        }
+        let picture = try canvas.target.readPixels()
+        let (_, oneByOne) = try headingPictures([([60, 100, 0], [0, 1, 0]), ([140, 200, 0], [-1, 1, 0])])
+        #expect(differingPixels(picture, oneByOne) == 0, "切り捨てた個数で置いた絵と違う")
+        let message = try #require(canvas.warnings.message(for: .positionLayoutRemainder))
+        #expect(message.contains("15 numbers"), Comment(rawValue: message))
+        #expect(message.contains("multiple of 6"), Comment(rawValue: message))
+        #expect(message.contains("2 places"), Comment(rawValue: message))
+        #expect(message.contains("last 3 number"), Comment(rawValue: message))
+    }
+
+    @Test("6 個に満たない並びは何も置かず、端数を知らせる")
+    func fewerThanOneHeadingPlacesNothing() throws {
+        let canvas = try makeCanvas()
+        let numbers = try canvas.makeNumbers(count: 5)
+        numbers.set([60, 100, 0, 1, 0])
+        let shape = slab(canvas)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            canvas.shape(shape, at: numbers, layout: .positionAndHeading)
+        }
+        #expect(coveredPixels(try canvas.target.readPixels()) == 0)
+        #expect(canvas.warnings.hasWarned(.positionLayoutRemainder))
+    }
+
+    @Test("向きの回転は鏡映を作らない。鏡映の符号は画面の変換から決まる")
+    func headingDoesNotMirror() throws {
+        for (mirrored, flip) in [(true, Float(-1)), (false, Float(1))] {
+            let canvas = try makeCanvas()
+            let numbers = try canvas.makeNumbers(count: 6)
+            numbers.set([60, 100, 0, -1, 0.5, -0.25])
+            let shape = slab(canvas)
+            var batch: Canvas.Batch?
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.translate(190, 0)
+                canvas.scale(flip, 1, 1)
+                canvas.shape(shape, at: numbers, layout: .positionAndHeading)
+                batch = canvas.batches.last
+            }
+            let found = try #require(batch, "列が開いていない")
+            #expect(found.isMirrored == mirrored)
+        }
+        // 置き場所の回転そのものの行列式は +1 (裏返さない)
+        let placed = try placedMatrices(
+            Self.grid([[-1, 0.5, -0.25], [0, 0, 1], [3, -2, 1]]), layout: .positionAndHeading)
+        for matrix in placed {
+            let upper = simd_float3x3(
+                SIMD3(matrix[0], matrix[1], matrix[2]), SIMD3(matrix[4], matrix[5], matrix[6]),
+                SIMD3(matrix[8], matrix[9], matrix[10]))
+            #expect(abs(upper.determinant - 1) <= 1e-5, "回転の行列式が \(upper.determinant)")
+        }
+    }
+
+    @Test("計算が毎フレーム書く位置と向きで、読み戻さずに置く (作例の群れの形)")
+    func followsAComputationThatWritesPositionAndHeading() throws {
+        let canvas = try makeCanvas()
+        let count = 12
+        let numbers = try canvas.makeNumbers(count: count * 6)
+        let swirl = try canvas.makeComputation(
+            """
+            kernel void swirl(device float *agent [[buffer(0)]],
+                              constant Values &values [[buffer(MOKUME_VALUES)]],
+                              uint id [[thread_position_in_grid]])
+            {
+                float angle = float(id) * 0.5 + values.turn;
+                agent[id * 6] = 100.0 + 70.0 * cos(angle);
+                agent[id * 6 + 1] = 150.0 + 70.0 * sin(angle);
+                agent[id * 6 + 2] = 0.0;
+                agent[id * 6 + 3] = -sin(angle);
+                agent[id * 6 + 4] = cos(angle);
+                agent[id * 6 + 5] = 0.0;
+            }
+            """, name: "swirl", values: ["turn": 0])
+        let shape = slab(canvas)
+        for frame in 0..<3 {
+            try canvas.draw {
+                swirl.set("turn", .number(Float(frame) * 0.4))
+                canvas.compute(swirl, over: count, writes: [numbers])
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.shape(shape, at: numbers, layout: .positionAndHeading)
+            }
+        }
+        #expect(numbers.readbackAllocations == 0, "並びを読み戻している")
+        // 最後のフレームの値と向きで置かれている。計算が書いた値を後から読んで、行列と比べる
+        let written = canvas.read(numbers)
+        let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers))
+        let instances = canvas.read(placer.draws[0].instances)
+        for id in 0..<count {
+            let heading = SIMD3(written[id * 6 + 3], written[id * 6 + 4], written[id * 6 + 5])
+            let forward = SIMD3(instances[id * 32], instances[id * 32 + 1], instances[id * 32 + 2])
+            #expect(simd_length(forward - simd_normalize(heading)) <= 1e-5, "\(id) 番目の +x が進む向きを向いていない")
+            #expect(instances[id * 32 + 12] == written[id * 6], "\(id) 番目の位置が最後のフレームの値ではない")
+        }
     }
 }
 

@@ -196,12 +196,11 @@ extension Canvas {
         guard isDrawing else { return warnPositionLayoutOutsideFrame() }
         guard !shape.isEmpty else { return }
 
-        switch layout {
-        case .position:
-            break
+        let stride = layout.stride
+        let capacity = positions.count / stride
+        if positions.count % stride != 0 {
+            warnPositionRemainder(count: positions.count, layout: layout)
         }
-        let capacity = positions.count / 3
-        if positions.count % 3 != 0 { warnPositionRemainder(count: positions.count) }
         guard capacity > 0 else { return }
 
         let run: Shape.Run
@@ -228,10 +227,11 @@ extension Canvas {
 
         let world = transform.matrix
         placer.write(
-            into: draw, world: world, normal: transform.normalMatrix, vertexCount: run.count)
+            into: draw, world: world, normal: transform.normalMatrix, vertexCount: run.count,
+            layout: layout)
         schedule(positions, placer, draw, kernels)
 
-        // 鏡映の符号は画面の変換から CPU で決まる。位置だけを動かすので、置き場所は鏡映を作らない
+        // 鏡映の符号は画面の変換から CPU で決まる。位置の移動と向きの回転は、置き場所に鏡映を作らない
         let mirrored = SolidInstance(
             matrix: world, normalMatrix: transform.normalMatrix, color: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)
         ).isMirrored
@@ -316,12 +316,14 @@ extension Canvas {
                 : subject + ". " + OutsideFrame.drawingTargetTail)
     }
 
-    /// 並びの長さが 3 で割り切れない。端数は置かない。
-    private func warnPositionRemainder(count: Int) {
+    /// 並びの長さが 1 か所の数 (`.position` は 3・`.positionAndHeading` は 6) で割り切れない。端数は置かない。
+    private func warnPositionRemainder(count: Int, layout: Placement.Layout) {
+        let stride = layout.stride
         warnOnce(
             .positionLayoutRemainder,
-            "shape(at:layout:): the array holds \(count) numbers, which is not a multiple of 3, so "
-                + "\(count / 3) positions were placed and the last \(count % 3) number(s) were ignored")
+            "shape(at:layout: .\(layout)): the array holds \(count) numbers, which is not a multiple "
+                + "of \(stride), so \(count / stride) places were filled and the last "
+                + "\(count % stride) number(s) were ignored")
     }
 
     /// 載らない形を渡された。**文面は載る形の範囲も言う** — 直す先が分かるように。

@@ -312,9 +312,10 @@ kernel void mokume_particles(
 
 // ## 数の並びを置き場所として読む (shape(_:at:layout:))
 //
-// 利用者の計算が書いた 3×N 個の位置から、粒と同じ道 (旗 → scan → 詰める) で置き場所を作る。
-// 数でない値・無限を含む 1 つは置かず、残りは並びの順に詰める。**旗と scan は粒のものをそのまま
-// 使い**(mokume_particleScan)、置き場所を書く入口だけが違う。束ねる先の番号は呼ぶ側が決める
+// 利用者の計算が書いた数の並びから、粒と同じ道 (旗 → scan → 詰める) で置き場所を作る。読み方は
+// 2 つで、0 (.position) は 3 つで 1 か所 (位置)、1 (.positionAndHeading) は 6 つで 1 か所 (位置と
+// 進む向き)。数でない値・無限を含む 1 つは置かず、残りは並びの順に詰める。scan は粒のものをそのまま
+// 使い (mokume_particleScan)、旗と置き場所を書く入口だけが違う。束ねる先の番号は呼ぶ側が決める
 // (Canvas+PositionLayout.swift が reads / writes の順で渡す)。
 //
 // 指定の並びは Swift 側の `PositionPlacer` が正本:
@@ -324,7 +325,40 @@ kernel void mokume_particles(
 //   [28]    スキャンの段の数 L (uint のビット列)
 //   [29]    描く頂点の数 (uint のビット列)
 //   [30…34] 段 0…4 の置き場の頭 (uint のビット列)。段 L が置ける数 1 個ぶん
-//   [35…39] 予備
+//   [35]    読み方 (uint のビット列。0 = 位置・1 = 位置と進む向き。Swift 側の `Placement.Layout.kernelCode`)
+//   [36…39] 予備
+
+/// 読み方ごとの 1 か所の数。
+static inline uint mokume_positionStride(device const float *parameters) {
+    return as_type<uint>(parameters[35]) == 1u ? 6u : 3u;
+}
+
+/// 進む向きへ回す行列 (3x3)。**形の +x を `heading` へ向け、+y は x と y の面に留める** (ロールなし)。
+///
+/// 方位 φ の分だけ z 軸まわりに、続けて仰角 θ の分だけ y 軸まわりに回すのと同じ行列を、三角関数を
+/// 使わずに組む: 1 列目は向きそのもの (長さ 1)、2 列目は (−sin φ, cos φ, 0)、3 列目はその外積。
+/// 長さ 0 の向きは回さない (単位行列)。真上・真下 (x と y が 0) の向きは方位を 0 とする。
+///
+/// 長さは成分の最大の絶対値で割ってから求める — 大きい向き (1e20 など) の 2 乗が溢れて無限になり、
+/// 有限の向きが数でない行列になるのを避ける。割り算と平方根は **正確な版** (precise::) を使い、軸に
+/// 沿う向きと 45° の向きの行列を、近似の算術 (fast math) の丸めで揺らさない。
+static inline float3x3 mokume_headingRotation(float3 heading) {
+    float largest = max(max(fabs(heading.x), fabs(heading.y)), fabs(heading.z));
+    if (largest == 0.0) {
+        return float3x3(float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), float3(0.0, 0.0, 1.0));
+    }
+    float3 d = float3(
+        precise::divide(heading.x, largest), precise::divide(heading.y, largest),
+        precise::divide(heading.z, largest));
+    float length3 = precise::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    float3 forward = float3(
+        precise::divide(d.x, length3), precise::divide(d.y, length3), precise::divide(d.z, length3));
+    float flat = precise::sqrt(d.x * d.x + d.y * d.y);
+    float3 side = flat > 0.0
+        ? float3(-precise::divide(d.y, flat), precise::divide(d.x, flat), 0.0)
+        : float3(0.0, 1.0, 0.0);
+    return float3x3(forward, side, cross(forward, side));
+}
 
 /// 1. 置ける位置に旗を立てる。
 ///
@@ -335,15 +369,20 @@ kernel void mokume_positionFlags(
     device uint *levels [[buffer(2)]],
     uint id [[thread_position_in_grid]])
 {
-    float3 position = float3(positions[3 * id], positions[3 * id + 1], positions[3 * id + 2]);
+    uint stride = mokume_positionStride(parameters);
+    device const float *at = positions + stride * id;
+    bool usable = mokume_particleFinite(float3(at[0], at[1], at[2]));
+    if (stride == 6u) usable = usable && mokume_particleFinite(float3(at[3], at[4], at[5]));
     uint base = as_type<uint>(parameters[30]);
-    levels[base + id] = mokume_particleFinite(position) ? 1u : 0u;
+    levels[base + id] = usable ? 1u : 0u;
 }
 
 /// 2. 置ける位置だけを詰めて、置き場所と描く引数を書く。
 ///
-/// 置き場所は**位置だけを動かす**ので、行列は「いまの変換 × 平行移動」で、面の向きは変換のものを
-/// そのまま使う (CPU の `Placement` が作る行列と同じ式)。色は白 (形に焼いた色がそのまま出る)。
+/// 位置だけの読み方では、行列は「いまの変換 × 平行移動」で、面の向きは変換のものをそのまま使う
+/// (CPU の `Placement` が作る行列と同じ式)。進む向きも読むときは、続けて向きへ回す行列
+/// (`mokume_headingRotation`) を掛け、面の向きにも同じ回転を掛ける (回転は直交なので、逆転置は
+/// 回転そのもの)。色は白 (形に焼いた色がそのまま出る)。
 ///
 ///   buffer(0) 指定 (読む) / buffer(1) 位置の並び (読む) / buffer(2) 段の置き場 (読む) /
 ///   buffer(3) 置き場所 (書く) / buffer(4) 描く引数 (書く)
@@ -367,8 +406,12 @@ kernel void mokume_positionPlace(
         arguments->baseInstance = 0;
     }
 
-    float3 position = float3(positions[3 * id], positions[3 * id + 1], positions[3 * id + 2]);
+    uint stride = mokume_positionStride(parameters);
+    device const float *at = positions + stride * id;
+    float3 position = float3(at[0], at[1], at[2]);
     if (!mokume_particleFinite(position)) return;
+    float3 heading = stride == 6u ? float3(at[3], at[4], at[5]) : float3(0.0);
+    if (!mokume_particleFinite(heading)) return;
 
     // 自分より前 (番号が小さい) に置ける位置の数。粒と同じ式
     uint place = 0;
@@ -383,10 +426,22 @@ kernel void mokume_positionPlace(
         float4(parameters[8], parameters[9], parameters[10], parameters[11]),
         float4(parameters[12], parameters[13], parameters[14], parameters[15]));
     SolidInstance placed;
-    placed.matrix = float4x4(world[0], world[1], world[2], world * float4(position, 1.0));
     placed.normal0 = float4(parameters[16], parameters[17], parameters[18], parameters[19]);
     placed.normal1 = float4(parameters[20], parameters[21], parameters[22], parameters[23]);
     placed.normal2 = float4(parameters[24], parameters[25], parameters[26], parameters[27]);
+    if (stride == 6u) {
+        float3x3 turn = mokume_headingRotation(heading);
+        float3x3 normal = float3x3(placed.normal0.xyz, placed.normal1.xyz, placed.normal2.xyz) * turn;
+        placed.matrix = float4x4(
+            world * float4(turn[0], 0.0), world * float4(turn[1], 0.0), world * float4(turn[2], 0.0),
+            world * float4(position, 1.0));
+        placed.normal0 = float4(normal[0], 0.0);
+        placed.normal1 = float4(normal[1], 0.0);
+        placed.normal2 = float4(normal[2], 0.0);
+    } else {
+        // 位置だけの読み方は、変換の列をそのまま使う (単位行列の回転を掛けると丸めで最下位の桁が動きうる)
+        placed.matrix = float4x4(world[0], world[1], world[2], world * float4(position, 1.0));
+    }
     placed.color = float4(1.0, 1.0, 1.0, 1.0);
     instances[place] = placed;
 }
