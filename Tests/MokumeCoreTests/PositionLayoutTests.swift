@@ -327,7 +327,7 @@ struct PositionLayoutDrawingTests {
     func remainingPositionsKeepTheirOrder() throws {
         let grid = Grid(count: 12, nanAt: 2, infinityAt: 5, negativeInfinityAt: 7)
         let numbers = try fromNumbers(grid)
-        let placer = try #require(numbers.canvas.positionLayouts.existingPlacer(for: numbers.positions))
+        let placer = try #require(numbers.canvas.positionLayouts.existingPlacer(for: numbers.positions, layout: .position))
         let draw = placer.draws[0]
         let instances = numbers.canvas.read(draw.instances)
         let counts = numbers.canvas.read(draw.arguments)
@@ -352,7 +352,7 @@ struct PositionLayoutDrawingTests {
         let placed = try fromPlacements(grid.usable(), size: 3, lit: false)
         let gap = differingPixels(numbers.picture, placed)
         #expect(gap == 0, "1000 個の絵が \(gap) 画素違う")
-        let placer = try #require(numbers.canvas.positionLayouts.existingPlacer(for: numbers.positions))
+        let placer = try #require(numbers.canvas.positionLayouts.existingPlacer(for: numbers.positions, layout: .position))
         #expect(placer.scanCount == 2, "段が 3 つになっていない — 検査の前提")
         #expect(coveredPixels(placed) > 0, "何も描かれていない (検査の前提)")
     }
@@ -396,20 +396,23 @@ struct PositionLayoutDrawingTests {
 
     // MARK: - 条件 4: 載らない形は描かれず、1 度知らせる
 
-    @Test("載らない形は描かれず、理由つきで 1 度だけ知らせる", arguments: IneligibleShape.allCases)
-    func ineligibleShapesAreRefused(_ kind: IneligibleShape) throws {
+    @Test(
+        "載らない形は描かれず、理由つきで 1 度だけ知らせる (どちらの読み方でも)",
+        arguments: IneligibleShape.allCases, [Placement.Layout.position, .positionAndHeading])
+    func ineligibleShapesAreRefused(_ kind: IneligibleShape, _ layout: Placement.Layout) throws {
         let canvas = try makeCanvas()
         let shape = kind.build(canvas)
+        // .position なら 2 か所、.positionAndHeading なら位置 (60, 100, 0) と向き (140, 200, 0) の 1 か所
         let positions = try canvas.makeNumbers(count: 6)
         positions.set([60, 100, 0, 140, 200, 0])
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.lights()
-            canvas.shape(shape, at: positions, layout: .position)
-            canvas.shape(shape, at: positions, layout: .position)
+            canvas.shape(shape, at: positions, layout: layout)
+            canvas.shape(shape, at: positions, layout: layout)
         }
         let picture = try canvas.target.readPixels()
-        #expect(coveredPixels(picture) == 0, "\(kind) が描かれた")
+        #expect(coveredPixels(picture) == 0, "\(kind) が \(layout) で描かれた")
         let message = try #require(
             canvas.warnings.message(for: .positionLayoutShape), "\(kind) を断る注意が出ていない")
         #expect(message.contains(kind.reason), "\(kind) の理由 (\(kind.reason)) が文面に無い: \(message)")
@@ -469,8 +472,10 @@ struct PositionLayoutDrawingTests {
 
     // MARK: - 条件 6: createShape の中
 
-    @Test("createShape { } の中で呼ぶと、描かれず形にも入らず、1 度知らせる")
-    func insideCreateShapeIsRefused() throws {
+    @Test(
+        "createShape { } の中で呼ぶと、描かれず形にも入らず、1 度知らせる (どちらの読み方でも)",
+        arguments: [Placement.Layout.position, .positionAndHeading])
+    func insideCreateShapeIsRefused(_ layout: Placement.Layout) throws {
         let canvas = try makeCanvas()
         let positions = try canvas.makeNumbers(count: 6)
         positions.set([60, 100, 0, 140, 200, 0])
@@ -480,8 +485,8 @@ struct PositionLayoutDrawingTests {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.lights()
             built = canvas.createShape {
-                canvas.shape(cube, at: positions, layout: .position)
-                canvas.shape(cube, at: positions, layout: .position)
+                canvas.shape(cube, at: positions, layout: layout)
+                canvas.shape(cube, at: positions, layout: layout)
             }
         }
         #expect(built.isEmpty, "組み立ての中の呼び出しが形に入った")
@@ -517,7 +522,7 @@ struct PositionLayoutDrawingTests {
             Placement(x: 160, y: 200),
         ])
         #expect(differingPixels(picture, placed) == 0, "2 回の呼び出しの絵が 1 回ずつの絵と違う")
-        let placer = try #require(canvas.positionLayouts.existingPlacer(for: positions))
+        let placer = try #require(canvas.positionLayouts.existingPlacer(for: positions, layout: .position))
         #expect(placer.draws.count == 2, "組が 2 つになっていない: \(placer.draws.count)")
         #expect(canvas.positionLayouts.placerCount == 1)
     }
@@ -533,7 +538,7 @@ struct PositionLayoutDrawingTests {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.lights()
             canvas.shape(cube, at: positions, layout: .position)
-            let placer = canvas.positionLayouts.existingPlacer(for: positions)
+            let placer = canvas.positionLayouts.existingPlacer(for: positions, layout: .position)
             placer?.drawAllocationFailureForTesting = .bufferUnavailable(byteCount: 1)
             canvas.push()
             canvas.translate(100, 0)
@@ -742,7 +747,7 @@ struct PositionLayoutDrawingTests {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.shape(cube, at: positions, layout: .position)
         }
-        let placer = try #require(canvas.positionLayouts.existingPlacer(for: positions))
+        let placer = try #require(canvas.positionLayouts.existingPlacer(for: positions, layout: .position))
         let draw = placer.draws[0]
         let arguments = canvas.read(draw.arguments)
         let placed = Int(arguments[1].bitPattern)
@@ -1046,7 +1051,7 @@ struct PositionLayoutDrawingTests {
             switch kind {
             case .kernel: layouts.kernelBuildAttempts
             case .placer: layouts.placerBuildAttempts
-            case .drawAllocation: layouts.existingPlacer(for: positions)?.drawAllocationAttempts ?? 0
+            case .drawAllocation: layouts.existingPlacer(for: positions, layout: .position)?.drawAllocationAttempts ?? 0
             }
         }
         func inject(_ failure: RenderFailure?) {
@@ -1054,7 +1059,7 @@ struct PositionLayoutDrawingTests {
             case .kernel: layouts.kernelFailureForTesting = failure
             case .placer: layouts.placerFailureForTesting = failure
             case .drawAllocation:
-                layouts.existingPlacer(for: positions)?.drawAllocationFailureForTesting = failure
+                layouts.existingPlacer(for: positions, layout: .position)?.drawAllocationFailureForTesting = failure
             }
         }
         /// 1 フレームに 3 回呼ぶ (同じフレームの 2 回目以降は、試さずに断られる)。試みが増えたフレームを返す。
@@ -1105,7 +1110,7 @@ struct PositionLayoutDrawingTests {
         #expect(layouts.placerCount == 1)
         #expect(layouts.kernels != nil)
         if kind == .drawAllocation {
-            #expect((layouts.existingPlacer(for: positions)?.draws.count ?? 0) >= 2)
+            #expect((layouts.existingPlacer(for: positions, layout: .position)?.draws.count ?? 0) >= 2)
         }
         #expect(coveredPixels(try canvas.target.readPixels()) > 0, "直ったのに描かれない")
     }
@@ -1322,7 +1327,7 @@ extension PositionLayoutDrawingTests {
             setup(canvas)
             canvas.shape(shape, at: numbers, layout: layout)
         }
-        let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers))
+        let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers, layout: layout))
         let draw = placer.draws[0]
         let placed = Int(canvas.read(draw.arguments)[1].bitPattern)
         let instances = canvas.read(draw.instances)
@@ -1440,7 +1445,7 @@ extension PositionLayoutDrawingTests {
         let (_, oneByOne) = try headingPictures(usable)
         #expect(differingPixels(picture, oneByOne) == 0, "外した後の絵が、使える分だけ置いた絵と違う")
 
-        let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers))
+        let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers, layout: .positionAndHeading))
         let instances = canvas.read(placer.draws[0].instances)
         #expect(canvas.read(placer.draws[0].arguments)[1].bitPattern == 6)
         for (slot, place) in usable.enumerated() {
@@ -1485,6 +1490,51 @@ extension PositionLayoutDrawingTests {
         }
         #expect(coveredPixels(try canvas.target.readPixels()) == 0)
         #expect(canvas.warnings.hasWarned(.positionLayoutRemainder))
+    }
+
+    @Test("同じ並びを同じフレームで 2 つの読み方で読むと、読み方ごとの置き場を持ち、次のフレームは作り直さない")
+    func oneArrayReadBothWaysKeepsTwoPlacers() throws {
+        // 12 個: .position なら 4 か所、.positionAndHeading なら 2 か所
+        let values: [Float] = [40, 60, 0, 1, 1, 0, 120, 200, 0, 0, -1, 0]
+        let canvas = try makeCanvas()
+        let numbers = try canvas.makeNumbers(count: values.count)
+        numbers.set(values)
+        let shape = slab(canvas)
+        for _ in 0..<3 {
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.shape(shape, at: numbers, layout: .position)
+                canvas.shape(shape, at: numbers, layout: .positionAndHeading)
+            }
+        }
+        #expect(canvas.positionLayouts.placerBuildAttempts == 2, "置き場を作り直している")
+        #expect(canvas.positionLayouts.placerCount == 2)
+
+        // それぞれの読み方の置き場所は、単独で読んだときと同じ
+        for layout in [Placement.Layout.position, .positionAndHeading] {
+            let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers, layout: layout))
+            #expect(placer.capacity == values.count / layout.stride)
+            let placed = Int(canvas.read(placer.draws[0].arguments)[1].bitPattern)
+            let instances = canvas.read(placer.draws[0].instances)
+            let both = (0..<placed).map { Array(instances[($0 * 32)..<($0 * 32 + 28)]) }
+
+            let alone = try makeCanvas()
+            let aloneNumbers = try alone.makeNumbers(count: values.count)
+            aloneNumbers.set(values)
+            let aloneShape = slab(alone)
+            try alone.draw {
+                alone.background(.linear(red: 0, green: 0, blue: 0))
+                alone.shape(aloneShape, at: aloneNumbers, layout: layout)
+            }
+            let alonePlacer = try #require(alone.positionLayouts.existingPlacer(for: aloneNumbers, layout: layout))
+            let aloneCount = Int(alone.read(alonePlacer.draws[0].arguments)[1].bitPattern)
+            let aloneInstances = alone.read(alonePlacer.draws[0].instances)
+            let single = (0..<aloneCount).map { Array(aloneInstances[($0 * 32)..<($0 * 32 + 28)]) }
+            #expect(both.count == values.count / layout.stride)
+            #expect(
+                both.map { $0.map(\.bitPattern) } == single.map { $0.map(\.bitPattern) },
+                "\(layout) の置き場所が、単独で読んだときと違う")
+        }
     }
 
     @Test("向きの回転は鏡映を作らない。鏡映の符号は画面の変換から決まる")
@@ -1548,7 +1598,7 @@ extension PositionLayoutDrawingTests {
         #expect(numbers.readbackAllocations == 0, "並びを読み戻している")
         // 最後のフレームの値と向きで置かれている。計算が書いた値を後から読んで、行列と比べる
         let written = canvas.read(numbers)
-        let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers))
+        let placer = try #require(canvas.positionLayouts.existingPlacer(for: numbers, layout: .positionAndHeading))
         let instances = canvas.read(placer.draws[0].instances)
         for id in 0..<count {
             let heading = SIMD3(written[id * 6 + 3], written[id * 6 + 4], written[id * 6 + 5])
