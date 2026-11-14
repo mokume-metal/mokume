@@ -46,8 +46,10 @@ struct WatchAuditionTests {
         private(set) var rebuilds = 0
         /// 起こした子ごとの、渡した時計の場所の番号 (``gens`` と同じ並び・#3428)。`0` は旗の場所。
         private(set) var clocks: [Int] = []
-        /// 見張りが最後に選んだ時計の場所の番号。
-        private var selectedClock = 0
+        /// 起こした子ごとの、時計を読むだけにしたか (``gens`` と同じ並び・#4070)。
+        private(set) var readOnlyClocks: [Bool] = []
+        /// 見張りが最後に選んだ時計。
+        private var selectedClock = WatchSession.Hooks.ClockChoice(place: 0)
         /// 作り直し (`build`) と子を起こした (`launch`) 順 (#3428)。
         private(set) var events: [String] = []
         /// 立てると、子を起こせない。
@@ -214,7 +216,8 @@ struct WatchAuditionTests {
                 throw .cannotLaunch(tool: "sh", place: "", reason: "\(error)")
             }
             gens.append(process)
-            clocks.append(selectedClock)
+            clocks.append(selectedClock.place)
+            readOnlyClocks.append(selectedClock.readsOnly)
             events.append("launch")
             return process
         }

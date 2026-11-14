@@ -66,12 +66,20 @@ final class WatchSession {
         /// 側と同じ 1 つを使う ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
         /// 既定は「何も走っていない」 — 替え玉の作り直しは子を起こさない。
         var stopRebuild: () -> Process? = { nil }
-        /// 次に起こす子へ渡す、作者の時計のファイル (`--keep-time`) の場所を番号で選ぶ
-        /// (#3428)。`0` は旗の場所、`n` は同じディレクトリの `<旗の場所>-n`。
+        /// 次に起こす子へ渡す、作者の時計のファイル (`--keep-time`) の場所と、その子が読むだけか (``ClockChoice``) を選ぶ
+        /// (#3428・#4070)。
         ///
         /// **どの子にどの番号を渡すかは ``WatchSession`` が決める** (本番と試聴の場所・起こし直し)。起こす口 (``launch``) の
         /// 直前に呼ぶ。旗の無い見張りでは何もしない。
-        var selectClock: (Int) -> Void = { _ in }
+        var selectClock: (ClockChoice) -> Void = { _ in }
+
+        /// 次に起こす子へ渡す時計 (``selectClock``)。
+        struct ClockChoice: Equatable {
+            /// 場所の番号。`0` は旗の場所、`n` は同じディレクトリの `<旗の場所>-n`。
+            var place: Int
+            /// 読むだけで書かないか (``StartupReads/keepTimeReadOnly``)。本番の場所を受ける試聴の子だけが立てる。
+            var readsOnly = false
+        }
 
         /// 呼ばれ方から、導き手ごと組む。
         ///
@@ -163,7 +171,7 @@ final class WatchSession {
                         // **置き場の断片は元から読ませる** (#2517)。写しを読むと、元を保存しても
                         // 走らせたまま差し替わらない
                         assetOrigin: resolved?.context.assets.url?.path,
-                        keepTime: clock.path,
+                        keepTime: clock.path, keepTimeReadOnly: clock.readsOnly,
                         recording: generations?.next())
                     do {
                         try process.run()
@@ -200,15 +208,18 @@ final class WatchSession {
             private let original: String?
             /// 次に起こす子へ渡す場所。旗の無い見張りでは `nil`。
             private(set) var path: String?
+            /// 次に起こす子が読むだけか。
+            private(set) var readsOnly = false
 
             init(_ path: String?) {
                 original = path
                 self.path = path
             }
 
-            /// 番号 `index` の場所を選ぶ。`0` は旗の場所。
-            func select(_ index: Int) {
-                path = original.map { index == 0 ? $0 : $0 + "-\(index)" }
+            /// 選んだ時計を、次に起こす子へ渡すものにする。場所の番号 `0` は旗の場所。
+            func select(_ choice: ClockChoice) {
+                path = original.map { choice.place == 0 ? $0 : $0 + "-\(choice.place)" }
+                readsOnly = choice.readsOnly
             }
         }
     }
@@ -579,6 +590,9 @@ final class WatchSession {
     /// 見張りを終えるときに、止まるのを待つ上限 (秒)。**検査から縮める** (``stopTimeout`` と
     /// 同じ理由)。
     let finishTimeout: TimeInterval
+    /// 強制終了した後に、消えるのを待つ上限 (秒)。**検査から渡す** — 回収の遅れで ``StopOutcome/abandoned`` に
+    /// 倒れる検査が、負荷で赤にならないようにする。既定は ``killGrace`` (静的) のまま。
+    let killGrace: TimeInterval
     /// 直前に子を止めたときの結果。**差し替えのときも入る。**
     ///
     /// 名乗るのは口の側である — このクラスは判断だけを持ち、出力を持たない。期限に
@@ -622,7 +636,8 @@ final class WatchSession {
         reportsRate: Bool = false, hooks: Hooks? = nil,
         invocation: Invocation = Invocation(),
         stopTimeout: TimeInterval = WatchSession.defaultStopTimeout,
-        finishTimeout: TimeInterval = WatchSession.defaultFinishTimeout
+        finishTimeout: TimeInterval = WatchSession.defaultFinishTimeout,
+        killGrace: TimeInterval = WatchSession.killGrace
     ) {
         self.directory = directory
         self.facetBase = facetBase ?? directory
@@ -631,6 +646,7 @@ final class WatchSession {
         self.hooks = hooks ?? .live(in: directory, invocation: invocation)
         self.stopTimeout = stopTimeout
         self.finishTimeout = finishTimeout
+        self.killGrace = killGrace
     }
 
     /// 見張りを終える手続き (``WatchCommand/finish(_:)``) がどこまで進んだか。
@@ -1567,7 +1583,7 @@ final class WatchSession {
         // 呼び手へ制御が戻る前に、別の口が同じ子を止めに入れる
         let runner = ShutdownRunner(
             Shutdown(
-                running, timeout: timeout, stopTimeout: stopTimeout, killGrace: Self.killGrace,
+                running, timeout: timeout, stopTimeout: stopTimeout, killGrace: killGrace,
                 interrupting: interrupting))
         let task = Task { () -> StopOutcome in
             let outcome = await runner.run { remaining in
@@ -1591,7 +1607,7 @@ final class WatchSession {
     ) -> StopOutcome {
         guard let running, running.isRunning else { return .notRunning }
         var shutdown = Shutdown(
-            running, timeout: timeout, stopTimeout: stopTimeout, killGrace: Self.killGrace,
+            running, timeout: timeout, stopTimeout: stopTimeout, killGrace: killGrace,
             interrupting: interrupting)
         while true {
             switch shutdown.poll(now: DispatchTime.now()) {
@@ -2012,7 +2028,7 @@ final class WatchSession {
         stageSilentPIDs.formIntersection(live)
         launchedTool = executable.lastPathComponent
         var launchFailure: CommandFailure?
-        hooks.selectClock(clock)
+        hooks.selectClock(.init(place: clock))
         do throws(CommandFailure) {
             child = try hooks.launch(
                 executable, directory, stamp, reportsRate ? configurationName : nil)
@@ -2482,18 +2498,21 @@ final class WatchSession {
 
     // MARK: 時計の場所 (`--keep-time`・#3428)
     //
-    // | 出来事 | 本番の場所 | 試聴の場所 | 起こす子が受ける |
-    // | --- | --- | --- | --- |
-    // | 見張りの起動 | 0 | 本番と同じ | 本番の場所 |
-    // | 保存・作り直す要求の子 | そのまま | そのまま | その役の場所 |
-    // | 試聴に入る・出る | そのまま | 本番と同じ | — |
-    // | 試聴の起こし直し: 子が起きた | そのまま | 新しい番号 | 新しい番号 |
-    // | 本番の起こし直し: 子が起きた | 新しい番号 | 試聴中で本番と同じなら、前の本番の場所に留める | 新しい番号 |
-    // | 起こし直しで起こせなかった | そのまま | そのまま | — |
-    // | 起こし直した子が最初の絵の前に落ちた | その役なら前へ戻す | その役なら前へ戻す | — |
+    // | 出来事 | 本番の場所 | 試聴の場所 | 起こす子が受ける | 以後の試聴の子 |
+    // | --- | --- | --- | --- | --- |
+    // | 見張りの起動 | 0 | 本番と同じ | 本番の場所 | 読むだけ |
+    // | 保存・作り直す要求の子 | そのまま | そのまま | その役の場所 | そのまま |
+    // | 試聴に入る・出る | そのまま | 本番と同じ | — | 読むだけ |
+    // | 試聴の起こし直し: 子が起きた | そのまま | 新しい番号 | 新しい番号 (書く) | 書く |
+    // | 本番の起こし直し: 子が起きた | 新しい番号 | 試聴中で本番と同じなら、前の本番の場所に留める | 新しい番号 | 試聴中なら書く |
+    // | 起こし直しで起こせなかった | そのまま | そのまま | — | そのまま |
+    // | 起こし直した子が最初の絵の前に落ちた | その役なら前へ戻す | その役なら前へ戻す | — | 場所が本番と同じに戻れば読むだけ |
     //
-    // 起こし直さない限り、本番の子と試聴の子は 1 つの場所を共有する (#3565 からの約束: 試聴の子が消えた後は本番が書き戻す・
-    // `ClockHandover`)。
+    // 試聴の子が読むだけなのは、受ける場所が本番の場所と同じとき (本番の子と時計を分け持つとき) だけである。本番の子は
+    // いつも書く。
+    //
+    // 起こし直さない限り、本番の子と試聴の子は 1 つの場所を共有する。**共有している間、試聴の子は読むだけ**で、書くのは本番の
+    // 子だけ (`ClockHandover`・#4070)。試聴を捨てても、本番の次の版は本番の子の時計から始まる。
 
     /// 本番の子へ渡す時計の場所の番号 (``Hooks/selectClock``)。
     private var productionClock = 0
@@ -2752,7 +2771,9 @@ final class WatchSession {
         stageSilentPIDs.formIntersection(live)
         launchedTool = executable.lastPathComponent
         var launchFailure: CommandFailure?
-        hooks.selectClock(clock)
+        // **本番の場所を受ける試聴の子は読むだけ** — 本番の時計は本番の子だけが進める (#4070)。起こし直して自分の場所を
+        // 持った試聴の子は、本番と分け持たないので書く
+        hooks.selectClock(.init(place: clock, readsOnly: clock == productionClock))
         do throws(CommandFailure) {
             auditionChild = try hooks.launch(
                 executable, directory, stamp, reportsRate ? configurationName : nil)

@@ -209,6 +209,21 @@ nonisolated package enum StartupReads {
             + "--keep-time, and the sketch takes it out of its own environment once read",
         readSite: "Sources/MokumeCore/Sketch/ClockHandover.swift")
 
+    /// ``keepTime`` の時計を読むだけで書かないか — 見張りの試聴の子 (#4070)。
+    ///
+    /// 試聴の子は本番の子と同じ場所を受けて本番の時計から始まるが、**本番の時計は本番の子だけが進める**。在ると、
+    /// 子は前の世代の時計を読んで始め、自分の時計は書かない (試聴を捨てても、試聴の中で進めた・止めた秒は本番へ残らない)。
+    /// 値は `1` で、渡すのは `watch --keep-time` が試聴の子を本番と同じ場所で起こすときだけ (``keepTime`` と同じく、
+    /// 渡さなければ親の環境に在っても落とす)。**受け取った子は読んだ時点で自分の環境から消す。**
+    public static let keepTimeReadOnly = Entry(
+        name: "Keep time read-only", origin: .environment, key: "MOKUME_KEEP_TIME_READ_ONLY",
+        decidedBy: .tool,
+        note: "Makes the sketch only read the clock of Keep time and never write it, so a version under "
+            + "audition starts from the production clock without moving it. The value is 1, and the tool "
+            + "passes it only for watch --keep-time when it starts a version under audition, and the sketch "
+            + "takes it out of its own environment once read",
+        readSite: "Sources/MokumeCore/Sketch/ClockHandover.swift")
+
     /// 走っている速さの名乗り。
     public static let frameRateNotice = Entry(
         name: "Frame rate notice", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
@@ -293,6 +308,6 @@ nonisolated package enum StartupReads {
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        assetOrigin, keepTime, record, replay, observe, input, params, viewport,
+        assetOrigin, keepTime, keepTimeReadOnly, record, replay, observe, input, params, viewport,
     ]
 }

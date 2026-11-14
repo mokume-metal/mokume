@@ -106,9 +106,14 @@ enum Command {
                     clock (clock: .frames) is recorded; on the wall clock it says why, does not
                     record, and keeps running. The previous run's file at that path is removed when
                     the sketch starts (also when it does not record), and a second run writing to the
-                    same path does not record. What comes from outside the sketch (a gamepad, MIDI,
-                    OSC, a camera, a dropped file, sound in the window) is not in the record, and the
-                    record names it under unreproducible
+                    same path does not record. What the record cannot hold is named under
+                    unreproducible with its reason, and mokume replay names it too: input from outside
+                    the sketch (a gamepad, MIDI, OSC, a camera or microphone, a movie; not the frames you
+                    give createCapture(frames:)), a dropped or chosen file, a file fetched from a URL,
+                    a request… load (the frame its result arrives at), a .metal fragment swapped in while
+                    it runs, and in a window, reading a sound's analysis (level, spectrum, waveform,
+                    isBeat; a sound that only plays is fine). Date() and Swift's own random numbers
+                    cannot be noticed: use random() and time instead to replay what they give
                     """
                 )
             case .watch:
@@ -131,7 +136,9 @@ enum Command {
                     from the carried second while frameCount starts at 1 again, and a pauseTime(), playTime()
                     or jumpTime() in setup() wins. If the old version crashed or had stopped drawing
                     with noLoop(), the new one starts from the second it last wrote or last showed,
-                    without the time that passed. run and render always start at 0.
+                    without the time that passed. A version under audition starts from the clock of
+                    the version in the work's window but never moves it, so after a leave the next
+                    build continues from that version's clock. run and render always start at 0.
                     What it watches: Package.swift, every .swift under Sources/, and the regular files
                     under Sources/<target>/assets/ (not hidden files or symbolic links). A .metal
                     fragment is not rebuilt: it swaps in while the sketch keeps running.
@@ -180,6 +187,9 @@ enum Command {
                     and clock, and opens no facets, so nothing from outside gets in. Ends with 0 when every
                     check matched; otherwise it names the first frame that differed and ends with 1. Either way
                     it writes .mokume/replay/report.json, with the time each frame took and the heaviest frame.
+                    What is not promised to replay frame for frame (see run --record), as the record names it
+                    and as the replay finds it itself, is listed on its last line and under unreproducible in
+                    the report; it does not change whether the checks matched.
                     A relative <record> starts from where you run this
                     """
                 )
