@@ -155,5 +155,8 @@ extension SketchPart {
     /// ``Sketch/settings`` の中から読めるので、繋がっているかどうかで開き方を選べる
     /// (``SketchSettings/fullScreen(_:)`` の例)。実行中に抜き差しすれば、次に読んだときの
     /// 一覧が変わる。描く大きさと全画面にした画面は、起動のときに決まったまま変わらない。
+    ///
+    /// ウィンドウなしの実行 (`HeadlessRun`) に渡すスケッチを自分で作るときは、そのスケッチの `init` の中で読まない。
+    /// そのプロセスで最初の `HeadlessRun` を作るまでは空の一覧が返る。画面の一覧が要るなら `setup()` 以降で読む。
     public var displays: [Display] { Display.connected }
 }

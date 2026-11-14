@@ -50,7 +50,7 @@ Core は口だけを持ち、macOS の部品は `MokumeMac` の `MacPlatform.ins
 | `Display.screenReader` (画面の読み) | `NSScreen` から読む `Display.readings()` | 空の一覧 |
 | `SketchRuntime.makePresence` (名乗りの係) | `SketchPresence` | 名乗らない |
 
-画面の一覧の組み方 (番号の振り方・全画面の大きさ・選び方) は純粋な関数で、Core に残る。差し込むのは、スケッチの実体を作る・ランタイムを組む入口である: `Sketch.main()` と `SketchView` はスケッチの実体を作る前に、`SketchApplication` の組み立て・`MokumeHost` の `HeadlessRun`・参照スケッチ・`frame-rate-probe` はランタイムを組む前に差し込む。どれも設定 (`sketch.settings`) を読む前なので、設定の中で `displays` を読んでも、全画面を頼んでも、これまでと同じに働く。
+画面の一覧の組み方 (番号の振り方・全画面の大きさ・選び方) は純粋な関数で、Core に残る。差し込むのは、スケッチの実体を作る・ランタイムを組む入口である: `Sketch.main()` と `SketchView` はスケッチの実体を作る前に、`SketchApplication` の組み立て・`MokumeHost` の `HeadlessRun`・参照スケッチ・`frame-rate-probe` はランタイムを組む前に差し込む。どれも設定 (`sketch.settings`) を読む前なので、設定の中で `displays` を読んでも、全画面を頼んでも、これまでと同じに働く。ただし `HeadlessRun(MySketch())` は、スケッチを渡す側が先に作るので、そのスケッチの `init` が `displays` を読むと、そのプロセスで最初の `HeadlessRun` を組むまでは空が見える。この差は受け入れ (2026-11-15)、`HeadlessRun` と `displays` の説明文に書いた。
 
 退けた案:
 

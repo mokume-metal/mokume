@@ -60,6 +60,10 @@ public final class HeadlessRun {
     ///   - sketch: 実行するスケッチ。
     ///   - gpu: 描画に使う GPU デバイス。省くとこの実行のために作る。多くの実行を続けて生成するなら、1 つを作って渡し回す。
     /// - Throws: 生成できなかったとき (GPU が無い・設定が不正 など)。
+    ///
+    /// **スケッチを自分で作って渡すとき、その `init` の中で ``SketchPart/displays`` を読まない。** 画面の一覧は
+    /// この `init` が差し込むので、そのプロセスで最初の `HeadlessRun` を作るまでは、スケッチの `init` からは空の一覧が
+    /// 見える。画面の一覧が要るなら、`setup()` 以降で読む。
     public init(_ sketch: some Sketch, gpu: RenderDevice? = nil) throws(RenderFailure) {
         let device: RenderDevice
         if let gpu { device = gpu } else { device = try RenderDevice() }
