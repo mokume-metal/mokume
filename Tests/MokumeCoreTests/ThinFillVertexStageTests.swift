@@ -625,10 +625,15 @@ struct ThinFillVertexStageTests {
                         Canvas.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
                             .moved(by: SIMD2(-w / 2, -h / 2)))
                 }
-                // 塗りだけは畳まれる。輪郭つき (太さ 0.7 は描く画素で細い) は 2x2 が畳みの鍵で、回転が全部違う
-                // この場面では畳む相手が無い (輪郭つきを畳んだ絵は `FoldedPlacementTests` が見る・#3759)
-                if folding, !stroke {
-                    #expect(canvas.openFlat != nil, "\(name): 畳まれていない")
+                // 塗りだけは畳まれる。輪郭つきも畳む (#3759) が、太さ 0.7 は描く画素で細く、置き場所の 2x2 が畳みの鍵
+                // なので、回転が全部違う並び (`spin` が 0 でない) は畳む相手が無い。回転を揃えた並び (`spin: 0`・倍率は
+                // どの置き場所も同じ) は畳まれる
+                if folding {
+                    if !stroke || spin == 0 {
+                        #expect(canvas.openFlat != nil, "\(name): 畳まれていない")
+                    } else {
+                        #expect(canvas.openFlat == nil, "\(name): 2x2 の違う細い輪郭が畳まれた")
+                    }
                 }
             }
         }
@@ -658,6 +663,11 @@ struct ThinFillVertexStageTests {
         try expectSameAsUnfolded("半径が締まる角丸 rect", size: (16, 10, 100), spin: 0.3)
         try expectSameAsUnfolded("輪郭つきの細い角丸 rect", stroke: true, size: (28, 0.8, 0.3), spin: 0.3)
         try expectSameAsUnfolded("輪郭つきの細くない角丸 rect", stroke: true, size: (16, 10, 3), spin: 0.3)
+        // 回転を揃えると、輪郭つきも 1 つの雛形に畳まれる (#3759)
+        try expectSameAsUnfolded("回転を揃えた輪郭つきの細い角丸 rect", stroke: true, size: (28, 0.8, 0.3), spin: 0)
+        try expectSameAsUnfolded(
+            "回転を揃えた輪郭つきの細くない角丸 rect", density: 0.5, stroke: true, size: (16, 10, 3), spin: 0,
+            scale: { _ in (-1.2, 0.9) })
         try expectSameAsUnfolded("貼る絵の細くない角丸 rect", texture: true, size: (16, 10, 3), spin: 0.27)
         // 鏡映 (行列式が負)・縦横で倍率の違う輪郭つき・半径が短い辺の半分ちょうど (円板状) の向き
         try expectSameAsUnfolded(

@@ -39,6 +39,12 @@ struct FoldedPlacementTests {
     enum Form: CustomStringConvertible {
         case rect
         case roundedRect
+        /// 半径 100 が短い辺の半分 (4.5) に締まる角丸 rect
+        case roundedRectClamped
+        /// `rectMode(.corners)` で、対角の 2 つの角を逆の順 (右下 → 左上) に渡す角丸 rect (同じ矩形になる)
+        case roundedRectCorners
+        /// `rectMode(.center)` で中心と寸法を渡す角丸 rect (同じ矩形になる)
+        case roundedRectCenter
         case ellipse
         case circle
         /// `.pie` の弧 (輪郭の有無によらず畳む)
@@ -56,6 +62,9 @@ struct FoldedPlacementTests {
             switch self {
             case .rect: "rect"
             case .roundedRect: "角丸 rect"
+            case .roundedRectClamped: "半径が締まる角丸 rect"
+            case .roundedRectCorners: "rectMode(.corners) の逆順の角丸 rect"
+            case .roundedRectCenter: "rectMode(.center) の角丸 rect"
             case .ellipse: "ellipse"
             case .circle: "circle"
             case .pie: ".pie の arc"
@@ -71,6 +80,15 @@ struct FoldedPlacementTests {
             switch self {
             case .rect: canvas.rect(3.1, -4.3, 13, 9)
             case .roundedRect: canvas.rect(3.1, -4.3, 13, 9, 2.5)
+            case .roundedRectClamped: canvas.rect(3.1, -4.3, 13, 9, 100)
+            case .roundedRectCorners:
+                canvas.rectMode(.corners)
+                canvas.rect(16.1, 4.7, 3.1, -4.3, 2.5)
+                canvas.rectMode(.corner)
+            case .roundedRectCenter:
+                canvas.rectMode(.center)
+                canvas.rect(9.6, 0.2, 13, 9, 2.5)
+                canvas.rectMode(.corner)
             case .ellipse: canvas.ellipse(2.3, -1.7, 14, 9)
             case .circle: canvas.circle(-2.9, 1.3, 11)
             case .pie: canvas.arc(2.3, -1.7, 14, 10, 0.3, 4.1, .pie)
@@ -88,10 +106,16 @@ struct FoldedPlacementTests {
             switch self {
             case .rect:
                 canvas.draw(Canvas.rectOutline(width: 13, height: 9).moved(by: SIMD2(3.1, -4.3)))
-            case .roundedRect:
+            case .roundedRect, .roundedRectCorners, .roundedRectCenter:
+                // どれも左上 (3.1, -4.3)・13×9 の矩形に解ける
                 let segments = Canvas.segmentCount(forRadius: 2.5, scale: scale)
                 canvas.draw(
                     Canvas.roundedRectOutline(width: 13, height: 9, radius: 2.5, segments: segments)
+                        .moved(by: SIMD2(3.1, -4.3)))
+            case .roundedRectClamped:
+                let segments = Canvas.segmentCount(forRadius: 4.5, scale: scale)
+                canvas.draw(
+                    Canvas.roundedRectOutline(width: 13, height: 9, radius: 4.5, segments: segments)
                         .moved(by: SIMD2(3.1, -4.3)))
             case .ellipse:
                 Self.ring(canvas, 2.3, -1.7, 14, 9, start: 0, sweep: 2 * .pi, piece: .sector, scale: scale)
@@ -135,7 +159,10 @@ struct FoldedPlacementTests {
     struct Stroke: CustomStringConvertible {
         var weight: Float
         var join: StrokeJoin = .round
-        var description: String { "輪郭 \(weight) \(join)" }
+        var cap: StrokeCap = .round
+        /// 破線 (`strokeDash(3, 2)`) で引くか
+        var dash = false
+        var description: String { "輪郭 \(weight) \(join) \(cap)\(dash ? " 破線" : "")" }
     }
 
     /// 置き場所の並べ方。
@@ -198,8 +225,9 @@ struct FoldedPlacementTests {
             if let stroke {
                 canvas.stroke(200, dense ? 60 : 255)
                 canvas.strokeWeight(stroke.weight)
-                canvas.strokeCap(.round)
+                canvas.strokeCap(stroke.cap)
                 canvas.strokeJoin(stroke.join)
+                if stroke.dash { canvas.strokeDash(3, 2) }
             } else {
                 canvas.noStroke()
             }
@@ -243,7 +271,7 @@ struct FoldedPlacementTests {
         for density in densities {
             for stroke in strokes {
                 for arrangement in Arrangement.allCases {
-                    let name = "\(form) \(stroke.map(\.description) ?? (texture ? "貼る絵" : "塗りだけ")) 細かさ \(density) \(arrangement)"
+                    let name = "\(form) \(stroke.map(\.description) ?? "")\(texture ? " 貼る絵" : "")\(stroke == nil && !texture ? "塗りだけ" : "") 細かさ \(density) \(arrangement)"
                     let result = try differences(
                         form, density: density, stroke: stroke, texture: texture, arrangement: arrangement)
                     #expect(result.lit > 0, "\(name): 絵が空")
@@ -299,6 +327,31 @@ struct FoldedPlacementTests {
         try Self.expectSameAsUnfolded(.roundedRect, strokes: [nil], texture: true)
     }
 
+    /// 輪郭つきの角丸 rect の、継ぎ目・端の形・半径の締まり・`rectMode` の違い (#3759)。角丸の周の点はどれも刻みで、
+    /// 継ぎ目と端の形によらず円板で繋ぐが、設定が畳みの鍵 (``Canvas/FlatKey``) に入るので、どの組でも畳み、畳まない道と
+    /// 許容 0 で一致することを見る。
+    @Test(
+        "輪郭つきの角丸 rect は、継ぎ目・端の形・半径の締まり・rectMode によらず畳まれ、畳まない道と画素が同じ (許容 0)",
+        arguments: [Form.roundedRect, .roundedRectClamped, .roundedRectCorners, .roundedRectCenter])
+    func strokedRoundedRectVariantsKeepTheirPixels(form: Form) throws {
+        try Self.expectSameAsUnfolded(
+            form,
+            strokes: [
+                Stroke(weight: 0.7, join: .miter), Stroke(weight: 0.7, join: .bevel), Stroke(weight: 2, join: .miter),
+                Stroke(weight: 2, join: .bevel, cap: .square), Stroke(weight: 0.7, cap: .project),
+            ])
+    }
+
+    /// 畳む口へ来ても畳まない角丸 rect: 破線の輪郭 (破線の片は置き場所ごとに刻む) と、貼る絵と輪郭の同居 (塗りと輪郭が
+    /// 別の面を読む)。どちらも、畳まないことと、畳まない道と許容 0 で一致することを見る。
+    @Test("破線の輪郭と、貼る絵と輪郭が同居する角丸 rect は畳まれず、畳まない道と画素が同じ (許容 0)")
+    func unfoldedRoundedRectsKeepTheirPixels() throws {
+        try Self.expectSameAsUnfolded(
+            .roundedRect, strokes: [Stroke(weight: 0.7, dash: true), Stroke(weight: 2, dash: true)], folds: false)
+        try Self.expectSameAsUnfolded(
+            .roundedRect, strokes: [Stroke(weight: 0.7), Stroke(weight: 2)], texture: true, folds: false)
+    }
+
     @Test("畳んだ ellipse と circle は、輪郭も貼る絵も、畳まない道と画素が同じ (許容 0)")
     func ellipsesKeepTheirPixels() throws {
         try Self.expectSameAsUnfolded(.ellipse, strokes: Self.roundStrokes)
@@ -322,6 +375,132 @@ struct FoldedPlacementTests {
         }
         for form in [Form.standardArc, .chord, .open] {
             try Self.expectSameAsUnfolded(form, strokes: [nil], texture: true)
+        }
+    }
+
+    // MARK: - 畳む置き場所と畳まない置き場所が混ざる並び
+
+    /// 置き場所ごとに切り替える設定の材料。
+    struct OrderedResources {
+        var shader: Shader
+        /// `shader` と別の断片 (切り替えると列が閉じる)
+        var dimmed: Shader
+        var image: Image
+    }
+
+    /// 重なり合う置き場所を、色を変えて半透明 (通常の混ぜ方) で置く。描く順が入れ替われば重なりの色が変わる。
+    /// 置き場所 `index` ごとに、`setup` で設定を変えてから形を置く。既定は断片 `shader` を効かせたまま。
+    private static func orderedPicture(
+        _ form: Form, density: Float, weight: Float, count: Int, instanceCapacity: Int?, folding: Bool,
+        setup: (Canvas, Int, OrderedResources) -> Void
+    ) throws -> (pixels: PixelBuffer, folded: Int) {
+        let canvas = try makeCanvas(density: density)
+        if let instanceCapacity { canvas.instanceCapacity = instanceCapacity }
+        let resources = OrderedResources(
+            shader: try canvas.makeShader(plain),
+            dimmed: try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color * 0.9; }"),
+            image: try gradient(canvas))
+        var folded = 0
+        try canvas.draw {
+            canvas.background(0)
+            canvas.shader(resources.shader)
+            let scales: [(Float, Float)] = [(1, 1), (-1.15, 1.15), (1.25, 0.8), (-0.9, 1.1)]
+            for index in 0..<count {
+                canvas.fill(
+                    Float(index * 67 % 256), Float(index * 151 % 256), Float(255 - index * 29 % 256), 150)
+                canvas.stroke(Float(255 - index * 89 % 256), Float(index * 43 % 256), 200, 170)
+                canvas.strokeWeight(weight)
+                setup(canvas, index, resources)
+                canvas.pushMatrix()
+                canvas.translate(30 + Float(index % 10) * 6.7, 30 + Float(index / 10) * 5.9)
+                // 回転と倍率は 2 つずつ同じ (続く 2 つが同じ鍵で畳まれる)
+                let pose = index / 2
+                canvas.rotate(Float(pose % 3) * 0.37 + 0.11)
+                let (sx, sy) = scales[pose % scales.count]
+                canvas.scale(sx, sy)
+                if folding { form.drawFolding(canvas) } else { form.drawUnfolded(canvas) }
+                canvas.popMatrix()
+            }
+            folded = canvas.flatInstances.count - 1
+        }
+        return (try canvas.target.readPixels(), folded)
+    }
+
+    /// 畳む口と畳まない道で同じ並びを描いて全成分を比べ、畳んだ置き場所の数を返す。
+    @discardableResult
+    private static func expectSameOrder(
+        _ name: String, _ form: Form, density: Float, weight: Float, count: Int = 60, instanceCapacity: Int? = nil,
+        setup: (Canvas, Int, OrderedResources) -> Void = { _, _, _ in }
+    ) throws -> Int {
+        let unfolded = try orderedPicture(
+            form, density: density, weight: weight, count: count, instanceCapacity: instanceCapacity, folding: false,
+            setup: setup)
+        let folded = try orderedPicture(
+            form, density: density, weight: weight, count: count, instanceCapacity: instanceCapacity, folding: true,
+            setup: setup)
+        #expect(unfolded.folded == 0, "\(name): 畳まない道が畳まれた (\(unfolded.folded))")
+        var differing = 0
+        var lit = 0
+        for index in unfolded.pixels.components.indices {
+            if unfolded.pixels.components[index] != folded.pixels.components[index] { differing += 1 }
+            if index % 4 != 3, unfolded.pixels.components[index] > 0 { lit += 1 }
+        }
+        #expect(lit > 0, "\(name): 絵が空")
+        #expect(
+            differing == 0,
+            "\(name): 畳まない道と画素の成分が \(differing) 個違う (点いている成分 \(lit)・畳んだ置き場所 \(folded.folded))")
+        return folded.folded
+    }
+
+    /// **描く画素で 1 をまたぐ太さの輪郭** (#3759 の反証 2)。倍率 (1.25, 0.8) の置き場所だけ描く画素で 1 より細い (太さ
+    /// 1.2 × 0.8 = 0.96・細かさ 0.5 では 2.2 × 0.5 × 0.8 = 0.88)。ほかは太い。開いた弧の細い輪郭は畳まずに直に描き、太い輪郭は
+    /// 雛形に積むので、**畳む置き場所と直に描く置き場所が 1 つの並びの中で交互に来る**。細い角丸・`.chord` は置き場所の 2x2 が
+    /// 鍵になり、同じく雛形が切り替わる。重なりの色で描く順を見る。
+    @Test(
+        "太さが 1 をまたぐ置き場所が交互に来ても、描く順が畳まない道と同じ (許容 0)",
+        arguments: [Form.roundedRect, .standardArc, .open, .chord])
+    func alternatingThinAndThickStrokesKeepTheirOrder(form: Form) throws {
+        for (density, weight) in [(Float(1), Float(1.2)), (0.5, 2.2)] {
+            let name = "\(form) 太さ \(weight) 細かさ \(density)"
+            let folded = try Self.expectSameOrder(name, form, density: density, weight: weight)
+            // 太い置き場所は畳まれ、細い置き場所 (2 つずつの組の 4 組に 1 組) は畳まれないか、別の雛形になる
+            #expect(folded > 0, "\(name): 畳まれていない")
+            if form == .standardArc || form == .open {
+                #expect(folded < 60, "\(name): 細い開いた弧が畳まれた (\(folded))")
+            }
+        }
+    }
+
+    /// **畳む相手を待つ 1 つ目が、列の閉じる所をまたぐ並び** (#3759 の反証で読み切れなかった所)。塗りと輪郭の 2 つの周で
+    /// 描く 1 つ目 (既定・`.open` の弧) は、2 つの `draw(_:)` を 1 組として雛形へ移るか、列が閉じていれば移らずに残る。
+    /// 置き場所の上限 (雛形を開き直す)・断片の切り替え・貼る絵と断片の切り替えで列を閉じ、畳まない道と許容 0 で一致することを見る。
+    @Test(
+        "塗りと輪郭の周で描く弧が、列の閉じる所 (置き場所の上限・断片や貼る絵の切り替え) をまたいでも、畳まない道と画素が同じ (許容 0)",
+        arguments: [Form.standardArc, .open, .chord, .roundedRect])
+    func batchBreaksKeepTheirPixels(form: Form) throws {
+        for density in [Float(1), 0.5] {
+            let name = "\(form) 細かさ \(density)"
+            // 置き場所の上限 3: 3 つごとに同じ形のまま雛形を開き直す
+            let capped = try Self.expectSameOrder("\(name) 上限 3", form, density: density, weight: 3, instanceCapacity: 3)
+            #expect(capped > 0, "\(name) 上限 3: 畳まれていない")
+            // 5 つに 1 つ別の断片に切り替える (切り替えで列が閉じ、待っている 1 つ目は雛形へ移れない)
+            let switched = try Self.expectSameOrder("\(name) 断片の切り替え", form, density: density, weight: 3) {
+                canvas, index, resources in
+                canvas.shader(index % 5 == 3 ? resources.dimmed : resources.shader)
+            }
+            #expect(switched > 0, "\(name) 断片の切り替え: 畳まれていない")
+            // 3 つに 1 つ、貼る絵だけ (輪郭なし) に切り替える (読む面と輪郭の有無が変わる)
+            try Self.expectSameOrder("\(name) 貼る絵の切り替え", form, density: density, weight: 3) {
+                canvas, index, resources in
+                if index % 3 == 2 {
+                    canvas.noStroke()
+                    canvas.resetShader()
+                    canvas.texture(resources.image)
+                } else {
+                    canvas.noTexture()
+                    canvas.shader(resources.shader)
+                }
+            }
         }
     }
 
