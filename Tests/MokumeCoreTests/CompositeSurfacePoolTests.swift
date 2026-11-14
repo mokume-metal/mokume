@@ -383,6 +383,8 @@ struct CompositeSurfacePoolTests {
     func unusedSurfacesAreReleasedAfterAFrame() throws {
         let canvas = try makeCanvas()
         let shape = try logo(on: canvas)
+        // 面の置き場は使う種類を初めて使うときに取る (#4082)。後で描く四角の置き場を先に取らせ、常駐の差に混ぜない
+        try canvas.draw { canvas.rect(0, 0, 10, 10) }
         try canvas.draw { canvas.shape(shape, at: [Placement(x: 0, y: 0), Placement(x: 40, y: 0)]) }
         #expect(canvas.compositeSurfaces.free.count == 2)
         let watched = Self.watch(canvas.compositeSurfaces)

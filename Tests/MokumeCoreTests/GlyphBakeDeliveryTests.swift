@@ -163,6 +163,8 @@ struct GlyphBakeDeliveryTests {
     func regionCountIsBounded() throws {
         let canvas = try makeCanvas()
         canvas.atlas.pendingRegionLimit = 8
+        // 字を焼く前の頁は白い区画だけなので、最初の字の頁へ替えておく (#4082)
+        try canvas.replaceGlyphPage()
         let resolved = try #require(canvas.typeface.glyph(for: "M"))
         var maxPending = 0
         for index in 0..<40 {

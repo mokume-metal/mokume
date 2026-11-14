@@ -1674,7 +1674,7 @@ struct TextTests {
             "検査の前提: \(size) の「M」(\(extent)) が、一辺 \(side) の面でちょうど入る大きさでない")
 
         let canvas = try makeCanvas(width: 128, height: 128)
-        #expect(canvas.atlas.size == GlyphAtlas.initialSize, "検査の前提: 面が作りたてでない")
+        #expect(canvas.atlas.size == GlyphAtlas.whiteOnlySize, "検査の前提: 面が作りたてでない")
         let first = try drawLargeM(size: size, on: canvas)
         #expect(
             canvas.atlas.size == side,
@@ -1728,6 +1728,8 @@ struct TextTests {
         let key = GlyphAtlas.Key(
             fontKey: resolved.fontKey, size: 32, style: .normal, glyph: resolved.glyph)
 
+        // 字を焼く前の頁は白い区画だけなので、最初の字の頁へ替えておく (#4082)
+        try canvas.replaceGlyphPage()
         canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
         let settles = canvas.gpu.settleCalls
         let baked = canvas.atlas.entry(for: key, font: resolved.font)
@@ -1774,6 +1776,7 @@ struct TextTests {
     @Test("上限の面にも入らない字形を頼んでも、焼き場は広がらない", arguments: overwhelmingSizes)
     func anOversizedGlyphDoesNotGrowTheAtlas(size: Float) throws {
         let canvas = try makeCanvas()
+        let created = canvas.atlas.size
         try canvas.draw {
             canvas.background(self.black)
             canvas.fill(self.white)
@@ -1787,9 +1790,9 @@ struct TextTests {
             canvas.atlas.warnings.hasWarned(.tooLarge),
             "入らない大きさ \(size) の「M」を描いたのに、「大きすぎる」を知らせていない")
         #expect(
-            canvas.atlas.size == GlyphAtlas.initialSize,
+            canvas.atlas.size == created,
             """
-            広げても入らない字形のために、焼き場が \(canvas.atlas.size) まで広がった。
+            広げても入らない字形のために、焼き場が \(created) から \(canvas.atlas.size) まで広がった。
 
             広げるたびに焼いた字形は全部捨てられるので、これは入らない 1 字のために
             他の字を焼き直させ続ける形になる。上限まで行っても入らないので、回復もしない
@@ -1894,6 +1897,11 @@ struct TextTests {
             "検査の前提: \(size) の「●」(\(extent)) が、白い区画のぶん入らない大きさでない")
 
         let canvas = try makeCanvas(width: 128, height: 128)
+        // 字を焼く前の頁は白い区画だけなので、最初の字で替わる (#4082)。替わった後の頁を見る
+        try canvas.draw {
+            canvas.textSize(32)
+            canvas.text("A", 8, 40)
+        }
         let page = canvas.atlas.texture
         for frame in 0..<4 {
             try canvas.draw {

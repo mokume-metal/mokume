@@ -122,8 +122,8 @@ public final class Canvas {
     /// 溜めている頂点と、その置き場。
     var vertices: [ShapeVertex] = []
     private let vertexStorage: GrowableBuffer
-    /// 平面の頂点ごとの被覆の置き場 (``coverageSpans``)。区間が無いフレームは 1 つだけ書く。
-    private let coverageStorage: GrowableBuffer
+    /// 平面の頂点ごとの被覆の置き場 (``coverageSpans``)。区間が無いフレームは書かず、置き場も取らない。
+    let coverageStorage: GrowableBuffer
 
     /// 平面の置き場所。列は自分の区間を指す。
     ///
@@ -135,11 +135,11 @@ public final class Canvas {
     /// 置き場所が持つ記述は 1 つとは限らない (いまは塗りの 1 つだけ。線の片は、同じ置き場所の続きの
     /// 記述になる)。細い塗りの雛形が無いフレームは空。
     var thinFillRecords: [ThinFillRecord] = []
-    private let thinFillRecordStorage: GrowableBuffer
+    let thinFillRecordStorage: GrowableBuffer
     /// 細い塗りの雛形の置き場所ごとの、記述の先頭と数 (#2208)。**細い塗りの雛形の置き場所を足すたびに
     /// 1 つ足し**、雛形が始まる位置を列が持つ (``Batch/thinFillStart``・平面の置き場所と同じ引き方)。
     var thinFillSpans: [ThinFillSpan] = []
-    private let thinFillSpanStorage: GrowableBuffer
+    let thinFillSpanStorage: GrowableBuffer
     /// 直前に求めた細い塗りの記述 (``thinFillRecord(of:drawn:)``)。**向きと寸法が同じ置き場所は記述も
     /// 同じ**なので、続けて同じ置き場所が来る間は求め直さない。
     var thinFillMemo: ThinFillMemo?
@@ -301,7 +301,7 @@ public final class Canvas {
     ///
     /// [#752]: https://github.com/mokume-metal/mokume/issues/752
     var formInstances: [FormInstance] = []
-    private let formInstanceStorage: GrowableBuffer
+    let formInstanceStorage: GrowableBuffer
     /// いま開いている基本図形の列。
     var openForm: OpenForm?
 
@@ -740,7 +740,7 @@ public final class Canvas {
     let positionLayouts = PositionLayouts()
     /// 立体の頂点の置き場。**写した回数 (``GrowableBuffer/writes``) を検査が読む** (#1790)。
     let solidVertexStorage: GrowableBuffer
-    private let solidIndexStorage: GrowableBuffer
+    let solidIndexStorage: GrowableBuffer
     /// 裏 → 表で描く置き場所の連なりを 1 回で描く添字の列の置き場 (``SolidSweep``・[#1947])。
     /// 畳める連なりが無いフレームは写さない。
     ///
@@ -860,7 +860,7 @@ public final class Canvas {
     /// 既に置いた立体の明るさまで変わる (記録した列だけで絵が決まらなくなる)。
     var lightStorage: [Light] = []
     /// 光の置き場。
-    private let lightStorageBuffer: GrowableBuffer
+    let lightStorageBuffer: GrowableBuffer
     /// 列ごとの「光がどこから何個か」の置き場。
     let lightingStorage: GrowableBuffer
 
@@ -3021,7 +3021,9 @@ public final class Canvas {
         self.emptyNumbers = try Numbers(gpu: gpu, count: 1)
         self.projection = Self.makeProjection(width: self.width, height: self.height)
 
-        let atlas = try GlyphAtlas(gpu: gpu)
+        // **字を焼くまでは白い区画だけの頁を持つ** (#4082)。最初の字は頁を広げる道で替える
+        // (``bakedGlyph(for:font:reportsFull:)``)
+        let atlas = try GlyphAtlas(gpu: gpu, whiteOnly: true)
         self.atlas = atlas
         self.currentTexture = atlas.held
         self.whiteUV = atlas.whiteUV
@@ -6287,11 +6289,11 @@ public final class Canvas {
         reusing baked: SolidUploads?
     ) throws(RenderFailure) -> GeometryBuffers {
         let buffer = try vertexStorage.write(vertices, holding: vertices.count)
-        // 頂点ごとの被覆。**区間が無ければ 1 つだけ書く** — 頂点関数は列の旗を見て読まない
-        // (`FlatFrame.readsCoverage`) が、口には何かを束ねる
+        // 頂点ごとの被覆。**区間が無ければ書かない** — 頂点関数は列の旗を見て読まない
+        // (`FlatFrame.readsCoverage`) が、口には何かを束ねる。0 個の要求は空の置き場で埋まる (#4082)
         let coverageBuffer: any MTLBuffer
         if coverageSpans.isEmpty {
-            coverageBuffer = try coverageStorage.write([Float(1)], holding: 1)
+            coverageBuffer = try coverageStorage.buffer(holding: 0)
         } else {
             // **置き場へ直に書く** ([#3253])。中間の `[Float]` を毎フレーム頂点数ぶん確保して、もう一度写さない
             //
@@ -6305,20 +6307,20 @@ public final class Canvas {
             }
             coverageBuffer = storage
         }
-        let formBuffer = try formInstanceStorage.write(
-            formInstances, holding: max(formInstances.count, 1))
+        // **並びが空なら 0 個を要求する** — 読む列が無く、口は空の置き場で埋まる
+        // (``GrowableBuffer/buffer(holding:)``・#4082)。使わない種類の置き場を取らない
+        let formBuffer = try formInstanceStorage.write(formInstances, holding: formInstances.count)
         let solid: SolidUploads
         if let baked { solid = baked } else { solid = try uploadSolids() }
         let flatInstanceBuffer = try flatInstanceStorage.write(
             flatInstances, holding: flatInstances.count)
-        // 細い塗りの記述。**無いフレームも 1 つだけ書く** — 頂点関数は列の旗を見て読まないが、口には何かを束ねる
+        // 細い塗りの記述。頂点関数は列の旗を見て読まない
         let thinFillRecordBuffer = try thinFillRecordStorage.write(
-            thinFillRecords, holding: max(thinFillRecords.count, 1))
+            thinFillRecords, holding: thinFillRecords.count)
         let thinFillSpanBuffer = try thinFillSpanStorage.write(
-            thinFillSpans, holding: max(thinFillSpans.count, 1))
-        // 光の置き場。列は自分の区間を指す
-        let lightsBuffer = try lightStorageBuffer.write(
-            lightStorage, holding: max(lightStorage.count, 1))
+            thinFillSpans, holding: thinFillSpans.count)
+        // 光の置き場。列は自分の区間を指し、光の無い列は区間の長さが 0 なので読まない
+        let lightsBuffer = try lightStorageBuffer.write(lightStorage, holding: lightStorage.count)
         argumentTable.setAddress(
             lightsBuffer.gpuAddress, index: ShapePipeline.lightsBufferIndex)
         return GeometryBuffers(
@@ -6332,8 +6334,7 @@ public final class Canvas {
     /// 要求する大きさが食い違うと、束ねた後に取り直した置き場を指すことになる
     /// (``GrowableBuffer/write(_:holding:)`` の順序の規律)。
     private func uploadSolids() throws(RenderFailure) -> SolidUploads {
-        let instances = try solidInstanceStorage.write(
-            solidInstances, holding: max(solidInstances.count, 1))
+        let instances = try solidInstanceStorage.write(solidInstances, holding: solidInstances.count)
         let vertices = try solidVertexStorage.write(solidVertices, holding: solidVertices.count)
         let indices = try solidIndexStorage.write(solidIndices, holding: solidIndices.count)
         return SolidUploads(vertices: vertices, indices: indices, instances: instances)
@@ -6567,7 +6568,7 @@ public final class Canvas {
     }
 
     /// 立体の置き場所の置き場。
-    private let solidInstanceStorage: GrowableBuffer
+    let solidInstanceStorage: GrowableBuffer
 
     // MARK: - フレームで積み上げる落とす側 (#1656)
 

@@ -671,6 +671,91 @@ struct GraphicsTests {
         }
     }
 
+    // MARK: - 使わない置き場を取らない (#4082)
+
+    /// 円を 1 つ描いて置く。
+    private func drawCircle(_ graphics: Canvas, on canvas: Canvas, text: String? = nil) throws {
+        try canvas.draw {
+            graphics.beginDraw()
+            graphics.background(blue)
+            graphics.fill(white)
+            graphics.circle(32, 32, 20)
+            if let text { graphics.text(text, 4, 20) }
+            graphics.endDraw()
+            canvas.image(graphics, 0, 0)
+        }
+    }
+
+    /// 字を置かない描き場所は字形の焼き場の頁を白い区画だけのまま持ち、列の置き場は使った種類だけを取る。
+    /// **数えるのは頁の大きさと置き場の容量**で、確保の量 (`allocatedSize`) や時間は比べない。
+    @Test("円だけを描いた描き場所は、焼き場の頁を広げず、使わない種類の列の置き場を取らない")
+    func aCircleOnlyGraphicsTakesNoUnusedStorage() throws {
+        let canvas = try makeCanvas()
+        let graphics = try canvas.createGraphics(64, 64)
+        try drawCircle(graphics, on: canvas)
+        try drawCircle(graphics, on: canvas)
+
+        #expect(
+            graphics.atlas.size == GlyphAtlas.whiteOnlySize,
+            "字を置いていないのに、焼き場の頁が \(graphics.atlas.size) に広がった")
+        // 円は基本図形の置き場所と行列だけを読む
+        #expect(graphics.formInstanceStorage.capacity > 0, "検査の前提: 円が基本図形の置き場所を取っていない")
+        let unused: [(String, GrowableBuffer)] = [
+            ("solidVertices", graphics.solidVertexStorage), ("solidIndices", graphics.solidIndexStorage),
+            ("solidInstances", graphics.solidInstanceStorage), ("lights", graphics.lightStorageBuffer),
+            ("coverages", graphics.coverageStorage), ("thinFillRecords", graphics.thinFillRecordStorage),
+            ("thinFillSpans", graphics.thinFillSpanStorage), ("lighting", graphics.lightingStorage),
+            ("materials", graphics.materialStorage), ("surroundings", graphics.surroundingsStorage),
+            ("values", graphics.valuesStorage),
+        ]
+        for (name, storage) in unused {
+            #expect(storage.capacity == 0, "\(name) を、使わないのに \(storage.capacity) 個ぶん取った")
+            #expect(storage.reallocations == 0, "\(name) を、使わないのに取った")
+        }
+    }
+
+    /// 最初の字で 1 度だけ頁を替え、以後は替えない。字の後に描いた図形も、替えた頁の白い区画を読む。
+    @Test("最初の字を置いたフレームで焼き場の頁を 1 度だけ替え、次のフレームでは替えない")
+    func theFirstGlyphReplacesTheWhiteOnlyPageOnce() throws {
+        let canvas = try makeCanvas()
+        let graphics = try canvas.createGraphics(64, 64)
+        try drawCircle(graphics, on: canvas)
+        let whitePage = graphics.atlas.pageSerial
+
+        try drawCircle(graphics, on: canvas, text: "Hi")
+        #expect(graphics.atlas.size == GlyphAtlas.initialSize, "最初の字で、最初の大きさの頁へ替わっていない")
+        #expect(graphics.atlas.pageSerial == whitePage + 1, "最初の字で、頁を 1 度より多く替えた")
+        #expect(graphics.whiteUV == graphics.atlas.whiteUV, "替えた頁の白い区画を指していない")
+
+        let textPage = graphics.atlas.pageSerial
+        try drawCircle(graphics, on: canvas, text: "Hi")
+        #expect(graphics.atlas.pageSerial == textPage, "2 度目の字で、頁をまた替えた")
+    }
+
+    /// 0 個の要求は装置に 1 本の空の置き場で埋め、置き場は 1 個以上を要求されたときに初めて取る。
+    /// 空の置き場は誰も手放さないので、同じフレームで先に束ねた番地は、後で取った置き場に替わっても読める。
+    @Test("0 個の要求は空の置き場で埋め、1 個以上を要求されて初めて置き場を取る")
+    func anEmptyRequestTakesNoStorage() throws {
+        let gpu = try RenderDevice()
+        let ring = FrameRing(gpu: gpu)
+        let storage = GrowableBuffer(
+            gpu: gpu, ring: ring, stride: MemoryLayout<Float>.stride, minimumCapacity: 16,
+            label: "mokume.test.empty")
+        try ring.advance()
+
+        let empty = try storage.buffer(holding: 0)
+        #expect(empty === (try gpu.emptyBuffer()), "0 個の要求に、空の置き場を返していない")
+        #expect(storage.capacity == 0 && storage.reallocations == 0, "0 個の要求で置き場を取った")
+        #expect(ring.bufferBytes == 0, "0 個の要求で、環の確保が増えた")
+
+        let taken = try storage.buffer(holding: 1)
+        #expect(taken !== empty, "1 個の要求に、空の置き場を返した")
+        #expect(storage.capacity == 16 && storage.reallocations == 1)
+        // 1 度取った後は、0 個でも自分の置き場を返す (容量はスロット共通で、空の置き場へ戻らない)
+        #expect(try storage.buffer(holding: 0) === taken, "取った後の 0 個の要求に、自分の置き場を返していない")
+        #expect(try gpu.emptyBuffer() === empty, "空の置き場が装置に 1 本ではない")
+    }
+
     // MARK: - 時刻と刻みは作った面と同じ (#1467)
 
     /// 時刻で脈打つ色。赤は `0.5 + 0.5·sin(πt)` で、0 秒で 0.5、0.5 秒 (30 fps の 16 枚目)

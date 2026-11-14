@@ -178,6 +178,26 @@ import MokumeDiagnostics
     /// 持っておく色の表の数。動画やカメラの色の意味の数 (ふつう 1〜2) より十分に多い。
     static let colorTableLimit = 8
 
+    /// 0 個ぶんを要求された置き場の代わりに束ねる、装置に 1 本の置き場 (``emptyBuffer()``)。
+    private var emptyBufferStorage: (any MTLBuffer)?
+
+    /// ``emptyBuffer()`` の長さ (バイト)。束ねる口の 1 区画 (`Canvas.valuesStride`) より長くとる。
+    static let emptyBufferLength = 4096
+
+    /// 中身を 0 個しか持たない並びを束ねる口へ渡す置き場。**誰も書かず、作ったときの 0 のまま**で、
+    /// 装置が生きている間 1 本を使い回す (#4082)。
+    ///
+    /// 口には何かを束ねる必要があるが、0 個の並びを読む描画は無い。描き場所ごと・種類ごとに最小の
+    /// 容量の置き場を環のスロットの数だけ取ると、使わない種類の分だけ確保が膨らむ
+    /// (``GrowableBuffer/buffer(holding:)`` がここへ回す)。
+    func emptyBuffer() throws(RenderFailure) -> any MTLBuffer {
+        if let emptyBufferStorage { return emptyBufferStorage }
+        let buffer = try makeReadableBuffer(byteCount: Self.emptyBufferLength)
+        buffer.label = "mokume.empty"
+        emptyBufferStorage = buffer
+        return buffer
+    }
+
     /// 未投入の計算を持ちうる面。**面をまたいで、計算を頼んだ順に効かせるための名簿**
     /// (`PendingComputations`・#1870)。溜めは面ごと、描き切りも面ごとなので、別の面で
     /// 後から頼んだ計算が先に走らないよう、頼む側が相手を引く。

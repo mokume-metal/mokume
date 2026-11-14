@@ -243,6 +243,8 @@ struct GlyphAtlasRebakeTests {
             fontKey: resolved.fontKey, size: 32, style: .normal, glyph: resolved.glyph)
         let atlas = canvas.atlas
         let gpu = canvas.gpu
+        // 字を焼く前の頁は白い区画だけなので、最初の字の頁へ替えておく (#4082)
+        try canvas.replaceGlyphPage()
         guard case .found = atlas.entry(for: key, font: resolved.font) else {
             Issue.record("検査の前提: 「M」を焼けなかった")
             return

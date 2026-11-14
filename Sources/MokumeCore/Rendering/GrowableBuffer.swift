@@ -97,8 +97,18 @@ import Metal
     /// 書いてよい。効果のパイプラインは作るときに置き場を取るが、作るのは頼まれたときで、前の
     /// 投入でスロットの印が落ちた後のこともある。
     ///
+    /// ## 0 個の要求は、まだ置き場を取らない (#4082)
+    ///
+    /// **1 度も 1 個以上を要求されていなければ、装置に 1 本の空の置き場** (``RenderDevice/emptyBuffer()``)
+    /// を返す。0 個の並びは誰も読まないので、束ねる口を埋められれば足りる。取るのは初めて 1 個以上を
+    /// 要求されたときで、空の置き場は誰の持ち物でもないので取り直しの待ちも要らない。そのため、1 フレーム
+    /// の中で 0 個の要求の後に大きい要求が来ても、先に束ねた番地は死なない。
+    ///
     /// [#2258]: https://github.com/mokume-metal/mokume/issues/2258
     func buffer(holding count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if buffers.isEmpty, count == 0 {
+            return try gpu.emptyBuffer()
+        }
         if buffers.isEmpty || count > capacity {
             try grow(to: count)
         } else {
