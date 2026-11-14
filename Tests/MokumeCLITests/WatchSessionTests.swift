@@ -12,12 +12,13 @@ import mokume
 
 @Suite("保存したら作り直して差し替える", .signalStateKept)
 struct WatchSessionTests {
-    /// 強制終了した後に、消えるのを待つ猶予 (``WatchSession/killGrace``) を、検査の長さでは切れない値にする。
+    /// 強制終了した後に、回収をこの秒数まで待つ (``WatchSession/killGrace`` として渡す)。
     ///
-    /// 強制終了から回収までの遅れは Foundation 側の別スレッドで進み、負荷で本番の 0.5 秒を越えると
-    /// `.abandoned` に倒れる。**`.killed` を期待する検査が見たいのは強制終了まで進んだこと** で、回収の速さではない。
-    /// 猶予が尽きたら `.abandoned` と名乗る本番の約束は、この検査では見ない (本番の既定は変えていない)
-    static let reapNeverExpires: TimeInterval = 3600
+    /// 回収は Foundation 側の別スレッドで進み、負荷で本番の 0.5 秒を越えると `.abandoned` に倒れる。
+    /// **`.killed` を期待する検査が見たいのは強制終了まで進んだこと** で、回収の速さではない。負荷の遅れでは
+    /// 切れず、回収が本当に来ないときだけ越える桁にする。越えたら `.abandoned` に倒れて `== .killed` が赤になる
+    /// = 回収が来なかったと読める。猶予が尽きたら `.abandoned` と名乗る本番の約束は、この検査では見ない
+    static let reapDeadline: TimeInterval = 60
 
     /// 差し替えた外側の記録。
     @MainActor
@@ -1009,7 +1010,7 @@ struct WatchSessionTests {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: true, ready: ready),
-            stopTimeout: 0.2, killGrace: Self.reapNeverExpires)
+            stopTimeout: 0.2, killGrace: Self.reapDeadline)
         await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
@@ -1029,7 +1030,7 @@ struct WatchSessionTests {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: true, ready: ready),
-            stopTimeout: 0.2, killGrace: Self.reapNeverExpires)
+            stopTimeout: 0.2, killGrace: Self.reapDeadline)
         await session.start()
         let first = try #require(session.child)
         ready.waitForLast()
@@ -1128,7 +1129,7 @@ struct WatchSessionTests {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
-            hooks: hooksNeverFinishingCleanup(ready: ready), stopTimeout: 0.2, finishTimeout: 3, killGrace: Self.reapNeverExpires)
+            hooks: hooksNeverFinishingCleanup(ready: ready), stopTimeout: 0.2, finishTimeout: 3, killGrace: Self.reapDeadline)
         var waits = 0
         session.willWaitForFinish = { _ in waits += 1 }
         await session.start()
