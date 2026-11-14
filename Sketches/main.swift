@@ -104,6 +104,8 @@ guard let name = arguments.first, let entry = catalogue.first(where: { $0.name =
 }
 
 do {
+    // スケッチの組み立て (`entry.make()`) が画面の一覧を読んでもよいように、組み立てより前に差し込む (#3804)
+    MacPlatform.install()
     let gpu = try RenderDevice()
     let application = try SketchApplication(sketch: entry.make(), gpu: gpu)
     application.run()

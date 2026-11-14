@@ -1877,16 +1877,21 @@ extension Sketch {
         // 消える(``SketchApplication``)。これより前に死ぬ子(動的リンクの失敗・`main()` に届く前の大域の
         // 初期化)は置けず、今までどおり「自分で消えた」と読まれる
         markOwnStarting()
-        // スケッチの組み立て (`Self()`) が画面の一覧を読んでもよいように、組み立てより前に差し込む (#3804)
-        MacPlatform.install()
         do {
-            let gpu = try RenderDevice()
-            let application = try SketchApplication(sketch: Self(), gpu: gpu)
-            application.run()
+            try makeApplication().run()
         } catch {
             reportStartFailure(error)
             exit(1)
         }
+    }
+
+    /// ``main()`` が回すアプリを組む。**スケッチの組み立て (`Self()`) より前に外枠の部品を差し込む** — スケッチの
+    /// `init` が画面の一覧 (``SketchPart/displays``) を読んでもよいように (``MacPlatform/install()``・#3804)。
+    /// `main()` は `NSApplication` を回して戻らないので、検査はここを呼んで順を見る。
+    package static func makeApplication() throws(RenderFailure) -> SketchApplication {
+        MacPlatform.install()
+        let gpu = try RenderDevice()
+        return try SketchApplication(sketch: Self(), gpu: gpu)
     }
 }
 

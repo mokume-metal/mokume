@@ -48,6 +48,8 @@ let allowsDisplaySleep = options.allowsDisplaySleep
 // 描画の土台とウィンドウを作れなければ、裸の `try` で Swift ランタイムの既定処理 (trap) へ落とさず、
 // 何が足りないかを名乗って落ちる (#2541)。文面は ProbeStartup.swift
 let application: SketchApplication
+// スケッチの組み立て (`Probe()`) が画面の一覧を読んでもよいように、組み立てより前に差し込む (#3804)
+MacPlatform.install()
 do {
     application = try SketchApplication(sketch: Probe(), gpu: try RenderDevice())
 } catch {

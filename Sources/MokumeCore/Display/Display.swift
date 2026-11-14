@@ -137,7 +137,7 @@ extension Display {
     }
 
     /// いま繋がっている画面を読む口。**MokumeCore は OS の UI 部品を知らないので、画面を読むのは外枠
-    /// (MokumeMac の `Display.installScreenReader()`) が差し込む** (#3804)。差し込まれる前は空を返す。
+    /// (MokumeMac の `MacPlatform.install()`) が差し込む** (#3804)。差し込まれる前は空を返す。
     @MainActor package static var screenReader: () -> [Reading] = { [] }
 
     /// いま繋がっているディスプレイ。**決して落ちない** — 画面の無い実行環境では空。
