@@ -344,6 +344,11 @@ struct WatchSessionModelTests {
             // プレビューの合図が作品のウィンドウより先に届く (反証 5)
             [.save, .promoteWaiting, .audition, .save, .send, .promoteSentInPreview, .promoteWaiting, .leave],
             [.save, .promoteWaiting, .audition, .save, .send, .promoteSentInPreview, .exitWaiting, .beat, .save],
+            // 送った版の時計 (決定 2): 起こし直した試聴の子を送ると、本番の場所はその子の場所になり、次の試聴の子は読むだけ・
+            // 出た後の本番はそこを書く。乗り換えの前に送った子が終わると、場所は送る前へ戻る
+            [.save, .promoteWaiting, .audition, .save, .restart, .send, .promoteWaiting, .save, .leave, .save],
+            [.save, .promoteWaiting, .audition, .save, .restart, .send, .exitWaitingFailing, .beat, .save, .leave, .save],
+            [.save, .promoteWaiting, .audition, .save, .restart, .send, .leave, .exitWaiting, .beat, .save],
         ])
     @MainActor
     func sendColumnsKeepTheirPostconditions(_ ops: [Op]) async {
@@ -608,6 +613,10 @@ struct WatchSessionModelTests {
         private var auditionGens: Set<Int> = []
         /// 送った世代のうち、作品のウィンドウがまだ乗り換えていないもの (#3566)。台の役で、作品のウィンドウの合図・知らせで下りる。
         private var sentWaiting: Int?
+        /// 送る前の時計の場所 (``sentWaiting`` の間だけ)。送った子が作品のウィンドウの乗り換えの前に終わったら、これへ戻す。
+        private var clocksBeforeSend: (production: Int, audition: Int?, split: Bool)?
+        /// 起こした世代ごとの、見張りが渡した時計の場所の番号 (操作の履歴)。
+        private var launchClocks: [Int: Int] = [:]
         /// 試聴に入っているか (見張りの答えから写す)。
         private var auditioning = false
         /// 自分から終わらせたが、まだ巡回が見ていない試聴の子。
@@ -889,6 +898,7 @@ struct WatchSessionModelTests {
                 launchViolation = launchViolation ?? "\(isAudition ? "試聴" : "本番")の子 G\(gens.count) の時計を\(selectedReadsOnly ? "読むだけ" : "書く") にした (規則では\(readsOnly ? "読むだけ" : "書く"))"
             }
             launchRoles[gens.count] = role
+            launchClocks[gens.count] = selectedClock
             launchBuilds[gens.count] = rebuilds
             if let artifact = Int(executable.lastPathComponent.replacingOccurrences(of: "build-", with: "")) {
                 launchArtifacts[gens.count] = artifact
@@ -1473,6 +1483,12 @@ struct WatchSessionModelTests {
                 // 送った子はもう起こし直しの子ではない (最初の絵の前に落ちても、試聴の時計の場所は戻さない)
                 restartClocks.removeValue(forKey: target)
                 restartSplits.removeValue(forKey: target)
+                // **送った子の時計の場所が本番の場所になる** (決定 2): 本番は、送った子が起きたときに受けた場所を書き続ける
+                // (前の本番が止まると書き手になる)。次の試聴の子はその本番と場所を分け持つので読むだけ
+                clocksBeforeSend = (productionClock, auditionClock, clocksSplit)
+                if let place = launchClocks[target] { productionClock = place }
+                auditionClock = nil
+                clocksSplit = false
                 if session.waitingGeneration !== gens[target] {
                     return Violation(number: 7, text: "送った G\(target) が、乗り換えを待つ本番になっていない")
                 }
@@ -1797,6 +1813,16 @@ struct WatchSessionModelTests {
         private func exitSent(_ target: Int, line: String) async -> Violation? {
             let previous = productionAlive().subtracting([target]).first
             sentWaiting = nil
+            let before = clocksBeforeSend
+            clocksBeforeSend = nil
+            // 前の本番が本番に戻るなら、時計の場所も送る前へ戻る (出た後なら試聴の場所は本番と同じのまま)
+            if previous != nil, let before {
+                productionClock = before.production
+                if auditioning {
+                    auditionClock = before.audition
+                    clocksSplit = before.split
+                }
+            }
             finish(target, line: line)
             await beat()
             guard let previous else { return nil }

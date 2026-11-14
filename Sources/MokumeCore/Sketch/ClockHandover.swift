@@ -39,6 +39,12 @@ import Synchronization
 /// 時計は書かない (``readsOnly``) — 世代の新しい試聴の子が本番の子を見送らせず、試聴を捨てた後の本番の次の版は、
 /// 本番の子の時計から始まる。試聴の中で進めた・止めた秒はどこにも残らない (#4070)。
 ///
+/// **読むだけの世代は、ファイルの書き手が居なくなったら書き手になる** (#3566)。試聴の版を作品のウィンドウへ送ると、
+/// 前の本番が止まり、読むだけで起きた送った子が本番の時計を書き始める — 見張りは値を渡し直さない。居なくなったかは、
+/// 既存の見送りと同じく、ファイルの書き手の番号が生きているかで読む。書き手が生きている間・ファイルが無い・使えない間は
+/// 読むだけのままで、書き手が生きたまま止まりかけている間に 2 つの書き手が同じファイルへ書く順は無い。1 度書き手になったら
+/// 戻らない (以後は世代の規則だけで見送る)。代償: 試聴の間に本番の子が自分で落ちたときも、試聴の子が書き始める。
+///
 /// 場所を受けない実行 (旗の無い `watch`・`run`・`render`) は、何も読まず何も書かない。
 ///
 /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
@@ -92,8 +98,12 @@ final class ClockHandover {
     private var lastWritten: Snapshot?
     /// この世代の番号。**生まれた時刻**なので、読めたかによらず後の世代ほど大きい。
     let generation: Double
-    /// 読むだけで書かないか (見張りの試聴の子・``StartupReads/keepTimeReadOnly``)。
+    /// 読むだけで起きたか (見張りの試聴の子・``StartupReads/keepTimeReadOnly``)。書き手になったかは ``tookOver``。
     let readsOnly: Bool
+    /// 読むだけで起きた世代が、ファイルの書き手が居なくなったのを見て書き手になったか。戻らない。
+    private(set) var tookOver = false
+    /// 読むだけの間に、ファイルの書き手を最後に見た時刻 (``refreshInterval`` ごとに見る)。
+    private var lastWriterCheck: Double?
     /// フレームの時計の進み方を測るウィンドウの起点 (フレーム番号と時刻)。止めている間・種類が変わったときに捨てる。
     private var rateAnchor: (frames: Int, at: Double)?
     /// 測れた進み方。まだ測れていなければ `nil`。
@@ -238,7 +248,8 @@ final class ClockHandover {
         }
     }
 
-    /// この枚の作者の時計を書く。**必要なときだけ書く。** 読むだけの世代 (``readsOnly``) は何も書かない。
+    /// この枚の作者の時計を書く。**必要なときだけ書く。** 読むだけの世代 (``readsOnly``) は、書き手になるまで
+    /// (``takesOverIfWriterGone(at:)``) 何も書かない。
     ///
     /// - 止めているか・枚が止まっているかが変わったとき、止めている・止まっている間に秒が変わったとき
     /// - 止めていない間は、前に書いたものからの外挿 (``Snapshot/rate`` を掛ける) が実際の秒と
@@ -255,7 +266,7 @@ final class ClockHandover {
     func publish(
         seconds: Double, isHeld: Bool, isStill: Bool, kind: Kind, frames: Int, at moment: Double
     ) {
-        guard !readsOnly else { return }
+        guard !readsOnly || takesOverIfWriterGone(at: moment) else { return }
         let rate = rate(of: kind, isHeld: isHeld || isStill, frames: frames, at: moment)
         let snapshot = Snapshot(
             seconds: seconds, isHeld: isHeld, isStill: isStill, rate: rate, at: moment, writer: writer,
@@ -263,6 +274,20 @@ final class ClockHandover {
         guard snapshot.isUsable, needsWrite(snapshot, tolerance: kind.tolerance) else { return }
         lastWritten = snapshot
         write(snapshot)
+    }
+
+    /// 読むだけで起きた世代が、いま書き手か。まだなら ``refreshInterval`` ごとにファイルを読み、書き手 (自分でない) が
+    /// もう居なければ書き手になる。**ファイルが無い・使えない間は書き手にならない** — 書き手が分からないので、生きている
+    /// 本番の子がまだ書いていないだけかもしれない。
+    private func takesOverIfWriterGone(at moment: Double) -> Bool {
+        if tookOver { return true }
+        if let last = lastWriterCheck, moment - last < Self.refreshInterval, moment >= last { return false }
+        lastWriterCheck = moment
+        guard case .found(let existing) = read(), existing.writer != writer, !isAlive(existing.writer) else {
+            return false
+        }
+        tookOver = true
+        return true
     }
 
     /// 止めていない間の作者の時計の進み方。実時間の時計は 1、フレームの時計は `refreshInterval` ごとに測り直し、

@@ -138,7 +138,9 @@ enum Command {
                     with noLoop(), the new one starts from the second it last wrote or last showed,
                     without the time that passed. A version under audition starts from the clock of
                     the version in the work's window but never moves it, so after a leave the next
-                    build continues from that version's clock. run and render always start at 0.
+                    build continues from that version's clock. After a send, the clock goes on from
+                    the sent version once the one it replaced has stopped. run and render always
+                    start at 0.
                     What it watches: Package.swift, every .swift under Sources/, and the regular files
                     under Sources/<target>/assets/ (not hidden files or symbolic links). A .metal
                     fragment is not rebuilt: it swaps in while the sketch keeps running.

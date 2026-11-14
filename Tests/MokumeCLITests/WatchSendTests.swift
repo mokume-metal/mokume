@@ -360,6 +360,57 @@ struct WatchSendTests {
         #expect(record["ok"] as? Bool == true, "\(record)")
     }
 
+    // MARK: - 送った版の時計 (`--keep-time`・決定 2)
+
+    @Test("送ると、本番の時計の場所は送った子の場所になる: 次の試聴の子はそこを読むだけ、出た後の本番はそこを書く")
+    func sendingMovesTheProductionClockToTheSentChild() async throws {
+        let harness = try Harness()
+        _ = try #require(await harness.save())
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        _ = try #require(await harness.save())
+        // 送る前に試聴の子を起こし直す: 試聴の子は新しい場所 1 を書く
+        #expect(try await harness.ask("restart")["accepted"] as? Bool == true)
+        let sent = try #require(harness.session.auditionChild)
+        #expect(harness.clocks.last == 1 && harness.readOnlyClocks.last == false)
+        #expect(try await harness.ask("send")["accepted"] as? Bool == true)
+        await harness.session.generationPromoted(pid: sent.processIdentifier, from: .window)
+        // 次の試聴の子は、送った子 (いまの本番) と場所 1 を分け持つので読むだけ。同じ場所を 2 つの子が書かない
+        let next = try #require(await harness.save())
+        #expect(harness.session.auditionChild === next)
+        #expect(
+            harness.clocks.last == 1 && harness.readOnlyClocks.last == true,
+            "次の試聴の子: 場所 \(harness.clocks)・読むだけ \(harness.readOnlyClocks)")
+        // 出た後に保存すると、本番の子は送った子の場所 1 から続く
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        _ = try #require(await harness.save())
+        #expect(
+            harness.clocks.last == 1 && harness.readOnlyClocks.last == false,
+            "出た後の本番: 場所 \(harness.clocks)・読むだけ \(harness.readOnlyClocks)")
+    }
+
+    @Test("送った子が作品のウィンドウの乗り換えの前に終わると、時計の場所も送る前に戻る")
+    func aWithdrawnSendKeepsTheClockPlaces() async throws {
+        let harness = try Harness()
+        let production = try #require(await harness.save())
+        harness.session.generationShown(pid: production.processIdentifier)
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        _ = try #require(await harness.save())
+        #expect(try await harness.ask("restart")["accepted"] as? Bool == true)
+        let sent = try #require(harness.session.auditionChild)
+        #expect(try await harness.ask("send")["accepted"] as? Bool == true)
+        harness.tell(sent, "bye")
+        await harness.beat()
+        #expect(harness.session.child === production && production.isRunning)
+        // 試聴の場所は送る前のまま (場所 1・書く)。本番の場所も前の本番の 0
+        _ = try #require(await harness.save())
+        #expect(
+            harness.clocks.last == 1 && harness.readOnlyClocks.last == false,
+            "次の試聴の子: 場所 \(harness.clocks)・読むだけ \(harness.readOnlyClocks)")
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        _ = try #require(await harness.save())
+        #expect(harness.clocks.last == 0 && harness.readOnlyClocks.last == false, "出た後の本番: \(harness.clocks)")
+    }
+
     @Test("起こし直した試聴の子を送った後に、その子が最初の絵の前に落ちても、起こし直しの失敗とは名乗らない")
     func aSentRestartedChildIsNoLongerARestart() async throws {
         let harness = try Harness()

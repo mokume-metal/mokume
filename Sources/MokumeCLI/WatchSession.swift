@@ -564,6 +564,9 @@ final class WatchSession {
         let process: Process
         let productionReport: BuildReport?
         let lastReport: BuildReport?
+        /// 送る前の時計の場所 (``productionClock``・``auditionClock``)。
+        let productionClock: Int
+        let auditionClock: Int?
     }
     private var sentHandover: SentHandover?
 
@@ -2420,6 +2423,9 @@ final class WatchSession {
     /// 乗り換えの途中の回は ``WatchReport/Reason/noTarget`` で断り、試聴に留まる。作り直しの完了を待ってから送ることはしない。
     /// 終われと言われた後も断る (止める手順が持っている子を入れ替えない)。
     ///
+    /// **本番の時計の場所 (``productionClock``) は、送った子の場所になる** (`--keep-time`)。送った子は前の本番が止まると
+    /// 書き手になり (`ClockHandover`)、次の試聴の子はその場所を読むだけで受ける。乗り換えの前に送った子が終わったら戻す。
+    ///
     /// **前の本番を止めるのは、作品のウィンドウの合図だけである** (``generationPromoted(pid:from:)``)。プレビューの合図・
     /// 知らせは送った子のものでも数えない。送った子が作品のウィンドウの乗り換えの前に終わったら、前の本番を残す
     /// (``departed()``・``withdrawSend(afterLosing:)``)。
@@ -2450,7 +2456,14 @@ final class WatchSession {
         hasNamedAuditionDeparture = false
         // 起こし直した試聴の子だったなら、最初の絵の前に落ちても試聴の時計の場所は戻さない (もう試聴の子ではない)
         restartedChildren.removeValue(forKey: pid)
-        sentHandover = SentHandover(process: sent, productionReport: productionReport, lastReport: lastReport)
+        sentHandover = SentHandover(
+            process: sent, productionReport: productionReport, lastReport: lastReport,
+            productionClock: productionClock, auditionClock: auditionClock)
+        // **本番の時計の場所は、送った子の場所になる** (値は渡さず、どの場所を本番と呼ぶかだけ)。送った子は読むだけで
+        // 起きていても、前の本番が止まれば書き手になる (`ClockHandover`)。次の試聴の子はこの場所を読むだけで受け、送った子と
+        // 同じ場所へ書かない
+        productionClock = auditionClock ?? productionClock
+        auditionClock = nil
         // 前の本番は乗り換えまで映り続け、作品のウィンドウの合図で止まる。プレビューは送った子を映したまま
         outgoing = child
         child = sent
@@ -2489,6 +2502,9 @@ final class WatchSession {
         outgoing = nil
         awaitingPromotion = false
         productionReport = handover.productionReport
+        // 時計の場所も送る前へ戻す。出た後なら試聴の場所は本番と同じのまま
+        productionClock = handover.productionClock
+        if isAuditioning { auditionClock = handover.auditionClock }
         if let restored = handover.lastReport {
             lastReport = restored
             write(restored)
@@ -2647,6 +2663,10 @@ final class WatchSession {
     // | 本番の起こし直し: 子が起きた | 新しい番号 | 試聴中で本番と同じなら、前の本番の場所に留める | 新しい番号 | 試聴中なら書く |
     // | 起こし直しで起こせなかった | そのまま | そのまま | — | そのまま |
     // | 起こし直した子が最初の絵の前に落ちた | その役なら前へ戻す | その役なら前へ戻す | — | 場所が本番と同じに戻れば読むだけ |
+    // | 送る (#3566) | 送った子の場所 | 本番と同じ | — | 読むだけ |
+    // | 送った子が作品のウィンドウの乗り換えの前に終わった | 送る前へ戻す | 試聴中なら送る前へ戻す | — | 送る前のまま |
+    //
+    // 送った子は読むだけで起きていても、前の本番が止まると書き手になる (`ClockHandover`)。値は渡し直さない。
     //
     // 試聴の子が読むだけなのは、受ける場所が本番の場所と同じとき (本番の子と時計を分け持つとき) だけである。本番の子は
     // いつも書く。

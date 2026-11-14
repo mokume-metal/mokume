@@ -342,6 +342,87 @@ struct WatchKeepTimeTests {
         #expect(read.writer == 10 && read.seconds == 121, "本番の子の時計が書かれていない: \(read)")
     }
 
+    // MARK: - 送った版の時計 (#3566 の決定 2)
+
+    private func written(_ path: String) -> ClockHandover.Snapshot? {
+        guard case .found(let snapshot) = ClockHandover.read(path: path) else { return nil }
+        return snapshot
+    }
+
+    @Test("送った子は、前の本番が最後に書いて止まってから書き始める。次の試聴の子は送った子の時計を読むだけ")
+    @MainActor
+    func theSentChildStartsWritingAfterThePreviousProductionStops() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+
+        let production = try Child(path: path, pid: 10, generation: 1, living: living)
+        production.publish(120, at: 100)
+        let sent = try Child(path: path, audition: true, pid: 11, generation: 2, living: living)
+        // 送った後・乗り換えの前: 前の本番が生きている間、送った子は読むだけ
+        sent.publish(150, at: 100.1)
+        #expect(written(path)?.writer == 10 && sent.sink.writeCount == 0, "\(String(describing: written(path)))")
+        // 前の本番が最後に書き、止まる
+        production.publish(125, held: true, at: 105)
+        living.end(10)
+        #expect(written(path)?.writer == 10 && written(path)?.seconds == 125)
+        // 送った子が書き始める
+        sent.publish(156, at: 106)
+        let after = try #require(written(path))
+        #expect(after.writer == 11 && after.seconds == 156, "送った子が書き手にならない: \(after)")
+        #expect(sent.handover.tookOver)
+        // 次の試聴の子は、送った子 (いまの本番) と時計を分け持つので読むだけ
+        let next = try Child(path: path, audition: true, pid: 12, generation: 3, living: living)
+        next.publish(300, at: 107)
+        #expect(written(path)?.writer == 11 && next.sink.writeCount == 0, "次の試聴の子が書いた")
+        let started = next.handover.predecessor()?.start(at: 107)
+        #expect(started?.seconds == 157 && started?.isHeld == false, "\(String(describing: started))")
+    }
+
+    @Test("逆の順: 前の本番が書く前に送った子が書こうとしても見送り、前の本番の最後の時計は上書きされない")
+    @MainActor
+    func theSentChildYieldsUntilThePreviousProductionIsGone() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+
+        let production = try Child(path: path, pid: 10, generation: 1, living: living)
+        production.publish(120, at: 100)
+        let sent = try Child(path: path, audition: true, pid: 11, generation: 2, living: living)
+        // 送った子が先に書こうとする (前の本番はまだ止まりかけで生きている)
+        sent.publish(150, held: true, at: 101)
+        // 止まりかけの前の本番が、その後に最後の時計を書く — 世代の新しい送った子はまだ書いていないので見送らない
+        production.publish(130, held: true, at: 102)
+        #expect(written(path)?.writer == 10 && written(path)?.seconds == 130, "\(String(describing: written(path)))")
+        // 同時: 前の本番が生きている間は、同じ時刻に頼んでも送った子の時計は載らない
+        production.publish(131, held: true, at: 102.6)
+        sent.publish(151, held: true, at: 102.6)
+        #expect(written(path)?.writer == 10 && written(path)?.seconds == 131 && sent.sink.writeCount == 0)
+        // 前の本番が止まった直後は、まだ見直す前 (前に見てから ``refreshInterval`` 未満)。見直すと書く
+        living.end(10)
+        sent.publish(151, held: true, at: 102.7)
+        #expect(written(path)?.writer == 10, "見直しの間隔の前に書いた")
+        sent.publish(151, held: true, at: 103.2)
+        #expect(written(path)?.writer == 11 && written(path)?.seconds == 151, "\(String(describing: written(path)))")
+    }
+
+    @Test("読むだけの子は、ファイルが無い・使えない間は書き手が分からないので書かない")
+    @MainActor
+    func aReadOnlyChildDoesNotWriteWithoutAKnownWriter() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+        let audition = try Child(path: path, audition: true, pid: 11, generation: 2, living: living)
+        audition.publish(10, at: 100)
+        #expect(written(path) == nil && !audition.handover.tookOver, "ファイルが無いのに書いた")
+        try Data("not a clock".utf8).write(to: URL(fileURLWithPath: path))
+        audition.publish(11, at: 101)
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "not a clock" && !audition.handover.tookOver)
+    }
+
     @Test("見張りは、本番の場所を受ける試聴の子だけを読むだけにする: 本番の子・起こし直した試聴の子・出た後の本番の子は書く")
     @MainActor
     func onlyAnAuditionSharingTheProductionClockReadsOnly() async throws {
