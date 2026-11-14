@@ -50,7 +50,7 @@ Core は口だけを持ち、macOS の部品は `MokumeMac` の `MacPlatform.ins
 | `Display.screenReader` (画面の読み) | `NSScreen` から読む `Display.readings()` | 空の一覧 |
 | `SketchRuntime.makePresence` (名乗りの係) | `SketchPresence` | 名乗らない |
 
-画面の一覧の組み方 (番号の振り方・全画面の大きさ・選び方) は純粋な関数で、Core に残る。差し込むのは、ランタイムを組む入口である: `SketchApplication` の組み立て (`Sketch.main()` と `SketchView` もここを通る)・`MokumeHost` の `HeadlessRun`・参照スケッチの書き出し。どれも設定 (`sketch.settings`) を読む前に差し込むので、設定の中で `displays` を読んでも、全画面を頼んでも、これまでと同じに働く。
+画面の一覧の組み方 (番号の振り方・全画面の大きさ・選び方) は純粋な関数で、Core に残る。差し込むのは、スケッチの実体を作る・ランタイムを組む入口である: `Sketch.main()` と `SketchView` はスケッチの実体を作る前に、`SketchApplication` の組み立て・`MokumeHost` の `HeadlessRun`・参照スケッチ・`frame-rate-probe` はランタイムを組む前に差し込む。どれも設定 (`sketch.settings`) を読む前なので、設定の中で `displays` を読んでも、全画面を頼んでも、これまでと同じに働く。
 
 退けた案:
 
@@ -58,7 +58,7 @@ Core は口だけを持ち、macOS の部品は `MokumeMac` の `MacPlatform.ins
 - **`MokumeMac` の読み込み時に自動で差し込む** (`@section("__DATA,__mod_init_func")`)。検査のバンドルが窓の透明化に使っている形だが、製品のライブラリに読み込み時の副作用を持たせることになり、差し込みが入口のコードから読めない
 - **ウィンドウを出さない口は差し込まない。** `HeadlessRun` を `MokumeMac` に依存させずに済むが、ウィンドウなしの実行で `displays` が空になり、全画面を頼むスケッチが組めなくなる。走り続けても名乗らなくなる。どちらもこれまでの振る舞いからの変更である
 
-> 破れたとき: 入口が差し込みを忘れ、その入口だけ画面の一覧が空になる (全画面を頼むスケッチが「繋がっていない」で断られる)。検査は `MacPlatformTests` と `HeadlessRunPlatformTests` が、口を空に戻してから入口を組んで見る。
+> 破れたとき: 入口が差し込みを忘れ、その入口だけ画面の一覧が空になる (全画面を頼むスケッチが「繋がっていない」で断られる)。検査は `MacPlatformTests`・`HeadlessRunPlatformTests`・`SketchHostTests` (`SketchView`) が、口を空に戻し、差し込む読み手を印の付いた画面に差し替えてから入口を組んで見る (画面の無い実行環境でも、差し込む前後を見分けられる)。
 
 ### 4. `MokumeMac` が使う Core の `package` の道は、外に届かない道の表に載せない
 
