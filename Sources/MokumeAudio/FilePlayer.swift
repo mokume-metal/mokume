@@ -35,13 +35,9 @@ import Synchronization
 ///
 /// ## 左右は自分で配る (#3473)
 ///
-/// 定位 (``pan``) は、節の `AVAudioMixing.pan` ではなく ``FileVoice`` が左右の倍率を掛けて決める。節の
-/// `pan` は、機材に出さない流れ (macOS 27) で 1 チャンネルにも 2 チャンネルにも効かなかった。**1 チャンネルの器は
-/// 常に 2 チャンネルの節にして、左右へ同じ標本を配る** (#3473 の 2026-11-13 の決定・[ADR-0042] 決定 6)。定位を
-/// 入れる前は 1 チャンネルの節を流れの混ぜる節が配っていて、混ぜる節の出口が 48 kHz (書き出し) などなら左右とも
-/// 1 倍だったので、既定 (`pan` 0) では標本が 1 つも変わらない。**出口が 44.1 kHz のときだけ**、混ぜる節は
-/// 1 チャンネルの節を左右とも約 1/√2 倍で配っていた (macOS 27 で測った)。そこでは既定のモノラルが約 3 dB 上がり、
-/// ほかの出口と同じ大きさに揃う。3 チャンネル以上の器は器のままの節で、定位は先頭の 2 チャンネルにだけ掛ける。
+/// 定位 (``pan``) は、節の `AVAudioMixing.pan` ではなく ``FileVoice`` が左右の倍率を掛けて決める (節の `pan` は
+/// 機材に出さない流れで効かず、書き出しに定位が入らない)。**1 チャンネルの器は常に 2 チャンネルの節にして、左右へ
+/// 同じ標本を配る** ([ADR-0042] 決定 6)。3 チャンネル以上の器は器のままの節で、定位は先頭の 2 チャンネルにだけ掛ける。
 ///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 final class FilePlayer {
@@ -369,7 +365,7 @@ nonisolated final class FileVoice: @unchecked Sendable {
         panTarget.store(position.bitPattern, ordering: .releasing)
     }
 
-    /// 定位 `position` の左右の倍率 (#3473 の 2026-11-13 の決定)。
+    /// 定位 `position` の左右の倍率 (#3473)。
     ///
     /// - 1 チャンネル (`mono`): 中央で 1 になるよう掛け直した、左右を合わせた大きさが変わらない定位。左 = √2·cos θ、
     ///   右 = √2·sin θ (θ は -1…1 を 0…π/2 へ写したもの)。端では片側が √2 倍・反対側が 0
@@ -480,7 +476,7 @@ nonisolated final class FileVoice: @unchecked Sendable {
     }
 
     /// 錨から導く位置で、器を読み直して描く (速さ ≠ 1 か、位置が整数でない)。描いた数を返す。速さ 0 の間は描かない
-    /// (無音。区切りは続く — #3473 の 2026-11-14 の決定 3)。1 度だけなら、位置が終わりに着いたところで止まる。
+    /// (無音。区切りは続く)。1 度だけなら、位置が終わりに着いたところで止まる。
     private func resample(
         _ frames: Int, into output: UnsafeMutableAudioBufferListPointer, channels copied: Int
     ) -> Int {

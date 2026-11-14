@@ -324,7 +324,7 @@ nonisolated final class FileNode: RackNode {
                             // 止める途中の消え方が終わった
                             playing = false
                         } else {
-                            // 速さ 0 の間は無音 (位置は進まず、区切りは続く。#3473 の 2026-11-14 の決定 3)
+                            // 速さ 0 の間は無音 (位置は進まず、区切りは続く)
                             value = rate == 0 ? 0 : read(source, at: position, looping: looping) * gate
                             if let envelope { value *= envelope.gain(atPlayed: filePlayed(count)) }
                             count += 1
