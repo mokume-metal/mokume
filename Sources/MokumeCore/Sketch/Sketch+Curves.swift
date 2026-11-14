@@ -102,6 +102,74 @@ extension SketchPart {
         canvas.bezier(from: start, control1: control1, control2: control2, to: end)
     }
 
+    /// 立体の空間に 3 次の曲線を 1 本引く。**視点と奥行きを通る。**
+    ///
+    /// 始点・制御点 2 つ・終点を、それぞれ `x, y, z` の順に渡す (`x1, y1, z1, …, x4, y4, z4`)。8 つの数の
+    /// ``bezier(_:_:_:_:_:_:_:_:)`` も視点を通るが、平面の図形なので奥行きを読み書きしない。12 の数で書くと、
+    /// 曲線を刻んだ点はどれも奥行きを持つ点になり、立体の線として ``camera(_:_:_:_:_:_:_:_:_:)`` や
+    /// ``orbitControl(_:_:_:)`` の視点から見た位置に引かれる — 同じ名前で、引数の数によって変わる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     // 斜め上から見下ろす
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     noFill()
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(4)
+    ///     // 2 つの制御点を奥へ引き、曲線が奥へふくらむ
+    ///     bezier(80, 150, 60, 140, 150, -260, 260, 150, -260, 320, 150, 60)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の曲線が手前の左右の端から、奥へ弧を描いてふくらんでいる -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ``beginShape(_:)`` と ``vertex(_:_:_:)`` と ``bezierVertex(_:_:_:_:_:_:_:_:_:)`` と ``endShape(_:)`` を
+    /// 順に呼んだのと**同じ絵**になる。線の色・太さ・端の形、``curveDetail(_:)`` の刻みも平面の曲線と同じに効く。
+    /// 塗りの色が有効なら、始点と終点を結ばない開いた形のまま塗る。``beginShape(_:)`` と ``endShape(_:)`` の間で
+    /// 呼んでも、組み立て中の形には点を足さず、その形と別の 1 本として引く。
+    // shot: 後で撮る
+    public func bezier(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
+        _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ z2: some ScalarConvertible,
+        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ z3: some ScalarConvertible,
+        _ x4: some ScalarConvertible, _ y4: some ScalarConvertible, _ z4: some ScalarConvertible
+    ) {
+        guard let canvas = liveCanvas() else { return }
+        let (x1, y1, z1, x2, y2, z2) = (x1.asFloat, y1.asFloat, z1.asFloat, x2.asFloat, y2.asFloat, z2.asFloat)
+        let (x3, y3, z3, x4, y4, z4) = (x3.asFloat, y3.asFloat, z3.asFloat, x4.asFloat, y4.asFloat, z4.asFloat)
+        canvas.bezier(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4)
+    }
+
+    /// 立体の空間に 3 次の曲線を 1 本引く。始点・制御点 2 つ・終点を `Vector3` で、ラベルを付けて渡す。
+    ///
+    /// 12 の数の ``bezier(_:_:_:_:_:_:_:_:_:_:_:_:)`` に 4 つの点の成分を同じ順で渡すのと同じ曲線になる。
+    /// ラベルは平面の形 (`Vector2` を取る形) と同じである。
+    ///
+    /// ```swift
+    /// // bezier(80, 150, 60, 140, 150, -260, 260, 150, -260, 320, 150, 60) と同じ曲線
+    /// camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    /// noFill()
+    /// bezier(
+    ///     from: Vector3(80, 150, 60), control1: Vector3(140, 150, -260),
+    ///     control2: Vector3(260, 150, -260), to: Vector3(320, 150, 60))
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - start: 始点。
+    ///   - control1: 始点の側の制御点。
+    ///   - control2: 終点の側の制御点。
+    ///   - end: 終点。
+    // shot: 参照 bezier(_:_:_:_:_:_:_:_:_:_:_:_:)
+    public func bezier(from start: Vector3, control1: Vector3, control2: Vector3, to end: Vector3) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.bezier(from: start, control1: control1, control2: control2, to: end)
+    }
+
     /// 通過点を結ぶ曲線の 1 区間を引く。
     ///
     /// **4 つの点を順に渡し (`x1, y1, x2, y2, x3, y3, x4, y4`)、引かれるのは 2 つ目から 3 つ目までの
@@ -151,7 +219,7 @@ extension SketchPart {
     /// **`control1` は `start` の手前、`control2` は `end` の先にある点**で、どちらも通らずに両端での
     /// 曲がり方を決める。``curve(_:_:_:_:_:_:_:_:)`` に `control1`・`start`・`end`・`control2` の成分を
     /// この順で渡すのと同じ曲線になる。並べる順が位置引数の形と違うのは、ラベルの綴りを
-    /// ``bezier(from:control1:control2:to:)`` に揃え、描く区間の両端を `from:`・`to:` で読めるようにしたからである。
+    /// ``bezier(from:control1:control2:to:)-(Vector2,_,_,_)`` に揃え、描く区間の両端を `from:`・`to:` で読めるようにしたからである。
     ///
     /// ```swift
     /// // curve(60, 230, 140, 80, 260, 220, 350, 60) と同じ曲線
@@ -166,6 +234,80 @@ extension SketchPart {
     ///   - end: 描く区間の終点。
     // shot: 参照 curve(_:_:_:_:_:_:_:_:)
     public func curve(from start: Vector2, control1: Vector2, control2: Vector2, to end: Vector2) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.curve(from: start, control1: control1, control2: control2, to: end)
+    }
+
+    /// 立体の空間に、通過点を結ぶ曲線の 1 区間を引く。**視点と奥行きを通る。**
+    ///
+    /// 4 つの点を、それぞれ `x, y, z` の順に渡す (`x1, y1, z1, …, x4, y4, z4`)。引かれるのは 8 つの数の
+    /// ``curve(_:_:_:_:_:_:_:_:)`` と同じく 2 つ目から 3 つ目までの 1 区間で、1 つ目と 4 つ目の点は通らない。
+    /// 8 つの数の形は平面の図形で奥行きを読み書きしないが、12 の数で書くと、刻んだ点はどれも奥行きを持つ
+    /// 点になり、立体の線として視点から見た位置に引かれる — 同じ名前で、引数の数によって変わる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     // 4 つの点 (灰色)。曲線は両端の 2 つを通らない
+    ///     stroke(89, 97, 115)
+    ///     strokeWeight(12)
+    ///     point(60, 40, 100)
+    ///     point(100, 150, 60)
+    ///     point(300, 150, -200)
+    ///     point(340, 260, -100)
+    ///     noFill()
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(4)
+    ///     curve(60, 40, 100, 100, 150, 60, 300, 150, -200, 340, 260, -100)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 4 つの灰色の点のうち、内側の 2 点の間にだけ、手前の左下から奥の右上へ橙色の曲線が引かれている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ``beginShape(_:)`` と ``curveVertex(_:_:_:)`` を同じ 4 点で 4 回と ``endShape(_:)`` を順に呼んだのと
+    /// **同じ絵**になる — ``curveDetail(_:)`` の刻み、``curveTightness(_:)`` の張りも同じに効く。塗り方・
+    /// 組み立て中の形の中での扱いは 8 つの数の形と同じである。
+    // shot: 後で撮る
+    public func curve(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
+        _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ z2: some ScalarConvertible,
+        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ z3: some ScalarConvertible,
+        _ x4: some ScalarConvertible, _ y4: some ScalarConvertible, _ z4: some ScalarConvertible
+    ) {
+        guard let canvas = liveCanvas() else { return }
+        let (x1, y1, z1, x2, y2, z2) = (x1.asFloat, y1.asFloat, z1.asFloat, x2.asFloat, y2.asFloat, z2.asFloat)
+        let (x3, y3, z3, x4, y4, z4) = (x3.asFloat, y3.asFloat, z3.asFloat, x4.asFloat, y4.asFloat, z4.asFloat)
+        canvas.curve(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4)
+    }
+
+    /// 立体の空間に、通過点を結ぶ曲線の 1 区間を `start` から `end` まで引く。4 つの点を `Vector3` で、
+    /// ラベルを付けて渡す。
+    ///
+    /// ラベルと並びは平面の形 (`Vector2` を取る形) と同じで、**`control1` は `start` の手前、`control2` は
+    /// `end` の先にある点**である。12 の数の ``curve(_:_:_:_:_:_:_:_:_:_:_:_:)`` に `control1`・`start`・`end`・
+    /// `control2` の成分をこの順で渡すのと同じ曲線になる。
+    ///
+    /// ```swift
+    /// // curve(60, 40, 100, 100, 150, 60, 300, 150, -200, 340, 260, -100) と同じ曲線
+    /// camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    /// noFill()
+    /// curve(
+    ///     from: Vector3(100, 150, 60), control1: Vector3(60, 40, 100),
+    ///     control2: Vector3(340, 260, -100), to: Vector3(300, 150, -200))
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - start: 描く区間の始点。
+    ///   - control1: 始点の手前の点。曲線はここを通らない。
+    ///   - control2: 終点の先の点。曲線はここを通らない。
+    ///   - end: 描く区間の終点。
+    // shot: 参照 curve(_:_:_:_:_:_:_:_:_:_:_:_:)
+    public func curve(from start: Vector3, control1: Vector3, control2: Vector3, to end: Vector3) {
         guard let canvas = liveCanvas() else { return }
         canvas.curve(from: start, control1: control1, control2: control2, to: end)
     }
@@ -227,6 +369,12 @@ extension SketchPart {
     ///
     /// 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
     /// 始点が無ければ引きようがない。
+    ///
+    /// **奥行きを持つ 9 つの数の ``bezierVertex(_:_:_:_:_:_:_:_:_:)`` に `z` = 0 を渡したのと同じ絵になる**
+    /// (``vertex(_:_:)`` が `vertex(x, y, 0)` と同じなのと同じ)。制御点と終点は `z` = 0 の点で、始点は手前の点その
+    /// ものである。手前の点が奥行きを持てば (`vertex(4, 50, -30)` の後など)、曲線はその点から `z` = 0 の終点へ
+    /// 滑らかに戻る。奥行きを持つ点が 1 つも無い形では平面の曲線のままである。制御点や終点に奥行きを持たせるなら
+    /// 9 つの数の形で書く。
     // shot: 1 snippet=0439d7b3
     // shot: 2 snippet=74fd9077
     public func bezierVertex(
@@ -257,6 +405,76 @@ extension SketchPart {
     ///   - end: 終点。次の区間の始点になる。
     // shot: 参照 bezierVertex(_:_:_:_:_:_:)
     public func bezierVertex(control1: Vector2, control2: Vector2, to end: Vector2) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.bezierVertex(control1: control1, control2: control2, to: end)
+    }
+
+    /// 奥行きを持つ 3 次の曲線で、いまの点から `x`・`y`・`z` まで繋ぐ。**視点と奥行きを通る。**
+    ///
+    /// 制御点 2 つと終点を、それぞれ `x, y, z` の順に渡す (`cx1, cy1, cz1, cx2, cy2, cz2, x, y, z`)。6 つの数の
+    /// ``bezierVertex(_:_:_:_:_:_:)`` は平面の点を刻むが、9 つの数で書くと、刻んだ点はどれも
+    /// ``vertex(_:_:_:)`` で置いたのと同じ奥行きを持つ点になり、形は立体として視点から見た位置に描かれる
+    /// — 同じ名前で、引数の数によって変わる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     noFill()
+    ///     stroke(89, 191, 242)
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     vertex(80, 150, 0)
+    ///     // 奥へふくらみ、手前へ戻る
+    ///     bezierVertex(120, 150, -240, 280, 150, -240, 320, 150, 0)
+    ///     // 続けて手前へふくらむ
+    ///     bezierVertex(320, 150, 120, 80, 150, 120, 80, 150, 0)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色の線が奥と手前へふくらみ、斜め上から見た輪のような閉じた線になっている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 始点は手前に置いた点である。**奥行きを持つ点と 1 つの形に混ぜると、平面の点は `z` = 0 として読む** (``vertex(_:_:)`` と同じ)。
+    /// 手前が ``vertex(_:_:)`` で置いた点なら、始点の `z` は 0 になる。6 つの数の ``bezierVertex(_:_:_:_:_:_:)`` は、
+    /// この形に `z` = 0 を渡したのと同じ絵になる。刻み (``curveDetail(_:)``)・
+    /// 手前に点が無いときの扱い・``curveVertex(_:_:)`` の並びを切ることは、6 つの数の形と同じ。
+    // shot: 後で撮る
+    public func bezierVertex(
+        _ cx1: some ScalarConvertible, _ cy1: some ScalarConvertible, _ cz1: some ScalarConvertible,
+        _ cx2: some ScalarConvertible, _ cy2: some ScalarConvertible, _ cz2: some ScalarConvertible,
+        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
+    ) {
+        guard let canvas = liveCanvas() else { return }
+        let (cx1, cy1, cz1) = (cx1.asFloat, cy1.asFloat, cz1.asFloat)
+        let (cx2, cy2, cz2) = (cx2.asFloat, cy2.asFloat, cz2.asFloat)
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        canvas.bezierVertex(cx1, cy1, cz1, cx2, cy2, cz2, x, y, z)
+    }
+
+    /// 奥行きを持つ 3 次の曲線で、いまの点から `end` まで繋ぐ。制御点 2 つと終点を `Vector3` で、ラベルを付けて渡す。
+    ///
+    /// 9 つの数の ``bezierVertex(_:_:_:_:_:_:_:_:_:)`` に 3 つの点の成分を同じ順で渡すのと同じ形になる。
+    /// ラベルは平面の形 (`Vector2` を取る形) と同じである。
+    ///
+    /// ```swift
+    /// // bezierVertex(120, 150, -240, 280, 150, -240, 320, 150, 0) と同じ形
+    /// beginShape()
+    /// vertex(80, 150, 0)
+    /// bezierVertex(control1: Vector3(120, 150, -240), control2: Vector3(280, 150, -240), to: Vector3(320, 150, 0))
+    /// endShape()
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - control1: いまの点の側の制御点。
+    ///   - control2: 終点の側の制御点。
+    ///   - end: 終点。次の区間の始点になる。
+    // shot: 参照 bezierVertex(_:_:_:_:_:_:_:_:_:)
+    public func bezierVertex(control1: Vector3, control2: Vector3, to end: Vector3) {
         guard let canvas = liveCanvas() else { return }
         canvas.bezierVertex(control1: control1, control2: control2, to: end)
     }
@@ -292,6 +510,11 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// **奥行きを持つ 6 つの数の ``quadraticVertex(_:_:_:_:_:_:)`` に `z` = 0 を渡したのと同じ絵になる**
+    /// (``vertex(_:_:)`` が `vertex(x, y, 0)` と同じなのと同じ)。制御点と終点は `z` = 0 の点で、始点は手前の点その
+    /// ものである。手前の点が奥行きを持てば、曲線はその点から `z` = 0 の終点へ滑らかに戻る。奥行きを持つ点が 1 つも
+    /// 無い形では平面の曲線のままである。制御点や終点に奥行きを持たせるなら 6 つの数の形で書く。
     // shot: 1 snippet=03aa6a6a
     public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
@@ -317,6 +540,65 @@ extension SketchPart {
     ///   - end: 終点。次の区間の始点になる。
     // shot: 参照 quadraticVertex(_:_:_:_:)
     public func quadraticVertex(control: Vector2, to end: Vector2) {
+        guard let canvas = liveCanvas() else { return }
+        canvas.quadraticVertex(control: control, to: end)
+    }
+
+    /// 奥行きを持つ 2 次の曲線で、いまの点から `x`・`y`・`z` まで繋ぐ。**視点と奥行きを通る。**
+    ///
+    /// 制御点と終点を、それぞれ `x, y, z` の順に渡す (`cx, cy, cz, x, y, z`)。4 つの数の
+    /// ``quadraticVertex(_:_:_:_:)`` は平面の点を刻むが、6 つの数で書くと、刻んだ点はどれも
+    /// ``vertex(_:_:_:)`` で置いたのと同じ奥行きを持つ点になる — 同じ名前で、引数の数によって変わる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     noFill()
+    ///     stroke(242, 217, 89)
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     vertex(80, 150, 60)
+    ///     // 制御点を奥へ置き、奥へ引き寄せる
+    ///     quadraticVertex(200, 150, -300, 320, 150, 60)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 黄色の曲線が手前の左右の端から、奥に置いた 1 つの制御点へ引き寄せられて弧を描いている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 始点の読み方・刻み・手前に点が無いときの扱いは、9 つの数の ``bezierVertex(_:_:_:_:_:_:_:_:_:)`` と同じ。
+    // shot: 後で撮る
+    public func quadraticVertex(
+        _ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ cz: some ScalarConvertible,
+        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
+    ) {
+        guard let canvas = liveCanvas() else { return }
+        let (cx, cy, cz, x, y, z) = (cx.asFloat, cy.asFloat, cz.asFloat, x.asFloat, y.asFloat, z.asFloat)
+        canvas.quadraticVertex(cx, cy, cz, x, y, z)
+    }
+
+    /// 奥行きを持つ 2 次の曲線で、いまの点から `end` まで繋ぐ。制御点と終点を `Vector3` で、ラベルを付けて渡す。
+    ///
+    /// 6 つの数の ``quadraticVertex(_:_:_:_:_:_:)`` に 2 つの点の成分を同じ順で渡すのと同じ形になる。
+    /// ラベルは平面の形 (`Vector2` を取る形) と同じである。
+    ///
+    /// ```swift
+    /// beginShape()
+    /// vertex(80, 150, 60)
+    /// quadraticVertex(control: Vector3(200, 150, -300), to: Vector3(320, 150, 60))
+    /// endShape()
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - control: 制御点。
+    ///   - end: 終点。次の区間の始点になる。
+    // shot: 参照 quadraticVertex(_:_:_:_:_:_:)
+    public func quadraticVertex(control: Vector3, to end: Vector3) {
         guard let canvas = liveCanvas() else { return }
         canvas.quadraticVertex(control: control, to: end)
     }
@@ -402,12 +684,56 @@ extension SketchPart {
     /// **穴の中の曲線は、外周と独立に始まる。** 穴の中で最初に引かれる区間は、穴の中で
     /// 置いた点だけで決まり、形の中で最初に引かれる区間と同じくその始点 (2 つ目に置いた点)
     /// から描かれる。穴を閉じた後に外周へ置く `curveVertex` も、穴の点を引き継がない。
+    ///
+    /// **奥行きを持つ ``curveVertex(_:_:_:)`` に `z` = 0 を渡したのと同じ絵になる** (``vertex(_:_:)`` が
+    /// `vertex(x, y, 0)` と同じなのと同じ)。通過点は `z` = 0 の点で、手前の点の奥行きを引き継がない — 奥行きを持つ点の
+    /// 後でも、並びの最初の区間の始点 (2 つ目に置いた点) は `z` = 0 に置かれ、手前の点からそこまで直線で繋がる。
+    /// 奥行きを持たせるなら ``curveVertex(_:_:_:)`` で書く。
     // shot: 1 snippet=398e30fc
     // shot: 2 snippet=794ad9dd
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.curveVertex(x, y)
+    }
+
+    /// 奥行きを持つ通過点を置く。**視点と奥行きを通る。**
+    ///
+    /// 2 つの数の ``curveVertex(_:_:)`` と同じく 4 つ揃って初めて 1 区間が引け、並びは `curveVertex` を続けて
+    /// 呼んでいる間だけ続く。3 つの数で書くと、刻んだ点はどれも ``vertex(_:_:_:)`` で置いたのと同じ奥行きを持つ
+    /// 点になり、形は立体として視点から見た位置に描かれる — 同じ名前で、引数の数によって変わる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     noFill()
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     curveVertex(60, 150, 100)
+    ///     curveVertex(60, 150, 100)
+    ///     curveVertex(160, 150, -150)
+    ///     curveVertex(240, 150, 60)
+    ///     curveVertex(340, 150, -200)
+    ///     curveVertex(340, 150, -200)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の曲線が手前と奥を行き来しながら、左から右へ折り返して通っている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 平面の点 (2 つの数の ``curveVertex(_:_:)``) と混ぜてよい。**平面の点は、この形に `z` = 0 を渡したのと同じに読む** (``vertex(_:_:)`` と同じ)。
+    /// 1 区間の 4 点がどれも平面の点なら、その区間は平面の曲線として刻む。
+    // shot: 後で撮る
+    public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        guard let canvas = liveCanvas() else { return }
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        canvas.curveVertex(x, y, z)
     }
 
     /// 曲線をいくつの直線で近似するか。

@@ -144,7 +144,7 @@ extension Canvas {
     ///     #2757)。矩形以外と、角を丸めない矩形は 0。
     ///   - cap: 端の形。渡さなければいまの設定。点は孤立した端として `square` を `project` に読み替える。
     ///   - strokes: 輪郭を引くか。偽なら、いまの設定が輪郭を引くときも塗りだけを置く。破線の図形が、
-    ///     塗りをここで置き、輪郭は破線の片で引くのに使う (``strokeDashedFormOutline(_:)``・#2835)。
+    ///     塗りをここで置き、輪郭は破線の片で引くのに使う (``appendDashedForm(_:center:half:arc:arcClosure:cornerRadius:outline:)``・#2835)。
     func appendForm(
         _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
         axis: SIMD2<Float> = SIMD2(1, 0), arc: SIMD2<Float> = .zero,

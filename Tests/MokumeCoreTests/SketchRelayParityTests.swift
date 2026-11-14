@@ -33,6 +33,11 @@ import Testing
 /// 0–255 の色で置く他の光) ので、足すときは ``Relay`` に 1 つ足す。引数なしの `camera()`
 /// は使わない — 突き合わせたいのは引数の順であって、既定の視点ではない。
 ///
+/// **奥行きを持つ曲線 ([#3712]) は、足した形を全部並べた。** 12 の数の `bezier`・`curve`、9 つの数の
+/// `bezierVertex`、6 つの数の `quadraticVertex`、3 つの数の `curveVertex` と、`Vector3` を受ける
+/// ラベル付きの 4 つの形である。ラベル付きの形は数の形と同じ値を 3 つずつ区切って点にするので、
+/// 点の中の成分の取り違えも、点どうしの取り違えも、値の入れ替えとして見える。
+///
 /// **値は、どの 2 つを入れ替えても絵が変わるものにした。** 対称な値 (幅と高さが同じ・
 /// 向きの成分が同じ・同じ数が 2 か所に出る) を選ぶと、取り違えても同じ絵になって一致の
 /// 検査が通ってしまう。面を正方形にしないのも同じ理由で、x と y を取り違えた絵が面の
@@ -40,6 +45,7 @@ import Testing
 /// ``everySwapChangesThePicture(_:)`` が確かめる。
 ///
 /// [#1387]: https://github.com/mokume-metal/mokume/issues/1387
+/// [#3712]: https://github.com/mokume-metal/mokume/issues/3712
 @Suite(
     "中継の口と、Canvas を直に呼んだ絵",
     .enabled(
@@ -62,9 +68,21 @@ struct SketchRelayParityTests {
     /// 突き合わせる中継の口。並びは引数の多い順。
     enum Relay: CaseIterable, CustomTestStringConvertible {
         case numericSpotLight, image, camera, spotLight, quad, bezier, arc, bezierVertex
+        // 奥行きを持つ曲線 (#3712)
+        case solidBezier, solidCurve, solidBezierVertex, solidQuadraticVertex, solidCurveVertex
+        case labeledSolidBezier, labeledSolidCurve, labeledSolidBezierVertex, labeledSolidQuadraticVertex
 
         var testDescription: String {
             switch self {
+            case .solidBezier: "bezier (奥行きつき・12 引数)"
+            case .solidCurve: "curve (奥行きつき・12 引数)"
+            case .solidBezierVertex: "bezierVertex (奥行きつき・9 引数)"
+            case .solidQuadraticVertex: "quadraticVertex (奥行きつき・6 引数)"
+            case .solidCurveVertex: "curveVertex (奥行きつき・3 引数)"
+            case .labeledSolidBezier: "bezier(from:control1:control2:to:) (Vector3)"
+            case .labeledSolidCurve: "curve(from:control1:control2:to:) (Vector3)"
+            case .labeledSolidBezierVertex: "bezierVertex(control1:control2:to:) (Vector3)"
+            case .labeledSolidQuadraticVertex: "quadraticVertex(control:to:) (Vector3)"
             case .numericSpotLight: "spotLight (0–255 の色・10 引数)"
             case .image: "image (切り出し・9 引数)"
             case .camera: "camera (9 引数)"
@@ -189,7 +207,103 @@ struct SketchRelayParityTests {
                 },
                 throughSketch: { $0.bezierVertex($1[0], $1[1], $1[2], $1[3], $1[4], $1[5]) },
                 direct: { $0.bezierVertex($1[0], $1[1], $1[2], $1[3], $1[4], $1[5]) })
+        case .solidBezier:
+            return RelayScene(
+                arguments: Self.solidBezierArguments, around: Self.stroked,
+                throughSketch: { $0.bezier($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7], $1[8], $1[9], $1[10], $1[11]) },
+                direct: { $0.bezier($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7], $1[8], $1[9], $1[10], $1[11]) })
+        case .labeledSolidBezier:
+            return RelayScene(
+                arguments: Self.solidBezierArguments, around: Self.stroked,
+                throughSketch: { $0.bezier(from: Self.point($1, 0), control1: Self.point($1, 1), control2: Self.point($1, 2), to: Self.point($1, 3)) },
+                direct: { $0.bezier(from: Self.point($1, 0), control1: Self.point($1, 1), control2: Self.point($1, 2), to: Self.point($1, 3)) })
+        case .solidCurve:
+            return RelayScene(
+                arguments: Self.solidCurveArguments, around: Self.stroked,
+                throughSketch: { $0.curve($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7], $1[8], $1[9], $1[10], $1[11]) },
+                direct: { $0.curve($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7], $1[8], $1[9], $1[10], $1[11]) })
+        case .labeledSolidCurve:
+            // ラベルの並び (from・control1・control2・to) のまま渡す
+            return RelayScene(
+                arguments: Self.solidCurveArguments, around: Self.stroked,
+                throughSketch: { $0.curve(from: Self.point($1, 0), control1: Self.point($1, 1), control2: Self.point($1, 2), to: Self.point($1, 3)) },
+                direct: { $0.curve(from: Self.point($1, 0), control1: Self.point($1, 1), control2: Self.point($1, 2), to: Self.point($1, 3)) })
+        case .solidBezierVertex:
+            return RelayScene(
+                arguments: Self.solidBezierVertexArguments, around: Self.closedFromCorner,
+                throughSketch: { $0.bezierVertex($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7], $1[8]) },
+                direct: { $0.bezierVertex($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7], $1[8]) })
+        case .labeledSolidBezierVertex:
+            return RelayScene(
+                arguments: Self.solidBezierVertexArguments, around: Self.closedFromCorner,
+                throughSketch: { $0.bezierVertex(control1: Self.point($1, 0), control2: Self.point($1, 1), to: Self.point($1, 2)) },
+                direct: { $0.bezierVertex(control1: Self.point($1, 0), control2: Self.point($1, 1), to: Self.point($1, 2)) })
+        case .solidQuadraticVertex:
+            return RelayScene(
+                arguments: Self.solidQuadraticVertexArguments, around: Self.closedFromCorner,
+                throughSketch: { $0.quadraticVertex($1[0], $1[1], $1[2], $1[3], $1[4], $1[5]) },
+                direct: { $0.quadraticVertex($1[0], $1[1], $1[2], $1[3], $1[4], $1[5]) })
+        case .labeledSolidQuadraticVertex:
+            return RelayScene(
+                arguments: Self.solidQuadraticVertexArguments, around: Self.closedFromCorner,
+                throughSketch: { $0.quadraticVertex(control: Self.point($1, 0), to: Self.point($1, 1)) },
+                direct: { $0.quadraticVertex(control: Self.point($1, 0), to: Self.point($1, 1)) })
+        case .solidCurveVertex:
+            // 描かれる区間の始点 (2 つ目の通過点) を口で置く。角の点から始めて閉じ、面積を持たせる
+            return RelayScene(
+                arguments: [("x", 14), ("y", 6), ("z", 4)],
+                around: { canvas, call in
+                    canvas.beginShape()
+                    canvas.vertex(6, 44)
+                    canvas.curveVertex(2, 30, -6)
+                    call()
+                    canvas.curveVertex(50, 18, 10)
+                    canvas.curveVertex(60, 44, -2)
+                    canvas.endShape(.close)
+                },
+                throughSketch: { $0.curveVertex($1[0], $1[1], $1[2]) },
+                direct: { $0.curveVertex($1[0], $1[1], $1[2]) })
         }
+    }
+
+    // MARK: - 奥行きを持つ曲線の値 (#3712)
+    //
+    // 数の形とラベル付きの形で同じ値を使う。12 の数はどれも違う値にし、`z` は視点 (既定の視点の目は
+    // 奥行き 41.6 ほど) の手前に収まる小さな値にする。
+
+    private static let solidBezierArguments: [(name: String, value: Float)] = [
+        ("x1", 6), ("y1", 40), ("z1", -4), ("x2", 14), ("y2", 5), ("z2", 9),
+        ("x3", 52), ("y3", 12), ("z3", -13), ("x4", 59), ("y4", 44), ("z4", 3),
+    ]
+    private static let solidCurveArguments: [(name: String, value: Float)] = [
+        ("x1", 2), ("y1", 30), ("z1", 7), ("x2", 8), ("y2", 42), ("z2", -5),
+        ("x3", 55), ("y3", 6), ("z3", 11), ("x4", 61), ("y4", 25), ("z4", -9),
+    ]
+    private static let solidBezierVertexArguments: [(name: String, value: Float)] = [
+        ("cx1", 50), ("cy1", 4), ("cz1", -7), ("cx2", 60), ("cy2", 38), ("cz2", 9), ("x", 12), ("y", 44), ("z", -3),
+    ]
+    private static let solidQuadraticVertexArguments: [(name: String, value: Float)] = [
+        ("cx", 55), ("cy", 7), ("cz", -8), ("x", 14), ("y", 42), ("z", 5),
+    ]
+
+    /// 値の並びの `index` 番目の点 (3 つずつ区切った成分)。
+    private static func point(_ values: [Float], _ index: Int) -> Vector3 {
+        Vector3(values[index * 3], values[index * 3 + 1], values[index * 3 + 2])
+    }
+
+    /// 1 本の曲線は塗りだけでは面積がほとんど無いので、線も引く。
+    private static func stroked(_ canvas: Canvas, _ call: () -> Void) {
+        canvas.stroke(.linear(red: 0.3, green: 0.8, blue: 0.6))
+        canvas.strokeWeight(3)
+        call()
+    }
+
+    /// 角の点から曲線で繋いで閉じた形を塗る (平面の `bezierVertex` の場面と同じ始点)。
+    private static func closedFromCorner(_ canvas: Canvas, _ call: () -> Void) {
+        canvas.beginShape()
+        canvas.vertex(6, 10)
+        call()
+        canvas.endShape(.close)
     }
 
     // MARK: - 場面の部品
