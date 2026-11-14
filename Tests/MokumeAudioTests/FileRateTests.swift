@@ -287,6 +287,17 @@ struct FileRateTests {
 
     // MARK: - エフェクトへ通した経路 (``FileNode``)
 
+    @Test("ファイルとラックの率が同じなら、ラックの節の位置は直に鳴らす経路と解析の式そのもの (率の比を掛けて割る丸めが入らない)")
+    func nodePositionMatchesTheDirectFormula() {
+        // 率の比を掛けて割ると 55768.55 にならず、1 ulp ずれる組
+        let direct = FileRate.position(from: 100, elapsed: 159_053, rate: 0.35)
+        #expect(direct == 100 + Double(159_053) * 0.35)
+        #expect(
+            FileNode.position(from: 100, made: 159_053, rate: 0.35, fileRate: 48_000, sampleRate: 48_000)
+                == direct)
+        #expect(100 + Double(159_053) * 0.35 * 48_000 / 48_000 != direct, "検査の組が丸めの差を持つ")
+    }
+
     @Test("ラックの節を速さ 2 で鳴らすと、立ち上がった後は偶数番目の標本で、1 度だけは半分の数で終わって終わりの印を立てる")
     func nodeReadsAtTheRate() throws {
         let samples = Self.wobble(20_000)
