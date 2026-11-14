@@ -42,7 +42,7 @@
     },
     "window": {
       "type": "boolean",
-      "description": "Whether the run was shown in a window. A window plays sound in real time (a replay without a window counts frames), so a record taken in a window names the sound it used under `unreproducible`; the draw of a recorded run is the same either way, because the window's deferral of enlarged-glyph bakes to the next frame is turned off while recording."
+      "description": "Whether the run was shown in a window. A window plays sound in real time (a replay without a window counts frames), so a record taken in a window names a sound whose analysis the sketch read (its level, spectrum, waveform or beat) under `unreproducible`, and a sound that only plays is not named; the draw of a recorded run is the same either way, because the window's deferral of enlarged-glyph bakes to the next frame is turned off while recording."
     },
     "start": {
       "type": "object",
@@ -141,7 +141,7 @@
     },
     "unreproducible": {
       "type": "array",
-      "description": "What was used that a replay cannot be promised to match, each with a reason, once per reason. A record with this key is not promised to replay frame for frame; a replay names it too. Omitted when there is nothing. The reasons: input that is not finite; too many inputs between two frames; a dropped or chosen file (the record holds its path, not its contents) and a file fetched from a URL; **a source from outside the sketch whose values the record does not hold** (a gamepad, MIDI, OSC / TCP / UDP / WebSocket, serial, microphone, camera, movie), named by kind; **sound that plays in real time in a window** (`window` is true); a picture that could not be read back to hash; a frame that failed to draw.",
+      "description": "What was used that a replay cannot be promised to match, each with a reason, once per reason. A record with this key is not promised to replay frame for frame; a replay names it too. Omitted when there is nothing. The reasons: input that is not finite; too many inputs between two frames; a dropped or chosen file (the record holds its path, not its contents) and a file fetched from a URL; **a source from outside the sketch whose values the record does not hold** (a gamepad, MIDI, OSC / TCP / UDP / WebSocket, serial, microphone, camera, movie), named by kind, but not frames the sketch gives `createCapture(frames:)`, which arrive one per frame; a `request…` load, whose result arrives at a frame the record does not hold; a shader fragment swapped in while the sketch ran, named by file; **the analysis of a sound read in a window** (`window` is true; a sound that only plays is not named); a picture that could not be read back to hash; a frame that failed to draw.",
       "items": {
         "type": "object",
         "required": ["step", "reason"],

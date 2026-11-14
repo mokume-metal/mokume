@@ -40,6 +40,9 @@ import MokumeDiagnostics
     /// [#932]: https://github.com/mokume-metal/mokume/issues/932
     var packedValues: [Float] { box.packedValues }
 
+    /// 描くために使われた (``ShaderBox/noteUsed()``)。
+    func noteUsed() { box.noteUsed() }
+
     /// 断片の在処。保存を拾い直すのに使う。
     ///
     /// **公開しない。** 面に出せば外の語彙 (`URL`) が一覧に載るので、指し直したい

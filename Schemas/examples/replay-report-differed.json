@@ -19,5 +19,5 @@
     "heaviest" : { "frame" : 1, "seconds" : 0.0298 },
     "seconds" : 4.18
   },
-  "unreproducible" : [ "Replay is not guaranteed (sound plays in real time in a window, and counts frames when replayed: SynthStage)" ]
+  "unreproducible" : [ "Replay is not guaranteed (the analysis of a sound was read, such as its level, spectrum, waveform or beat; in a window sound plays in real time, and a replay counts frames: TriOsc)" ]
 }

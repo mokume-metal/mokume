@@ -173,6 +173,8 @@ extension SketchPart {
     /// 扱いは ``requestStrings(_:)`` と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。**
     // shot: 撮れない 読んだバイト列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func requestBytes(_ path: String) async throws(DataFailure) -> [UInt8] {
+        // 届くフレームは記録に無い (#3575)
+        ReplayNotice.waitingLoad()
         if let url = try WebFile.url(path) {
             // 本文は記録に持たない (#3570)
             LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
@@ -797,6 +799,8 @@ extension SketchPart {
     private func requestParsed<Value: Sendable>(
         _ path: String, _ parse: @escaping @Sendable (String) throws(DataFailure) -> Value
     ) async throws(DataFailure) -> Value {
+        // 届くフレームは記録に無い (#3575)。文字・表・JSON・XML の待つ口はここを通る
+        ReplayNotice.waitingLoad()
         if let url = try WebFile.url(path) {
             // 本文は記録に持たない (#3570)
             LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
