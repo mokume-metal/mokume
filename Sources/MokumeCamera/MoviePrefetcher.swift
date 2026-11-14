@@ -112,24 +112,27 @@ final class MoviePrefetcher {
         mailbox.state.withLock { $0.idle && $0.seen == serial }
     }
 
-    /// 係が最後に 1 歩進んだ (頼みを見た・コマを積んだ・休んだ) 時刻。**検査が読む。**
+    /// 係が最後に頼みを見て 1 歩に取りかかった時刻。**検査が読む。**
     var lastStep: ContinuousClock.Instant {
         mailbox.state.withLock { $0.progressed }
+    }
+
+    /// 係が走り出したか (動画を開く前の印)。**検査が読む。**
+    var hasStarted: Bool {
+        mailbox.state.withLock { $0.started }
     }
 
     /// 係の今の状態を 1 行にしたもの。**検査が待ち切れの説明に載せる** — 係が進んでいるのに遅い (遅れ) のか、
     /// 頼みが新しいのに休んでいる (取りこぼし) のかを、記録 1 回で読み分けるため。
     ///
-    /// 読み方: `idle=true` で `seen` が `request` より小さければ取りこぼし (頼みが新しいのに休んでいる)。
-    /// `idle=false` は 1 歩の最中で、`lastStep` が大きいのは長い 1 歩 (復号が遅い) であり、取りこぼしの印ではない。
-    /// `lastStep` は 1 歩を終えるたびに更新するので、1 歩の途中の長さは含まない。
+    /// 読み方:
+    /// - `started=false`: 係の仕事がまだ走り出していない (協調プールの `.utility` が混んでいる)
+    /// - `started=true idle=false seen=0`: 走り出したが、動画を開いている最中
+    /// - `idle=true` で `seen` が `request` より小さい: 取りこぼし (頼みが新しいのに休んでいる)
+    /// - `idle=false`: 1 歩の最中。`lastStep` は 1 歩に取りかかってからの経過なので、大きければ長い 1 歩
+    ///   (復号が遅い) であり、取りこぼしの印ではない。`idle=true` のときの `lastStep` は休んでからの長さを含む
     var diagnosis: String {
-        let (idle, seen, frames, failure, ended, broken, progressed) = mailbox.state.withLock {
-            ($0.idle, $0.seen, $0.frames.count, $0.failure != nil, $0.ended, $0.broken, $0.progressed)
-        }
-        let since = ContinuousClock.now - progressed
-        return "idle=\(idle) seen=\(seen) request=\(serial) frames=\(frames) failure=\(failure) "
-            + "ended=\(ended) broken=\(broken) lastStep=\(since) ago"
+        mailbox.state.withLock { $0.describe(requested: serial, now: .now) }
     }
 
     /// 係が動画を開けなかったか。開けなければ ``Movie`` は同期の読みに戻る。
@@ -176,6 +179,7 @@ final class MoviePrefetcher {
     private nonisolated static func run(
         source: MovieSource, mailbox: PrefetchMailbox, wakes: AsyncStream<Void>, pause: (@Sendable () -> Void)?
     ) async {
+        mailbox.state.withLock { $0.started = true }
         guard let frames = open(source) else {
             mailbox.state.withLock {
                 $0.broken = true
@@ -275,8 +279,17 @@ nonisolated final class PrefetchMailbox: Sendable {
         /// 係が読み手を閉じて抜けた。
         var exited = false
         var restarts = 0
-        /// 係が最後に 1 歩進んだ (頼みを見た・コマを積んだ・休んだ) 時刻。**検査が待ち切れの説明に使う。**
+        /// 係の仕事が走り出した (動画を開く前)。
+        var started = false
+        /// 係が最後に頼みを見て 1 歩に取りかかった時刻。
         var progressed = ContinuousClock.now
+
+        /// 待ち切れの説明に載せる 1 行。`requested` は main が最後に出した頼みの番号。
+        func describe(requested: Int, now: ContinuousClock.Instant) -> String {
+            "started=\(started) idle=\(idle) seen=\(seen) request=\(requested) frames=\(frames.count) "
+                + "failure=\(failure != nil) ended=\(ended) broken=\(broken) stopping=\(stopping) exited=\(exited) "
+                + "lastStep=\(now - progressed) ago"
+        }
     }
 
     let state = Mutex(State())
@@ -323,7 +336,6 @@ nonisolated struct PrefetchWorker {
             guard let (request, ahead, ended) = snapshot else {
                 return mailbox.state.withLock { state in
                     state.idle = true
-                    state.progressed = .now
                     return !state.stopping
                 }
             }
@@ -333,7 +345,6 @@ nonisolated struct PrefetchWorker {
                 let rest = mailbox.state.withLock { state -> Bool in
                     guard state.request?.serial == request.serial || state.stopping else { return false }
                     state.idle = true
-                    state.progressed = .now
                     return true
                 }
                 if rest { return mailbox.state.withLock { !$0.stopping } }
@@ -431,7 +442,6 @@ nonisolated struct PrefetchWorker {
             // 変換の間に飛んでいれば積まない
             guard state.request?.generation == prefetched.generation, !state.stopping else { return }
             state.frames.append(prefetched)
-            state.progressed = .now
         }
     }
 }

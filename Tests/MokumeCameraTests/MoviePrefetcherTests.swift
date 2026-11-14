@@ -44,9 +44,15 @@ struct MoviePrefetcherTests {
         try await settle(prefetcher)
         let first = prefetcher.lastStep
         let text = prefetcher.diagnosis
-        #expect(text.contains("idle=true seen=2 request=2 frames="), "\(text)")
-        #expect(text.contains("failure=false ended=false broken=false lastStep="), "\(text)")
+        #expect(text.contains("started=true idle=true seen=2 request=2 frames="), "\(text)")
+        #expect(text.contains("failure=false ended=false broken=false stopping=false exited=false lastStep="), "\(text)")
         #expect(prefetcher.isSettled)
+        // 係が走り出す前と後で印が変わる (状態で見る。走り出す前の係は State の初期値で作る)
+        var before = PrefetchMailbox.State()
+        #expect(before.describe(requested: 1, now: .now).hasPrefix("started=false idle=false seen=0 request=1"))
+        before.started = true
+        #expect(before.describe(requested: 1, now: .now).hasPrefix("started=true "))
+        #expect(prefetcher.hasStarted)
         // 係が進めば「最後に進んだ時刻」が更新される (時間の大小ではなく、更新されたかを見る)
         _ = try prefetcher.picture(at: 0.5, generation: 0, lap: 0, looping: false)
         try await settle(prefetcher)

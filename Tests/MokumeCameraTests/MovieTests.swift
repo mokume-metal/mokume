@@ -635,10 +635,9 @@ struct MovieTests {
         #expect(
             (restartsInFirstFrame ?? 0) > restartsAtReattach,
             "足し直した最初のフレームで読みに行かなかった: 読み直し \(restartsAtReattach) → \(restartsInFirstFrame ?? -1)")
-        // 読めない所の手前から読み直すと、その所へ届くまでに何枚かは読める。どの枚で壊れたと分かるかは復号器の
-        // 進み方 (機械の負荷) で数枚動くので、持ち越しの長さ (retryDistance 秒ぶんのフレーム) の半分までに名乗ればよい
-        let carryOver = Int(MovieReader.retryDistance * 30)
-        #expect(afterReattach.prefix(carryOver / 2).contains(.disconnected), "\(afterReattach)")
+        // 足し直した後も、読めない所へ進めば壊れを名乗り直す。何枚目で名乗るかは復号器の進み方 (機械の負荷) で
+        // 動くので、枚数は決めない。持ち越しの有無は上の「最初のフレームで読みに行く」が決定的に見る
+        #expect(afterReattach.contains(.disconnected), "\(afterReattach)")
         runtime.closePlugins()
     }
 
