@@ -635,6 +635,8 @@ struct WatchSessionModelTests {
         private var clockCount = 0
         /// 見張りが最後に選んだ番号 (``WatchSession/Hooks/selectClock``)。
         private var selectedClock = 0
+        /// 見張りが最後に選んだ時計を、読むだけにしたか。**規則: 本番の場所を受ける試聴の子だけが読むだけ** (#4070)。
+        private var selectedReadsOnly = false
         /// 起こし直しの子ごとの、渡した番号と、起こす前のその役の番号。
         private var restartClocks: [Int: (audition: Bool, fresh: Int, previous: Int?)] = [:]
         /// プレビューへ出した行。
@@ -701,7 +703,10 @@ struct WatchSessionModelTests {
                     },
                     now: { 0 },
                     stamp: { _ in box.driver?.stamp },
-                    selectClock: { box.driver?.selectedClock = $0 }),
+                    selectClock: { choice in
+                        box.driver?.selectedClock = choice.place
+                        box.driver?.selectedReadsOnly = choice.readsOnly
+                    }),
                 stopTimeout: 0.5, finishTimeout: 0.5)
             session.overlapsGenerations = true
             box.driver = self
@@ -820,6 +825,11 @@ struct WatchSessionModelTests {
                 if selectedClock != expected {
                     launchViolation = launchViolation ?? "\(isAudition ? "試聴" : "本番")の子 G\(gens.count) に時計の場所 \(selectedClock) を渡した (規則では \(expected))"
                 }
+            }
+            // 本番の場所を受ける試聴の子だけが、時計を読むだけ (起こし直した試聴の子は自分の場所なので書く)
+            let readsOnly = isAudition && selectedClock == productionClock
+            if selectedReadsOnly != readsOnly {
+                launchViolation = launchViolation ?? "\(isAudition ? "試聴" : "本番")の子 G\(gens.count) の時計を\(selectedReadsOnly ? "読むだけ" : "書く") にした (規則では\(readsOnly ? "読むだけ" : "書く"))"
             }
             launchRoles[gens.count] = role
             launchBuilds[gens.count] = rebuilds
