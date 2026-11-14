@@ -190,11 +190,7 @@ struct MovieTests {
     /// 動画の先読みの係が列を埋め終えるまで待つ。期限 (60 秒) を越えたら落とす。期限は、係が最初のコマで面の色の表を作る (debug で数秒・#2962) 間を含む。
     private func settle(_ movie: Movie) async throws {
         guard let prefetcher = movie.prefetcher else { return }
-        let deadline = ContinuousClock.now + .seconds(60)
-        while !prefetcher.isSettled {
-            try #require(ContinuousClock.now < deadline, "係が 60 秒で列を埋め終えない")
-            try await Task.sleep(for: .milliseconds(1))
-        }
+        try await PrefetcherSettle.wait(prefetcher)
     }
 
     /// 実時間の時計 (手で進める時刻) で回す。フレームごとに `step` 秒進める。
@@ -623,12 +619,17 @@ struct MovieTests {
                     phase = 2
                 default:
                     afterReattach.append(movie.state)
+                    // 先読みの係が頼みに答え終えてから次のフレームへ進む。読みに行った結果の届く遅さ (機械の
+                    // 混み具合) が、見る枚数に混ざらない
+                    if let prefetcher = movie.prefetcher { PrefetcherSettle.waitBlocking(prefetcher) }
                 }
             })
         #expect(phase == 2, "読めなくなるところまで進まなかった")
         #expect(afterReattach.count >= 10)
         // 足し直した直後に読みに行き、読めない所で disconnected になる。外す前の「まだ試さない」を持ち越すと、
-        // 約 1 秒ぶんの間、読みに行かずに絵が止まったまま動いていると名乗る
+        // 約 1 秒 (60 フレームほど) の間、読みに行かずに絵が止まったまま動いていると名乗る。係の答えを
+        // フレームごとに待っているので、読みに行く経路なら 2〜3 フレーム目で名乗り、持ち越す経路の 60 フレームとは
+        // 桁が違う (5 は遅れの余裕で、機械の速さには依らない)
         #expect(afterReattach.prefix(5).contains(.disconnected), "\(afterReattach)")
         runtime.closePlugins()
     }
