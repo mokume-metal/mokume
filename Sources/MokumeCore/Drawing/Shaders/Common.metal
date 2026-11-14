@@ -370,8 +370,18 @@ struct Fragment {
     /// 絵を `texture()` で貼ったときと同じ値で、模様を形に付いてこさせられる。輪郭・線・点では白い区画を
     /// 指す 1 点のまま、字では字形の置き場の位置、画像では切り出した範囲を指す。
     float2 uv;
-    /// 図形が持っている色 (線形・アルファ乗算済み)。
+    /// 図形が持っている色 (線形・アルファ乗算済み)。**立体に光か周囲が効いているときは、光と材質を
+    /// 通した後の色**で、そのまま返せば組み込みの塗りと同じ絵になる。
     float4 color;
+    /// **光を通す前**の図形の色 (線形・アルファ乗算済み)。`fill()`・頂点の色・置き場所の色を掛けた値で、
+    /// 光と材質と周囲はまだ通っていない (#3573)。
+    ///
+    /// 光の当たり方を断片で書き直すとき (トゥーン・点光源風の陰影) の元の色にする — `noLights()` で
+    /// 光を切らずに、`lights()` の下で読める。光も周囲も効かない形 (平面・光も周囲も置いていない立体・
+    /// 立体の線と点) では ``color`` と同じ値になる。`noLights()` が外すのは置いた光だけなので、周囲
+    /// (`surroundings(...)`) を置いた立体では `noLights()` の下でも ``color`` と違う。`texture()` で貼った絵は ``texel`` に別に届き、
+    /// ここには掛からない (``color`` と同じ)。
+    float4 baseColor;
     /// 読む面から読んだ値 (線形・アルファ乗算済み)。
     float4 texel;
     /// **形自身の座標**での、この画素が指す位置。立体だけが持つ (平面は 0)。
@@ -380,6 +390,22 @@ struct Fragment {
     /// ここから作った模様は形の表面に留まる。単位は形を置いたときの寸法そのままで、
     /// 例えば `box(520, 26, 300)` なら x は −260…260 を取る。
     float3 shapePosition;
+    /// **世界の座標**での、この画素が指す位置。立体だけが持つ (平面は 0)。
+    ///
+    /// 置き場所の変換 (`translate`・`rotate`・`scale`・`shape(_:at:)` の置き場所) を通した**後**、視点を
+    /// 通す**前**の座標で、光が当たる位置と同じ値である (#3573)。形を動かすと変わり、視点を動かしても
+    /// 変わらない。点光源風の陰影 (`normalize(values.lamp - in.worldPosition)`) や、世界に留まる
+    /// 模様に使う。単位はスケッチの座標で、書き出しの倍率 (`--scale`) や細かさ (`pixelDensity`) では
+    /// 変わらない (画素で数える ``position`` とは違う)。
+    ///
+    /// **平面の図形は、視点を決めた下でも、`rotateX` などで空間に置いても 0** である。0 は世界の原点に
+    /// ある立体とも区別できないので、立体かどうかの見分けには使えない。
+    ///
+    /// **立体の線と点は例外で、線の芯の位置ではない。** 線と点は画面の画素で帯や円板へ広げ、目の側へ
+    /// 少し寄せてから描くので、届くのはその広げて寄せた後の位置である (光が当たる位置と同じ値)。
+    /// 広げる幅と寄せる量は 1 画素ぶんの世界での長さで決まるので、視点の奥行き・倍率・細かさで、線の
+    /// 太さの程度だけ動く。
+    float3 worldPosition;
     /// 形自身の座標での面の向き (長さ 1)。
     ///
     /// ``shapePosition`` と同じ座標系なので、**回しても面ごとの向きが変わらない**。
@@ -411,6 +437,11 @@ struct Fragment {
     /// 0 になる場所と裏返しの規則は ``shapeNormal`` と同じ。
     float3 viewNormal;
     /// スケッチが始まってからの秒数。
+    ///
+    /// **長く走らせるほど刻みは粗くなる** (#3573)。スケッチの `time` と同じ `float` の秒なので、約 1.5 日を
+    /// 超えると刻みは約 15.6 ms (60 fps の 1 フレームとほぼ同じ)、約 6 日を超えると約 62.5 ms になり、
+    /// `sin(in.time * 0.8)` もその刻みの段になる。周期のある動きは、スケッチの `phase(period:)` で取った
+    /// 位相を値 (`values`) で渡す — 倍精度の秒から取るので、何日走らせても刻みは周期の長さで決まる。
     float time;
     /// 面の大きさ (出す画素)。スケッチの `width` / `height` と同じで、細かさによらない。
     float2 resolution;
@@ -430,6 +461,9 @@ struct Fragment {
     /// **渡していなければ 1 個の 0 を指す。** 何も指さない状態にすると、渡し忘れた
     /// 断片が絵の乱れではなく異常終了として出る。範囲は書いた側が知っているので、
     /// ここでは長さを配らない。
+    ///
+    /// 読めるのは 1 本だけである。何本も読むなら、作る口の `numbers:` で名前を付けて渡し、
+    /// 入口の `Numbers numbers` から `numbers.<名前>[i]` で読む (#3576)。
     device const float *numbers;
 };
 
@@ -634,9 +668,17 @@ static inline float4 mokume_composite(float4 source, float4 destination, uint mo
 /// **面を宣言した断片だけ、受け取るものが 1 つ増える。** 宣言していない断片は今までの
 /// 2 引数のままで、組み上がる原稿も 1 バイト変わらない ([#407])。
 ///
+/// **名前で数の並びを宣言した断片も、同じ形で `Numbers numbers` を受け取る** ([#3576])。面と並びの
+/// 両方を宣言した断片は、面・並びの順に 4 引数で受け取る。
+///
 /// [#407]: https://github.com/mokume-metal/mokume/issues/407
-#ifdef MOKUME_SURFACES
+/// [#3576]: https://github.com/mokume-metal/mokume/issues/3576
+#if defined(MOKUME_SURFACES) && defined(MOKUME_NUMBERS)
+float4 paint(Fragment in, Values values, Surfaces surfaces, Numbers numbers);
+#elif defined(MOKUME_SURFACES)
 float4 paint(Fragment in, Values values, Surfaces surfaces);
+#elif defined(MOKUME_NUMBERS)
+float4 paint(Fragment in, Values values, Numbers numbers);
 #else
 float4 paint(Fragment in, Values values);
 #endif
@@ -661,6 +703,21 @@ float4 paint(Fragment in, Values values);
 #else
 #define MOKUME_SURFACE_PARAMS
 #define MOKUME_SURFACE_ARGS
+#endif
+
+#ifdef MOKUME_NUMBERS
+// 利用者が名前で宣言した数の並び (#3576)。**口の数は宣言した本数によらず固定**で、余りには
+// 1 個の 0 が束ねてある (面と同じく、何も束ねない口を作らないため)
+#define MOKUME_NUMBERS_PARAMS \
+    device const float *user_numbers_0 [[buffer(15)]], \
+    device const float *user_numbers_1 [[buffer(16)]], \
+    device const float *user_numbers_2 [[buffer(17)]], \
+    device const float *user_numbers_3 [[buffer(18)]],
+#define MOKUME_NUMBERS_ARGS \
+    , mokume_numbers(user_numbers_0, user_numbers_1, user_numbers_2, user_numbers_3)
+#else
+#define MOKUME_NUMBERS_PARAMS
+#define MOKUME_NUMBERS_ARGS
 #endif
 
 #define MOKUME_SHAPE_PARAMS \
@@ -718,6 +775,9 @@ static inline float4 mokume_shapeColor(
 #ifdef MOKUME_SURFACES
     , Surfaces surfaces
 #endif
+#ifdef MOKUME_NUMBERS
+    , Numbers namedNumbers
+#endif
 ) {
     // **形から求めた向きだけは、どちらの側から見ても光を受ける。** 裏を向いている面
     // では向きを裏返す — 利用者が頂点を並べる向き (巻き方) で絵が真っ黒になるのを
@@ -735,6 +795,11 @@ static inline float4 mokume_shapeColor(
     f.place = f.position / uniforms.resolution;
     f.uv = in.uv;
     f.color = in.color;
+    // **光を通す前の色は、ここで取っておく** (#3573)。下の 2 つの分岐が `f.color` を光の後の色で上書きする
+    f.baseColor = in.color;
+    // 世界の座標は頂点関数が置き場所の変換だけを通して渡す。画素の倍率 (`unitsPerDrawnPixel`) は掛けない —
+    // `--scale` の下でも光とトゥーンの段がずれない (#2441 の「作品から見た座標は変わらない」と同じ)
+    f.worldPosition = in.worldPosition;
     // **周囲そのものを出す列は、光も材質も見ない。** 見ている向きへ周囲を読むだけで、
     // 背景と映り込みが同じ 1 本の関数から出る
     if (kShapeLit && surroundings.horizonAndBackdrop.w > 0.5) {
@@ -785,8 +850,12 @@ static inline float4 mokume_shapeColor(
 
     // **被覆は断片の後で掛ける** (#1637)。乗算済みの色なので、全成分に掛ければ画素の
     // 一部だけを覆った色になる
-#ifdef MOKUME_SURFACES
+#if defined(MOKUME_SURFACES) && defined(MOKUME_NUMBERS)
+    return paint(f, values, surfaces, namedNumbers) * in.coverage;
+#elif defined(MOKUME_SURFACES)
     return paint(f, values, surfaces) * in.coverage;
+#elif defined(MOKUME_NUMBERS)
+    return paint(f, values, namedNumbers) * in.coverage;
 #else
     return paint(f, values) * in.coverage;
 #endif
@@ -798,6 +867,7 @@ static inline float4 mokume_shapeColor(
 /// (一覧は `ShapePipeline.BlendStates` の doc)。
 fragment float4 mokume_fragmentMain(
     MOKUME_SURFACE_PARAMS
+    MOKUME_NUMBERS_PARAMS
     MOKUME_SHAPE_PARAMS,
     constant uint &mode [[buffer(2)]],
     float4 destination [[color(0)]])
@@ -818,11 +888,11 @@ fragment float4 mokume_fragmentMain(
             }
             coverage *= glyph;
         }
-        float4 color = mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
+        float4 color = mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS MOKUME_NUMBERS_ARGS);
         return coverage < 1.0 ? color + destination * (1.0 - coverage) : color;
     }
     return mokume_composite(
-        mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS), destination, mode);
+        mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS MOKUME_NUMBERS_ARGS), destination, mode);
 }
 
 /// 画素を描く入口。**下地を読まない。**
@@ -836,9 +906,10 @@ fragment float4 mokume_fragmentMain(
 /// [#758]: https://github.com/mokume-metal/mokume/issues/758
 fragment float4 mokume_fragmentDirect(
     MOKUME_SURFACE_PARAMS
+    MOKUME_NUMBERS_PARAMS
     MOKUME_SHAPE_PARAMS)
 {
-    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
+    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS MOKUME_NUMBERS_ARGS);
 }
 
 /// 画素を描く入口 (置き換える列)。**下地を読まないが、字形の外の余白は捨てる。**
@@ -870,11 +941,12 @@ fragment float4 mokume_fragmentDirect(
 /// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
 fragment float4 mokume_fragmentReplace(
     MOKUME_SURFACE_PARAMS
+    MOKUME_NUMBERS_PARAMS
     MOKUME_SHAPE_PARAMS)
 {
     if (textureReading == kTextureGlyphPage && source_texture.sample(kGlyphSampler, in.uv).a <= 0.0) {
         discard_fragment();
         return float4(0.0);
     }
-    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
+    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS MOKUME_NUMBERS_ARGS);
 }

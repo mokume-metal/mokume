@@ -16,6 +16,6 @@ stripes = try createShader("float4 paint(Fragment in, Values values) { return fl
 
 `Canvas.makeShader` (`canvas.makeShader(…)`・`createGraphics` で得た描き場所の `makeShader`) は変わらない — 下の層は Swift の慣行 (`make` で始める) のまま残す。`makeEffect`・`makeComputation`・`makeNumbers`・`makeParticles` も変えない。
 
-走っていない所 (`init()` の中など) から呼んだときに投げる `ShaderFailure.notRunning(call:)` の `call` は、`"createShader(_:name:values:surfaces:)"` になる。
+走っていない所 (`init()` の中など) から呼んだときに投げる `ShaderFailure.notRunning(call:)` の `call` は、`"createShader(_:name:values:surfaces:numbers:)"` になる。
 
 **絵は変わらない。** 名前が変わるだけで、描く結果は同じである。

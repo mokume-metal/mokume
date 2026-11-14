@@ -231,6 +231,51 @@ struct OutputScaleTests {
         #expect(one[64, 64].red > 0.5 && one[36, 64].red > 0.02 && one[36, 64].red < 0.5)
     }
 
+    /// #3573 の完了条件 5: 断片の `worldPosition` は世界の座標で測るので、倍率を掛けない。画素で数える
+    /// `position` は倍率を掛けて座標の単位で読むので、z = 0 の面の上では倍率によらず 2 つが一致する
+    /// (``SolidShaderTests/worldMatchesScreen``)。`worldPosition` に倍率が掛かっていれば、倍率 2・3 で外れる。
+    @Test("断片の worldPosition は、倍率 2・3 の下でも座標のまま (光とトゥーンの段がずれない)", arguments: [1, 2, 3])
+    func worldPositionIgnoresTheScale(_ factor: Int) throws {
+        try Self.expectWorldPositionInCoordinates(
+            on: try Self.makeCanvas(scale: factor), area: 3000 * factor * factor, label: "倍率 \(factor)")
+    }
+
+    /// 細かさも倍率と同じく描く画素だけを変えるので、`worldPosition` は座標のまま。細かさは 1 以下に
+    /// 限られる (`invalidPixelDensity`) ので、描く画素 1 つが座標の 2 になる 0.5 で見る — 倍率と逆向きに
+    /// `unitsPerDrawnPixel` が 1 から外れる。
+    @Test("断片の worldPosition は、細かさ 0.5 の下でも座標のまま")
+    func worldPositionIgnoresTheDensity() throws {
+        try Self.expectWorldPositionInCoordinates(
+            on: try Self.makeCanvas(scale: 1, density: 0.5), area: 3000, label: "細かさ 0.5")
+    }
+
+    /// 回した平らな面を断片 ``SolidShaderTests/worldMatchesScreen`` で塗り、緑が `area` を超え赤が 0 か。
+    private static func expectWorldPositionInCoordinates(on canvas: Canvas, area: Int, label: String) throws {
+        let probe = try canvas.makeShader(SolidShaderTests.worldMatchesScreen)
+        try Self.draw(on: canvas) {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(probe)
+            canvas.translate(60, 70, 0)
+            canvas.rotateZ(0.5)
+            canvas.plane(60, 60)
+        }
+        let pixels = try canvas.output.readPixels()
+        var green = 0
+        var red = 0
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                let pixel = pixels[x, y]
+                if pixel.green > 0.8 && pixel.red < 0.2 { green += 1 }
+                if pixel.red > 0.8 && pixel.green < 0.2 { red += 1 }
+            }
+        }
+        // 面は 60×60 の座標 = 倍率 N で (60N)² 画素。縁を除いても大半は緑
+        #expect(green > area, "\(label) の面が塗られていない: 緑 \(green) 画素")
+        #expect(red == 0, "\(label) で worldPosition が座標と食い違う画素が \(red) ある")
+    }
+
     // MARK: - 字
 
     /// 完了条件 3: 字は倍率を掛けた画素で焼く。`textSize(24)` は倍率 2 で 48 の大きさ (1 オクターブ上の

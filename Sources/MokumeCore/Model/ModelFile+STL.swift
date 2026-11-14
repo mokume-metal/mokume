@@ -592,7 +592,7 @@ nonisolated extension ModelFile {
     /// `Float` に収まらない欄があったか (読み手が無限の座標にして落とす)。
     ///
     /// 40 万面の STL で 160 万行あるので、`String` を作らず、綴りの照合と「有限か」の見積もりを 1 度の走査で済ませる
-    /// (``decimalSpelling(_:count:)``)。有限と言い切れない綴り (指数が大きい) だけ、`strtof` で値を見る — 照合を
+    /// (``scanDecimal(_:from:end:)``)。有限と言い切れない綴り (指数が大きい) だけ、`strtof` で値を見る — 照合を
     /// 通った綴りだけを渡すので、16 進や `nan`・`inf` は読まれない。
     ///
     /// [#2567]: https://github.com/mokume-metal/mokume/issues/2567

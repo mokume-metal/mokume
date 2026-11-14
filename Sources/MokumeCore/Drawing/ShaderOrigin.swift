@@ -11,7 +11,7 @@ import Synchronization
 /// 見張りの子の作業ディレクトリはスケッチの根で、`assets/paint.metal` は根の直下には無い。
 /// 候補の並び (``ImageFile/candidates(for:)``) はそのあとビルドが束へ写した**写し**に解けるので、
 /// 置き場の元のファイルを保存しても断片の見張りが見ている写しは変わらず、走らせたまま差し替わらない
-/// (保存を拾って組み直すという ``Sketch/loadShader(_:values:surfaces:)`` の約束が破れる)。
+/// (保存を拾って組み直すという ``Sketch/loadShader(_:values:surfaces:numbers:)`` の約束が破れる)。
 ///
 /// ## 何をするのか
 ///

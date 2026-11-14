@@ -29,7 +29,7 @@ extension SketchPart {
     /// }
     /// ```
     ///
-    /// 文字列から作る ``createShader(_:name:values:surfaces:)`` も、ここに書いた規約のまま書ける。
+    /// 文字列から作る ``createShader(_:name:values:surfaces:numbers:)`` も、ここに書いた規約のまま書ける。
     /// 値・面・平面と立体・秒数を 1 つずつ動かした例と絵は、そちらにある。
     ///
     /// ## 書くのは「その画素の色」だけ
@@ -39,8 +39,8 @@ extension SketchPart {
     /// 合成を通るので、**混ぜ方が断片によって食い違わない。**
     ///
     /// `Fragment` から読めるもの: 面の中の位置 (`position` は画素の中心・`place` は 0…1)・
-    /// 読む面の位置 (`uv`)・図形の色 (`color`)・読んだ面の値 (`texel`)・秒数
-    /// (`time`)・面の大きさ (`resolution`)。
+    /// 読む面の位置 (`uv`)・図形の色 (`color`)・光を通す前の色 (`baseColor`)・読んだ面の値 (`texel`)・
+    /// 世界の座標での位置 (`worldPosition`。立体だけ)・秒数 (`time`)・面の大きさ (`resolution`)。
     ///
     /// **`uv` は形の中の位置で、`texture()` で絵を貼っていなくても届く** — 平面の図形は囲みの箱の 0…1、
     /// 立体はメッシュの位置 (箱は面ごと・球は経緯) で、白い 1×1 の絵を貼ったときと同じ値になる。
@@ -109,12 +109,60 @@ extension SketchPart {
     /// 決まっている。超えた宣言は読み込みの時点で断られる。値と同じく、**名前は
     /// 読み込むときに決め、面だけを後から差し替える** (``Shader/set(_:_:)-(_,ShaderSurface)``)。
     ///
+    /// ## 数の並びも名前で渡せる
+    ///
+    /// `numbers` に書いた名前が、断片から `numbers.名前[i]` で読める。渡すのは ``makeNumbers(count:)``
+    /// で作った並びで、計算 (``compute(_:over:reads:writes:)``) が書いた数も、CPU が書いた数も読める。
+    ///
+    /// `assets/levels.metal` に置く断片と、それを読む例:
+    ///
+    /// <!-- example: 資材 assets/levels.metal -->
+    /// ```metal
+    /// float4 paint(Fragment in, Values values, Numbers numbers) {
+    ///     uint i = min(uint(in.place.x * 4.0), 3u);
+    ///     float level = numbers.heights[i] * numbers.gains[i];
+    ///     return in.color * step(1.0 - in.place.y, level);
+    /// }
+    /// ```
+    /// <!-- example: 文脈 var levels: Shader! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     let heights = try makeNumbers(count: 4)
+    ///     heights.set([0.2, 0.9, 0.5, 0.7])
+    ///     let gains = try makeNumbers(count: 4)
+    ///     gains.fill(1)
+    ///     levels = try loadShader(
+    ///         "assets/levels.metal", numbers: ["heights": heights, "gains": gains])
+    /// }
+    /// ```
+    ///
+    /// **並びを名前で宣言した断片だけ、受け取るものが 1 つ増える** (面と同じ)。面と並びの両方を
+    /// 宣言した断片は `paint(Fragment, Values, Surfaces, Numbers)` と、面・並びの順に受け取る。
+    /// 渡せるのは **4 本まで**で、名前は読み込むときに決め、並びだけを後から差し替える
+    /// (``Shader/set(_:_:)-(_,Numbers)``)。並びの中身は、置いた時点ではなく描き切りの時点のものが
+    /// 届く (``Numbers`` の「読み手ごとに、効く時刻が違う」)。
+    ///
+    /// 1 本だけなら、名前を付けずに ``numbers(_:)`` で渡して `in.numbers[i]` で読む形も使える。
+    ///
     /// ## 平面にも立体にも同じ断片が効く
     ///
     /// **書き分けは要らない。** `rect` にも `box` にも同じ断片が同じ規約で効く —
     /// 前置きの配り方も、渡す値も、置き場も同じである。立体では `Fragment` の
     /// `color` に**光と材質を通したあとの色**が入るので、`in.color` をそのまま
     /// 返せば組み込みの塗りと同じ絵になり、そこから変えていける。
+    ///
+    /// 光の当たり方そのものを書き直す (トゥーン・点光源風の陰影) なら、光を通す**前**の色 `in.baseColor` と、
+    /// 世界の座標での位置 `in.worldPosition`・向き `in.worldNormal` を読む。`noLights()` で光を切らずに書ける:
+    ///
+    /// ```metal
+    /// float4 paint(Fragment in, Values values) {
+    ///     float n = max(dot(in.worldNormal, normalize(values.light)), 0.0);
+    ///     float band = floor(n * values.bands) / values.bands;
+    ///     return float4(in.baseColor.rgb * (0.3 + 0.7 * band), in.baseColor.a);
+    /// }
+    /// ```
+    ///
+    /// 平面の図形には光が当たらないので、`baseColor` は `color` と同じで、`worldPosition` は 0 である。
     ///
     /// 断片が書けるのは**その画素の色だけ**で、頂点の落とし方は差し替えられない。
     /// まとめ描き (``shape(_:at:)``) は頂点の側の仕組みなので、**断片を使っても
@@ -131,21 +179,22 @@ extension SketchPart {
     ///
     /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
     ///   場所が載る ``ShaderFailure/unopenable(path:location:reason:)``)・UTF-8 の文字として読めないとき
-    ///   (``ShaderFailure/unreadable(path:)``)・組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
+    ///   (``ShaderFailure/unreadable(path:)``)・組み立てられないとき・値や面や並びが多すぎるときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 参照 createShader(_:name:values:surfaces:)
+    // shot: 参照 createShader(_:name:values:surfaces:numbers:)
     public func loadShader(
         _ path: String, values: [String: ShaderValue] = [:],
-        surfaces: [String: ShaderSurface] = [:]
+        surfaces: [String: ShaderSurface] = [:], numbers: [String: Numbers] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try resourceCanvas(ShaderFailure.self).loadShader(path, values: values, surfaces: surfaces)
+        try resourceCanvas(ShaderFailure.self).loadShader(
+            path, values: values, surfaces: surfaces, numbers: numbers)
     }
 
     /// 文字列から断片を作る。保存の拾い直しは効かない (在処が無いため)。
     ///
-    /// 書き方の規約 (書くのは `paint` 1 本・値と面は作るときに名前で宣言する・平面にも立体にも
-    /// 同じ断片が効く) は ``loadShader(_:values:surfaces:)`` と同じである。下の例はどれも、
+    /// 書き方の規約 (書くのは `paint` 1 本・値と面と並びは作るときに名前で宣言する・平面にも立体にも
+    /// 同じ断片が効く) は ``loadShader(_:values:surfaces:numbers:)`` と同じである。下の例はどれも、
     /// 断片を `setup()` で 1 度だけ作り、`draw()` で ``shader(_:)`` を当ててから図形を置く。
     ///
     /// ## 値は名前を決めて渡し、後から変える
@@ -342,7 +391,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Throws: 組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
+    /// - Throws: 組み立てられないとき・値や面や並びが多すぎるときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=bf971035
@@ -351,9 +400,10 @@ extension SketchPart {
     // shot: 4 snippet=94dcd4a6
     public func createShader(
         _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
-        surfaces: [String: ShaderSurface] = [:]
+        surfaces: [String: ShaderSurface] = [:], numbers: [String: Numbers] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try resourceCanvas(ShaderFailure.self).makeShader(body, name: name, values: values, surfaces: surfaces)
+        try resourceCanvas(ShaderFailure.self).makeShader(
+            body, name: name, values: values, surfaces: surfaces, numbers: numbers)
     }
 
     /// これから描くものを、この断片で塗る。

@@ -9,7 +9,7 @@ import Foundation
 /// ([ADR-0018] 決定 3) ので、書き手が新しい鍵を足しても古い実装は壊れない。ただし黙って捨てず、
 /// 応答の `warnings` で名乗る (``unknownKeysWarning``・[#2392])。
 ///
-/// **省略できる欄 (`scale`・`count`・`every`・`time`) の `null` は、省略と同じに読む** ([#2392])。
+/// **省略できる欄 (`scale`・`count`・`every`・`time`・`keep`) の `null` は、省略と同じに読む** ([#2392])。
 /// `time: null` は「時刻なし」で、断らない。型の違う値 (`"5"`・`true`) は省略として通さない。
 ///
 /// ## 同じ時刻で比較する
@@ -79,6 +79,16 @@ package struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 観測の秒を読むのは `draw()` の中の `time` だけで、動画の再生位置・録った音の起点・入力の
     /// コールバックの `time` は作者の時計の秒のままである。
     public let time: Double?
+    /// 撮った 1 枚と、そのフレームについて分かる条件の組を、観測の区画の外 (`.mokume/kept/<id>/`) へ持ち出すか
+    /// ([#2618])。省略・`null` は `false` で、そのときの観測は持ち出しを知らない版と 1 バイトも変わらない。
+    /// 持ち出すのは 1 枚の要求だけで、2 枚以上の列と一緒に頼むと、撮りはするが持ち出さず、応答の警告で名乗る。
+    ///
+    /// **持ち出せるのは、`draw()` の終わりの絵がそのまま残っているときだけ**である。そのフレームの描画が失敗したとき・
+    /// 止めている間のコールバックが描き足したとき (`set()`・`loadPixels()` を含む) は、絵がそのフレームの絵ではないので
+    /// 持ち出さず、応答の警告で名乗る。止めている間に描き足した絵を持ち出すには、`redraw()` で描き直した後に頼む。
+    ///
+    /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
+    public let keep: Bool
     /// 要求にあった、この版が読まない鍵 (名前順)。
     package let unknownKeys: [String]
 
@@ -94,12 +104,15 @@ package struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         return nil
     }
 
-    public init(id: String, scale: Double = 1, count: Int = 1, every: Int = 1, time: Double? = nil) {
+    public init(
+        id: String, scale: Double = 1, count: Int = 1, every: Int = 1, time: Double? = nil, keep: Bool = false
+    ) {
         self.id = id
         self.scale = scale
         self.count = count
         self.every = every
         self.time = time
+        self.keep = keep
         self.unknownKeys = []
     }
 
@@ -163,7 +176,7 @@ package struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
-        case id, scale, count, every, time
+        case id, scale, count, every, time, keep
     }
 
     /// 整数の鍵を読む。**範囲を越えた大きな数は、符号の側の端へ寄せる** (#2805)。
@@ -246,6 +259,8 @@ package struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
             self.scale = try Self.scale(in: container, forKey: .scale) ?? 1
             self.count = try Self.integer(in: container, forKey: .count) ?? 1
             self.every = try Self.integer(in: container, forKey: .every) ?? 1
+            // **`null` は省略と同じ `false`。** 真偽の値でないもの (`"yes"`・`1`) は省略として通さず、読めない要求にする
+            self.keep = try container.decodeIfPresent(Bool.self, forKey: .keep) ?? false
         } catch let error as DecodingError {
             throw Self.annotated(error, naming: unknownKeys)
         }

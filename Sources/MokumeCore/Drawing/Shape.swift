@@ -184,6 +184,10 @@ public struct Shape {
         var surfaces: [HeldTexture]
         /// この区間の塗りが読む数の並び。`nil` なら読まない。
         @ByIdentityOrNone var numbers: Numbers?
+        /// 利用者が名前で渡した数の並び (#3576)。面と同じく**区間の先頭で取り込んだもの**を、宣言と
+        /// 同じ並び (名前順) で持ち歩く。後から ``Shader/set(_:_:)-(_,Numbers)`` で差し替えた並びで、
+        /// 前の図形まで描かれないようにするため。
+        var namedNumbers: [Numbers] = []
 
         /// 組み込みの塗り。**利用者の断片が効いていない区間**が持つ。
         static let builtIn = Paint(shader: nil, values: [], surfaces: [], numbers: nil)
@@ -194,7 +198,9 @@ public struct Shape {
         /// 同じ塗りで毎回列を閉じる (`BitwiseEquality.swift` と同じ作法)。
         static func == (left: Paint, right: Paint) -> Bool {
             left._shader == right._shader && left.surfaces == right.surfaces
-                && left._numbers == right._numbers && left.values.count == right.values.count
+                && left._numbers == right._numbers
+                && left.namedNumbers.elementsEqual(right.namedNumbers, by: ===)
+                && left.values.count == right.values.count
                 && zip(left.values, right.values).allSatisfy { $0.bitPattern == $1.bitPattern }
         }
     }

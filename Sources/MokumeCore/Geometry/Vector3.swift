@@ -74,7 +74,9 @@ nonisolated extension Vector3: ExpressibleByArrayLiteral {
     ///
     /// 要素は数のリテラルに限る。`Int` の変数を混ぜるときは ``init(_:_:_:)`` で書く。
     /// **要素が 3 つでなければ止まる** — 書いた場所で必ず起きる誤りなので、その行で知らせる
-    /// (``Vector2`` の配列リテラルと同じ)。
+    /// (``Vector2`` の配列リテラルと同じ)。`Vector2` と `Vector3` を同じラベルで受ける API (曲線のラベル付きの形など) に
+    /// `Vector3` の変数とリテラルを混ぜて渡すと、リテラルも `Vector3` として読まれ、`[1, 2]` は要素の数が合わずに
+    /// 実行時に止まる。リテラルにも `Vector2(…)`・`Vector3(…)` と型を書けば避けられる。
     // shot: 撮れない 値を作るだけで、描く結果が無い
     public init(arrayLiteral elements: Float...) {
         precondition(
