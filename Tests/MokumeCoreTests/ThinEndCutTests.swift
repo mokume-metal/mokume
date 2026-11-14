@@ -304,6 +304,18 @@ struct ThinEndCutRenderTests {
     private static func retained(
         _ points: [SIMD2<Float>], cap: StrokeCap, density: Float, placements: [(dx: Float, dy: Float, angle: Float)]
     ) throws -> (rebuilt: Int, worstRatio: Double) {
+        try retained(cap: cap, density: density, placements: placements) { canvas in
+            canvas.beginShape()
+            for point in points { canvas.vertex(point.x, point.y) }
+            canvas.endShape()
+        }
+    }
+
+    /// ``retained(_:cap:density:placements:)`` の、形を `figure` で描く形 (曲線にも使う)。
+    private static func retained(
+        cap: StrokeCap, density: Float, placements: [(dx: Float, dy: Float, angle: Float)],
+        figure: @MainActor (Canvas) -> Void
+    ) throws -> (rebuilt: Int, worstRatio: Double) {
         let canvas = try makeCanvas(density: density)
         var line: Shape?
         try canvas.draw {
@@ -311,11 +323,7 @@ struct ThinEndCutRenderTests {
             canvas.stroke(255)
             canvas.strokeWeight(1)
             canvas.strokeCap(cap)
-            line = canvas.createShape {
-                canvas.beginShape()
-                for point in points { canvas.vertex(point.x, point.y) }
-                canvas.endShape()
-            }
+            line = canvas.createShape { figure(canvas) }
         }
         let shape = try #require(line)
         let shader = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
@@ -345,9 +353,7 @@ struct ThinEndCutRenderTests {
                 canvas.shader(shader)
                 canvas.translate(64 + dx, 64 + dy)
                 canvas.rotate(angle)
-                canvas.beginShape()
-                for point in points { canvas.vertex(point.x, point.y) }
-                canvas.endShape()
+                figure(canvas)
             }
             let ratio = placed / total(try canvas.target.readPixels())
             if abs(ratio - 1) > abs(worst - 1) { worst = ratio }
@@ -358,8 +364,8 @@ struct ThinEndCutRenderTests {
     /// 開いた端の保持した形は、十分に長ければ端の形によらず、位相の違う置き場所でも控えた片を使い回す (#3864・#3903)。
     /// #3748 の決定 A は丸い端も、#3745 の決定 A は四角い端・延ばす端も位相ごとに組み直したが、#3859 の決定 (光の量の
     /// 許容 ±25%) の下で戻した。端の片はどの端の形でも平らな延長で、平行移動しても面積が変わらないので、光の量はその場で
-    /// 引いた線とほぼ変わらない。代償: 端の画素の濃さは、その場で引いた線と最大 0.2 ほど違う (片を作った位相の列の境目で
-    /// 切ったままなので)。
+    /// 引いた線とほぼ変わらない。代償: 画素ごとの濃さはその場で引いた線と違う (片を作った位相の列の境目で切ったままなので)。
+    /// 四角い端・延ばす端では、1 画素ぶん丸ごと違う画素もある (#3903 の実測で差の最大 0.998)。
     @Test(
         "長い開いた端の保持した形は、端の形によらず、位相・向きが変わっても組み直さず、光の量はその場で引いた線と変わらない (#3864・#3903)",
         arguments: [StrokeCap.round, .square, .project], [false, true])
@@ -413,6 +419,108 @@ struct ThinEndCutRenderTests {
         let placements: [(dx: Float, dy: Float, angle: Float)] = [(0, 0, 0.81), (0.125, 0.5, 0.81), (0.5, 1.5, 0.81)]
         let (rebuilt, _) = try Self.retained(points, cap: cap, density: 0.5, placements: placements)
         #expect(rebuilt == rebuilds, "\(cap) 長さ \(drawnLength)・両端 \(drawnGap): 組み直した回数: \(rebuilt)")
+    }
+
+    /// 形 `figure` を細かさ `density` で記録したときの、描く画素での周の長さと両端の距離 (線引きが測る量と同じ:
+    /// 記録した刻みの周・``ThinStrokeRecipe/endsAreFreeOfPhase(drawnBy:)``)。回すだけの置き場所では変わらない。
+    private static func recordedLengthAndGap(
+        density: Float, figure: @MainActor (Canvas) -> Void
+    ) throws -> (length: Float, gap: Float) {
+        let canvas = try makeCanvas(density: density)
+        var held: Shape?
+        try canvas.draw {
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.strokeWeight(1)
+            held = canvas.createShape { figure(canvas) }
+        }
+        let shape = try #require(held)
+        let points = try #require(shape.strokeRanges.compactMap(\.thin).first).outline.points
+        var length: Float = 0
+        for index in 1..<points.count { length += simd_length(points[index] - points[index - 1]) }
+        return (length * density, simd_length(points[points.count - 1] - points[0]) * density)
+    }
+
+    /// 線引きの両側を、折れ線と曲線 (`curveVertex`) でも 3 つの端の形で踏む (#3903 の反証 6)。`target` は描く画素での
+    /// 長さ (`gap` が偽) か両端の距離 (`gap` が真)。曲線は刻みの長さが前もって分からないので、記録した周を測って大きさを
+    /// 合わせ直し、測った量が `target` の ±0.02 に入ってから置く。手前 (31.9・5.9) は位相 3 通りで 3 回、先 (32.1・6.1) は
+    /// 1 回組む。端の形ごとに別の線引きを使う変異・延ばした分を長さに足す変異は、どちらかの側で赤になる。
+    @Test(
+        "折れ線と曲線も、端の形によらず、描く画素で長さ 32・両端の距離 6 を境に組み直すかが分かれる (#3903)",
+        arguments: [StrokeCap.round, .square, .project], [
+            (curve: false, gap: false, target: Float(31.9), rebuilds: 3), (false, false, 32.1, 1),
+            (false, true, 5.9, 3), (false, true, 6.1, 1),
+            (true, false, 31.9, 3), (true, false, 32.1, 1), (true, true, 5.9, 3), (true, true, 6.1, 1),
+        ])
+    func bentAndCurvedEndsPhaseFreeBoundary(
+        cap: StrokeCap, row: (curve: Bool, gap: Bool, target: Float, rebuilds: Int)
+    ) throws {
+        let density: Float = 0.5
+        // 出す画素で書く。細かさ 0.5 なので描く画素の 2 倍
+        func figure(_ size: Float) -> @MainActor (Canvas) -> Void {
+            switch (row.curve, row.gap) {
+            case (false, false):
+                // (-a, 0) → (0, a/2) → (a, 0)。描く画素で長さ √5 a / 2・両端 a
+                let a = 2 * size / Float(5).squareRoot()
+                return { canvas in
+                    canvas.beginShape()
+                    canvas.vertex(-a, 0)
+                    canvas.vertex(0, a / 2)
+                    canvas.vertex(a, 0)
+                    canvas.endShape()
+                }
+            case (false, true):
+                // 長さ 60 の 2 本を、描く画素で両端 `size` の V 字に折る
+                return { canvas in
+                    canvas.beginShape()
+                    canvas.vertex(-size, 0)
+                    canvas.vertex(0, 120)
+                    canvas.vertex(size, 0)
+                    canvas.endShape()
+                }
+            case (true, false):
+                // S 字。`size` は全体の倍率 (長さは測って合わせる)
+                return { canvas in
+                    let (step, lift) = (size, size * 0.6)
+                    canvas.beginShape()
+                    canvas.curveVertex(-1.5 * step, lift)
+                    canvas.curveVertex(-1.5 * step, 0)
+                    canvas.curveVertex(-0.5 * step, lift)
+                    canvas.curveVertex(0.5 * step, -lift)
+                    canvas.curveVertex(1.5 * step, 0)
+                    canvas.curveVertex(1.5 * step, -lift)
+                    canvas.endShape()
+                }
+            case (true, true):
+                // 半径 30 の円をほぼ一周する C 字。両端の弦が描く画素で `size`
+                return { canvas in
+                    let radius: Float = 30
+                    let start = asin(size / radius)
+                    let count = 12
+                    canvas.beginShape()
+                    for index in -1...(count + 1) {
+                        let angle = start + (2 * .pi - 2 * start) * Float(index) / Float(count)
+                        canvas.curveVertex(radius * cos(angle), radius * sin(angle))
+                    }
+                    canvas.endShape()
+                }
+            }
+        }
+        var size = row.target
+        var measured = try Self.recordedLengthAndGap(density: density, figure: figure(size))
+        for _ in 0..<6 {
+            let current = row.gap ? measured.gap : measured.length
+            if abs(current - row.target) <= 0.02 { break }
+            size *= row.target / current
+            measured = try Self.recordedLengthAndGap(density: density, figure: figure(size))
+        }
+        let current = row.gap ? measured.gap : measured.length
+        try #require(abs(current - row.target) <= 0.02, "\(row): 記録した量 \(current) が合わない")
+        // 長さを見る行は両端が遠く、両端を見る行は長さが足りていること (片方の線引きだけを踏む)
+        if row.gap { #expect(measured.length >= 40) } else { #expect(measured.gap >= 8) }
+        let placements: [(dx: Float, dy: Float, angle: Float)] = [(0, 0, 0.81), (0.125, 0.5, 0.81), (0.5, 1.5, 0.81)]
+        let (rebuilt, _) = try Self.retained(cap: cap, density: density, placements: placements, figure: figure(size))
+        #expect(rebuilt == row.rebuilds, "\(cap) \(row) (記録した長さ \(measured.length)・両端 \(measured.gap)): 組み直した回数 \(rebuilt)")
     }
 
     /// 切るかどうかの選び方 (平面)。端点の重なる開いた周 (A → B → C → A) は、両端の列の片が同じ列を 2 度数えるので
