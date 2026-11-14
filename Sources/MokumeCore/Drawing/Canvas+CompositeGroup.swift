@@ -357,6 +357,9 @@ final class CompositeSurfacePool<Surface: AnyObject> {
     private(set) var made = 0
     /// 使い回した回数 (作ってから通算)。
     private(set) var reused = 0
+    /// 帳簿が面の項目を見た回数 (作ってから通算)。**検査が読む** (帳簿の仕事が面の数に比例することを、時間でなく
+    /// 回数で見る)。数えるのは面を引く ``lookUp(_:)`` と、全部を見渡すときの面の数。
+    private(set) var entryVisits = 0
 
     /// 検査から「中間面を描き切れなかった」を作るための差し込み (``Canvas/failureForTesting`` を中間面に立てる)。
     /// 製品の経路では常に `nil`。
@@ -372,7 +375,7 @@ final class CompositeSurfacePool<Surface: AnyObject> {
     /// `placer` が置く形 `shape` の中間面に使える空きを、`placer` の使用中にして返す。
     func take(_ shape: CompositeSurfaceShape, for placer: AnyObject) -> Surface? {
         while let ticket = freeByShape[shape]?.popLast() {
-            guard var entry = slots[ticket.id], !entry.inUse, entry.serial == ticket.serial else { continue }
+            guard var entry = lookUp(ticket.id), !entry.inUse, entry.serial == ticket.serial else { continue }
             entry.inUse = true
             entry.placer = placer
             entry.stamp = epoch
@@ -413,7 +416,7 @@ final class CompositeSurfacePool<Surface: AnyObject> {
     func leaveFrame(of placer: AnyObject, sweeping: Bool) {
         if let placed = placedBy.removeValue(forKey: ObjectIdentifier(placer)) {
             for id in placed {
-                guard var entry = slots[id], entry.inUse, entry.placer === placer else { continue }
+                guard var entry = lookUp(id), entry.inUse, entry.placer === placer else { continue }
                 serials += 1
                 entry.inUse = false
                 entry.placer = nil
@@ -445,6 +448,7 @@ final class CompositeSurfacePool<Surface: AnyObject> {
             if !releaseOrder.isEmpty || !freeByShape.isEmpty || !placedBy.isEmpty { resetLists() }
             return
         }
+        entryVisits += slots.count
         let doomed = slots.compactMap { id, entry in condition(entry) ? id : nil }
         for id in doomed { remove(id) }
         // 手放す順は空いた順のまま、今も空きを指す項目だけを残す。残った空きは、次の持ち主のフレームでは
@@ -456,7 +460,7 @@ final class CompositeSurfacePool<Surface: AnyObject> {
             return kept.isEmpty ? nil : kept
         }
         placedBy = placedBy.compactMapValues { ids in
-            let kept = ids.filter { slots[$0]?.inUse == true }
+            let kept = ids.filter { lookUp($0)?.inUse == true }
             return kept.isEmpty ? nil : kept
         }
     }
@@ -468,8 +472,14 @@ final class CompositeSurfacePool<Surface: AnyObject> {
         placedBy.removeAll()
     }
 
+    /// 面の項目を引く (``entryVisits`` を数える)。
+    private func lookUp(_ id: ObjectIdentifier) -> Entry? {
+        entryVisits += 1
+        return slots[id]
+    }
+
     private func isFree(_ ticket: Ticket) -> Bool {
-        guard let entry = slots[ticket.id] else { return false }
+        guard let entry = lookUp(ticket.id) else { return false }
         return !entry.inUse && entry.serial == ticket.serial
     }
 

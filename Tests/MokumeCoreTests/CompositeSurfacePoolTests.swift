@@ -703,34 +703,29 @@ struct CompositeSurfacePoolLedgerTests {
         #expect(pool.heldBytes == 200)
     }
 
-    /// `units` 個を 1 フレームに置く書き方で、使い回すフレームを `frames` 回回した時間 (5 回のうち最短)。
-    private static func ledgerTime(units count: Int, frames: Int = 10) -> Duration {
-        var best: Duration = .seconds(1_000)
-        for _ in 0..<5 {
-            let pool = CompositeSurfacePool<Surface>()
-            let owner = Surface()
-            // 入れ子の外側の面のように、単位ごとに置いた側が違う形も混ぜる
-            let inner = (0..<count / 4).map { _ in Surface() }
-            let units =
-                (0..<count).map { Unit(placer: owner, width: 10 + $0 % 3, placerLeaves: false) }
-                + inner.map { Unit(placer: $0, width: 5, placerLeaves: true) }
-            frame(pool, owner: owner, units)
-            let clock = ContinuousClock()
-            let elapsed = clock.measure {
-                for _ in 0..<frames { frame(pool, owner: owner, units) }
-            }
-            #expect(pool.made == units.count - inner.count + 1, "2 フレーム目からは使い回す")
-            best = min(best, elapsed)
-        }
-        return best
+    /// `units` 個を 1 フレームに置く書き方で、使い回すフレームを `frames` 回回す間に帳簿が面の項目を見た回数
+    /// (``CompositeSurfacePool/entryVisits``)。時間でなく回数で見るので、機械の負荷でぶれない。
+    private static func ledgerVisits(units count: Int, frames: Int = 10) -> Int {
+        let pool = CompositeSurfacePool<Surface>()
+        let owner = Surface()
+        // 入れ子の外側の面のように、単位ごとに置いた側が違う形も混ぜる
+        let inner = (0..<count / 4).map { _ in Surface() }
+        let units =
+            (0..<count).map { Unit(placer: owner, width: 10 + $0 % 3, placerLeaves: false) }
+            + inner.map { Unit(placer: $0, width: 5, placerLeaves: true) }
+        frame(pool, owner: owner, units)
+        let before = pool.entryVisits
+        for _ in 0..<frames { frame(pool, owner: owner, units) }
+        #expect(pool.made == units.count - inner.count + 1, "2 フレーム目からは使い回す")
+        return pool.entryVisits - before
     }
 
-    @Test("帳簿の仕事は単位の数に比例する: 1,000 個の時間は 100 個の 10 倍ほど (2 乗なら 100 倍)")
+    @Test("帳簿の仕事は単位の数に比例する: 1,000 個で面の項目を見る回数は 100 個の 9〜11 倍 (2 乗なら 100 倍)")
     func ledgerWorkGrowsLinearly() {
-        let small = Self.ledgerTime(units: 100)
-        let large = Self.ledgerTime(units: 1_000)
-        let ratio = large / small
-        print("CompositeSurfacePoolLedgerTests: 100 units \(small), 1,000 units \(large), ratio \(ratio)")
-        #expect(ratio < 30, "1,000 個が 100 個の \(ratio) 倍かかる (100 個 \(small)・1,000 個 \(large))")
+        let small = Self.ledgerVisits(units: 100)
+        let large = Self.ledgerVisits(units: 1_000)
+        #expect(small > 0)
+        // 単位の数が 10 倍でも、形ごとの数の端数で回数はちょうど 10 倍にはならない (9.96 倍)。2 乗なら 100 倍になる
+        #expect(small * 9 <= large && large <= small * 11, "1,000 個で \(large) 回・100 個で \(small) 回 (\(Double(large) / Double(small)) 倍)")
     }
 }
