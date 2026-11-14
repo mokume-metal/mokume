@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 import QuartzCore
 
 /// 表示のリフレッシュを受け取る側。

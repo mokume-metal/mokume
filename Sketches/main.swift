@@ -64,6 +64,8 @@ if arguments.first == "--render" {
         let frames = options.frames
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let gpu = try RenderDevice()
+        // ウィンドウを出さずに組むランタイムにも、画面の一覧とメニューバーの名乗りを差し込む (#3804)
+        MacPlatform.install()
         // 外と実物でやりとりするものは書き出さない (ReferenceSketch.reachesOutside)
         for entry in catalogue where !entry.reachesOutside {
             // **つまみの保存を持たない** (#1832)。撮り直せば同じ絵になると名乗るので、撮った人の手元にだけ

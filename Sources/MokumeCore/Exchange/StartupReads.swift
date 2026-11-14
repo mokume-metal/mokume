@@ -214,7 +214,7 @@ nonisolated package enum StartupReads {
         name: "Frame rate notice", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
         note: "Says how fast it is running, once a second. The value is the configuration "
             + "name shown alongside, and the tool passes it only for run and watch",
-        readSite: "Sources/MokumeCore/Display/FrameRateNotice.swift")
+        readSite: "Sources/MokumeMac/FrameRateNotice.swift")
 
     /// ウィンドウの × を押した人に確かめるか。
     ///
@@ -230,7 +230,7 @@ nonisolated package enum StartupReads {
         decidedBy: .tool,
         note: "Asks before the window's close button ends the sketch. The value is the name "
             + "of the tool that started it, and the tool passes it only for run",
-        readSite: "Sources/MokumeCore/Display/CloseConfirmation.swift")
+        readSite: "Sources/MokumeMac/CloseConfirmation.swift")
 
     /// 決めた枚数を、決めた速さの時刻で書き出すか (`mokume render`)。
     ///

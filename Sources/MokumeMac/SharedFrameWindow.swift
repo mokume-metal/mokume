@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 
 /// 別のプロセスが差し出しているフレームを、**スケッチのウィンドウ**として出す。
 ///

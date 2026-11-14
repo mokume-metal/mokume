@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 import SwiftUI
 
 /// 画面の色と作業空間の色を往復させる。

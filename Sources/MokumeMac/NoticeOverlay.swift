@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 import QuartzCore
 
 /// 短い 1 行を、絵の上に重ねる。

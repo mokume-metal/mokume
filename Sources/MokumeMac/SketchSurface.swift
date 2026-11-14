@@ -3,6 +3,7 @@
 
 import AppKit
 import Metal
+import MokumeCore
 import QuartzCore
 
 /// 絵を映す面。

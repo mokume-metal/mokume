@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 import MokumeDiagnostics
 
 // ``SketchView`` の中身。**ビュー (`SketchView`) は埋め込む人の入口 `MokumeUI` に置き、面と席の

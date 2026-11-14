@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 import SwiftUI
 
 /// つまみの面を、絵と同じウィンドウに重ねる。

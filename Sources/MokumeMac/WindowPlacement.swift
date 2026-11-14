@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 import MokumeDiagnostics
 
 /// ウィンドウをどう出すか。

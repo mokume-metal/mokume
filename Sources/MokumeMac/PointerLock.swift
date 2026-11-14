@@ -3,6 +3,7 @@
 
 import AppKit
 import CoreGraphics
+import MokumeCore
 import MokumeDiagnostics
 
 /// 1 つの面がカーソルを捕まえるかを決め、OS へ頼む ([#1144])。

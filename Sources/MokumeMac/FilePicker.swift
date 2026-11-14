@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 
 /// 選ばせるダイアログ (ファイル・保存先・フォルダ) を出す口。
 ///

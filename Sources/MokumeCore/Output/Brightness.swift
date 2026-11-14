@@ -35,13 +35,13 @@ public nonisolated enum ToneMapping: Sendable, Equatable, CaseIterable {
 /// 作業空間そのものだからである ([ADR-0011] 決定 3)。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-nonisolated struct Brightness: Equatable, Sendable {
+package nonisolated struct Brightness: Equatable, Sendable {
     /// 画面全体の明るさの倍率。
     var exposure: Float = 1
     /// 範囲を超えた明るさの丸め方。
     var toneMapping: ToneMapping = .clip
 
-    static let `default` = Brightness()
+    package static let `default` = Brightness()
 
     /// 寄せ始める明るさ。ここより暗いところは ``ToneMapping/roll`` でも動かない。
     static let knee: Float = 0.8

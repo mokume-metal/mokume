@@ -46,7 +46,7 @@ package nonisolated enum StopSignals {
     /// - Returns: 置き換えた合図と、置き換える前の受け口。``restore(_:)`` へ渡す
     ///   (本番のスケッチは戻さない — 戻すのは検査のため)。
     @discardableResult
-    static func install() -> [(number: Int32, previous: sigaction)] {
+    package static func install() -> [(number: Int32, previous: sigaction)] {
         numbers.compactMap { number in
             var previous = sigaction()
             sigaction(number, nil, &previous)
@@ -69,7 +69,7 @@ package nonisolated enum StopSignals {
     }
 
     /// 合図を受けていたか。**読んだら下ろす** — 1 度の合図で終わりを 1 度だけ頼む。
-    static func takeRequest() -> Bool {
+    package static func takeRequest() -> Bool {
         guard sketchStopRequested != 0 else { return false }
         sketchStopRequested = 0
         return true

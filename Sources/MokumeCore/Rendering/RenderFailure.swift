@@ -452,7 +452,7 @@ extension RenderFailure: CustomStringConvertible {
     /// 消える。起動の失敗も全文を出す (そこで終わりなので、次にすることまで要る)。
     ///
     /// [#600]: https://github.com/mokume-metal/mokume/issues/600
-    nonisolated var headline: String {
+    package nonisolated var headline: String {
         String(description.prefix { $0 != "\n" })
     }
 

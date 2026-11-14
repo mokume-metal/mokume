@@ -59,8 +59,8 @@ import MokumeDiagnostics
 /// [#987]: https://github.com/mokume-metal/mokume/issues/987
 /// [#1048]: https://github.com/mokume-metal/mokume/issues/1048
 @MainActor
-final class WatchedFile<Value: Decodable> {
-    let url: URL
+package final class WatchedFile<Value: Decodable> {
+    package let url: URL
     /// もう読んだことにした改訂の最終更新時刻。
     private var readAt: FileStamp?
     /// 読めなかったと知らせた改訂の最終更新時刻。**同じ改訂では繰り返さない** (確定ではない)。
@@ -70,7 +70,7 @@ final class WatchedFile<Value: Decodable> {
 
     /// - Parameter onUnreadable: 読めない改訂を初めて掴んだときの知らせ。**必須** — 名乗らない読み手は
     ///   空の閉包を明示する。名乗る文面は ``UnreadableRevision/notice(of:at:failure:saidBy:)`` で組む。
-    init(url: URL, onUnreadable: @escaping (UnreadableRevision.Failure) -> Void) {
+    package init(url: URL, onUnreadable: @escaping (UnreadableRevision.Failure) -> Void) {
         self.url = url
         self.onUnreadable = onUnreadable
     }
@@ -82,7 +82,7 @@ final class WatchedFile<Value: Decodable> {
     /// (掴んだ後に消えていたときを除く)。
     ///
     /// - Returns: 新しい中身。変わっていない・まだ読めないなら `nil`。
-    func changed() -> Value? {
+    package func changed() -> Value? {
         let modified = FileStamp.of(url)
         guard let modified, modified != readAt else { return nil }
         let data: Data
@@ -116,9 +116,9 @@ final class WatchedFile<Value: Decodable> {
 
 /// 読めない改訂の失敗と、それを名乗る文面。**読み手 2 つ (つまみの応答・目録) が同じ文面を使う** —
 /// 候補の言い方が片方だけ違う・片方だけ落ちる、を作らないため ([#2889](https://github.com/mokume-metal/mokume/issues/2889))。
-enum UnreadableRevision {
+package enum UnreadableRevision {
     /// 読めなかった改訂の失敗。**何が読めなかったかで、案内が変わる。**
-    enum Failure: Equatable {
+    package enum Failure: Equatable {
         /// ファイルとして読めない (権限が無い・置き場がディレクトリ)。版の形とは関係が無い。
         case cannotRead(reason: String)
         /// 読めたが解けない (JSON でない・型に合わない・版が違う)。
@@ -140,7 +140,7 @@ enum UnreadableRevision {
     ///
     /// **版のずれは断定しない** (候補として挙げる)。解けない形は版のずれ以外でも起きうる。**ファイルとして
     /// 読めない失敗には付けない** — 権限や置き場の事情に、版の案内は的外れである。
-    static func notice(
+    package static func notice(
         of subject: String, at url: URL, failure: Failure, saidBy: String? = nil
     ) -> String {
         let once = "(said once for this revision" + (saidBy.map { " by \($0)" } ?? "") + ")"

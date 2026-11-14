@@ -960,7 +960,7 @@ extension Particles: SettlementObserver {
     /// 届くまでに置いた粒は、その分だけ長く生きているものとして扱う (上書きの注意が多めに出る側)。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+    package func submissionSettled(_ submission: UInt64, dropped: Bool) {
         var index = 0
         while index < advancesInFlight.count {
             guard advancesInFlight[index].submission == submission else {

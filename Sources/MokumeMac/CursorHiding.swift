@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 
 /// 1 つの面が矢印のカーソルを隠すかを決め、OS へ頼む ([#2439])。
 ///

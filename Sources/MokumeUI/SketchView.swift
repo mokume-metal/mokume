@@ -3,6 +3,7 @@
 
 import AppKit
 import MokumeCore
+import MokumeMac
 import SwiftUI
 
 /// スケッチを SwiftUI のアプリの中に映すビュー。**`import MokumeUI` で使う。**

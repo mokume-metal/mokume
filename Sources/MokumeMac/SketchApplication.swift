@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 import MokumeDiagnostics
 
 /// スケッチをアプリケーションとして走らせる。
@@ -501,6 +502,8 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         record: ReplayRequest? = nil,
         replay: ReplayPlayer? = nil
     ) throws(RenderFailure) {
+        // 設定 (`sketch.settings`) が画面の一覧 (``SketchPart/displays``) を読むので、読む前に差し込む (#3804)
+        MacPlatform.install()
         let replay = render == nil ? replay : nil
         self.gpu = gpu
         // **設定は 1 度だけ読む。** 計算型の設定は読むたびに別の値を返しうるので、題名と断る口を別々に読むと、組み立て
@@ -1874,6 +1877,8 @@ extension Sketch {
         // 消える(``SketchApplication``)。これより前に死ぬ子(動的リンクの失敗・`main()` に届く前の大域の
         // 初期化)は置けず、今までどおり「自分で消えた」と読まれる
         markOwnStarting()
+        // スケッチの組み立て (`Self()`) が画面の一覧を読んでもよいように、組み立てより前に差し込む (#3804)
+        MacPlatform.install()
         do {
             let gpu = try RenderDevice()
             let application = try SketchApplication(sketch: Self(), gpu: gpu)

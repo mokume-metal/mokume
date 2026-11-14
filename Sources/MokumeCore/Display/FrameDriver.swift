@@ -22,7 +22,7 @@ import IOKit.pwr_mgt
 ///
 /// スリープの通知を購読して切り替える形は採らない。**「何が原因であれ、進んでいなければ
 /// 進める」**なら、スリープ以外で駆動源が止まったときにも同じ手当てが効く。
-enum FrameDriver {
+package enum FrameDriver {
     /// 予備の駆動源が、この機会に自分で進めるべきか。
     ///
     /// - Parameters:
@@ -34,7 +34,7 @@ enum FrameDriver {
     /// **一度引き受けたら、表示のリフレッシュが戻るまで進め続ける** (`isAlreadyDriving`)。
     /// 経過だけで判断すると、自分が進めた直後は必ず「進んでいる」になるので、
     /// 止まっている間のフレームレートが閾値ぶんに落ちる。
-    static func shouldAdvanceFromFallback(
+    package static func shouldAdvanceFromFallback(
         now: Double, lastAdvancedAt: Double, stallThreshold: Double, isAlreadyDriving: Bool
     ) -> Bool {
         isAlreadyDriving || now - lastAdvancedAt >= stallThreshold
@@ -46,7 +46,7 @@ enum FrameDriver {
     /// スケッチで「1 枚ぶんの間隔」が閾値を越えてしまい、予備が常に割り込む。
     /// 4 倍は 60 fps のとき 0.066 秒で、``SketchRuntime`` が名乗りの側で使っている
     /// 停滞の判定と同じ水準になる。
-    static func stallThreshold(frameRate: Int) -> Double {
+    package static func stallThreshold(frameRate: Int) -> Double {
         // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         4 / Double(max(1, frameRate))
     }
@@ -58,7 +58,7 @@ enum FrameDriver {
     /// 止まっている間はこの間隔がそのままフレームレートになるので、粗くすると
     /// [ADR-0012](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md)
     /// 決定 5 (画面に出ていなくてもフレームレートを維持する) を満たせない。
-    static func fallbackInterval(frameRate: Int) -> Double {
+    package static func fallbackInterval(frameRate: Int) -> Double {
         // `max(1, …)` の意味は ``stallThreshold(frameRate:)`` と同じ (#1642)
         1 / Double(max(1, frameRate))
     }
@@ -69,7 +69,7 @@ enum FrameDriver {
     /// そこは画面のリフレッシュに任せている (``ScreenDisplayLink/frameRate``)。画面が
     /// 眠っている間は任せる先が無いので、予備はこの値で回る — 差し出し元より速く回っても
     /// 出す枚数は増えないので、**画面のいちばん普通の速さ**を取る。
-    static let unspecifiedFrameRate = 60
+    package static let unspecifiedFrameRate = 60
 }
 
 /// ディスプレイが勝手に消えるのを断る。
@@ -86,14 +86,14 @@ enum FrameDriver {
 /// 観測だけの実行である。書き出しは ``SketchApplication`` を通るが、画面に出さず画面を持たない全速の駆動
 /// (``FullSpeedFrameDriver``) で回るので断らない (``SketchApplication/holdsDisplayAwake``・#3474)。
 @MainActor
-final class DisplaySleepBlock {
+package final class DisplaySleepBlock {
     private var assertion: IOPMAssertionID = 0
     private var isHeld = false
 
     /// 断りを立てる。**立てられなくても走り続ける** — これは保証ではなく手当てで、
     /// 外部ディスプレイの電源を切る・蓋を閉じるといった経路は元より断れない。
     /// 止まったときに拾うのは予備の駆動源 (``FrameDriver``) の仕事である。
-    init(reason: String) {
+    package init(reason: String) {
         var id: IOPMAssertionID = 0
         let result = IOPMAssertionCreateWithName(
             kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
@@ -105,7 +105,7 @@ final class DisplaySleepBlock {
     }
 
     /// 断りを返す。**返し忘れると、プロセスが終わるまで画面が消えなくなる。**
-    func release() {
+    package func release() {
         guard isHeld else { return }
         IOPMAssertionRelease(assertion)
         isHeld = false

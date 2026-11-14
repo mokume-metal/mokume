@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 /// 実行中のフレームレートを報告する。
 ///

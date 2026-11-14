@@ -29,7 +29,7 @@ import Synchronization
 /// #2520)。見張りの外 (`mokume run`・束ねた `.app`) は合図が渡らないので、解き方は変わらない。
 ///
 /// [#2517]: https://github.com/mokume-metal/mokume/issues/2517
-nonisolated enum ShaderOrigin {
+package nonisolated enum ShaderOrigin {
     /// 合図を読んだか、読んだ値。**一度だけ控える** — 読んだら環境から消すので、2 度目からは環境に無い。
     private struct Taken {
         var done = false
@@ -45,7 +45,7 @@ nonisolated enum ShaderOrigin {
     /// 見張りが渡したもので、このプロセスがさらに起こす子 (スケッチが `Process` で直に走らせる別の実行
     /// ファイルなど) のものではない — 継がせると、孫が別のスケッチの断片をこの置き場から読みかねない。
     /// 読むのは ``SketchApplication`` の組み立てで、スケッチの `setup()` より前である。
-    static func startup() -> URL? {
+    package static func startup() -> URL? {
         taken.withLock { taken in
             if !taken.done {
                 taken.value = take()

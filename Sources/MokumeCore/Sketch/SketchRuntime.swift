@@ -65,7 +65,7 @@ package final class SketchRuntime {
     /// ``setupFailure`` を、フレームを投げて受ける道 (``advance()``) の外で見つけたときに知らせる先。ウィンドウの経路
     /// (``SketchApplication``) が差し、起動の失敗として終わらせる。名乗りのメニューが開いている間に別の駆動源が
     /// 進めた回 (``advanceForPresence()``) が使う。
-    var setupFailureHandler: ((RenderFailure) -> Void)?
+    package var setupFailureHandler: ((RenderFailure) -> Void)?
     /// 外から止められているか (``pause()``)。
     private var isPaused = false {
         // 止まった枚の秒を次の世代へ渡す (`watch --keep-time`・#2414)。止まったかどうかは両方から決まる
@@ -76,14 +76,14 @@ package final class SketchRuntime {
     ///
     /// 読むのは書き出しの経路である — 止まったスケッチは決めた枚数まで進まないので、そこで
     /// 書き出しを終える (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
-    private(set) var isLooping = true {
+    package private(set) var isLooping = true {
         didSet { timing.noteStill(isHeldStill) }
     }
     /// 拡大した字の焼きを、次のフレームへ送ってよい組み方か ([#2446](https://github.com/mokume-metal/mokume/issues/2446))。
     /// **ウィンドウ・共有面で走らせる `SketchApplication` だけが立てる。** 先送りした字は次のフレームが焼き直すまでぼけて
     /// いるので、絵がウィンドウへ出るだけで、そのフレームを次のフレームが描き直すと分かる走らせ方にしか許さない。
     /// 組み込み (検査・外から `pause()`・画素を読む使い方) と書き出す経路は既定のまま、先送りせず焼き切る。
-    var defersEnlargedGlyphBakes = false
+    package var defersEnlargedGlyphBakes = false
     /// 1 枚だけ描いて書き出す口 (``renderFrame(to:)``) の最中か。**書き出す絵は残る**ので、拡大した字の焼きを
     /// 次のフレームへ送らない (``canDeferEnlargedGlyphs``・[#2446](https://github.com/mokume-metal/mokume/issues/2446))。
     private var exportsOneFrame = false
@@ -96,7 +96,7 @@ package final class SketchRuntime {
     /// [#2367](https://github.com/mokume-metal/mokume/issues/2367))。**走っている間は変わっていなくても
     /// 出す** — 道具が読む速さ・時刻は枚数が上がったときだけ更新されるので、何も描かない回まで飛ばすと
     /// 走っているのに止まって見える。
-    var isHeldStill: Bool { !isLooping || isPaused }
+    package var isHeldStill: Bool { !isLooping || isPaused }
     /// 止まっている間に 1 枚だけ描き直すよう頼まれているか (``redraw()``)。
     private var redrawRequested = false
     /// 指定時刻の1枚の最中は連続録画を始めない。通常の時刻へ戻るので順序を保証できない。
@@ -159,7 +159,7 @@ package final class SketchRuntime {
     /// 計算型の `settings` は読むたびに別の値を返しうるので、検めた値と渡す値が別物になる
     /// ([#1642](https://github.com/mokume-metal/mokume/issues/1642))。検めた値そのものを持ち回れば、
     /// 1 を割る値が届かないことを構造で保証できる。
-    let declaredFrameRate: Int
+    package let declaredFrameRate: Int
 
     /// ランタイムが 1 度だけ言う注意の種類。
     enum Warning: Hashable {
@@ -247,7 +247,7 @@ package final class SketchRuntime {
     ///
     /// **ウィンドウを開く側はこれを読む** (`SketchApplication`)。``declaredFrameRate`` と同じく、
     /// `settings` を読み直すと検めた値と使う値が別物になりうる。
-    let windowScale: Float
+    package let windowScale: Float
 
     /// 組み立てでウィンドウを開く倍率を検める。**0 より大きい有限の数でなければ断る**
     /// ([ADR-0020] 決定 5 の 2 行目)。
@@ -265,14 +265,14 @@ package final class SketchRuntime {
     ///
     /// **ウィンドウを開く側はこれを読む** (`SketchApplication`)。``windowScale`` と同じく、`settings` を
     /// 読み直すと、選んだディスプレイと描く大きさが別物になりうる。
-    let fullScreenDisplay: Display?
+    package let fullScreenDisplay: Display?
 
     /// ホストのアプリの中 (``SketchView``) で走るか。**組み立てのときに決まる。**
     ///
     /// ウィンドウ・メニューバー・全画面はホストのもので、ここは持たない: 全画面のディスプレイを選ばず
     /// (``embeddedStage(for:)``)、メニューバーの名乗り (``SketchPresence``) も出さない
     /// (``updatePresence()``)。
-    let isEmbedded: Bool
+    package let isEmbedded: Bool
 
     /// 描く大きさを決める。全画面ならディスプレイを選び、その全画面の大きさにする ([#2020])。
     ///
@@ -340,7 +340,7 @@ package final class SketchRuntime {
     ///
     /// **係は閉じ終えたところで手放すので、答えはここに残す。** 読むのは書き出しの経路で、
     /// 書けたかを終了コードにする (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
-    private(set) var recordingFailed = false
+    package private(set) var recordingFailed = false
 
     /// 組んだけれどまだ配っていない絵 1 枚。
     private struct PendingOutletFrame {
@@ -422,7 +422,7 @@ package final class SketchRuntime {
     private var outletHeldDrop: (reason: String, droppedAt: UInt64)?
     /// GPU の打ち切りで出口へ配らなかった枚数 (作ってから通算・#2743)。書き出す経路の終わり
     /// (`SketchApplication`) が、揃わなかった枚数として名乗り、0 以外で終わる。
-    private(set) var outletFramesDropped = 0
+    package private(set) var outletFramesDropped = 0
     /// 閉じる口が、控えの絵を決着させている最中か。**このあいだはフレームを進めない** (``runFrame()``)。
     /// 塞がずに見に来る閉じ方 (``Patience/peek``) は、決着するまで何度も呼ばれる。
     private var outletsClosing = false
@@ -446,7 +446,7 @@ package final class SketchRuntime {
     ///
     /// ウィンドウ (``KnobOverlay``) もここから受け取る — それぞれが引き直すと、重複した宣言の
     /// 警告が数えた回数だけ出る ([#994](https://github.com/mokume-metal/mokume/issues/994) の 13)。
-    let paramRegistry: ParamRegistry
+    package let paramRegistry: ParamRegistry
     private let paramStore: ParamStore?
     /// 入力の合流点。ウィンドウからの操作も、外から送られたものもここへ集まる。
     public let input = InputState()
@@ -454,7 +454,7 @@ package final class SketchRuntime {
     /// 記録点はどれも `nil` の判定だけで通り過ぎる。
     ///
     /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
-    private(set) var replay: ReplayRecorder?
+    package private(set) var replay: ReplayRecorder?
     /// 記録を流して照らす係 (#3571)。`mokume replay` の子だけが持ち、ほかの実行は `nil` で、当てる点・照らす点は
     /// どれも `nil` の判定だけで通り過ぎる。
     private(set) var player: ReplayPlayer?
@@ -463,14 +463,14 @@ package final class SketchRuntime {
     /// **読むのはウィンドウである** — 直に走らせたウィンドウは ``SketchApplication`` が毎リフレッシュ渡し、見張りの
     /// 子は共有面の属性に載せて道具のウィンドウへ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
     /// ウィンドウの無い実行 (書き出し・ウィンドウを持たない `SketchRuntime`) では誰も読まないので、何も起きない。
-    var pointerLockRequested = false
+    package var pointerLockRequested = false
     /// 矢印のカーソルを隠す要求 (``SketchPart/noCursor()``)。``SketchPart/cursor()`` まで残る。
     ///
     /// ``pointerLockRequested`` と同じく**読むのはウィンドウである** — 直に走らせたウィンドウは ``SketchApplication`` が
     /// 毎リフレッシュ渡し、見張りの子は共有面の属性 (``SharedFrameSurface/cursorHiddenAttribute``) に載せて
     /// 道具のウィンドウへ渡す ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。ウィンドウの無い実行では
     /// 誰も読まないので、何も起きない。絵には触れない。
-    var cursorHidingRequested = false
+    package var cursorHidingRequested = false
     /// ウィンドウの題名を変える頼み (``SketchPart/windowTitle(_:)``)。**頼んでいなければ `nil`** で、ウィンドウは
     /// 起動のときの題名 (``SketchSettings/title``) のまま。
     ///
@@ -478,7 +478,7 @@ package final class SketchRuntime {
     /// 毎リフレッシュ当て、見張りの子は共有面の属性 (``SharedFrameSurface/windowTitleAttribute``) に載せて道具の作品の
     /// ウィンドウへ渡す ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。ウィンドウの無い実行では誰も読まない。
     /// ``isEmbedded`` の実行 (``SketchView``) では頼みを持たない (題名はホストのもの)。絵には触れない。
-    var windowTitleRequest: String?
+    package var windowTitleRequest: String?
     /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
     /// 視点 (シーンの記述) と違ってフレームごとには戻らない。まだ触っていなければ `nil`。
     var orbit: Orbit?
@@ -532,16 +532,19 @@ package final class SketchRuntime {
     /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
     private var drawnState: DrawnState?
     /// メニューバーで名乗る係。**組み立てのときには何も出さない** — 出すのは
-    /// ``SketchPresence/grace`` 秒ぶん進み続けてからである。
-    private lazy var presence = SketchPresence(source: self)
+    /// `SketchPresence.grace` 秒ぶん進み続けてからである。名乗るのは OS の UI 部品で、外枠 (MokumeMac) が
+    /// ``makePresence`` で差し込む。差し込まれていなければ名乗らない (#3804)。
+    private lazy var presence: (any PresenceAnnouncing)? = Self.makePresence(self)
+    /// 名乗る係を作る口。**外枠 (MokumeMac の `MacPlatform.install()`) が差し込む** (#3804)。既定は名乗らない。
+    package static var makePresence: (SketchRuntime) -> (any PresenceAnnouncing)? = { _ in nil }
     /// 絵を渡している相手 (受け手が名乗った名前)。メニューバーの名乗りに載り、空でなければ猶予を待たずに名乗る
     /// ([ADR-0049] 決定 6・[#3921](https://github.com/mokume-metal/mokume/issues/3921))。
     ///
     /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
-    var presenceReceivers: [String] = [] {
+    package var presenceReceivers: [String] = [] {
         didSet {
             guard !isEmbedded, presenceReceivers != oldValue else { return }
-            presence.receivers = presenceReceivers
+            presence?.receivers = presenceReceivers
         }
     }
     /// 最初に ``advance()`` が呼ばれた時刻。名乗りの経過はここを起点に測る。
@@ -583,7 +586,7 @@ package final class SketchRuntime {
     private var frameWorkBegan: Double?
 
     /// ウィンドウに出す数字。**観測の応答が返すものと同じ集計器から採る** (ADR-0030 決定 7)。
-    var frameNumbers: FrameNumbers {
+    package var frameNumbers: FrameNumbers {
         let moment = now()
         let warnings = Diagnostics.warningSummary()
         return FrameNumbers(
@@ -623,7 +626,7 @@ package final class SketchRuntime {
     /// (`x += 0.2 * deltaTime` → `x += 200 * deltaTime`)。意味の説明は ``SketchPart/deltaTime`` が正本。
     public var deltaTime: Float { timing.deltaTime }
     /// 時刻の出どころ。意味の説明は ``SketchPart/clock`` が正本。
-    var clock: Clock { timing.clock }
+    package var clock: Clock { timing.clock }
     /// 描いたフレームの経過を足し込んだもの (秒・``Countdown`` が読む)。
     var elapsed: Double { timing.elapsed }
 
@@ -635,7 +638,7 @@ package final class SketchRuntime {
     /// 持たずに直に回す実行) である。
     ///
     /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
-    let isOnScreen: Bool
+    package let isOnScreen: Bool
 
     /// スケッチとその舞台を組み立てる。
     ///
@@ -684,7 +687,7 @@ package final class SketchRuntime {
     /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
     /// [#1619]: https://github.com/mokume-metal/mokume/issues/1619
     /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
-    init(
+    package init(
         sketch: any Sketch,
         gpu: RenderDevice,
         clock: Clock?,
@@ -899,7 +902,7 @@ package final class SketchRuntime {
     /// [#978]: https://github.com/mokume-metal/mokume/issues/978
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     @discardableResult
-    func closePlugins(_ patience: Patience) -> Bool {
+    package func closePlugins(_ patience: Patience) -> Bool {
         // **閉じる前に決着させる。** 最後のフレームの絵はまだ誰にも渡っていないし (#927)、
         // 止まっている間に頼まれた `save()` にとってはここが最後の機会である (#1300)。
         //
@@ -993,7 +996,7 @@ package final class SketchRuntime {
     ///   `nil` (予備のタイマーが進めた回・直に回す面) なら現在時刻。
     ///
     /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
-    func advance(displayTime: Double?) throws(RenderFailure) {
+    package func advance(displayTime: Double?) throws(RenderFailure) {
         // **描く前に済ませる。** 名乗りのメニューが開くとしたらこの中なので、そのとき
         // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
         // 止まっているスケッチも、居座っていることに変わりはない
@@ -1338,7 +1341,7 @@ package final class SketchRuntime {
     ///
     /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
     @discardableResult
-    func startRecording(_ request: ReplayRequest) -> Bool {
+    package func startRecording(_ request: ReplayRequest) -> Bool {
         guard replay == nil else { return true }
         guard !hasSetUp else {
             Diagnostics.warn("Not recording: the sketch already started, and a record always begins at its first frame")
@@ -1423,7 +1426,7 @@ package final class SketchRuntime {
     /// 記録を流して照らし始める。**``start()`` の前に呼ぶ** — 開始の状態は `setup()` の前に当てる。
     ///
     /// 記録の大きさと描く先の大きさが違えば、流さずに理由を持たせる (絵が一致しえない)。
-    func startReplaying(_ player: ReplayPlayer) {
+    package func startReplaying(_ player: ReplayPlayer) {
         guard self.player == nil, !hasSetUp else { return }
         player.check(width: canvas.output.width, height: canvas.output.height)
         self.player = player
@@ -1433,7 +1436,7 @@ package final class SketchRuntime {
 
     /// 流し終えた (または止められた)。最後の枚を照らして結果を書く。**2 度目からは前の結果を返す。**
     @discardableResult
-    func finishReplaying(stoppedEarly: String? = nil) -> ReplayPlayer.Report? {
+    package func finishReplaying(stoppedEarly: String? = nil) -> ReplayPlayer.Report? {
         guard let player else { return nil }
         let drewLast = timing.frameCount > 0 && !lastFrameFailedToDraw
         return player.finish(
@@ -1630,7 +1633,7 @@ package final class SketchRuntime {
     /// ので、標準入力に触らず、閉じていても終わらない (#2024・#2025)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-    func relayToolInput(from events: StandardInputEvents) {
+    package func relayToolInput(from events: StandardInputEvents) {
         relayed = events
     }
 
@@ -1639,7 +1642,7 @@ package final class SketchRuntime {
     /// **見張りから起こされていなければ、常に `false`。** 管を読むのはそのときだけなので
     /// (``relayToolInput(from:)``)、`mokume run`・`mokume render` や直に走らせた子の
     /// 標準入力 (端末・閉じた入力) が閉じても終わらない。
-    func takeDriverDeparture() -> Bool {
+    package func takeDriverDeparture() -> Bool {
         relayed?.takeDeparture() ?? false
     }
 
@@ -2156,16 +2159,16 @@ package final class SketchRuntime {
             firstAdvanceRealAt = presenceClock()
             return
         }
-        presence.advanced(runningFor: presenceElapsed)
+        presence?.advanced(runningFor: presenceElapsed)
     }
 
     /// 名乗っているか。検査が読む (名乗りの本体 ``presence`` は持たせたまま外へ出さない)。
-    var isPresenceAnnounced: Bool { presence.isAnnounced }
+    var isPresenceAnnounced: Bool { presence?.isAnnounced ?? false }
 
     /// 走り続けている時間 (秒)。名乗りが読む。最初のフレームの前は 0。
     ///
     /// 作者の時計での経過と実時間での経過の**小さいほう** (``updatePresence()``)。戻った時計で負にしない。
-    var presenceElapsed: Double {
+    package var presenceElapsed: Double {
         guard let firstAdvanceAt, let firstAdvanceRealAt else { return 0 }
         return max(0, min(now() - firstAdvanceAt, presenceClock() - firstAdvanceRealAt))
     }
@@ -2183,7 +2186,7 @@ package final class SketchRuntime {
     /// (``SketchPart/time``)。
     ///
     /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
-    func advanceForPresence() {
+    package func advanceForPresence() {
         // **実時間で測る** (#3120)。誰かが進めているかは壁の時間の話で、作者の時計 (``now``) は検査が
         // 差し替えて進められる。名乗りの経過 (``presenceElapsed``) が実時間を見るのと揃える (ADR-0032 決定 1)。
         // 本番の ``now`` は実時間と同じ値なので、振る舞いは変わらない
@@ -2218,7 +2221,7 @@ package final class SketchRuntime {
     ///   大きさはスケッチが決めるので、率で指定すると出来上がりがスケッチごとに変わる。
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    func presencePreview(maxWidth: Int) -> DisplayImage? {
+    package func presencePreview(maxWidth: Int) -> DisplayImage? {
         guard timing.frameCount > 0 else { return nil }
         guard let image = try? encodePictureForReading() else { return nil }
         // 縮めてから読む (#1745)。出るバイト列は、原寸を読んでから縮めたのと同じ
@@ -2403,7 +2406,7 @@ package final class SketchRuntime {
     /// 配る形 (GIF・MP4) は、枚数を知っている入口だけが頼める。
     ///
     /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
-    func beginRecord(_ pattern: String, rendering frameCount: Int?) {
+    package func beginRecord(_ pattern: String, rendering frameCount: Int?) {
         guard !observingAtTime else {
             Diagnostics.warn("beginRecord(): cannot start recording in a specified-time observation; start on a normal frame")
             return

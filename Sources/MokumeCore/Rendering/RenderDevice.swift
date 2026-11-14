@@ -153,13 +153,13 @@ import MokumeDiagnostics
         return (try? gate.makeQueue(on: device)) != nil
     }
 
-    let device: any MTLDevice
+    package let device: any MTLDevice
 
     /// 発行口を作る関所 (``CommandQueueGate``)。製品の経路ではプロセスで 1 つのもの
     /// (``CommandQueueGate/process``) で、合図の待ちが期限を越えたら、ここに印を立てる ([#2052])。
     ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
-    let queueGate: CommandQueueGate
+    package let queueGate: CommandQueueGate
 
     /// **このファイルの外へ出さない** ([#845])。別のファイルから掴めると、
     /// ``commit(_:retaining:writing:)`` を通らずに投入する口が書ける。そうして投入された置き場は
@@ -235,7 +235,7 @@ import MokumeDiagnostics
     ///
     /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
     /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
-    var rebuildsShadersInBackground = false
+    package var rebuildsShadersInBackground = false
 
     /// いまのフレームは、断片の組み上がりを待つか。**観測のフレームでランタイムが立てる**
     /// ([#2365])。観測が返す絵と目録は、保存した中身で描いたものでなければならない
@@ -836,7 +836,7 @@ import MokumeDiagnostics
     ///
     /// 常駐は集合への追加だけでは効かず、追加のあとに確定させる必要がある。
     /// 呼ぶたびに確定させるので、確保の直後に 1 回呼べばよい。
-    func makeResident(_ allocation: any MTLAllocation) {
+    package func makeResident(_ allocation: any MTLAllocation) {
         residencySet.addAllocation(allocation)
         residencySet.commit()
         residencySet.requestResidency()
@@ -850,7 +850,7 @@ import MokumeDiagnostics
     ///
     /// **GPU が空になってから外す。** 実行中のコマンドが踏んでいるリソースを常駐から
     /// 外すと、そのコマンドの結果が未定義になる (``releaseDrawableResidency()`` と同じ)。
-    func releaseResidency(of allocations: [any MTLAllocation]) throws(RenderFailure) {
+    package func releaseResidency(of allocations: [any MTLAllocation]) throws(RenderFailure) {
         guard !allocations.isEmpty else { return }
         try settle()
         for allocation in allocations { residencySet.removeAllocation(allocation) }
@@ -881,7 +881,7 @@ import MokumeDiagnostics
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
     /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
     /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
-    func retire(_ allocation: any MTLAllocation) {
+    package func retire(_ allocation: any MTLAllocation) {
         // **組み立て中のコマンドは、まだ番号を持っていない。** 開いている最中に死んだ
         // ものは、その 1 本が投入されて終わるまで外せないので 1 つ先の番号で待たせる
         let after = slotOfOpenCommands.isEmpty ? submissionCount : submissionCount + 1
@@ -1393,7 +1393,7 @@ import MokumeDiagnostics
     /// 続けて預けたら 1 つにまとめる (影と拡大を 1 本の描き切りに載せる面)。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    func awaitSettlement(of submission: UInt64, by observer: any SettlementObserver) {
+    package func awaitSettlement(of submission: UInt64, by observer: any SettlementObserver) {
         if let last = settlements.last, last.submission == submission, last.observer === observer {
             return
         }
@@ -1441,7 +1441,7 @@ import MokumeDiagnostics
     /// **打ち切りの無い経路では確保しない。** 置き場は持ち回り、預けは値として並べる。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    func revokeDroppedDeliveries() {
+    package func revokeDroppedDeliveries() {
         guard !settlements.isEmpty, revocationHolds == 0, !isSettling, slotOfOpenCommands.isEmpty
         else { return }
         isSettling = true
@@ -1475,7 +1475,7 @@ import MokumeDiagnostics
     /// 1 枚名乗りを見送るだけで済む (``CommandFaultLog/undelivered(_:)``)。
     ///
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
-    func undelivered(_ submission: UInt64) -> Bool? {
+    package func undelivered(_ submission: UInt64) -> Bool? {
         commandFaults.undelivered(submission)
     }
 
@@ -1750,7 +1750,7 @@ extension RenderDevice {
 /// ``RenderDevice/awaitSettlement(of:by:)`` で預け、結末が届いたらここで受ける。
 ///
 /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-@MainActor protocol SettlementObserver: AnyObject {
+@MainActor package protocol SettlementObserver: AnyObject {
     /// 番号 `submission` の投入の結末が届いた。`dropped` なら打ち切られたと確かめられたので、その投入で
     /// 進めた記帳を取り消す。**まだその番号の記帳が生きているかは持ち主が見る** — 後の投入が同じ記帳を
     /// 進め直していれば、取り消さない。`dropped` が偽でも呼ぶので、番号ごとに覚えた分はここで手放す。

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeCore
 
 /// 制作を助けるためのウィンドウ。**スケッチのウィンドウとは別に立つ。**
 ///

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 /// 画面を持たない全速の駆動 ([#3474])。
 ///

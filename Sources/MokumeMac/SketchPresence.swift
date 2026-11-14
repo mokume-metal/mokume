@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import MokumeCore
 
 /// 走っているスケッチが、自分の存在をメニューバーで名乗る。
 ///
@@ -59,7 +60,7 @@ import Foundation
 /// 名乗る前に終わる** — 実測で `make reference-shots` はランタイム 1 本あたり 1 秒未満である。
 /// 仮に越えても払うのは 1 度の ~40 ms だけで、`.accessory` は前面を奪わない。
 @MainActor
-final class SketchPresence {
+final class SketchPresence: PresenceAnnouncing {
     /// 名乗るまでに走り続ける必要のある時間 (秒)。
     ///
     /// 短命な一括処理と、人が離れて忘れうる実行との境目。**30 秒という値に意味があるのでは

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 /// ウィンドウの × を押した人に確かめてから、スケッチを終える。
 ///

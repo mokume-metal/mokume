@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import MokumeCore
 import SwiftUI
 
 /// 警告の欄に出す値の置き場 ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。

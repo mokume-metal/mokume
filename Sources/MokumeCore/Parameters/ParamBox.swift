@@ -139,7 +139,7 @@ public final class ParamBox<Value> {
     private let observation = ObservationRegistrar()
     /// 値が変わった回数 (``DeclaredParam/changeCount``)。変化の通知を出すときと、面に出る姿は同じでも置いた値の
     /// ビット列が変わったとき (`0` に `-0.0` を置いた。通知は出さない) に進める。同じ値の入れ直しでは進めない。
-    private(set) var changeCount: UInt64 = 0
+    package private(set) var changeCount: UInt64 = 0
 
     /// この置き場が 1 度だけ言う注意の種類。
     enum Warning: Hashable {
@@ -313,7 +313,7 @@ extension ParamBox: nonisolated Observable {}
 
 extension ParamBox: DeclaredParam {
     /// 保存に併記する既定値 (``bornValue``)。
-    var defaultValue: ParamValue? { bornValue }
+    package var defaultValue: ParamValue? { bornValue }
 
     /// 面から見えるいまの姿。
     public var declaration: ParamDeclaration {
@@ -340,7 +340,7 @@ extension ParamBox: DeclaredParam {
     /// 検める**。拒んだ値は置かず、前の値のまま。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-    func write(_ incoming: ParamValue) -> ParamOutcome {
+    package func write(_ incoming: ParamValue) -> ParamOutcome {
         if case .string(let text) = incoming, let choices, !choices.contains(text) {
             return .notInChoices
         }
@@ -358,7 +358,7 @@ extension ParamBox: DeclaredParam {
     }
 
     /// 外から来た書き込みが置かれたことを知らせる先を差す (``writeObserver``)。外すときは `nil`。
-    func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {
+    package func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {
         writeObserver = observer
     }
 
@@ -390,7 +390,7 @@ extension ParamBox: DeclaredParam {
 }
 
 /// 型を伏せた ``ParamBox``。宣言の一覧を集めるときと、面から書き込むときに使う。
-protocol DeclaredParam: AnyObject {
+package protocol DeclaredParam: AnyObject {
     var declaration: ParamDeclaration { get }
     /// 宣言が生まれたときの値 (``ParamBox/bornValue``)。**持たない実装は `nil`** で、その宣言は
     /// 保存に既定値を併記せず、コードの既定値が変わったかも見られない (名前と型だけで戻る)。

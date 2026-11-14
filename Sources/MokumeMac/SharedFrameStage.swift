@@ -4,6 +4,7 @@
 import AppKit
 import IOSurface
 import Metal
+import MokumeCore
 import MokumeDiagnostics
 import QuartzCore
 
@@ -84,9 +85,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 持つ — 端末に出ている言葉と揃える必要があるからである
     /// (``SharedFramePreview/report(_:spinning:)`` と同じ規律)。
     ///
-    /// 実体は ``MokumeCore/CloseQuestion``。走っているスケッチ自身のウィンドウ
+    /// 実体は ``MokumeMac/CloseQuestion``。走っているスケッチ自身のウィンドウ
     /// (``SketchApplication``) も同じ問いを出すので、型と出し方はそちらが持つ。
-    typealias CloseQuestion = MokumeCore.CloseQuestion
+    typealias CloseQuestion = MokumeMac.CloseQuestion
 
     /// 面の 1 枚を、差し出せる形にしたもの。
     private struct Frame: PresentableFrame {

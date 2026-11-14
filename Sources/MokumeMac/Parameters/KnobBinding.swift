@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import MokumeCore
 import SwiftUI
 
 /// つまみと正典 (``ParamBox``) を結ぶ。
