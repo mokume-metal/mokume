@@ -2421,7 +2421,8 @@ final class WatchSession {
     ///
     /// 送る試聴の子が居ない回 — 入ってまだ保存していない・試聴の子が落ちた・作り直し (起こし直し) の最中 — と、本番が
     /// 乗り換えの途中の回は ``WatchReport/Reason/noTarget`` で断り、試聴に留まる。作り直しの完了を待ってから送ることはしない。
-    /// 終われと言われた後も断る (止める手順が持っている子を入れ替えない)。
+    /// 終われと言われた後も断る (止める手順が持っている子を入れ替えない)。控えの列 (``pending``) に頼みが在る間も、待たずに
+    /// 同じ語で断る — 控えた起こし直しが当たる試聴の子を、送って奪わない。
     ///
     /// **本番の時計の場所 (``productionClock``) は、送った子の場所になる** (`--keep-time`)。送った子は前の本番が止まると
     /// 書き手になり (`ClockHandover`)、次の試聴の子はその場所を読むだけで受ける。乗り換えの前に送った子が終わったら戻す。
@@ -2437,6 +2438,13 @@ final class WatchSession {
         guard !isProductionSettling else {
             answered.lines = [Self.sendSettlingLine]
             answered.notice = Self.sendSettlingLine
+            return refusal(id: request.id, action: request.action, .noTarget)
+        }
+        // **控えた頼み (保存・作り直し・起こし直し) が先に在る間は、待たずに断る** — 先に送ると、控えた頼みが当たる試聴の子を
+        // 失う (頼んだ順に行う・#3428)。控えずに答える要求なので、控えの列の後ろには並ばない
+        guard pending.isEmpty else {
+            answered.lines = [Self.sendQueuedLine]
+            answered.notice = Self.sendQueuedLine
             return refusal(id: request.id, action: request.action, .noTarget)
         }
         // **作品のウィンドウに採らせるのは最後** — 採らせた後に断ると、台が採った目録を戻せない
@@ -2526,6 +2534,11 @@ final class WatchSession {
     static let sendSettlingLine =
         "Not sent — the work's window is still switching versions. Send again once the version it had "
         + "has stopped"
+
+    /// 控えた頼みが先に在るので断ったことを名乗る行。
+    static let sendQueuedLine =
+        "Not sent — an earlier save, rebuild or restart is still waiting its turn. Send again once it has "
+        + "been carried out"
 
     // MARK: - 作り直す・起こし直す (#3428)
 

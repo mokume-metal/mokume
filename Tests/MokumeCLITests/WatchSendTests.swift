@@ -411,6 +411,38 @@ struct WatchSendTests {
         #expect(harness.clocks.last == 0 && harness.readOnlyClocks.last == false, "出た後の本番: \(harness.clocks)")
     }
 
+    // MARK: - 控えの列と送る順 (決定 4)
+
+    @Test("控えた起こし直しが在る間の送る要求は、待たずに noTarget で断り、控えた起こし直しは試聴の子に当たる")
+    func sendingWhileARestartIsQueuedIsDeclined() async throws {
+        let harness = try Harness()
+        let production = try #require(await harness.save())
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        let audition = try #require(await harness.save())
+        // 読みの最中に起こし直しを頼む: 控えの列に入る
+        let reading = try await harness.holdRead(placing: false)
+        #expect(try await harness.ask("restart")["accepted"] as? Bool == true)
+        // 控えた起こし直しが先に在る間に送る
+        let report = try await harness.ask("send")
+        harness.releaseStamp()
+        await reading.value
+        #expect(report["accepted"] as? Bool == false)
+        #expect(report["reason"] as? String == "noTarget", "\(report)")
+        #expect(report["auditioning"] as? Bool == true)
+        #expect(pidOf(report["audition"]) == audition.processIdentifier, "試聴の子のまま名乗らない")
+        #expect(harness.adopted.isEmpty, "作品のウィンドウに採らせた")
+        #expect(harness.previewLines.last == WatchSession.sendQueuedLine, "\(harness.previewLines)")
+        #expect(harness.session.auditionChild === audition && harness.session.child === production, "断ったのに子を動かした")
+        // 控えた起こし直しは、対象を失わずに試聴の子を起こし直す
+        await harness.beat()
+        let restarted = try #require(harness.session.auditionChild)
+        #expect(restarted !== audition && !audition.isRunning, "控えた起こし直しが試聴の子に当たらない")
+        #expect(harness.session.child === production && production.isRunning)
+        #expect(!harness.previewLines.contains { $0.hasPrefix("Could not restart") }, "\(harness.previewLines)")
+        // 控えが空になれば送れる
+        #expect(try await harness.ask("send")["accepted"] as? Bool == true)
+    }
+
     @Test("起こし直した試聴の子を送った後に、その子が最初の絵の前に落ちても、起こし直しの失敗とは名乗らない")
     func aSentRestartedChildIsNoLongerARestart() async throws {
         let harness = try Harness()
