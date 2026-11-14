@@ -634,9 +634,13 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/line(_:_:_:_:)``
 - ``SketchPart/line(_:_:)-(Vector2,_)``
 - ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
-- ``SketchPart/bezier(from:control1:control2:to:)``
+- ``SketchPart/bezier(from:control1:control2:to:)-(Vector2,_,_,_)``
+- ``SketchPart/bezier(_:_:_:_:_:_:_:_:_:_:_:_:)``
+- ``SketchPart/bezier(from:control1:control2:to:)-(Vector3,_,_,_)``
 - ``SketchPart/curve(_:_:_:_:_:_:_:_:)``
-- ``SketchPart/curve(from:control1:control2:to:)``
+- ``SketchPart/curve(from:control1:control2:to:)-(Vector2,_,_,_)``
+- ``SketchPart/curve(_:_:_:_:_:_:_:_:_:_:_:_:)``
+- ``SketchPart/curve(from:control1:control2:to:)-(Vector3,_,_,_)``
 
 ### 座標の読み方
 
@@ -666,10 +670,15 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``SketchPart/index(_:)``
 - ``SketchPart/normal(_:_:_:)``
 - ``SketchPart/bezierVertex(_:_:_:_:_:_:)``
-- ``SketchPart/bezierVertex(control1:control2:to:)``
+- ``SketchPart/bezierVertex(control1:control2:to:)-(Vector2,_,_)``
+- ``SketchPart/bezierVertex(_:_:_:_:_:_:_:_:_:)``
+- ``SketchPart/bezierVertex(control1:control2:to:)-(Vector3,_,_)``
 - ``SketchPart/quadraticVertex(_:_:_:_:)``
-- ``SketchPart/quadraticVertex(control:to:)``
+- ``SketchPart/quadraticVertex(control:to:)-(Vector2,_)``
+- ``SketchPart/quadraticVertex(_:_:_:_:_:_:)``
+- ``SketchPart/quadraticVertex(control:to:)-(Vector3,_)``
 - ``SketchPart/curveVertex(_:_:)``
+- ``SketchPart/curveVertex(_:_:_:)``
 - ``SketchPart/curveDetail(_:)``
 - ``SketchPart/curveTightness(_:)``
 - ``bezierPoint(_:_:_:_:_:)``

@@ -25,6 +25,18 @@ struct BuildingVertex {
     var isCurveStep = false
 }
 
+/// 通過点を結ぶ曲線の制御点 1 つぶん (``Canvas/curveGuides``)。
+///
+/// 平面の点 (`curveVertex(x, y)`) は `z` を 0 として持つ — `vertex(x, y)` が奥行きを持つ形の中で
+/// `z` = 0 の点になるのと同じ ([#3712])。
+///
+/// [#3712]: https://github.com/mokume-metal/mokume/issues/3712
+struct CurveGuide: Equatable {
+    var position: SIMD3<Float>
+    /// `curveVertex(x, y, z)` で置いた点か。
+    var hasDepth: Bool
+}
+
 // 頂点を並べて形を作る。**道具は 1 つで、平面と立体に分かれない** ([ADR-0021] 決定 5)。
 // 意味の説明は利用者が最初に触る層 (`Sketch`) が正本 ([ADR-0020] 決定 4)。
 //
@@ -130,7 +142,15 @@ extension Canvas {
         let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
         guard admitsShapeCall("bezierVertex") else { return }
-        guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("bezierVertex") }
+        guard let position = lastShapePosition else { return warnCurveWithoutStartOnce("bezierVertex") }
+        // 平面の曲線は、奥行きつきの形に z = 0 を渡したのと同じ (#3712)。手前の点が奥行きを持てば、その点から
+        // z = 0 の制御点・終点へ向かう曲線を奥行きつきの形で刻む。手前が z = 0 なら同じ曲線なので、平面の式で
+        // 刻む (平面だけの形の点は #3712 の前と 1 ビットも変わらない)
+        guard position.z == 0 else {
+            let zero: Float = 0
+            return bezierVertex(cx1, cy1, zero, cx2, cy2, zero, x, y, zero)
+        }
+        let start = SIMD2(position.x, position.y)
         let c1 = SIMD2(cx1, cy1)
         let c2 = SIMD2(cx2, cy2)
         let end = SIMD2(x, y)
@@ -146,7 +166,13 @@ extension Canvas {
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
         guard admitsShapeCall("quadraticVertex") else { return }
-        guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("quadraticVertex") }
+        guard let position = lastShapePosition else { return warnCurveWithoutStartOnce("quadraticVertex") }
+        // 奥行きつきの形に z = 0 を渡したのと同じ (#3712・平面の bezierVertex と同じ分け方)
+        guard position.z == 0 else {
+            let zero: Float = 0
+            return quadraticVertex(cx, cy, zero, x, y, zero)
+        }
+        let start = SIMD2(position.x, position.y)
         // 2 次は 3 次の特別な形として通す — 曲線の道具を 1 本に保つ
         let control = SIMD2(cx, cy)
         let end = SIMD2(x, y)
@@ -165,6 +191,58 @@ extension Canvas {
     /// 成分を同じ順で渡すのと同じ (#3781)。
     public func quadraticVertex(control: Vector2, to end: Vector2) {
         quadraticVertex(control.x, control.y, end.x, end.y)
+    }
+
+    // 奥行きを持つ 3 次の曲線で、いまの点から繋ぐ (#3712)。刻みの点は `vertex(x, y, z)` と同じく
+    // 奥行きを持つ点として置く。始点は手前の点で、平面の点なら `z` = 0 として読む。
+    public func bezierVertex(
+        _ cx1: some ScalarConvertible, _ cy1: some ScalarConvertible, _ cz1: some ScalarConvertible,
+        _ cx2: some ScalarConvertible, _ cy2: some ScalarConvertible, _ cz2: some ScalarConvertible,
+        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
+    ) {
+        let (cx1, cy1, cz1) = (cx1.asFloat, cy1.asFloat, cz1.asFloat)
+        let (cx2, cy2, cz2) = (cx2.asFloat, cy2.asFloat, cz2.asFloat)
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        breakCurveSequence()
+        guard admitsShapeCall("bezierVertex") else { return }
+        guard let start = lastShapePosition else { return warnCurveWithoutStartOnce("bezierVertex") }
+        let c1 = SIMD3(cx1, cy1, cz1)
+        let c2 = SIMD3(cx2, cy2, cz2)
+        let end = SIMD3(x, y, z)
+        for step in 1...currentCurveDetail {
+            let t = Float(step) / Float(currentCurveDetail)
+            appendVertex(
+                Self.cubicPoint(start, c1, c2, end, t), hasDepth: true,
+                isCurveStep: step < currentCurveDetail)
+        }
+    }
+
+    // 奥行きを持つ 2 次の曲線で、いまの点から繋ぐ (#3712)。平面の形と同じく 3 次の特別な形として通す。
+    public func quadraticVertex(
+        _ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ cz: some ScalarConvertible,
+        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
+    ) {
+        let (cx, cy, cz, x, y, z) = (cx.asFloat, cy.asFloat, cz.asFloat, x.asFloat, y.asFloat, z.asFloat)
+        breakCurveSequence()
+        guard admitsShapeCall("quadraticVertex") else { return }
+        guard let start = lastShapePosition else { return warnCurveWithoutStartOnce("quadraticVertex") }
+        let control = SIMD3(cx, cy, cz)
+        let end = SIMD3(x, y, z)
+        let c1 = start + (control - start) * (2.0 / 3.0)
+        let c2 = end + (control - end) * (2.0 / 3.0)
+        bezierVertex(c1.x, c1.y, c1.z, c2.x, c2.y, c2.z, end.x, end.y, end.z)
+    }
+
+    /// 奥行きを持つ 3 次の曲線で、いまの点から `end` まで繋ぐ。9 つの数の
+    /// ``bezierVertex(_:_:_:_:_:_:_:_:_:)`` に制御点 2 つと終点の成分を同じ順で渡すのと同じ (#3712)。
+    public func bezierVertex(control1: Vector3, control2: Vector3, to end: Vector3) {
+        bezierVertex(control1.x, control1.y, control1.z, control2.x, control2.y, control2.z, end.x, end.y, end.z)
+    }
+
+    /// 奥行きを持つ 2 次の曲線で、いまの点から `end` まで繋ぐ。6 つの数の
+    /// ``quadraticVertex(_:_:_:_:_:_:)`` に制御点と終点の成分を同じ順で渡すのと同じ (#3712)。
+    public func quadraticVertex(control: Vector3, to end: Vector3) {
+        quadraticVertex(control.x, control.y, control.z, end.x, end.y, end.z)
     }
 
     /// 通過点を結ぶ曲線の制御点を置く。
@@ -186,22 +264,57 @@ extension Canvas {
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard admitsShapeCall("curveVertex") else { return }
-        curveGuides.append(SIMD2(x, y))
+        placeCurveGuide(CurveGuide(position: SIMD3(x, y, 0), hasDepth: false))
+    }
+
+    // 奥行きを持つ通過点を置く (#3712)。並びの扱いは平面の点と同じで、平面の点と混ぜてよい。
+    public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        guard admitsShapeCall("curveVertex") else { return }
+        placeCurveGuide(CurveGuide(position: SIMD3(x, y, z), hasDepth: true))
+    }
+
+    /// 通過点を並びへ足し、4 つ揃っていれば最後の 1 区間を刻んで置く。
+    ///
+    /// **平面の点はどれも `z` = 0 の点として読む** (`vertex(x, y)` と同じ・#3712)。1 区間の 4 点が
+    /// どれも平面の点なら平面の曲線として刻み、刻みの点も `z` = 0 の平面の点として置く (形を立体に
+    /// しない。平面だけの形の点は #3712 の前と同じ)。1 つでも奥行きを持つ点があれば 3 次元で刻み、
+    /// 刻みの点を `vertex(x, y, z)` と同じく奥行きを持つ点として置く。どちらでも平面の通過点は
+    /// `z` = 0 なので、2 つの区間が同じ通過点を違う奥行きで読むことは無く、`curveVertex(x, y)` は
+    /// `curveVertex(x, y, 0)` と同じ位置に点を置く。
+    private func placeCurveGuide(_ guide: CurveGuide) {
+        curveGuides.append(guide)
         guard curveGuides.count >= 4 else { return }
         let count = curveGuides.count
-        let p0 = curveGuides[count - 4]
-        let p1 = curveGuides[count - 3]
-        let p2 = curveGuides[count - 2]
-        let p3 = curveGuides[count - 1]
-        // 並びの最初の区間は始点も置く。環の最後の点が始点と同じ位置なら置き直さない (#1537)
-        let last = lastShapePoint
-        if count == 4, last != p1 { appendShapePoint(p1, isCurveStep: false) }
+        let g0 = curveGuides[count - 4]
+        let g1 = curveGuides[count - 3]
+        let g2 = curveGuides[count - 2]
+        let g3 = curveGuides[count - 1]
+        guard g0.hasDepth || g1.hasDepth || g2.hasDepth || g3.hasDepth else {
+            let p0 = SIMD2(g0.position.x, g0.position.y)
+            let p1 = SIMD2(g1.position.x, g1.position.y)
+            let p2 = SIMD2(g2.position.x, g2.position.y)
+            let p3 = SIMD2(g3.position.x, g3.position.y)
+            // 並びの最初の区間は始点も置く。環の最後の点が始点と同じ位置なら置き直さない (#1537)。
+            // 位置は奥行きまで比べる — 平面の始点は `z` = 0 の点で、同じ x・y の奥行きを持つ点とは別の点 (#3712)
+            if count == 4, lastShapePosition != g1.position { appendShapePoint(p1, isCurveStep: false) }
+            for step in 1...currentCurveDetail {
+                let t = Float(step) / Float(currentCurveDetail)
+                // 最後の刻みは通過点 — 張り具合 1 では折れ線の角になる
+                appendShapePoint(
+                    Self.catmullRomPoint(p0, p1, p2, p3, t, tightness: currentCurveTightness),
+                    isCurveStep: step < currentCurveDetail)
+            }
+            return
+        }
+        let (p0, p1, p2, p3) = (g0.position, g1.position, g2.position, g3.position)
+        // 始点の置き方は平面と同じ。位置は奥行きまで比べる
+        if count == 4, lastShapePosition != p1 { appendVertex(p1, hasDepth: true) }
         for step in 1...currentCurveDetail {
             let t = Float(step) / Float(currentCurveDetail)
-            // 最後の刻みは通過点 — 張り具合 1 では折れ線の角になる
-            appendShapePoint(
+            appendVertex(
                 Self.catmullRomPoint(p0, p1, p2, p3, t, tightness: currentCurveTightness),
-                isCurveStep: step < currentCurveDetail)
+                hasDepth: true, isCurveStep: step < currentCurveDetail)
         }
     }
 
@@ -348,7 +461,7 @@ extension Canvas {
         var holePoints: [BuildingVertex]?
         var hasDepth: Bool
         var normal: SIMD3<Float>?
-        var curveGuides: [SIMD2<Float>]
+        var curveGuides: [CurveGuide]
     }
 
     /// 組み立て中の形を取り出し、組み立ての状態を既定へ戻す。**注意は言わない** —
@@ -1319,15 +1432,17 @@ extension Canvas {
 
     // MARK: - 溜める
 
-    /// いま組んでいる環 (外周か穴) の最後の点。**空の穴は外周の点へ倒れない** — 穴の最初の
-    /// ``bezierVertex(_:_:_:_:_:_:)`` / ``quadraticVertex(_:_:_:_:)`` は、形の中で手前に点が
+    /// いま組んでいる環 (外周か穴) の最後の点の位置。曲線 (`bezierVertex` / `quadraticVertex`) の始点に
+    /// なる。平面の点 (`vertex(x, y)`) は `z` = 0 を持つ ([#3712])。**空の穴は外周の点へ倒れない** — 穴の
+    /// 最初の ``bezierVertex(_:_:_:_:_:_:)`` / ``quadraticVertex(_:_:_:_:)`` は、形の中で手前に点が
     /// 無いときと同じく何もしない ([#1449])。
     ///
     /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
-    private var lastShapePoint: SIMD2<Float>? {
+    /// [#3712]: https://github.com/mokume-metal/mokume/issues/3712
+    private var lastShapePosition: SIMD3<Float>? {
         // `Optional.map` に閉包を渡さない (#2376・点を置くたびに実行時の隔離の検査が入る)
         guard let last = (holePoints ?? shapePoints).last else { return nil }
-        return SIMD2(last.position.x, last.position.y)
+        return last.position
     }
 
     /// 通過点の曲線の並び (``curveGuides``) を切る。**`curveVertex` 以外で点を置く呼び出し
@@ -1340,10 +1455,13 @@ extension Canvas {
         curveGuides.removeAll(keepingCapacity: true)
     }
 
-    /// 曲線が作った点を置く。奥行きは直前の点から引き継ぐ。
+    /// 平面の式で刻んだ曲線の点を置く。**奥行きは `z` = 0** — 平面の式で刻むのは、渡した点も始点も
+    /// `z` = 0 の曲線だけである ([#3712]。それより前は直前の点の奥行きを引き継いでいた)。手前の点が奥行きを
+    /// 持つ平面の `bezierVertex` / `quadraticVertex` は、奥行きつきの形に `z` = 0 を渡して刻む。
+    ///
+    /// [#3712]: https://github.com/mokume-metal/mokume/issues/3712
     private func appendShapePoint(_ point: SIMD2<Float>, isCurveStep: Bool) {
-        let depth = (holePoints?.last ?? shapePoints.last)?.position.z ?? 0
-        appendVertex(SIMD3(point.x, point.y, depth), hasDepth: false, isCurveStep: isCurveStep)
+        appendVertex(SIMD3(point.x, point.y, 0), hasDepth: false, isCurveStep: isCurveStep)
     }
 
     func appendVertex(
@@ -1376,11 +1494,36 @@ extension Canvas {
         return p0 * (u * u * u) + c1 * (3 * u * u * t) + c2 * (3 * u * t * t) + p1 * (t * t * t)
     }
 
+    /// 3 次の曲線の上の点の、奥行きを持つ形 (#3712)。式は平面の ``cubicPoint(_:_:_:_:_:)`` と同じ。
+    nonisolated static func cubicPoint(
+        _ p0: SIMD3<Float>, _ c1: SIMD3<Float>, _ c2: SIMD3<Float>, _ p1: SIMD3<Float>, _ t: Float
+    ) -> SIMD3<Float> {
+        let u = 1 - t
+        return p0 * (u * u * u) + c1 * (3 * u * u * t) + c2 * (3 * u * t * t) + p1 * (t * t * t)
+    }
+
     /// 通過点を結ぶ曲線の上の点。`tightness` が 0 のとき、4 点のうち中の 2 点を滑らかに繋ぐ。
     nonisolated static func catmullRomPoint(
         _ p0: SIMD2<Float>, _ p1: SIMD2<Float>, _ p2: SIMD2<Float>, _ p3: SIMD2<Float>,
         _ t: Float, tightness: Float
     ) -> SIMD2<Float> {
+        let s = (1 - tightness) / 2
+        let t2 = t * t
+        let t3 = t2 * t
+        let m1 = (p2 - p0) * s
+        let m2 = (p3 - p1) * s
+        return p1 * (2 * t3 - 3 * t2 + 1)
+            + m1 * (t3 - 2 * t2 + t)
+            + p2 * (-2 * t3 + 3 * t2)
+            + m2 * (t3 - t2)
+    }
+
+    /// 通過点を結ぶ曲線の上の点の、奥行きを持つ形 (#3712)。式は平面の
+    /// ``catmullRomPoint(_:_:_:_:_:tightness:)`` と同じ。
+    nonisolated static func catmullRomPoint(
+        _ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>, _ p3: SIMD3<Float>,
+        _ t: Float, tightness: Float
+    ) -> SIMD3<Float> {
         let s = (1 - tightness) / 2
         let t2 = t * t
         let t3 = t2 * t
@@ -1433,7 +1576,7 @@ extension Canvas {
     ///
     /// **形の外の注意 (``warnVertexOutsideShapeOnce(_:)``) とは言うことが違う。** 呼んだ場所は
     /// 既に `beginShape()` と `endShape()` の間なので、間で呼べと言っても直す先を指さない。
-    /// 穴の最初もこちらに当たる (穴は外周の点から始めない・``lastShapePoint``)。
+    /// 穴の最初もこちらに当たる (穴は外周の点から始めない・``lastShapePosition``)。
     ///
     /// [#1485]: https://github.com/mokume-metal/mokume/issues/1485
     private func warnCurveWithoutStartOnce(_ name: String) {

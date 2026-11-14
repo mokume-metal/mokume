@@ -643,38 +643,48 @@ struct PixelGridTests {
     /// (D. Eberly, "Distance from a Point to an Ellipse")。距離関数の経路の楕円は近似の距離場
     /// (`mokume_ellipseField`) なので、それと独立に和集合を決めるために使う。
     nonisolated static func ellipseDistance(_ point: SIMD2<Double>, _ radii: SIMD2<Double>) -> Double {
-        // 長いほうを x に揃え、第 1 象限へ折る
-        var p = SIMD2(abs(point.x), abs(point.y))
-        var r = radii
-        if r.x < r.y {
-            p = SIMD2(p.y, p.x)
-            r = SIMD2(r.y, r.x)
+        // 長いほうを x に揃え、第 1 象限へ折る。検査は点ごとに何十万回も解くので、成分はスカラーで持ち、
+        // 二分法の中で SIMD の成分を読まない (debug では成分の読み出しも範囲の `for` も関数呼び出しになり、
+        // 1 回あたり 20 µs かかっていた)。式と評価の順序・80 回の打ち切りは変えず、同じ商を 1 度だけ
+        // 求めて自乗するだけなので、戻り値はビット列まで変わらない (#3904)
+        var px = abs(point.x)
+        var py = abs(point.y)
+        var rx = radii.x
+        var ry = radii.y
+        if rx < ry {
+            swap(&px, &py)
+            swap(&rx, &ry)
         }
-        let inside = (p.x / r.x) * (p.x / r.x) + (p.y / r.y) * (p.y / r.y) <= 1
+        let inside = (px / rx) * (px / rx) + (py / ry) * (py / ry) <= 1
         let distance: Double
-        if p.y > 0 && p.x > 0 {
-            let z = p / r
-            let ratio = (r.x / r.y) * (r.x / r.y)
-            let n0 = ratio * z.x
-            var low = z.y - 1
-            var high = inside ? 0 : sqrt(n0 * n0 + z.y * z.y) - 1
+        if py > 0 && px > 0 {
+            let zx = px / rx
+            let zy = py / ry
+            let ratio = (rx / ry) * (rx / ry)
+            let n0 = ratio * zx
+            var low = zy - 1
+            var high = inside ? 0 : sqrt(n0 * n0 + zy * zy) - 1
             var s = 0.0
-            for _ in 0..<80 {
+            var step = 0
+            while step < 80 {
+                step += 1
                 s = (low + high) / 2
-                let g = (n0 / (s + ratio)) * (n0 / (s + ratio)) + (z.y / (s + 1)) * (z.y / (s + 1)) - 1
+                let u = n0 / (s + ratio)
+                let v = zy / (s + 1)
+                let g = u * u + v * v - 1
                 if g > 0 { low = s } else { high = s }
             }
-            let nearest = SIMD2(ratio * p.x / (s + ratio), p.y / (s + 1))
-            distance = simd_length(nearest - p)
-        } else if p.y > 0 {
+            let nearest = SIMD2(ratio * px / (s + ratio), py / (s + 1))
+            distance = simd_length(nearest - SIMD2(px, py))
+        } else if py > 0 {
             // 短い軸の上。いちばん近いのは短い軸の端
-            distance = abs(p.y - r.y)
-        } else if r.x * p.x < r.x * r.x - r.y * r.y {
+            distance = abs(py - ry)
+        } else if rx * px < rx * rx - ry * ry {
             // 長い軸の上で、縮閉線の尖りより中心の側。いちばん近いのは軸の外の点
-            let x0 = r.x * p.x / (r.x * r.x - r.y * r.y)
-            distance = simd_length(SIMD2(r.x * x0 - p.x, r.y * sqrt(max(0, 1 - x0 * x0))))
+            let x0 = rx * px / (rx * rx - ry * ry)
+            distance = simd_length(SIMD2(rx * x0 - px, ry * sqrt(max(0, 1 - x0 * x0))))
         } else {
-            distance = abs(p.x - r.x)
+            distance = abs(px - rx)
         }
         return inside ? -distance : distance
     }
