@@ -104,6 +104,12 @@ nonisolated final class GIFFile: MovieOutput {
     deinit { try? handle.close() }
 
     func append(_ image: DisplayImage, at time: Double) async throws(MovieWriteFailure) {
+        // **1 枚ごとに autorelease の置き場を空にする** (#4081)。書き手の仕事は積まれている間ループを抜けず、
+        // 待ちが無いので区切りも来ない。ImageIO が 1 枚ごとに autorelease するものを、次の枚へ持ち越さない
+        try drainingAutoreleased { () throws(MovieWriteFailure) in try appendNow(image) }
+    }
+
+    private func appendNow(_ image: DisplayImage) throws(MovieWriteFailure) {
         if added == 0 {
             width = image.width
             height = image.height
