@@ -8,7 +8,7 @@
 /// ([ADR-0030] 決定 3)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-enum ParamOutcome: Equatable {
+package enum ParamOutcome: Equatable {
     /// 書いたとおりに入った。
     case applied
     /// 範囲へ収めて入った。**収めたことは黙らない。** 値は宣言の型のまま持つ —
@@ -33,7 +33,7 @@ enum ParamOutcome: Equatable {
 /// ここが作り直すことはない ([ADR-0030] 決定 5)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-struct ParamRegistry {
+package struct ParamRegistry {
     private let boxes: [(name: String, box: any DeclaredParam)]
 
     init(of sketch: any Sketch) {
@@ -91,7 +91,7 @@ struct ParamRegistry {
     /// 起動のたびに 2 度数えることになり、重複した宣言の警告まで 2 度出る — 読み手には
     /// 「重複が 2 個ある」と読める
     /// ([#994](https://github.com/mokume-metal/mokume/issues/994) の 13)。
-    var knobs: [any DeclaredParam] { boxes.map(\.box) }
+    package var knobs: [any DeclaredParam] { boxes.map(\.box) }
 
     /// その名前の宣言があるか。
     func declares(_ name: String) -> Bool {

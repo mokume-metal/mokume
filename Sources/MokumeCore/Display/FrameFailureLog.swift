@@ -22,17 +22,19 @@
 /// 組み立てた文が壊れるのは実際に起きている — その 7 本を畳んだとき、動詞の語幹から
 /// 組んだせいで「頼んだ」が「頼んた」になった
 /// ([#947](https://github.com/mokume-metal/mokume/issues/947))。
-struct FrameFailureLog {
+package struct FrameFailureLog {
     private var consecutive = 0
 
+    package init() {}
+
     /// 1 つ数える。**言うべきなら `true`** — 続きの失敗では `false` を返す。
-    mutating func note() -> Bool {
+    package mutating func note() -> Bool {
         consecutive += 1
         return consecutive == 1
     }
 
     /// 回復した。**言うべきなら飛ばした枚数**、言うことが無ければ `nil`。
-    mutating func recovered() -> Int? {
+    package mutating func recovered() -> Int? {
         guard consecutive > 0 else { return nil }
         defer { consecutive = 0 }
         return consecutive

@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 外から届く JSON の整数の欄が、桁の多い端数つきの数を端数を捨てた整数として読まないこと
 /// ([#4015](https://github.com/mokume-metal/mokume/issues/4015))。

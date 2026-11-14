@@ -105,13 +105,13 @@ package final class OutsideRun {
     }
 
     /// 映し始めた実行を載せる。同じものを 2 度載せない。
-    func present(_ runtime: SketchRuntime) {
+    package func present(_ runtime: SketchRuntime) {
         presented.removeAll { $0.runtime == nil || $0.runtime === runtime }
         presented.append(WeakRuntime(runtime: runtime))
     }
 
     /// 映し終えた実行を降ろす。
-    func withdraw(_ runtime: SketchRuntime) {
+    package func withdraw(_ runtime: SketchRuntime) {
         presented.removeAll { $0.runtime == nil || $0.runtime === runtime }
     }
 

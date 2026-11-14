@@ -6,6 +6,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 @testable import mokume
 
 /// 範囲つきの整数の `@Param` へ、`Int` の端の値が書かれても落ちないこと

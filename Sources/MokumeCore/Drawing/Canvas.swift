@@ -7206,7 +7206,7 @@ extension Canvas: SettlementObserver {
     /// 影を焼いた投入か、拡大を積んだ投入の結末が届いた。打ち切られていれば、それぞれの記帳を取り消す
     /// (``shadowBakeDropped(_:)``・``upscaleDropped(_:)``)。正常に終わったなら何もしない — 覚えた番号は
     /// 後の投入が上書きする。
-    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+    package func submissionSettled(_ submission: UInt64, dropped: Bool) {
         let restoredOver = carriedAwaitingOutcome.removeValue(forKey: submission) ?? false
         // `filter()` の投入は、届いたら手放す。打ち切られていたら知らせる (戻すものは無い)
         let wasFilter = filterSubmissions.contains(submission)

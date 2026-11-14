@@ -29,7 +29,7 @@ import Observation
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
-final class RemoteParams {
+package final class RemoteParams {
     /// 面の応答のうち、つまみを組むのに要るところ。
     ///
     /// **宣言は 1 件ずつ緩く読む** (``Reading``)。配列ごと厳しく読むと、1 件が読めないだけで応答
@@ -77,7 +77,7 @@ final class RemoteParams {
 
     let directory: URL
     /// いま並べる箱。**顔ぶれが変われば作り直される。**
-    private(set) var boxes: [RemoteParam] = []
+    package private(set) var boxes: [RemoteParam] = []
     /// 並んでいる宣言の顔ぶれ。名前と型が変わったかだけを見る。
     private(set) var signature: [String] = []
     /// 応答の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、確定させずに
@@ -104,7 +104,7 @@ final class RemoteParams {
     /// 読めない宣言を飛ばしたこと・読めない応答のことの名乗り。**検査から差し替える** — 既定は標準エラー。
     private let warn: (String) -> Void
 
-    init(directory: URL, warn: @escaping (String) -> Void = Diagnostics.warn) {
+    package init(directory: URL, warn: @escaping (String) -> Void = Diagnostics.warn) {
         self.directory = directory
         self.warn = warn
         let reportURL = WorkDirectory.reportURL(under: directory)
@@ -119,7 +119,7 @@ final class RemoteParams {
     ///
     /// - Returns: 箱の顔ぶれが変わったら `true` (重ねる面を作り直す合図)。
     @discardableResult
-    func refresh() -> Bool {
+    package func refresh() -> Bool {
         guard let report = report.changed() else { return false }
         return adopt(report)
     }
@@ -272,7 +272,7 @@ final class RemoteParams {
 /// でよい — 走らせたウィンドウと道具のウィンドウで見た目が割れない ([ADR-0032] 決定 5)。
 @Observable
 @MainActor
-final class RemoteParam: DeclaredParam {
+package final class RemoteParam: DeclaredParam {
     /// いまの値。**動かせばその場で変わる** (正典は子だが、届くまではこちらを見せる)。
     private(set) var value: ParamValue
 
@@ -291,19 +291,19 @@ final class RemoteParam: DeclaredParam {
         self.post = post
     }
 
-    var declaration: ParamDeclaration {
+    package var declaration: ParamDeclaration {
         ParamDeclaration(name: name, value: value, range: range, choices: choices, step: step)
     }
 
     /// **面越しのつまみは既定値を持たない。** 保存を持つのは子 (``ParamBox`` の側) で、ウィンドウの側は読まない。
-    var defaultValue: ParamValue? { nil }
+    package var defaultValue: ParamValue? { nil }
 
     /// つまみを動かされた。
     ///
     /// **収めるのも弾くのも子の仕事である** ([ADR-0030] 決定 3 の判断は 1 か所にある)。
     /// ここは見た目をその場で合わせて、要求を置くだけにする — 二重に判断すると、
     /// 道具の版とスケッチの版で違う端に収まる日が来る。
-    func write(_ incoming: ParamValue) -> ParamOutcome {
+    package func write(_ incoming: ParamValue) -> ParamOutcome {
         if incoming != value { changeCount &+= 1 }
         value = incoming
         post(name, incoming)
@@ -311,10 +311,10 @@ final class RemoteParam: DeclaredParam {
     }
 
     /// 見せている値が変わった回数 (``DeclaredParam/changeCount``)。
-    @ObservationIgnored private(set) var changeCount: UInt64 = 0
+    @ObservationIgnored package private(set) var changeCount: UInt64 = 0
 
     /// **聴かない。** 値を置くのも記録するのも子の側 (``ParamBox``) で、道具のウィンドウのつまみは要求を置くだけである (#3570)。
-    func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {}
+    package func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {}
 
     /// 子が名乗った値へ合わせる。
     func adopt(_ settled: ParamValue) {

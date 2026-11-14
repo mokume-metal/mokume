@@ -7,6 +7,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 画面の出口と道具の管を誰が持つかは、**起こし方**で決まる ([#2028])。
 ///

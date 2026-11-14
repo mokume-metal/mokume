@@ -16,6 +16,12 @@
 @_exported import MokumeNetwork
 @_exported import MokumeVision
 
+// macOS の単独のウィンドウの外枠 (`Sketch.main()` など)。Package.swift が macOS のときだけ依存するので、
+// ここも同じ条件で通す (#3804)
+#if os(macOS)
+@_exported import MokumeMac
+#endif
+
 // 三角関数は宣言単位で名指しして通す (ADR-0020 決定 7)。
 //
 // スケッチで時刻から位置を出すのは最初の 1 行目にやることで、そこで `import Foundation`

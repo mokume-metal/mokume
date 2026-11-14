@@ -419,7 +419,7 @@ extension Numbers: PendingUpload {
     /// いない入力を読んでおり、その結果も含めて打ち切られた回の計算と同じく失われる。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+    package func submissionSettled(_ submission: UInt64, dropped: Bool) {
         guard let index = inFlight.firstIndex(where: { $0.submission == submission }) else { return }
         let record = inFlight[index]
         let ranges = record.start..<(record.start + record.count)

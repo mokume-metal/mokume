@@ -215,7 +215,7 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     /// 道具と依存の版がずれたとき、手で値を置いたときに起きる。
     ///
     /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
-    static func startup(
+    package static func startup(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws(RenderFailure) -> RenderRequest? {
         guard let value = environment[StartupReads.render.key] else { return nil }

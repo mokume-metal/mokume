@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+@testable import MokumeMac
 
 // 検査の原文を読み、**GPU を要する検査に GPU の有無の条件が掛かっているか**を見る。
 //

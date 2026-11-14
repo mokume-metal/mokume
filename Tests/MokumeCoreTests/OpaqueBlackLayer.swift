@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+@testable import MokumeMac
 
 /// 1 枚目の前のウィンドウの層が、不透明な黒で塗られているかの判定 ([#2876](https://github.com/mokume-metal/mokume/issues/2876))。
 ///

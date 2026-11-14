@@ -6,6 +6,7 @@ import MokumeDiagnostics
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// スケッチが言った警告の溜め場 (``WarningDigest``) の振る舞い (#2761)。GPU は要らない。
 ///
@@ -187,13 +188,13 @@ struct WarningDigestTests {
     static let directWriteAllowlist = [
         "Sources/MokumeDiagnostics/Diagnostics.swift":
             "溜め場へ控える側 (warn の本体)",
-        "Sources/MokumeCore/Display/SketchApplication.swift":
+        "Sources/MokumeMac/SketchApplication.swift":
             "起動に失敗して終わるときの最後の 1 文。スケッチが走り出す前で、観測を答える相手が居ない",
     ]
 
     @Test("スケッチのプロセスの警告は、すべて Diagnostics.warn を通る")
     func everySketchModuleWarnsThroughDiagnostics() throws {
-        let modules = ["MokumeCore", "MokumeAudio", "MokumeCamera", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI", "MokumeGame", "MokumeVision", "MokumeUI", "MokumeHost", "MokumeDiagnostics"]
+        let modules = ["MokumeCore", "MokumeAudio", "MokumeCamera", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI", "MokumeGame", "MokumeVision", "MokumeUI", "MokumeHost", "MokumeMac", "MokumeDiagnostics"]
         let marks = ["FileHandle.standardError", "fputs(", "stderr"]
         var found: Set<String> = []
         for module in modules {

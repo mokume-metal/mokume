@@ -39,7 +39,7 @@ import Foundation
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
-final class StandardInputEvents {
+package final class StandardInputEvents {
     /// 一度に読み取る量。
     static let chunkSize = 4096
 
@@ -68,7 +68,7 @@ final class StandardInputEvents {
     /// **合図を自分では見ない。** 作ってよいかは出口を決めた側が知っている
     /// (``SketchApplication``・上の「合図を増やさない」)。経路ごとに合図を持つと、ウィンドウは道具の
     /// ものなのに触っても効かない、という片側だけ効いた状態が作れてしまう。
-    init(descriptor: Int32) {
+    package init(descriptor: Int32) {
         self.descriptor = descriptor
         // **塞がないようにする。** これを忘れると、次の 1 件が来るまでフレームが進まない
         let flags = fcntl(descriptor, F_GETFL)

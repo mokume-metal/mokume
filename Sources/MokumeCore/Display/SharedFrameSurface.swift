@@ -48,7 +48,7 @@ import MokumeDiagnostics
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
-final class SharedFrameSurface {
+package final class SharedFrameSurface {
     /// 面の画素形式 (`'RGhA'` = 4 成分・半精度浮動小数)。
     ///
     /// **``RenderTarget/pixelFormat`` と対になっている。** IOSurface 側は Metal の
@@ -181,20 +181,20 @@ final class SharedFrameSurface {
     static let windowTitleAttribute = "mokume.windowTitle"
 
     /// 面の番号を置くファイルの名前。
-    static let manifestName = "surface.json"
+    package static let manifestName = "surface.json"
 
     /// 全画面にするよう頼むディスプレイ 1 枚 ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。
     ///
     /// **番号 (``Display/number``) だけでなく、OS が振った識別子 (`CGDirectDisplayID`) も載せる。** 道具は同じ
     /// 機械の `NSScreen` から識別子で画面を引き直す — 番号は子が組み立てで選んだ後に抜き差しがあると、道具が
     /// 別の画面を指しうる。番号と名前は、引けなかったときに道具が名乗る言葉の材料である。
-    struct FullScreenDisplay: Codable, Equatable, Sendable {
+    package struct FullScreenDisplay: Codable, Equatable, Sendable {
         /// 子が選んだ番号 (1 から)。整数の欄は、桁の多い端数つきの数も `2.5` と同じに断る (#4015)。
         @WholeNumber var number: Int
         /// OS が名乗る名前。
         let name: String
         /// OS が振った識別子 (`CGDirectDisplayID`)。**道具が画面を引く鍵。**
-        @WholeNumber var screenID: UInt32
+        @WholeNumber package var screenID: UInt32
 
         init(number: Int, name: String, screenID: UInt32) {
             self.number = number
@@ -202,7 +202,7 @@ final class SharedFrameSurface {
             self.screenID = screenID
         }
 
-        init(_ display: Display) {
+        package init(_ display: Display) {
             self.init(number: display.number, name: display.name, screenID: display.screenID)
         }
 
@@ -210,7 +210,7 @@ final class SharedFrameSurface {
         var isUsable: Bool { number >= 1 && screenID != 0 }
 
         /// `display 2 (LG ULTRAWIDE)` の形。名乗りに使う。
-        var label: String { "display \(number) (\(name))" }
+        package var label: String { "display \(number) (\(name))" }
     }
 
     /// 面の番号と大きさ。**読み手が最初に読むもの。**
@@ -221,7 +221,7 @@ final class SharedFrameSurface {
     /// 「綴りが 2 か所へ分かれると片方だけ直したときに静かに食い違う」と危うさを名乗って
     /// いたが、**注意書きは分かれることを止めない**
     /// ([#960](https://github.com/mokume-metal/mokume/issues/960) の 4)。
-    struct Manifest: Codable {
+    package struct Manifest: Codable {
         /// この形の版。**先頭の格納プロパティである** — 合成の `encode` は宣言順に
         /// 書き出すので、置き場所が鍵の並びを決める。
         let schemaVersion = Manifest.readableVersion
@@ -233,9 +233,9 @@ final class SharedFrameSurface {
         static let readableVersion = 1
 
         /// 面の番号。並びが**書く順**である。
-        let ids: [UInt32]
-        let width: Int
-        let height: Int
+        package let ids: [UInt32]
+        package let width: Int
+        package let height: Int
         /// ウィンドウを開く倍率 (``SketchSettings/windowScale``)。**作品のウィンドウの大きさを、直に走らせた
         /// ときと揃えるために渡す** ([ADR-0032] 決定 1 の「見え方は直に走らせたときと同じ」)。
         ///
@@ -244,7 +244,7 @@ final class SharedFrameSurface {
         ///
         /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
         /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-        let windowScale: Float?
+        package let windowScale: Float?
         /// 作品のウィンドウを全画面にするよう頼むディスプレイ (``SketchSettings/fullScreen(_:)``)。**宣言どおりの画面で
         /// 出すために渡す** ([ADR-0032] 決定 1 の「見え方は直に走らせたときと同じ」・[#2188])。
         ///
@@ -253,7 +253,7 @@ final class SharedFrameSurface {
         /// ならなかったことは子の名乗りが言う (``SketchApplication/resolveOutlet(at:owner:)``)。
         ///
         /// [#2188]: https://github.com/mokume-metal/mokume/issues/2188
-        let fullScreenDisplay: FullScreenDisplay?
+        package let fullScreenDisplay: FullScreenDisplay?
         /// この目録を置いた子のプロセスの番号。**どの世代の目録かを、読み手が照合する印である**
         /// ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
         ///
@@ -261,7 +261,7 @@ final class SharedFrameSurface {
         /// は、見張りが届いた時点で待っている世代に当てはめるしかなかった — 保存を続けた並びで、前の
         /// 世代の合図が次の世代のものと読まれる。**無くても絵は出る** (``windowScale`` と同じ足し方 —
         /// 版は据え置き)。書かない古いライブラリの子は `nil` で、読み手は今までの推定に倒れる。
-        let pid: Int32?
+        package let pid: Int32?
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, ids, width, height, windowScale, fullScreenDisplay, pid
@@ -283,7 +283,7 @@ final class SharedFrameSurface {
         ///
         /// 絵にならない値もここで止める — 面が 1 枚も無い、大きさが 0 以下。**持ち回ってから
         /// 気付くと、落ちる場所が読んだ所から遠ざかる。**
-        init(from decoder: any Decoder) throws {
+        package init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             // 整数の欄は、桁の多い端数つきの数も `2.5` と同じに断る (#4015)
             let version = try container.decodeWhole(Int.self, forKey: .schemaVersion)
@@ -382,12 +382,12 @@ final class SharedFrameSurface {
 
     /// 道具へ渡す名乗りの中身 (``frameShareAttribute``)。**`nil` なら断っている** (道具は名乗らない)。
     /// 書き手が出口を共有面に決めたときに据える。
-    var frameShare: FrameShare?
+    package var frameShare: FrameShare?
     /// GPU が打ち切った焼きを、名乗らずに捨てた回数 (作ってから通算)。
     ///
     /// 呼び手 (``SketchApplication``) が、止まっている間に同じ絵を焼き直さない代わりに、捨てた焼きを
     /// 見つけて焼き直すために読む ([#2367](https://github.com/mokume-metal/mokume/issues/2367))。
-    private(set) var droppedBurns = 0
+    package private(set) var droppedBurns = 0
     /// 書き込みの通し番号。**1 から数える。** 焼いた面が名乗る枚数はこれで決まる。
     private var writes = 0
     /// 最後に名乗った面の枚数 (その面を焼いた書き込みの通し番号)。**1 から数える** — 0 は「まだ
@@ -411,7 +411,7 @@ final class SharedFrameSurface {
     /// - Parameters:
     ///   - owner: 起こした道具の名乗り (``launchOwner``)。
     ///   - warn: 理由を伝える口。検査が差し替える。
-    static func makeIfEnabled(
+    package static func makeIfEnabled(
         gpu: RenderDevice, width: Int, height: Int, windowScale: Float? = nil,
         fullScreenDisplay: FullScreenDisplay? = nil,
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
@@ -438,7 +438,7 @@ final class SharedFrameSurface {
     /// 走らせる別の実行ファイルなど) のものではない — 継がせると、孫まで見張りのウィンドウと管を
     /// 持っているかのように振る舞う ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
     /// 読むのは ``SketchApplication`` の組み立てで、スケッチの `setup()` より前である。
-    static let launchOwner: String? = takeOwner()
+    package static let launchOwner: String? = takeOwner()
 
     /// 合図を読み、環境から消す。**呼ぶのは ``launchOwner`` の 1 度だけ** (検査は口を差し替える)。
     ///
@@ -490,7 +490,7 @@ final class SharedFrameSurface {
     /// ([#988](https://github.com/mokume-metal/mokume/issues/988))。
     ///
     /// - Parameter owner: 起こした道具の名乗り (``launchOwner``)。
-    static func isEnabled(
+    package static func isEnabled(
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
         owner: String? = SharedFrameSurface.launchOwner
     ) -> Bool {
@@ -509,7 +509,7 @@ final class SharedFrameSurface {
     /// 呼び手が既に名乗っている。置いた目印は、見た道具が消す。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-    static func declareFallback(
+    package static func declareFallback(
         at directory: URL, pid: Int32 = ProcessInfo.processInfo.processIdentifier
     ) {
         let url = WorkDirectory.fellBackURL(forProcess: pid, under: directory)
@@ -523,7 +523,7 @@ final class SharedFrameSurface {
     /// なぜ開いたかを 1 度だけ言う。**在処をそのまま出す** — 基準は環境変数が動かせるので、
     /// `.mokume/…` とだけ言うとスケッチの場所を探して「無い」と読まれる
     /// ([#791](https://github.com/mokume-metal/mokume/issues/791))。
-    static func strayFacetNotice(
+    package static func strayFacetNotice(
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
         owner: String? = SharedFrameSurface.launchOwner
     ) -> String? {
@@ -631,7 +631,7 @@ final class SharedFrameSurface {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     /// **投げる。** 置けなかったときにウィンドウを開く側へ倒す判断は呼び手 (``SketchApplication``)
     /// が持つので、ここは名乗らない — 判断が呼び手にある口だけが `throws` である (#989)。
-    func publishManifest() throws {
+    package func publishManifest() throws {
         try AtomicFile.writeJSON(
             Manifest(
                 ids: ids, width: width, height: height, windowScale: windowScale,
@@ -663,7 +663,7 @@ final class SharedFrameSurface {
     ///   - windowTitle: この絵を描いたときに、スケッチが頼んでいたウィンドウの題名 (``windowTitleAttribute``)。
     ///     頼んでいなければ `nil`。
     @discardableResult
-    func write(
+    package func write(
         _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers,
         pointerLock: Bool = false, cursorHidden: Bool = false,
         selection: SelectionBroker.Request? = nil, windowTitle: String? = nil
@@ -711,7 +711,7 @@ final class SharedFrameSurface {
     /// (1 回の書き込みの間、届かなかった・結末を失った)、後に焼いた面があるので見送る。
     ///
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
-    func publishPending() throws(RenderFailure) {
+    package func publishPending() throws(RenderFailure) {
         while !pending.isEmpty {
             let burn = pending.removeFirst()
             try gpu.waitForSubmission(burn.submission)
@@ -805,7 +805,7 @@ final class SharedFrameSurface {
     }
 
     /// 引いた面が名乗っている捕まえの要求。載っていなければ `false`。
-    static func pointerLockRequested(on surface: IOSurfaceRef) -> Bool {
+    package static func pointerLockRequested(on surface: IOSurfaceRef) -> Bool {
         number(pointerLockAttribute, on: surface)?.intValue == 1
     }
 
@@ -828,7 +828,7 @@ final class SharedFrameSurface {
     }
 
     /// 引いた面が名乗っている矢印を隠す要求。載っていなければ `false`。
-    static func cursorHiddenRequested(on surface: IOSurfaceRef) -> Bool {
+    package static func cursorHiddenRequested(on surface: IOSurfaceRef) -> Bool {
         number(cursorHiddenAttribute, on: surface)?.intValue == 1
     }
 
@@ -845,7 +845,7 @@ final class SharedFrameSurface {
     /// 引いた面が名乗っている題名を変える頼み。読み手の側の規則 (``publishWindowTitle(_:to:)`` と対)。
     ///
     /// - Returns: 載っていない面・文字列でない値は `nil` (頼んでいない)。
-    static func windowTitleRequest(on surface: IOSurfaceRef) -> String? {
+    package static func windowTitleRequest(on surface: IOSurfaceRef) -> String? {
         IOSurfaceCopyValue(surface, windowTitleAttribute as CFString) as? String
     }
 
@@ -874,7 +874,7 @@ final class SharedFrameSurface {
     }
 
     /// 引いた面が載せている名乗りの中身。**載っていない・形の違う値は `nil`** (断っている)。
-    static func frameShare(on surface: IOSurfaceRef) -> FrameShare? {
+    package static func frameShare(on surface: IOSurfaceRef) -> FrameShare? {
         guard let value = IOSurfaceCopyValue(surface, frameShareAttribute as CFString) as? [String: Any],
             let sketch = value[FrameShare.sketchKey] as? String,
             let title = value[FrameShare.titleKey] as? String
@@ -903,7 +903,7 @@ final class SharedFrameSurface {
     /// - Returns: 載っていない面は `nil` (頼んでいない)。番号が正の整数でない値は頼みとして読まない。
     ///   文言の無い頼みは、文言を空にして読む (番号が頼みの本体で、文言は添え書き)。種類の無い頼みは
     ///   `file` と読み、知らない種類の頼みは読まない (``selectInputKindKey``)。
-    static func selectionRequest(on surface: IOSurfaceRef) -> SelectionBroker.Request? {
+    package static func selectionRequest(on surface: IOSurfaceRef) -> SelectionBroker.Request? {
         guard let value = IOSurfaceCopyValue(surface, selectInputAttribute as CFString)
                 as? [String: Any],
             let serial = (value[selectInputSerialKey] as? NSNumber)?.intValue, serial > 0
@@ -942,7 +942,7 @@ final class SharedFrameSurface {
     ///
     /// - Returns: 読めなければ `nil`。版・面の枚数・大きさの検めは ``Manifest/init(from:)``
     ///   が持つ。
-    static func readManifest(at facet: URL) -> Manifest? {
+    package static func readManifest(at facet: URL) -> Manifest? {
         let url = facet.appendingPathComponent(manifestName)
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(Manifest.self, from: data)
@@ -970,18 +970,18 @@ final class SharedFrameSurface {
     ///
     /// [#2368]: https://github.com/mokume-metal/mokume/issues/2368
     @MainActor
-    final class Lookup {
+    package final class Lookup {
         let ids: [UInt32]
         private var held: [UInt32: IOSurfaceRef] = [:]
         /// `IOSurfaceLookup` を呼んだ回数。**検査が読む** — 番号の組が変わらない間は増えないこと。
-        private(set) var lookups = 0
+        package private(set) var lookups = 0
 
-        init(ids: [UInt32]) {
+        package init(ids: [UInt32]) {
             self.ids = ids
         }
 
         /// 番号の面。持っていなければ 1 度引く。引けなければ `nil` (持たない)。
-        func surface(_ id: UInt32) -> IOSurfaceRef? {
+        package func surface(_ id: UInt32) -> IOSurfaceRef? {
             if let surface = held[id] { return surface }
             lookups += 1
             guard let surface = IOSurfaceLookup(id) else { return nil }
@@ -990,7 +990,7 @@ final class SharedFrameSurface {
         }
 
         /// いま読むべき面の番号と、その面が名乗っている枚数。規則は ``SharedFrameSurface/newest(among:)``。
-        func newest() -> (id: UInt32, frame: Int)? {
+        package func newest() -> (id: UInt32, frame: Int)? {
             var best: (id: UInt32, frame: Int)?
             for id in ids {
                 guard let surface = surface(id) else { continue }
@@ -1025,7 +1025,7 @@ final class SharedFrameSurface {
     }
 
     /// 引いた面が名乗っている速さ。載っていなければ `nil`。
-    static func numbers(on surface: IOSurfaceRef) -> FrameNumbers? {
+    package static func numbers(on surface: IOSurfaceRef) -> FrameNumbers? {
         guard let count = number(TempoAttribute.frameCount, on: surface)?.intValue,
             let time = number(TempoAttribute.time, on: surface)?.doubleValue
         else { return nil }

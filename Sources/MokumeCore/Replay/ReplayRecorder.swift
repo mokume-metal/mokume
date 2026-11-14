@@ -42,7 +42,7 @@ import MokumeDiagnostics
 /// 読み飛ばせる形にしてある (`Schemas/replay-record.schema.json`)。
 ///
 /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
-final class ReplayRecorder {
+package final class ReplayRecorder {
     /// 記録の書式の版。
     static let schemaVersion = 1
     /// 画素のハッシュを取るフレーム番号の間隔。**そのフレーム番号が 60 の倍数のとき**に取る。

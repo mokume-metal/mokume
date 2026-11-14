@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import AppKit
+import CoreGraphics
 
 /// 繋がっているディスプレイ 1 枚。``SketchPart/displays`` が番号順に並べ、
 /// ``SketchSettings/fullScreen(_:)`` が番号で選ぶ。
@@ -37,7 +37,7 @@ public nonisolated struct Display: Equatable, Sendable, CustomStringConvertible 
     public let height: Int
     /// OS がこのディスプレイに振った番号 (`CGDirectDisplayID`)。ウィンドウを出すときに、画面を
     /// 引き直す鍵にする (`screen(for:among:)`)。**面には出さない** — 選ぶ形は番号の 1 本である。
-    let screenID: UInt32
+    package let screenID: UInt32
 
     /// `2: DELL U2720Q (3840×2160)` の形。
     public var description: String { "\(number): \(name) (\(width)×\(height))" }
@@ -46,24 +46,36 @@ public nonisolated struct Display: Equatable, Sendable, CustomStringConvertible 
 // MARK: - 一覧の組み方 (#2020)
 
 extension Display {
-    /// OS が名乗る画面 1 枚の読み。``readings(of:)`` が `NSScreen` から写す。
+    /// OS が名乗る画面 1 枚の読み。外枠 (MokumeMac の `Display.readings(of:)`) が `NSScreen` から写す。
     ///
     /// **検査はこれを直に組む。** 一覧の番号の振り方・全画面の大きさ・選び方は、この読みから
     /// 先がすべて純粋な関数なので、ディスプレイが 1 枚の機械でも、何枚・どんな配置でも確かめ
     /// られる (ADR-0041 決定 2 の基準 4)。
-    struct Reading: Equatable, Sendable {
+    package struct Reading: Equatable, Sendable {
         /// OS が振った番号 (`CGDirectDisplayID`)。
-        var screenID: UInt32
+        package var screenID: UInt32
         /// OS が名乗る名前。
-        var name: String
+        package var name: String
         /// 画面の枠 (点・全画面の座標。原点はメニューバーのある画面の左下)。
-        var frame: CGRect
+        package var frame: CGRect
         /// 使える範囲 (点)。メニューバーと Dock の帯を除いたもの。
-        var visibleFrame: CGRect
+        package var visibleFrame: CGRect
         /// 上の縁でカメラの切り欠きにかかる丈 (点)。切り欠きの無い画面では 0。
-        var cameraHousing: CGFloat
+        package var cameraHousing: CGFloat
         /// 1 点あたりの画素。
-        var scale: CGFloat
+        package var scale: CGFloat
+
+        package init(
+            screenID: UInt32, name: String, frame: CGRect, visibleFrame: CGRect, cameraHousing: CGFloat,
+            scale: CGFloat
+        ) {
+            self.screenID = screenID
+            self.name = name
+            self.frame = frame
+            self.visibleFrame = visibleFrame
+            self.cameraHousing = cameraHousing
+            self.scale = scale
+        }
     }
 
     /// 全画面にしたウィンドウの中身の大きさ (点)。
@@ -124,30 +136,12 @@ extension Display {
         return display
     }
 
-    /// 画面の読み。**既定はいま繋がっている画面。**
-    static func readings(of screens: [NSScreen] = NSScreen.screens) -> [Reading] {
-        screens.map { screen in
-            Reading(
-                screenID: screen.screenID, name: screen.localizedName, frame: screen.frame,
-                visibleFrame: screen.visibleFrame, cameraHousing: screen.safeAreaInsets.top,
-                scale: screen.backingScaleFactor)
-        }
-    }
+    /// いま繋がっている画面を読む口。**MokumeCore は OS の UI 部品を知らないので、画面を読むのは外枠
+    /// (MokumeMac の `MacPlatform.install()`) が差し込む** (#3804)。差し込まれる前は空を返す。
+    @MainActor package static var screenReader: () -> [Reading] = { [] }
 
     /// いま繋がっているディスプレイ。**決して落ちない** — 画面の無い実行環境では空。
-    static var connected: [Display] { list(from: readings()) }
-
-    /// このディスプレイの画面を、繋がっている中から引く。外れていれば `nil`。
-    static func screen(for display: Display, among screens: [NSScreen] = NSScreen.screens) -> NSScreen? {
-        screens.first { $0.screenID == display.screenID }
-    }
-}
-
-extension NSScreen {
-    /// OS がこの画面に振った番号 (`CGDirectDisplayID`)。読めなければ 0。
-    var screenID: UInt32 {
-        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
-    }
+    @MainActor package static var connected: [Display] { list(from: screenReader()) }
 }
 
 extension SketchPart {

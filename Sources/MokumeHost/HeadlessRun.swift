@@ -4,6 +4,10 @@
 import Foundation
 import MokumeCore
 
+#if os(macOS)
+import MokumeMac
+#endif
+
 /// スケッチをウィンドウを出さずに実行する API。**`import MokumeHost` で使う。**
 ///
 /// ツール・外のパッケージ・テストが、スケッチを 1 フレームずつ進め、描いたフレームを値で読み、入力を注入するための
@@ -59,6 +63,11 @@ public final class HeadlessRun {
     public init(_ sketch: some Sketch, gpu: RenderDevice? = nil) throws(RenderFailure) {
         let device: RenderDevice
         if let gpu { device = gpu } else { device = try RenderDevice() }
+        // 画面の一覧 (``SketchPart/displays``・全画面の大きさ) とメニューバーの名乗りは OS の UI 部品で読む・出すので、
+        // macOS の外枠から差し込む (#3804)。ウィンドウは開かない
+        #if os(macOS)
+        MacPlatform.install()
+        #endif
         runtime = try SketchRuntime(sketch: sketch, gpu: device)
     }
 

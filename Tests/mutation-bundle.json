@@ -166,7 +166,7 @@
     {
       "id": "2983-stage-reads-released-requests",
       "origin": "#2983",
-      "file": "Sources/MokumeCore/Display/SharedFrameStage.swift",
+      "file": "Sources/MokumeMac/SharedFrameStage.swift",
       "find": "if !isReleased(source) {\n            pointerLockRequested =",
       "replace": "if true {\n            pointerLockRequested =",
       "gpu": true,

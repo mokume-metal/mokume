@@ -3,6 +3,7 @@
 
 import AppKit
 import ObjectiveC
+@testable import MokumeMac
 
 // 検査のプロセスだけで、並べたウィンドウを透明にする (#3652)。
 //

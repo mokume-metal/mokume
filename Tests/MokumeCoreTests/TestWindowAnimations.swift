@@ -3,6 +3,7 @@
 
 import AppKit
 import ObjectiveC
+@testable import MokumeMac
 
 // 検査のプロセスだけで、ウィンドウのアニメーションを止める (#3286)。
 //

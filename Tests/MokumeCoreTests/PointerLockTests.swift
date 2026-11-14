@@ -5,6 +5,7 @@ import IOSurface
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// カーソルを捕まえるかの判定 ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
 ///

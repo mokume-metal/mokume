@@ -37,7 +37,7 @@ import Synchronization
 /// 場所を受けない実行 (旗の無い `watch`・`run`・`render`) は、何も読まず何も書かない。
 ///
 /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
-final class ClockHandover {
+package final class ClockHandover {
     /// 作者の時計が、実時間の時計か、フレーム番号から導く時計か。書く頻度と外挿の誤差の許し方が違う。
     nonisolated enum Kind: Equatable, Sendable {
         /// 実時間で進む。止めていなければ書いた後も実時間で進むので、外挿は正確である。
@@ -133,7 +133,7 @@ final class ClockHandover {
     /// **ここではファイルを読まない** — 読むのは `setup()` の前と最初の枚の時点である。
     ///
     /// **環境を読むのはここだけ** — 一覧 (``StartupReads``) が読み場所としてこのファイルを名指している。
-    static func startup(
+    package static func startup(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         unset: (String) -> Void = { unsetenv($0) }
     ) -> ClockHandover? {

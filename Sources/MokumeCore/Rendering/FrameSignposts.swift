@@ -14,7 +14,7 @@ import os
 /// ``RenderDevice/lastGPUFrameTime`` が持つ。
 ///
 /// 張ること自体の代償は 1 フレームあたり数 µs で、予算の 0.02% 前後に収まる (#2378 の実測)。
-nonisolated enum FrameSignposts {
+package nonisolated enum FrameSignposts {
     /// 区間の持ち主。`OSSignposter` は `Sendable` で、状態を持たない。
     static let signposter = OSSignposter(
         logHandle: OSLog(subsystem: "mokume", category: .pointsOfInterest))
@@ -38,11 +38,11 @@ nonisolated enum FrameSignposts {
     }
 
     /// 描いた絵を差し出す。
-    static func beginPresent() -> OSSignpostIntervalState {
+    package static func beginPresent() -> OSSignpostIntervalState {
         signposter.beginInterval("present")
     }
 
-    static func endPresent(_ state: OSSignpostIntervalState) {
+    package static func endPresent(_ state: OSSignpostIntervalState) {
         signposter.endInterval("present", state)
     }
 }

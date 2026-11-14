@@ -326,7 +326,7 @@ enum NewCommand {
         // (ADR-0048) だが、埋め込む・ウィンドウなしで走らせるときに依存へ足すと、同じ名前のターゲットが 2 つになる
         "mokume", "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork",
         "MokumeGamepad", "MokumeMIDI", "MokumeGame", "MokumeVision", "MokumeUI", "MokumeHost", "MokumeDiagnostics",
-        "MokumeMacros",
+        "MokumeMacros", "MokumeMac",
         // ひな形が import するモジュール (`mokume` は上) と標準ライブラリ。`Foundation` はひな形が
         // import しなくなった (#2416) が、ライブラリのソースが import するので下の SDK の列にも要る
         "Foundation", "Swift",

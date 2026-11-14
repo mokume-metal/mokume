@@ -19,7 +19,7 @@ import MokumeDiagnostics
 // (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
 @MainActor public final class RenderTarget: EffectSurface {
     /// 作業空間の画素の形式。
-    static let pixelFormat: MTLPixelFormat = .rgba16Float
+    package static let pixelFormat: MTLPixelFormat = .rgba16Float
 
     /// 奥行きを覚えておく面の形式。
     static let depthFormat: MTLPixelFormat = .depth32Float
@@ -37,7 +37,7 @@ import MokumeDiagnostics
     /// ここに置くのは、効く先が「この描画先から出て行く絵すべて」だからである。
     /// 画面へ差し出す経路も書き出す経路も、行き先は違っても出どころはここ 1 つ
     /// なので、設定も 1 つで足りる。
-    var brightness = Brightness.default
+    package var brightness = Brightness.default
 
     /// 幅 (画素)。
     public let width: Int
@@ -62,7 +62,7 @@ import MokumeDiagnostics
     /// 取り替えの相手 (``exchangePartner``) は、この描き場所が生きている間は生きている。
     ///
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
-    private(set) var texture: any MTLTexture
+    package private(set) var texture: any MTLTexture
 
     /// この面と取り替わる面 (効果の控え) の持ち主 ([#2388])。**強く持つ。**
     ///
@@ -300,7 +300,7 @@ import MokumeDiagnostics
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     ///
     /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
-    var contentRevision: UInt64 {
+    package var contentRevision: UInt64 {
         lastWriteSubmission &+ (pixelMirror?.cpuWriteCount ?? 0) &+ texturesReplaced
     }
 
@@ -1014,7 +1014,7 @@ extension RenderTarget: SettlementObserver {
     ///   写しへ書いた画素は塗られていない面を映した写しの上に載っていて、書き戻しは写しの全面を戻すので、
     ///   塗り直しても書き戻しが未定義の中身で上書きする (書き戻しを立て直さないのと同じ向き・#2199 の
     ///   反証 C9)
-    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+    package func submissionSettled(_ submission: UInt64, dropped: Bool) {
         guard dropped else { return }
         rewritePixels(droppedAt: submission)
         if let pixelMirror, !pixelMirror.hasPendingWrites, pixelMirror.syncedThrough == submission {
