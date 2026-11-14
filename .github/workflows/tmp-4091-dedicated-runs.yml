@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て (merge しない)。#4030 の完了条件 4 と #3697 の完了条件 2 — PR #4091 の木で、
+# Metal の検証層つきの全体の検査を専用機で 10 回回し、MokumeCameraTests の落ち方を数える。
+# 束 #4089。1 回ずつ直列に積み (max-parallel: 1)、始める前に merge queue の render に順番を譲る。
+name: tmp-4091-dedicated-runs
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - .github/workflows/tmp-4091-dedicated-runs.yml
+
+permissions:
+  contents: read
+
+jobs:
+  turn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: read # checkout
+      actions: read # merge queue の render の run を読む
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}
+        run: bash scripts/render-turn.sh wait
+
+  full:
+    needs: turn
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/runner-preflight.sh
+      # CI= で検証層つき (Makefile の METAL_VALIDATION)。render の job と同じ回し方
+      - run: make ci-check CI_CHECK_STEPS="build test" CI=
+      - name: 落ちた検査の文面を要約へ書く
+        if: failure()
+        run: python3 scripts/read-test-record.py --failure-messages .build/test-results-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tmp-4091-record-${{ matrix.run }}
+          path: |
+            .build/test-results-swift-testing.xml
+            .build/test-log.txt
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 7
