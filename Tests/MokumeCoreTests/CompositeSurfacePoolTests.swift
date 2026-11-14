@@ -596,8 +596,10 @@ struct CompositeSurfacePoolTests {
 
     @Test("#4029 の再現 (1280×720 に同じ形を 100 個) は既定の上限に収まり、2 フレーム目からは 1 枚も作らない")
     func theIssueExampleIsReusedWithinTheDefaultLimit() throws {
-        let placements = (0..<100).map { index in
-            Placement(x: Float(index % 10 * 112), y: Float(index / 10 * 58))
+        let placements: [Placement] = (0..<100).map { (index: Int) -> Placement in
+            let column: Int = index % 10
+            let row: Int = index / 10
+            return Placement(x: Float(column * 112), y: Float(row * 58))
         }
         let canvas = try makeCanvas(width: 1280, height: 720)
         _ = try render([{ $0.shape($1, at: placements) }, { $0.shape($1, at: placements) }], on: canvas)
