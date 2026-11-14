@@ -66,6 +66,13 @@ final class ShaderBox {
     /// 診断: 失敗を知らせた回数 (読めなかった・組み立てに失敗した)。
     private(set) var failureReports = 0
     private(set) var watcher: FileWatcher?
+    /// 差し替わったことを名乗る先: **断片を読み込んだ実行**の、再現を保証しないものを聞く係 (#3575)。
+    ///
+    /// 差し替えを扱うのは印を取った側で、プロセスで生きているどの面のフレームの頭でも、main actor を譲ったときの
+    /// `Task` でもありうる (``FileWatcher`` の「扱うのは、印を取った側」)。扱った所の ``LaunchingSketch/replay`` を
+    /// 引くと、別の実行の記録・再生に載り、自分の記録・再生からは落ちる。だから読み込んだときに控える。
+    /// 受け手の寿命は実行が決めるので弱く持つ。
+    private weak var replaySink: (any UnreproducibleSink)?
     /// 裏で組んでいる 1 本 (型の説明の「裏で組む」)。
     private var inFlight: InFlight?
     /// 診断: 裏で組みに行った回数。
@@ -100,6 +107,7 @@ final class ShaderBox {
     /// いない持ち主の `reload` が走る。
     func watch(_ onChange: @escaping () -> Void) {
         guard let url else { return }
+        replaySink = LaunchingSketch.replay
         watcher = FileWatcher(url: url, onChange: onChange)
     }
 
@@ -258,7 +266,7 @@ final class ShaderBox {
             failedBody = nil
             generation += 1
             // 走らせたまま絵が変わる。記録と再生は、差し替えた中身もその枚も持たない (#3575)
-            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.fragmentSwapped(bodyName))
+            replaySink?.noteUnreproducible(ReplayRecorder.Reason.fragmentSwapped(bodyName))
         case .failure(let error):
             // **中身のせいと言える失敗だけを控える** (#1830 の 2 回目の反証 3)。組めなかった理由が
             // 中身と関係なければ、同じ中身でも次は組める。控えると、中身を変えるまで固着する

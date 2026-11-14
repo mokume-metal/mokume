@@ -265,11 +265,54 @@ struct ReplayUnreproducibleTests {
         try write(0.2)
         let url = directory.appendingPathComponent("take.json")
         let recorded = try await record(Painted(fragment.path), frames: 4, to: url, between: swap)
-        // 並んで走る検査の見張りの印も、この面の頭が取りうる (`FileWatcher.takeChanges()`)。だから含むかで見る
-        #expect(recorded.unreproducible.contains(Reason.fragmentSwapped("paint.metal")), "\(recorded.unreproducible)")
+        // 並んで走る検査の見張りの印をこの面の頭が取っても、名乗りはその断片を読み込んだ実行へ行く。だから一致で見る
+        #expect(recorded.unreproducible == [Reason.fragmentSwapped("paint.metal")], "\(recorded.unreproducible)")
 
         try write(0.2)
         let found = try await replay(Painted(fragment.path), try stripped(url), between: swap)
-        #expect(found.unreproducible.contains(Reason.fragmentSwapped("paint.metal")), "\(found.unreproducible)")
+        #expect(found.unreproducible == [Reason.fragmentSwapped("paint.metal")], "\(found.unreproducible)")
+    }
+
+    @Test("断片の差し替えを別の実行のフレームの頭が扱っても、名乗りは断片を読み込んだ実行の記録に載り、扱った側には載らない")
+    func aSwapTakenByAnotherRunIsNamedByItsOwner() throws {
+        let directory = try scratch()
+        let fragment = directory.appendingPathComponent("paint.metal")
+        func write(_ green: Float) throws {
+            try """
+                float4 paint(Fragment in, Values values) {
+                    return float4(0.0, \(green), 0.0, 1.0);
+                }
+                """.write(to: fragment, atomically: true, encoding: .utf8)
+        }
+        try write(0.2)
+        func recording(_ sketch: any Sketch, to url: URL) throws -> SketchRuntime {
+            let runtime = try SketchRuntime(
+                sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
+            try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+            return runtime
+        }
+        let ownerURL = directory.appendingPathComponent("owner.json")
+        let otherURL = directory.appendingPathComponent("other.json")
+        let painted = Painted(fragment.path)
+        let owner = try recording(painted, to: ownerURL)
+        let other = try recording(Loader(nil), to: otherURL)
+        try owner.advance()
+        try other.advance()
+        let paint = try #require(painted.paint)
+
+        // 書き換えて印を立て、**持ち主より先に、別の実行のフレームを回す**。この間は main actor を譲らないので、
+        // 見張りの `Task` は走らず、印を取るのは別の実行の面の頭である
+        try write(0.8)
+        paint.watcher?.keepPending()
+        try other.advance()
+        #expect(paint.generation == 1, "別の実行のフレームの頭が差し替えを扱った")
+        try owner.advance()
+        owner.closePlugins()
+        other.closePlugins()
+
+        let owned = try ReplayRecord.read(from: ownerURL)
+        #expect(owned.unreproducible == [Reason.fragmentSwapped("paint.metal")], "\(owned.unreproducible)")
+        let taken = try ReplayRecord.read(from: otherURL)
+        #expect(taken.unreproducible.isEmpty, "扱った側の記録に載せない: \(taken.unreproducible)")
     }
 }

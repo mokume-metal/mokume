@@ -1248,7 +1248,7 @@ package final class SketchRuntime {
         // 図形・絵・画素の口は `guard canPlace` で守られている。フレームの外で置けるのは、この面に
         // ランタイムが持ち越しを約束した区間 (`setup()` と止まっている間のコールバック・
         // ``carryingOver(_:)``) だけで、そこで置いたものは次に描くフレームへ出る
-        try openCanvasFrame {
+        try canvas.openFrame {
             withActiveRuntime {
                 // **コールバック 1 つが 1 つの区間である** (止まっている間と同じ規則・#3408)。書いた変換・光・
                 // 切り抜きなどは出口で戻り、続くコールバックにも同じフレームの `draw()` にも漏れない
@@ -1296,15 +1296,6 @@ package final class SketchRuntime {
         }
         replayDrew = true
         noteDrawnState()
-    }
-
-    /// 面のフレームを開いて `body` を描く。**再現を保証しないものを聞く係を、面のフレームの頭から束ねる** (#3575) —
-    /// 面が頭で取り込む断片の差し替え (``FileWatcher/takeChanges()``) は `withActiveRuntime` の外で起きる。
-    private func openCanvasFrame(_ body: () -> Void) throws(RenderFailure) {
-        let opened = LaunchingSketch.$replay.withValue(unreproducibleSink) {
-            Result { () throws(RenderFailure) in try canvas.openFrame(body) }
-        }
-        try opened.get()
     }
 
     /// `draw()` の終わりの、絵と `@Param` の書き込みの番号 ([#2618])。
@@ -2513,8 +2504,7 @@ package final class SketchRuntime {
     ///
     /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
     private func takeFragmentChangesWithoutAFrame() {
-        // 差し替えは、記録と再生で再現を保証しない (#3575)
-        LaunchingSketch.$replay.withValue(unreproducibleSink) { FileWatcher.takeChanges() }
+        FileWatcher.takeChanges()
     }
 
     /// 抱えている絵と予約を、**次のフレームを当てにせずに**決着させる。
