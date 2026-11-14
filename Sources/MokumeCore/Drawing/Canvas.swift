@@ -2211,8 +2211,12 @@ public final class Canvas {
     /// ``endContour()``) で空に戻す — 穴の中の曲線は外周の点を並びに含まず、外周と独立に
     /// 始まる ([#1449])。
     ///
+    /// 点は奥行きを持つか (`curveVertex(x, y, z)` か) を覚える ([#3712])。1 区間の 4 点が
+    /// どれも平面の点なら平面の曲線として刻む。
+    ///
     /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
-    var curveGuides: [SIMD2<Float>] = []
+    /// [#3712]: https://github.com/mokume-metal/mokume/issues/3712
+    var curveGuides: [CurveGuide] = []
 
     /// 閉じた列。**同じ列は単一の混ぜ方でしか描かれない。**
     ///
@@ -6439,7 +6443,8 @@ public final class Canvas {
 
             writeValues(of: batch, into: values.contents().advanced(by: offset))
         }
-        // 形の切り抜きの層を描く区画 (``clipLayerFrameIndex``)。輪郭も細い塗りも持たない平面の三角形として描く
+        // 形の切り抜きの層を描く区画。列の区画の後ろ (添字 `batches.count`) に置き、``encodeBatches(into:prepared:)``
+        // の `drawClipLayer` が読む。輪郭も細い塗りも持たない平面の三角形として描く
         var clipLayerFrame = FlatFrame(
             projection: jittered(projection, drawingInFrame: drawingInFrame),
             strokeStart: UInt32.max, strokeShift: solidStrokeShift,

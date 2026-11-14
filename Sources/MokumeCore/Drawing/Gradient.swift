@@ -341,7 +341,7 @@ final class ResolvedGradient: Sendable, Equatable {
 /// 勾配で塗る断片。**面ごとに 1 つ、初めて勾配で塗るときに組む。**
 ///
 /// 利用者の断片と同じ経路 (三角形の経路) で描くので、円も字も同じ口で塗れる。勾配で塗る頂点は
-/// 不透明度を負にして印を付けてあり (``Canvas/gradientVertexColor``)、印の無い頂点 (輪郭・線) は
+/// 不透明度を負にして印を付けてあり (``Canvas/gradientMarker``)、印の無い頂点 (輪郭・線) は
 /// 組み込みの塗りと同じ式 (`texel * color`) で塗る。値は断片の宣言を通さず、列の値の並びへ直に
 /// 書く (``ResolvedGradient/packedValues``)。
 enum GradientShader {
