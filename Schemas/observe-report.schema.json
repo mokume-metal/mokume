@@ -166,7 +166,7 @@
           },
           "state": {
             "type": "string",
-            "description": "The state of the source: waitingForPermission, denied, running, unavailable (no device; it starts when one is plugged in), disconnected or stopped. A reader passes an unknown value through (ADR-0018 decision 5)."
+            "description": "The state of the source: waitingForPermission, denied, running, preparing (getting ready, such as loading a model; it becomes running when ready), unavailable (no device; it starts when one is plugged in), disconnected or stopped. A reader passes an unknown value through (ADR-0018 decision 5)."
           },
           "lastFrame": {
             "type": "integer",

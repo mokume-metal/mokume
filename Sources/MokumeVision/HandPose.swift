@@ -3,7 +3,8 @@
 
 import MokumeCore
 
-/// 手の関節点の入力ソース。``Sketch/createHandPose(results:)`` が作り、実行中のスケッチへ追加する。
+/// 手の関節点の入力ソース。``Sketch/createHandPose(_:arrival:)`` (画像から推論する) と
+/// ``Sketch/createHandPose(results:)`` (記録した結果を流す) が作り、実行中のスケッチへ追加する。
 ///
 /// 毎フレーム呼ぶ API は無い。`draw()` の前に、**最新の 1 つ**の結果が ``hands`` に入る ([ADR-0028] 決定 2 の
 /// 「最新の 1 つ」)。新しい結果が無いフレームは、前の結果のまま — 蓄積しない。
@@ -38,7 +39,8 @@ import MokumeCore
 ///
 /// | 状態 | いつ |
 /// | --- | --- |
-/// | ``SourceState/running`` | 受け取っている |
+/// | ``SourceState/preparing`` | 推論のモデルを用意している (画像から推論するとき)。描画は続き、結果はまだ届かない |
+/// | ``SourceState/running`` | 受け取っている。推論するときは、手が写っていなくてもこの状態 |
 /// | ``SourceState/unavailable`` | 記録した結果の列が空 |
 /// | ``SourceState/stopped`` | スケッチから外した (``SketchPart/detach(_:)-(Inlet)``)。追加し直せば戻る |
 ///

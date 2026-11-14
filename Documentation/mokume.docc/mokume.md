@@ -144,7 +144,7 @@ func setup() {
 - **読み取りと描く API。** 読み取りは 0 や空を返し (``SketchPart/width`` は 0)、描く API は何もしない。警告は観測の応答にも載る。キャンバスの大きさで決まる値は、``Sketch/setup()`` の中で部品を作り直して決める
 - **キャンバスから作るリソース** (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)`` など)。返すものを作れないので、型付きのエラー (``ImageFailure/notRunning(call:)`` など) を投げる。`try?` で受ければ `nil` になる。投げない ``SketchPart/createShape(_:)`` は空の形を返す
 - **音・通信・シリアルを作る API** (``Sketch/loadSound(_:)``・``Sketch/createTCPServer(_:)``・``Sketch/createSerial(_:baudRate:)`` など)。スケッチの `init()` などで呼ぶと、作ったものを実行中のスケッチへ追加できないので、同じく ``AudioFailure/notRunning(call:)``・``SerialFailure/notRunning(call:)`` などを投げる
-- **投げない作る API** は、スケッチに追加されていないものを返す。合成音の API (``Sketch/createSinOsc()`` など) は、音声のストリームをまだ追加していなければ鳴らない音を (``Sketch/setup()`` などで先に合成音を作ってあれば、そのストリームに入って鳴る音を)、``Sketch/createAudioIn(device:)`` は何も聞かない入力を、記録したメッセージを流す 5 つの API (``Sketch/createTCPServer(messages:)``・``Sketch/createWebSocketServer(messages:)``・``Sketch/createUDP(messages:)``・``Sketch/createOSC(messages:)``・``Sketch/createSerial(lines:)``) は何も届かないポートを、ゲームパッドの API (``Sketch/gamepads()``・``Sketch/createGamepad(inputs:)``) は何も入力されないパッドを、MIDI の API (``Sketch/createMIDI(_:)``・``Sketch/createMIDI(messages:)``) は何も届かない入力を、手の関節点の API (``Sketch/createHandPose(results:)``) は何も届かない入力を返す
+- **投げない作る API** は、スケッチに追加されていないものを返す。合成音の API (``Sketch/createSinOsc()`` など) は、音声のストリームをまだ追加していなければ鳴らない音を (``Sketch/setup()`` などで先に合成音を作ってあれば、そのストリームに入って鳴る音を)、``Sketch/createAudioIn(device:)`` は何も聞かない入力を、記録したメッセージを流す 5 つの API (``Sketch/createTCPServer(messages:)``・``Sketch/createWebSocketServer(messages:)``・``Sketch/createUDP(messages:)``・``Sketch/createOSC(messages:)``・``Sketch/createSerial(lines:)``) は何も届かないポートを、ゲームパッドの API (``Sketch/gamepads()``・``Sketch/createGamepad(inputs:)``) は何も入力されないパッドを、MIDI の API (``Sketch/createMIDI(_:)``・``Sketch/createMIDI(messages:)``) は何も届かない入力を、手の関節点の API (``Sketch/createHandPose(_:arrival:)``・``Sketch/createHandPose(results:)``) は何も届かない入力を返す
 - **入力を止める API** (``AudioIn/stop()``・``Capture/stop()``・``Serial/stop()`` など)。外で呼ぶと何もせず、`AudioIn.stop()` のように型名を付けた名前で 1 度だけ警告する
 
 **プロセスが止まる (`fatalError`) のは、キャンバスそのもの (``SketchPart/canvas``) を外から読んだときだけである。**
@@ -1205,6 +1205,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 
 ### 映像から手を検出する
 
+- ``Sketch/createHandPose(_:arrival:)``
 - ``Sketch/createHandPose(results:)``
 - ``HandPose``
 - ``HandPoseResult``
