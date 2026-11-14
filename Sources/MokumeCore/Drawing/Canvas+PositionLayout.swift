@@ -23,7 +23,7 @@ import simd
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 extension Canvas {
-    /// 位置の並びごとの常駐の置き場と、その計算の入口。**面が 1 つ持つ。**
+    /// 位置の並びと読み方の組ごとの常駐の置き場と、その計算の入口。**面が 1 つ持つ。**
     ///
     /// 計算の入口は初めて使うときに 1 度だけ組む — 使わない面は組む費用も払わない。置き場は並び
     /// (``Numbers``) ごとで、並びを手放したら**次のフレームの頭**で畳む (``foldReleased()``)。際限なく
@@ -34,7 +34,8 @@ extension Canvas {
     /// 失敗は 1 度しか知らせないので、覚えないと、見えないまま毎フレーム原文を組み直し、置き場を確保し直して
     /// 重くなる (描き切りの失敗を同じ番号のうちは繰り返さない ``Canvas`` の `framesDrawn` の扱いと同じ考え)。
     /// 一方、永く覚えると、一時的な失敗 (メモリの逼迫・装置の失敗) の後に、その面・その並びは二度と置けない
-    /// (粒は作り直せるが、こちらには作り直す口が無い)。覚えるのは計算の入口が面ごとに 1 つ、置き場が並びごとに 1 つ。
+    /// (粒は作り直せるが、こちらには作り直す口が無い)。覚えるのは計算の入口が面ごとに 1 つ、置き場が並びと
+    /// 読み方の組ごとに 1 つ。
     ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     final class PositionLayouts {
@@ -42,8 +43,15 @@ extension Canvas {
         var kernels: PositionKernels?
         /// 計算の入口の組み立てが失敗した記憶。試してよいフレームまでは、組み直さずにこれを投げる。
         var kernelsFailure: RememberedFailure?
-        private var placers: [ObjectIdentifier: PositionPlacer] = [:]
-        private var placerFailures: [ObjectIdentifier: PlacerFailure] = [:]
+        private var placers: [PlacerKey: PositionPlacer] = [:]
+        private var placerFailures: [PlacerKey: PlacerFailure] = [:]
+
+        /// 置き場の鍵。**並びと読み方の組** — 同じ並びを 2 つの読み方で読むと容量が違うので、それぞれの
+        /// 置き場を並べて持つ (片方で上書きすると、呼ぶたびに作り直す)。
+        private struct PlacerKey: Hashable {
+            let numbers: ObjectIdentifier
+            let layout: Placement.Layout
+        }
 
         /// 置き場の組み立てが失敗した並びと、その記憶。
         private struct PlacerFailure {
@@ -65,14 +73,15 @@ extension Canvas {
             if let kernelFailureForTesting { throw kernelFailureForTesting }
         }
 
-        /// `positions` の置き場。無ければ作る。`frame` は面の ``Canvas/framesDrawn``。
+        /// `positions` を `layout` で読む置き場。無ければ作る。`frame` は面の ``Canvas/framesDrawn``。
         ///
         /// 並びの識別子は、並びを手放した後に別の並びが使い回しうる (畳むのは次のフレームの頭なので、
         /// 同じフレームの中で起きうる)。同じ識別子でも読み元が同じ並びかを確かめ、違えば作り直す。
         func placer(
-            for positions: Numbers, capacity: Int, gpu: RenderDevice, frame: Int
+            for positions: Numbers, layout: Placement.Layout, capacity: Int, gpu: RenderDevice,
+            frame: Int
         ) throws(RenderFailure) -> PositionPlacer {
-            let key = ObjectIdentifier(positions)
+            let key = PlacerKey(numbers: ObjectIdentifier(positions), layout: layout)
             if let existing = placers[key], existing.source === positions,
                 existing.capacity == capacity
             {
@@ -118,9 +127,14 @@ extension Canvas {
         /// 覚えている置き場の失敗の数。**手放された並びのものも数える** — 畳んだかを検査が読む。
         var placerFailureCount: Int { placerFailures.count }
 
-        /// 作ってあれば `positions` の置き場。**検査が読む。**
-        func existingPlacer(for positions: Numbers) -> PositionPlacer? {
-            guard let found = placers[ObjectIdentifier(positions)], found.source === positions else {
+        /// 作ってあれば、`positions` を `layout` で読む置き場。**検査が読む。**
+        func existingPlacer(
+            for positions: Numbers, layout: Placement.Layout
+        ) -> PositionPlacer? {
+            guard
+                let found = placers[PlacerKey(numbers: ObjectIdentifier(positions), layout: layout)],
+                found.source === positions
+            else {
                 return nil
             }
             return found
@@ -196,12 +210,11 @@ extension Canvas {
         guard isDrawing else { return warnPositionLayoutOutsideFrame() }
         guard !shape.isEmpty else { return }
 
-        switch layout {
-        case .position:
-            break
+        let stride = layout.stride
+        let capacity = positions.count / stride
+        if positions.count % stride != 0 {
+            warnPositionRemainder(count: positions.count, layout: layout)
         }
-        let capacity = positions.count / 3
-        if positions.count % 3 != 0 { warnPositionRemainder(count: positions.count) }
         guard capacity > 0 else { return }
 
         let run: Shape.Run
@@ -218,7 +231,7 @@ extension Canvas {
         do {
             kernels = try positionKernels()
             placer = try positionLayouts.placer(
-                for: positions, capacity: capacity, gpu: gpu, frame: framesDrawn)
+                for: positions, layout: layout, capacity: capacity, gpu: gpu, frame: framesDrawn)
             draw = try placer.claimDraw(by: self)
         } catch {
             return warnPositionLayoutUnavailable(error)
@@ -228,10 +241,11 @@ extension Canvas {
 
         let world = transform.matrix
         placer.write(
-            into: draw, world: world, normal: transform.normalMatrix, vertexCount: run.count)
+            into: draw, world: world, normal: transform.normalMatrix, vertexCount: run.count,
+            layout: layout)
         schedule(positions, placer, draw, kernels)
 
-        // 鏡映の符号は画面の変換から CPU で決まる。位置だけを動かすので、置き場所は鏡映を作らない
+        // 鏡映の符号は画面の変換から CPU で決まる。位置の移動と向きの回転は、置き場所に鏡映を作らない
         let mirrored = SolidInstance(
             matrix: world, normalMatrix: transform.normalMatrix, color: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)
         ).isMirrored
@@ -316,12 +330,14 @@ extension Canvas {
                 : subject + ". " + OutsideFrame.drawingTargetTail)
     }
 
-    /// 並びの長さが 3 で割り切れない。端数は置かない。
-    private func warnPositionRemainder(count: Int) {
+    /// 並びの長さが 1 か所の数 (`.position` は 3・`.positionAndHeading` は 6) で割り切れない。端数は置かない。
+    private func warnPositionRemainder(count: Int, layout: Placement.Layout) {
+        let stride = layout.stride
         warnOnce(
             .positionLayoutRemainder,
-            "shape(at:layout:): the array holds \(count) numbers, which is not a multiple of 3, so "
-                + "\(count / 3) positions were placed and the last \(count % 3) number(s) were ignored")
+            "shape(at:layout: .\(layout)): the array holds \(count) numbers, which is not a multiple "
+                + "of \(stride), so \(count / stride) places were filled and the last "
+                + "\(count % stride) number(s) were ignored")
     }
 
     /// 載らない形を渡された。**文面は載る形の範囲も言う** — 直す先が分かるように。

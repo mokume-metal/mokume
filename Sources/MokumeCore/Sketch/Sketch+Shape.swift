@@ -385,6 +385,13 @@ extension SketchPart {
     /// `.position` では、並びの 3 つが 1 か所の位置 (x・y・z) になる。3×N 個の並びが N か所で、
     /// 同じ位置の ``Placement`` の配列で置いた画像と画素まで一致する。
     ///
+    /// `.positionAndHeading` では、並びの 6 つが 1 か所の位置 (x・y・z) と進む向き (x・y・z) になり、
+    /// **形の +x 軸を進む向きへ向けて**置く。形の +y 軸は画面の面 (x と y の面) に留まり、進む向きの軸まわりには
+    /// ひねらない。進む向きが画面の面の中なら、`push()`・`translate(_:_:_:)`・`rotateZ(_:)`・`shape(_:)`・`pop()`
+    /// と書いて置いたのと同じになる (向きの 0 が +x (右))。奥行きへ向かう向きは、続けて仰角の分だけ
+    /// `rotateY(_:)` で回したのと同じである。向きの長さは問わないので、速度をそのまま書いてよい。長さ 0 の
+    /// 向きは回さずに置く。形を作るときは、進ませたい側を +x へ向けておく。
+    ///
     /// <!-- example: 文脈 var cube: Shape! -->
     /// <!-- example: 文脈 var positions: Numbers! -->
     /// ```swift
@@ -435,6 +442,73 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙の立方体 24 個が、円周に等間隔で並ぶ -->
+    ///     ![橙の立方体 24 個が、円周に等間隔で並ぶ](https://i.gyazo.com/a8cc307555c4ae9faa804c86f67a6f20.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 下は、2 万匹の群れを計算が毎フレーム進め、1 匹ごとの位置と速度 (6 つ) をそのまま
+    /// `.positionAndHeading` で読んで、進む向きを向いた細い三角錐を置いたもの。群れは中心のまわりに渦を巻く。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var dart: Shape! -->
+    ///     <!-- example: 文脈 var flock: Computation! -->
+    ///     <!-- example: 文脈 var agents: Numbers! -->
+    ///     ```swift
+    ///     func setup() throws {
+    ///         // 先 (円錐の頂) を +x へ向けた三角錐。進む向きへ向くのは +x
+    ///         dart = createShape {
+    ///             noStroke()
+    ///             fill(120, 200, 255)
+    ///             rotateZ(Float.pi / 2)
+    ///             cone(1, 7, detail: 3)
+    ///         }
+    ///         // 1 匹 6 つ: 位置 (x, y, z) と速度 (x, y, z)。速度がそのまま進む向きになる
+    ///         flock = try makeComputation(
+    ///             """
+    ///             kernel void flock(device float *agent [[buffer(0)]],
+    ///                               constant Values &values [[buffer(MOKUME_VALUES)]],
+    ///                               uint id [[thread_position_in_grid]])
+    ///             {
+    ///                 device float *a = agent + id * 6;
+    ///                 float3 p = float3(a[0], a[1], a[2]);
+    ///                 float3 v = float3(a[3], a[4], a[5]);
+    ///                 float2 away = p.xy - float2(200.0, 150.0);
+    ///                 float r = max(length(away), 1.0);
+    ///                 float ring = 24.0 + float(id % 113);          // 1 匹ずつ回る半径
+    ///                 float2 around = float2(-away.y, away.x) / r;  // 渦の向き
+    ///                 float2 pull = -away / r * (r - ring) * 0.03;  // 回る半径へ戻す
+    ///                 float lift = sin(values.time * 2.0 + r * 0.05) * 1.5 - p.z * 0.02;
+    ///                 v += (float3(around * 2.0 + pull, lift) - v) * 0.06;
+    ///                 p += v;
+    ///                 a[0] = p.x; a[1] = p.y; a[2] = p.z;
+    ///                 a[3] = v.x; a[4] = v.y; a[5] = v.z;
+    ///             }
+    ///             """,
+    ///             name: "flock", values: ["time": 0])
+    ///         var start: [Float] = []
+    ///         for _ in 0..<20_000 {
+    ///             let angle = random(2 * Float.pi)
+    ///             let radius = random(24, 136)
+    ///             start += [200 + radius * cos(angle), 150 + radius * sin(angle), random(-20, 20), 0, 0, 0]
+    ///         }
+    ///         agents = try makeNumbers(count: start.count)
+    ///         agents.set(start)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         flock.set("time", .number(time))
+    ///         compute(flock, over: 20_000, writes: [agents])
+    ///         background(12, 16, 24)
+    ///         lights()
+    ///         shape(dart, at: agents, layout: .positionAndHeading)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 紺の下地に、水色の細い三角錐 2 万個が輪になって渦を巻き、どれも回る向きの先を向いている | symmetric=xy -->
+    ///     ![紺の下地に、水色の細い三角錐 2 万個が輪になって渦を巻き、どれも回る向きの先を向いている](https://i.gyazo.com/afc7fc356211fc4f5b09136f6c7a4500.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -449,8 +523,10 @@ extension SketchPart {
     ///
     /// ## 並びの読み方
     ///
-    /// - 長さが 3 で割り切れないときは、`count / 3` の切り捨ての数だけ置き、端数があることを 1 度だけ警告する
-    /// - 数でない値・無限を含む 1 か所は置かれず、残りは並びの順に置かれる
+    /// - 長さが 1 か所の数 (`.position` は 3・`.positionAndHeading` は 6) で割り切れないときは、`count / 3`
+    ///   (`.positionAndHeading` は `count / 6`) の切り捨ての数だけ置き、端数があることを 1 度だけ警告する
+    /// - 数でない値・無限を含む 1 か所 (`.positionAndHeading` では位置か向きのどれか) は置かれず、残りは並びの
+    ///   順に置かれる
     /// - 並びは、計算を呼んだ同じフレームの値で読む (前のフレームの値ではない)。計算より先にこの API を呼ぶと、
     ///   その計算が書く前の値を読む
     /// - `createShape(_:)` の中で呼ぶと置かれず、1 度だけ警告する。構築は配置を頂点へ焼くが、
@@ -460,7 +536,7 @@ extension SketchPart {
     ///
     /// ## 費用
     ///
-    /// 位置の数に比例したバッファとフラグ用のバッファを、並びごとに 1 度だけ確保して使い回す (毎フレーム確保しない)。
+    /// 位置の数に比例したバッファとフラグ用のバッファを、並びと読み方ごとに 1 度だけ確保して使い回す (毎フレーム確保しない)。
     /// 1 か所あたり 128 バイトのバッファを持つ。同じフレームで何度呼んでも、呼び出しごとに別のバッファを使う。
     ///
     /// - **同じフレームで呼ぶ回数ぶんバッファを持ち、描画先が生きている間は縮まない。** 並びが大きいほど、
@@ -472,7 +548,8 @@ extension SketchPart {
     /// - バッファや計算の準備に失敗すると、その呼び出しは描かれず 1 度だけ警告する。失敗は一時的なことが
     ///   あるので、フレームを重ねながら間隔を延ばして (1・2・4…フレーム、上限 600 フレーム) 試し直す。
     ///   直れば、そのまま置かれるようになる
-    // shot: 後で撮る
+    // shot: 1 snippet=1db36a9b image=b36dd899fa0ea2cf
+    // shot: 2 snippet=6dd438cb image=b450e47da740507f
     public func shape(_ shape: Shape, at positions: Numbers, layout: Placement.Layout) {
         guard let canvas = liveCanvas() else { return }
         canvas.shape(shape, at: positions, layout: layout)

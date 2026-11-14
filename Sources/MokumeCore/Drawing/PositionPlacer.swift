@@ -54,9 +54,9 @@ struct PositionKernels {
 
 /// 数の並び 1 本を置き場所として読むための、常駐の置き場。
 ///
-/// **位置の並び (``Numbers``) ごとに 1 つ、面が持つ** (``Canvas/PositionLayouts``)。置き場所・描く引数・
-/// 旗の段を毎フレーム確保しない ([ADR-0023] 決定 5)。容量は並びの長さの 1/3 から決まり、並びは
-/// 長さが変わらないので、置き場の大きさも変わらない。
+/// **位置の並び (``Numbers``) と読み方の組ごとに 1 つ、面が持つ** (``Canvas/PositionLayouts``)。置き場所・描く引数・
+/// 旗の段を毎フレーム確保しない ([ADR-0023] 決定 5)。容量は並びの長さを 1 か所の数 (`.position` は 3・
+/// `.positionAndHeading` は 6) で割って決まり、並びは長さが変わらないので、置き場の大きさも変わらない。
 ///
 /// 旗の段 (``levels``) は呼び出しをまたいで共有し、毎回の指定・置き場所・描く引数は呼び出しごとの組
 /// (``Draw``) に分ける。同じ描き切りの中で何度呼んでも、1 回目の計算が 2 回目の指定を読んだり、
@@ -74,12 +74,12 @@ final class PositionPlacer {
         let arguments: Numbers
     }
 
-    /// 指定の長さ。変換 16・面の向き 12・段の数・頂点の数・段の頭 5・予備 5。
+    /// 指定の長さ。変換 16・面の向き 12・段の数・頂点の数・段の頭 5・読み方 1・予備 4。
     static let parameterFloats = 40
     /// 置き場所 1 つの float の数。
     private static let instanceFloats = MemoryLayout<SolidInstance>.stride / MemoryLayout<Float>.stride
 
-    /// 置ける位置の数の上限 (位置の並びの長さの 1/3)。
+    /// 置ける位置の数の上限 (並びの長さを 1 か所の数で割った切り捨て)。
     let capacity: Int
     /// 読み元の並び。**弱く持つ** — 手放された並びの置き場を、面が次の呼び出しで畳める
     /// (``Canvas/PositionLayouts``)。
@@ -187,7 +187,11 @@ final class PositionPlacer {
     ///   - world: いまの変換。置き場所の行列は、これに位置の平行移動を掛けたもの
     ///   - normal: 面の向きを移す行列。**位置を動かしても変わらない**ので、変換のものを 1 つ渡す
     ///   - vertexCount: 描く頂点の数 (形の区間の頂点の数)
-    func write(into draw: Draw, world: simd_float4x4, normal: simd_float3x3, vertexCount: Int) {
+    ///   - layout: 並びの読み方
+    func write(
+        into draw: Draw, world: simd_float4x4, normal: simd_float3x3, vertexCount: Int,
+        layout: Placement.Layout
+    ) {
         draw.parameters.write(at: 0, count: Self.parameterFloats) { values in
             for column in 0..<4 {
                 let vector = world[column]
@@ -205,7 +209,8 @@ final class PositionPlacer {
                 let offset = slot < levelOffsets.count ? levelOffsets[slot] : 0
                 values[30 + slot] = Float(bitPattern: UInt32(offset))
             }
-            for index in 35..<Self.parameterFloats { values[index] = 0 }
+            values[35] = Float(bitPattern: layout.kernelCode)
+            for index in 36..<Self.parameterFloats { values[index] = 0 }
         }
     }
 }

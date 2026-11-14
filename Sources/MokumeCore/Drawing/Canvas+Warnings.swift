@@ -102,7 +102,7 @@ extension Canvas {
         /// 計算を頼む口の鍵 (``computeOutsideFrame``) とは分ける — 断られたものが違い、片方が言ったからと
         /// もう片方が黙ってはならない。
         case positionLayoutOutsideFrame
-        /// 数の並びを置き場所として読む口に、3 で割り切れない長さの並びが渡された。端数は置かない。
+        /// 数の並びを置き場所として読む口に、1 か所の数 (3 か 6) で割り切れない長さの並びが渡された。端数は置かない。
         case positionLayoutRemainder
         /// 数の並びを置き場所として読む口が、計算の入口か置き場を用意できなかった。
         case positionLayoutUnavailable
