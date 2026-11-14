@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 駆動源と、その予備 ([#874](https://github.com/mokume-metal/mokume/issues/874)・
 /// [#1279](https://github.com/mokume-metal/mokume/issues/1279))。

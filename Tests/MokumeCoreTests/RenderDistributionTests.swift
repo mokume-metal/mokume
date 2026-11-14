@@ -9,6 +9,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ウィンドウを開かずに、配る形 (GIF・MP4) へ書き出す経路 (`mokume render --out loop.gif`・[#2440])。
 ///

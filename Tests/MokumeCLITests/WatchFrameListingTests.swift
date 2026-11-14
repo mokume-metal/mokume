@@ -10,6 +10,7 @@ import Testing
 
 @testable import MokumeCLI
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 見張りの下では道具が目録へ名乗る ([ADR-0049] 決定 2・[#3919])。
 ///

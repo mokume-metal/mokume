@@ -9,6 +9,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ウィンドウが受けたスクロールの量を点へ揃える関数。
 ///

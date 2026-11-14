@@ -7,6 +7,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 @testable import reference_sketches
 
 /// 記録の読み手 (#3571)。GPU を要さない。

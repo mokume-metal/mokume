@@ -7,6 +7,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// `noLoop()` で止めた絵を 1 回描いたきりの、あるいは何かを押すたびに変わるスケッチ。
 private final class StoppedSketch: Sketch {

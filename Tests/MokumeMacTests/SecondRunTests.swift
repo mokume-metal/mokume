@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 1 プロセスで 2 つ目の ``SketchApplication/run()`` を呼ぶ ([#2027])。
 ///

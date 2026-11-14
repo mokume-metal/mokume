@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 走っている速さの名乗り (#510)。GPU は要らない — 行を組むところは純関数にしてある。
 @Suite("速さの名乗り")

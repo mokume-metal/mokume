@@ -6,6 +6,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 捕まえを頼むスケッチ。**頼むのは `setup()` で 1 度だけ**、``releases`` を立てると `draw()` で
 /// 取り下げる。`draw()` から読めた値と、1 件ぶんの量の和を控える。

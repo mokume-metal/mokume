@@ -9,6 +9,7 @@ import Testing
 import mokume
 
 @testable import MokumeCLI
+@testable import MokumeMac
 
 @Suite("保存したら作り直して差し替える", .signalStateKept)
 struct WatchSessionTests {

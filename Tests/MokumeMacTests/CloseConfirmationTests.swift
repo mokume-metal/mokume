@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ウィンドウの × を押した人に確かめる合図 ([#1120](https://github.com/mokume-metal/mokume/issues/1120))。
 ///

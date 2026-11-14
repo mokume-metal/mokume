@@ -7,6 +7,7 @@ import SwiftUI
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 @testable import mokume
 
 /// ウィンドウのつまみから値への書き戻し (``KnobBinding``) が、型ごとに正しい値を書くこと。

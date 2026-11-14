@@ -9,6 +9,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ウィンドウが前にあるか (`focused`) と、ウィンドウの題名を変える頼み (`windowTitle(_:)`)
 /// ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。

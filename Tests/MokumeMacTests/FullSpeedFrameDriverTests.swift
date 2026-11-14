@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 画面を持たない全速の駆動 ([#3474](https://github.com/mokume-metal/mokume/issues/3474))。
 ///

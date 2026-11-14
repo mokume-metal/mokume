@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 組み立てで受け取る数が 1 を割ったら、型のついたエラーで断る。GPU を要する。
 ///

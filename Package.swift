@@ -184,6 +184,11 @@ let package = Package(
             ],
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokumeTests),
+        // macOS の単独のウィンドウの外枠 (MokumeMac) の検査 (#3804)。ウィンドウを開く検査の窓の透明化とアニメーションの
+        // 止めは、同じ検査のプロセスに載る MokumeCoreTests の読み込み時の初期化が掛ける
+        .testTarget(
+            name: "MokumeMacTests", dependencies: ["mokume", "MokumeMac", "MokumeTestSupport"],
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeCLITests", dependencies: ["MokumeCLI", "MokumeProbe", "MokumeTestSupport"],
             swiftSettings: .mokumeTests),

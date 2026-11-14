@@ -8,6 +8,7 @@ import SwiftUI
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 @testable import mokume
 
 /// 宣言からつまみを決める規則。

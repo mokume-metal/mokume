@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ウィンドウの出し方 (#679・#1624)。GPU は要らない — 起動の性質と、開く大きさの指定から
 /// 決まるところだけを見る (大きさの指定はウィンドウを 1 枚作って当てるが、画面に出さない)。

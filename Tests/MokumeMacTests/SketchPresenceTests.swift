@@ -5,6 +5,7 @@ import AppKit
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 名乗りの**判断と文言**だけを見る検査。
 ///
@@ -227,6 +228,8 @@ struct SketchPresenceClockTests {
 
     /// 最初のフレームだけ進めて起点を立てたランタイム。
     private func started(_ clockwork: Clockwork) throws -> SketchRuntime {
+        // 名乗りの係はウィンドウの外枠が差し込む (#3804)。差し込まないと名乗りの係が建たず、下の「名乗っていない」が空振りする
+        MacPlatform.install()
         let runtime = try SketchRuntime(
             sketch: Blank(), gpu: RenderDevice(), clock: .wallClock, now: { clockwork.author },
             presenceClock: { clockwork.real })

@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 絵に重ねる 1 行の置き方。
 ///

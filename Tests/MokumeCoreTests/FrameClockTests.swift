@@ -6,6 +6,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ウィンドウでもフレームの時計で回せる設定 (`SketchSettings(clock: .frames)`) と、処理落ちを見えるようにする
 /// 仕組み ([#2601](https://github.com/mokume-metal/mokume/issues/2601))。

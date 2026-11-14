@@ -7,6 +7,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// `NSCursor.hide()` / `unhide()` の数を、プロセスで 1 つのものとして真似る。
 ///

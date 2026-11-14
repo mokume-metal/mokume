@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 画面の読みの見本 ([#2020])。**ディスプレイが何枚でも、どう並んでいても、1 枚の機械で回る。**
 ///

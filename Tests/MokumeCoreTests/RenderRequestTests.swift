@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 書き出しの頼み (`mokume render`・[#1282])。GPU は要らない。
 ///

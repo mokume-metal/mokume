@@ -4,6 +4,7 @@
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ホストのコード (`SketchView` の隣のボタンの処理など) から語彙を呼ぶ ([#3847])。
 ///

@@ -7,6 +7,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 書き出しの子 (`MOKUME_RENDER`) は、利用者の区画 `observe` / `input` / `params` が在っても開かない
 /// ([#1619](https://github.com/mokume-metal/mokume/issues/1619)・ADR-0032「書き出す起こし方」)。

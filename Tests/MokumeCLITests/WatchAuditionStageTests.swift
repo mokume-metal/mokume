@@ -9,6 +9,7 @@ import mokume
 
 @testable import MokumeCLI
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 試聴の間、**作品のウィンドウの台とプレビューの台が別の世代を映す**ことを、見張りと台を繋いで見る (#3565 の完了条件 1・5・8)。
 ///

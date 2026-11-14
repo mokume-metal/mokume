@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+@testable import MokumeMac
 
 // 製品の原文を読み、**細かさを下げた面の出す先 (`Canvas.output`) を読む行が、どう追い付くかを
 // 名乗っているか**を見る ([#2104])。`StoppedUpscaleOutletsTests` が実際に読んで確かめる口の、
@@ -171,7 +172,7 @@ struct StoppedUpscaleOutletReadersTests {
             reason: "ウィンドウなしの実行の読む口 (readPixels・displayImage・writePNG・#3870)。呼ぶ先の readPixels() (RenderTarget.swift) と encodeForDisplay・writePNG (出力段) が、どれも頭で catchUpWithDrawnPicture() を通る"),
         // MARK: ランタイムの配った後
         Reader(
-            file: "MokumeCore/Display/SketchApplication.swift", token: "runtime.target", count: 4,
+            file: "MokumeMac/SketchApplication.swift", token: "runtime.target", count: 4,
             catchUp: .afterDelivery, vouchedIn: "MokumeCore/Sketch/SketchRuntime.swift",
             reason: "ウィンドウ (presenter.present) と共有の面 (shared.write)、繋いできた受け手の面 (deliverToReceivers の presenter.draw・#3920。presentFrame の中でウィンドウより先に書く)、止まっている間に出し直すかの鍵 (shownFrame・描画先の番号と明るさだけを読み、絵は読まない)。advance() がコールバックを配った直後と止めている間に catchUpOutputWithoutThrowing() を済ませた後に呼ぶ (#1882・#1906・#2367)"),
         Reader(
