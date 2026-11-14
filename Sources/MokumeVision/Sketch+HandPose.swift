@@ -12,13 +12,93 @@ import MokumeCore
 // `createGamepad`) の `create` に揃える。記録を流す口の引数ラベルは、MIDI の `messages:`・ゲームパッドの
 // `inputs:` と同じく、流すものの名前 (`results:`) にする。
 //
-// 段 2 (#3586) は結果の型・座標の写し・最新の 1 つの入り口・注入の口までで、実物の推論 (Vision) は段 3
-// (#3587) で、絵を受けて手を探す口 (`createHandPose(_:arrival:)`) と一緒に足す。
-//
 // [ADR-0014]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0014-machine-learning-role.md
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0041]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0041-standard-scope-map.md
 extension Sketch {
+
+    /// 画像に写った手を探し、手ごとに 21 の関節点を返す入力ソースを作る。OS の Vision の手の姿勢推定
+    /// (`VNDetectHumanHandPoseRequest`) を使う。
+    ///
+    /// カメラに手をかざすと、関節に円が置かれ、人差し指の先が通った跡が線として残る:
+    ///
+    /// ```swift
+    /// final class AirDraw: Sketch {
+    ///     var camera: Capture?
+    ///     var hands: HandPose?
+    ///     var trail: [Vector2] = []
+    ///
+    ///     func setup() throws {
+    ///         let camera = try createCapture(640, 480, mirrored: true)
+    ///         self.camera = camera
+    ///         // カメラより後に作る: 同じフレームで書かれたばかりの画像を探す
+    ///         hands = createHandPose(camera.image, arrival: { camera.lastArrival })
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(0)
+    ///         guard let camera, let hands else { return }
+    ///         image(camera.image, 0, 0)
+    ///         if hands.state == .preparing { text("準備中", 10, 20) }
+    ///         noStroke()
+    ///         for hand in hands.hands {
+    ///             for joint in hand.joints { circle(joint.position.x, joint.position.y, 8) }
+    ///             trail.append(hand[.indexTip].position)
+    ///         }
+    ///         if trail.count > 300 { trail.removeFirst(trail.count - 300) }
+    ///         noFill()
+    ///         stroke(255, 200, 0)
+    ///         beginShape()
+    ///         for point in trail { vertex(point.x, point.y) }
+    ///         endShape()
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// - **点は渡した画像のピクセル座標で返る** (左上が原点・y は下向き)。`mirrored: true` のカメラの画像を渡せば、
+    ///   左右を入れ替えた後の画像の座標で返るので、その画像を描いた上に円を置けば手に重なる
+    /// - **新しい画像が届いたときだけ探す。** `arrival` が返す到着の記録 (``Arrival``) の host time が前と変わった
+    ///   フレームで、画像のピクセルを読んで推論に渡す。結果は元の画像の host time を持つ (``HandPose/hostTime``)。
+    ///   `arrival` を省くと、画像を 1 度だけ探す (`loadImage` で読んだ写真など)。そのときの host time は 0
+    /// - **推論は main actor の外で走り、描画は止まらない。** 結果は画像より遅れて届き、届くまでは前の結果のまま。
+    ///   推論中に届いた画像は最新の 1 枚だけを持ち、溜めない
+    /// - **作った時点でモデルの用意を始める。** 用意が済むまで ``HandPose/state`` は ``SourceState/preparing``
+    ///   で、描画は続く。済めば、手が写っていなくても ``SourceState/running`` になる (この Mac で初めて
+    ///   使うときは数秒かかる)
+    /// - **固定の時計 (``SketchPart/clock`` が ``Clock/frameIndex(frameRate:)``) では推論を待つ。** 書き出し
+    ///   (`mokume render`) では、作るときに用意を、画像が届いたフレームごとに推論を待つので、フレーム N に届いた
+    ///   画像の結果がフレーム N の `draw()` に出る。実時間の時計では待たない。1 回の待ちが 30 秒を越えたら、
+    ///   その結果なしで進め、警告し、以後は待たない
+    /// - 手が写っていない画像では ``HandPose/hands`` が空になる。許可は要らない (カメラの許可は `Capture` が持つ)
+    ///
+    /// ピクセルは ``Image/readPixels()`` で読み、乗算済みのアルファを外し sRGB の転送関数を掛けて Vision に渡す。
+    /// 1 枚ごとに画像の大きさに比例する費用がかかる。
+    ///
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、実行中の
+    /// スケッチに追加されず何も入らない ``HandPose`` を返し、この API の名前で 1 度だけ警告する。
+    ///
+    /// - Parameters:
+    ///   - image: 手を探す画像。カメラ (`Capture/image`)・動画 (`Movie/image`)・読み込んだ画像など。
+    ///   - arrival: 画像が届いたことを知らせる到着の記録。カメラなら `{ camera.lastArrival }`。省けば 1 度だけ探す。
+    // shot: 撮れない 手の写った映像と実物の推論 (Vision) を要する。作例の絵は参照スケッチ (air-draw) が記録した結果で撮る
+    public func createHandPose(_ image: Image, arrival: (() -> Arrival?)? = nil) -> HandPose {
+        createHandPose(image, arrival: arrival, estimator: VisionHandPoseEstimator(), calledAs: #function)
+    }
+
+    /// 推論を差し替えて作る (検査が偽の推論を差す)。固定の時計かどうかは、このスケッチの ``SketchPart/clock`` で見る。
+    func createHandPose(
+        _ image: Image, arrival: (() -> Arrival?)?, estimator: any HandPoseEstimator,
+        patience: Duration = InferenceSource.defaultPatience, calledAs call: String = #function
+    ) -> HandPose {
+        let arrival = arrival ?? { Arrival(frame: 0, time: 0, hostTime: 0) }
+        let source = InferenceSource(
+            estimator: estimator, image: image,
+            waits: { [weak self] in self.map { $0.clock != .wallClock } ?? false }, patience: patience,
+            arrival: arrival)
+        let pose = HandPose(name: "hand pose", source: source)
+        attach(pose, calledAs: call, returning: "a hand pose that never receives anything")
+        return pose
+    }
 
     /// 記録した手の関節点の結果の列を、手を探した結果として流す。**カメラも Vision も使わない。**
     ///

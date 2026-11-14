@@ -405,7 +405,8 @@ struct InferencePoseTests {
     @Test("推論の結果は画素の座標で入り、元の絵の host time を持つ。推論が終わった時刻ではない")
     func resultCarriesThePicturesHostTime() async throws {
         let pose = try pose(FakeEstimator(trace: Trace()), Pictures([Self.picture(4242)]))
-        #expect(pose.state == .running)
+        // 用意の要らない推論でも、用意は main actor の外で済むので、開いた直後は preparing のことがある
+        #expect(await eventually { pose.state == .running })
         #expect(await settle(pose) { !pose.hands.isEmpty })
         #expect(pose.hands[0][.indexTip].position == Vector2(160, 120))
         #expect(pose.hostTime == 4242)
@@ -417,7 +418,7 @@ struct InferencePoseTests {
         let pose = try pose(FakeEstimator(trace: Trace(), hands: []), Pictures([Self.picture(7)]))
         #expect(await settle(pose) { pose.hostTime == 7 })
         #expect(pose.hands.isEmpty)
-        #expect(pose.state == .running)
+        #expect(await eventually { pose.state == .running })
     }
 
     @Test("同じ到着の絵を 2 度推論しない: 到着の host time が変わったときだけ推論する")
@@ -454,7 +455,7 @@ struct InferencePoseTests {
             pose.supply()  // 推論を待たずに返る (返らなければこの検査は進まない)
         }
         #expect(pose.hands.isEmpty, "遅い推論の間は、結果がまだ無い")
-        #expect(pose.state == .running)
+        #expect(await eventually { pose.state == .running }, "推論が遅くても、用意が済めば running")
 
         await trace.openGate()
         #expect(await settle(pose) { pose.hostTime == 4 })

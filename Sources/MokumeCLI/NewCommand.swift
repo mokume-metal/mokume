@@ -334,7 +334,7 @@ enum NewCommand {
         "simd", "Metal", "Synchronization", "AppKit", "Darwin", "QuartzCore", "CoreGraphics",
         "AVFAudio", "Observation", "SwiftUI", "Accelerate", "AVFoundation", "Network", "CoreText",
         "ImageIO", "IOSurface", "CoreMedia", "CoreAudio", "VideoToolbox", "UniformTypeIdentifiers",
-        "ModelIO", "IOKit", "CoreVideo", "GameController", "CoreMIDI", "os", "CryptoKit",
+        "ModelIO", "IOKit", "CoreVideo", "GameController", "CoreMIDI", "os", "CryptoKit", "Vision",
         // ライブラリのソースが import する swift-syntax のモジュール
         "SwiftSyntax", "SwiftSyntaxMacros", "SwiftCompilerPlugin", "SwiftDiagnostics",
     ]

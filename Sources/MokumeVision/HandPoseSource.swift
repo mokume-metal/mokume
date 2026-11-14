@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import MokumeCore
 import MokumeDiagnostics
 import Synchronization
@@ -67,11 +68,11 @@ final class RecordedHandPoseSource: HandPoseSource {
 
 // MARK: - 推論
 
-/// 推論に渡す、1 枚の絵の写し。**画素は持たない。**
+/// 推論に渡す、1 枚の絵の写し。
 ///
 /// ``Image`` は main actor の持ち物で `Sendable` ではないので、推論 (main actor の外) へは渡せない。
-/// 渡すのは大きさと届いた host time だけにして、画素を CPU へ読み出して持たせるのは実物の推論の段
-/// (#3587) で足す。
+/// main actor の上で画素を ``Image/readPixels()`` で読み出した写し (``PixelBuffer``) を持たせて渡す。
+/// 画素の要らない推論 (検査の偽物) には `pixels` を持たせない。
 nonisolated struct HandPoseInput: Sendable, Equatable {
     /// 絵の幅 (画素)。
     let width: Int
@@ -79,6 +80,32 @@ nonisolated struct HandPoseInput: Sendable, Equatable {
     let height: Int
     /// 絵が届いた瞬間の host time。
     let hostTime: UInt64
+    /// 絵の画素。線形・アルファ乗算済み (``PixelBuffer`` のとおり)。`nil` なら画素を持たない写し。
+    let pixels: PixelBuffer?
+
+    init(width: Int, height: Int, hostTime: UInt64, pixels: PixelBuffer? = nil) {
+        self.width = width
+        self.height = height
+        self.hostTime = hostTime
+        self.pixels = pixels
+    }
+
+    /// 大きさ・host time と、画素を持つかどうかで比べる。画素の中身は比べない (``PixelBuffer`` の比べ方は
+    /// main actor の上でしか使えない)。
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.width == rhs.width && lhs.height == rhs.height && lhs.hostTime == rhs.hostTime
+            && lhs.hasPixels == rhs.hasPixels
+    }
+
+    private var hasPixels: Bool {
+        if case .some = pixels { true } else { false }
+    }
+
+    /// 読み出した画素から作る。大きさは画素のもの。
+    @MainActor
+    init(pixels: PixelBuffer, hostTime: UInt64) {
+        self.init(width: pixels.width, height: pixels.height, hostTime: hostTime, pixels: pixels)
+    }
 }
 
 /// 推論が返す関節点 1 つ。**Vision の座標のまま** (0〜1・左下が原点・y は上向き)。
@@ -99,7 +126,14 @@ nonisolated struct RawHand: Sendable, Equatable {
 ///
 /// main actor の外で呼ばれる。手が写っていなければ空を返し、投げない。
 nonisolated protocol HandPoseEstimator: Sendable {
+    /// 推論できるようにする (モデルの読み込みなど)。返ったら推論できる。何度呼んでもよく、2 度目からはすぐ返る。
+    func prepare() async
     func estimate(_ frame: HandPoseInput) async -> [RawHand]
+}
+
+nonisolated extension HandPoseEstimator {
+    /// 用意の要らない推論は、すぐ返る。
+    func prepare() async {}
 }
 
 nonisolated extension HandPoseResult {
@@ -311,30 +345,146 @@ final class ArrivalFilter {
     func forget() { last = nil }
 }
 
+/// 推論の用意 (モデルの読み込みなど) を 1 度だけ走らせ、済んだら入れ物の状態を ``SourceState/running`` にする係。
+///
+/// 用意は main actor の外で走り、描くほうは止まらない。用意の間の状態は ``SourceState/preparing``。
+/// **止めている間に用意が済んでも ``SourceState/running`` にしない** — 確かめてから名乗るまでを錠の内側で行うので、
+/// 止めた直後に済んだ用意が ``SourceState/stopped`` を上書きしない。用意は 1 度きりで、足し直したときに済んでいれば
+/// すぐ ``SourceState/running`` を名乗る。
+nonisolated final class HandPosePreparation: Sendable {
+    private struct State {
+        var started = false
+        var prepared = false
+        var stopped = false
+    }
+
+    private let estimator: any HandPoseEstimator
+    private let output: ExternalInput<HandPoseResult>
+    private let state = Mutex(State())
+    private let finished = DispatchSemaphore(value: 0)
+
+    init(estimator: any HandPoseEstimator, output: ExternalInput<HandPoseResult>) {
+        self.estimator = estimator
+        self.output = output
+    }
+
+    /// 用意が済んだか。
+    var isPrepared: Bool { state.withLock { $0.prepared } }
+
+    /// 開く。済んでいなければ ``SourceState/preparing`` を名乗って用意を始め (始めていなければ)、済んでいれば
+    /// ``SourceState/running`` を名乗る。**すぐ返る。**
+    func start() {
+        let begins = state.withLock { state -> Bool in
+            state.stopped = false
+            if state.prepared {
+                output.setState(.running)
+                return false
+            }
+            output.setState(.preparing)
+            guard !state.started else { return false }
+            state.started = true
+            return true
+        }
+        guard begins else { return }
+        Task.detached(priority: .userInitiated) { [self] in
+            await estimator.prepare()
+            state.withLock { state in
+                state.prepared = true
+                if !state.stopped { output.setState(.running) }
+            }
+            finished.signal()
+        }
+    }
+
+    /// 止める。この後に用意が済んでも、状態は変えない。
+    func stop() {
+        state.withLock { $0.stopped = true }
+    }
+
+    /// 用意が済むまで、この場で待つ。`timeout` を越えたら待たずに `false` を返す。
+    func wait(timeout: Duration) -> Bool {
+        if isPrepared { return true }
+        guard finished.wait(timeout: .now() + timeout.seconds) == .success else { return isPrepared }
+        return true
+    }
+}
+
+/// 推論を 1 枚だけ走らせ、終わるまでこの場で待つ。**待つ側が期限を持つ** — 越えたら推論に `Task.cancel` を送り、
+/// `nil` を返す。推論は main actor の外で走るので、main actor から待ってもよい。
+nonisolated enum BlockingInference {
+    private final class Slot: Sendable {
+        let hands = Mutex<[RawHand]?>(nil)
+        let done = DispatchSemaphore(value: 0)
+    }
+
+    static func run(
+        _ estimator: any HandPoseEstimator, on frame: HandPoseInput, timeout: Duration
+    ) -> [RawHand]? {
+        let slot = Slot()
+        let task = Task.detached(priority: .userInitiated) {
+            let hands = await estimator.estimate(frame)
+            slot.hands.withLock { $0 = hands }
+            slot.done.signal()
+        }
+        guard slot.done.wait(timeout: .now() + timeout.seconds) == .success else {
+            task.cancel()
+            return nil
+        }
+        return slot.hands.withLock { $0 }
+    }
+}
+
+extension Duration {
+    /// 秒 (`DispatchTime` に足せる形)。
+    nonisolated fileprivate var seconds: Double {
+        Double(components.seconds) + Double(components.attoseconds) / 1e18
+    }
+}
+
 /// 推論で回す出どころ。届いた絵を ``HandPoseWorker`` に渡し、結果は worker が入れ物へ入れる。
 ///
 /// 絵の写し (``HandPoseInput``) は `frame` が作る。**新しい絵が届いたときだけ**値を返し、無ければ
 /// `nil` を返す — 同じ絵を 2 度推論しない。止めたら `forget` で「見た絵」を忘れ、足し直した後は同じ絵でも
 /// 1 度推論する。
+///
+/// **`waits` が `true` を返す間 (固定の時計) は推論を待つ。** 開くときに用意を、フレームごとに推論を、この場で
+/// 待つ (`patience` まで)。結果はその ``Inlet/supply()`` の中で入れ物へ入るので、フレーム N の絵に対する結果が
+/// フレーム N の `draw()` に出る。期限を越えたら、そのフレームは新しい結果なしで進め、1 度だけ名乗り、以後は待たない
+/// (固まった推論で書き出しを止め続けない)。`waits` が `false` の間 (実時間の時計) は待たず、worker に渡す。
 final class InferenceSource: HandPoseSource {
+    /// 固定の時計で、用意と推論の 1 回をそれぞれ待つ長さの既定。この機械で初めて推論した回の用意 (数秒) が収まる長さ。
+    static let defaultPatience: Duration = .seconds(30)
+
     private let frame: () -> HandPoseInput?
     private let forget: () -> Void
     private let estimator: any HandPoseEstimator
     private let dropped: DroppedHands
+    private let waits: () -> Bool
+    private let patience: Duration
+    private let tell: (String) -> Void
     private(set) var worker: HandPoseWorker?
+    private var preparation: HandPosePreparation?
     private var stopped = false
+    /// 期限を越えたことがあるか。越えた後は待たない。
+    private(set) var gaveUpWaiting = false
 
     init(
         estimator: any HandPoseEstimator, dropped: DroppedHands = DroppedHands(),
+        waits: @escaping () -> Bool = { false }, patience: Duration = defaultPatience,
+        tell: @escaping (String) -> Void = { Diagnostics.warn($0) },
         forget: @escaping () -> Void = {}, frame: @escaping () -> HandPoseInput?
     ) {
         self.frame = frame
         self.forget = forget
         self.estimator = estimator
         self.dropped = dropped
+        self.waits = waits
+        self.patience = patience
+        self.tell = tell
     }
 
-    /// 絵の大きさと到着の記録から写しを作る組み方。`arrival` の host time が前と変わったときが、新しい絵である。
+    /// 絵の大きさと到着の記録から写しを作る組み方 (画素は持たない)。`arrival` の host time が前と変わったときが、
+    /// 新しい絵である。
     convenience init(
         estimator: any HandPoseEstimator, dropped: DroppedHands = DroppedHands(),
         size: @escaping () -> (width: Int, height: Int), arrival: @escaping () -> Arrival?
@@ -347,14 +497,24 @@ final class InferenceSource: HandPoseSource {
         }
     }
 
-    /// 絵と到着の記録から写しを作る組み方。
+    /// 絵と到着の記録から写しを作る組み方。新しい絵が届いたフレームで、絵の画素を ``Image/readPixels()`` で読む。
     ///
     /// **供給の順に注意。** 入り口は足した順に ``Inlet/supply()`` が回る。絵を書き込む入り口 (`Capture`) より
     /// 後に足せば、同じフレームで書かれたばかりの絵を見る。
     convenience init(
-        estimator: any HandPoseEstimator, image: Image, arrival: @escaping () -> Arrival?
+        estimator: any HandPoseEstimator, dropped: DroppedHands = DroppedHands(), image: Image,
+        waits: @escaping () -> Bool = { false }, patience: Duration = defaultPatience,
+        tell: @escaping (String) -> Void = { Diagnostics.warn($0) },
+        arrival: @escaping () -> Arrival?
     ) {
-        self.init(estimator: estimator, size: { (image.width, image.height) }, arrival: arrival)
+        let filter = ArrivalFilter()
+        self.init(
+            estimator: estimator, dropped: dropped, waits: waits, patience: patience, tell: tell,
+            forget: filter.forget
+        ) {
+            guard let hostTime = arrival()?.hostTime, filter.isNew(hostTime) else { return nil }
+            return HandPoseInput(pixels: image.readPixels(), hostTime: hostTime)
+        }
     }
 
     func start(into input: ExternalInput<HandPoseResult>) {
@@ -363,20 +523,43 @@ final class InferenceSource: HandPoseSource {
             worker.resume()
         } else {
             worker = HandPoseWorker(estimator: estimator, output: input, dropped: dropped)
+            preparation = HandPosePreparation(estimator: estimator, output: input)
         }
-        // 用意の状態は、実物の推論が用意に時間を使う段 (#3587) で名乗る
-        input.setState(.running)
+        preparation?.start()
+        guard shouldWait, let preparation, !preparation.wait(timeout: patience) else { return }
+        giveUp("getting the hand pose estimator ready")
     }
 
     func pump(into input: ExternalInput<HandPoseResult>) {
         // 止めている間は絵を見ない — 見ると「見た絵」になり、足し直した後に同じ絵が推論されない
         guard !stopped, let picture = frame() else { return }
-        worker?.submit(picture)
+        guard shouldWait else {
+            worker?.submit(picture)
+            return
+        }
+        guard let hands = BlockingInference.run(estimator, on: picture, timeout: patience) else {
+            giveUp("estimating the hands in a frame")
+            return
+        }
+        let converted = HandPoseResult.converting(hands, of: picture)
+        input.send(converted.result, hostTime: picture.hostTime)
+        dropped.note(converted.dropped)
     }
 
     func stop() {
         stopped = true
         forget()
         worker?.stop()
+        preparation?.stop()
+    }
+
+    private var shouldWait: Bool { !gaveUpWaiting && waits() }
+
+    private func giveUp(_ what: String) {
+        gaveUpWaiting = true
+        tell(
+            "hand pose: \(what) took longer than \(patience), so the sketch went on without the result. "
+                + "Later frames do not wait for the estimator, so a written movie may not show each frame's hands "
+                + "on the same frame")
     }
 }
