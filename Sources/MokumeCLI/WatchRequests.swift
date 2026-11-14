@@ -15,10 +15,12 @@ struct WatchRequest: ExchangeRequest, Equatable {
     let id: String
     let action: String
 
-    /// この段で受ける動作。`send` は後の段 (#3566) が足す。
+    /// 受ける動作。
     enum Action: String, CaseIterable {
         case audition
         case leave
+        /// 試聴の版を本番にして作品のウィンドウを乗り換え、前の本番を止める。試聴には居続ける (#3566)。
+        case send
         /// ソースの中身が変わっていなくても、保存したときと同じ作り直しと差し替えを 1 回起こす
         /// (#3428)。
         case rebuild
@@ -55,7 +57,7 @@ struct WatchReport: Encodable, Equatable {
 
     /// 断った理由。**綴りは `Schemas/watch-report.schema.json` の `enum` と揃える。**
     enum Reason: String, Encodable, CaseIterable {
-        /// 試聴に入っていないのに出る要求だった。
+        /// 試聴に入っていないのに、出る・送る要求だった。
         case notAuditioning
         /// 既に試聴に入っている。
         case alreadyAuditioning
@@ -66,8 +68,9 @@ struct WatchReport: Encodable, Equatable {
         /// 作品のウィンドウが映している本番の子が、目録で自分の番号を名乗らない (古いライブラリ)。試聴の版と本番を、番号で
         /// 区別して別のウィンドウに出し分けられない。入ると、試聴の版が作品のウィンドウにも出て、ウィンドウの入力は本番へ届く。
         case unidentifiedGeneration
-        /// 起こし直す要求で、当たる子が走っていない (試聴中なら試聴の子、そうでなければ本番の子が居ない。最初の作り直しが
-        /// 失敗した後など) (#3428)。
+        /// 起こし直す・送る要求で、当たる子が走っていない (#3428・#3566)。起こし直しは、試聴中なら試聴の子、そうでなければ
+        /// 本番の子が居ない (最初の作り直しが失敗した後など)。送るのは、送る試聴の子が居ない (入ってまだ保存していない・
+        /// 試聴の子が落ちた・作り直しの最中)。
         case noTarget
         /// 起こし直す要求で、当たる子の版の組み上がりがもう無い (#3428)。
         /// 本番の版も試聴の版も同じ置き場の同じ実行ファイルへ組むので、最後に通った作り直しの版が当たる子の版でなければ、

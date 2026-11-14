@@ -2550,6 +2550,61 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **送る (#3566)。** 試聴の子の頼みは、送るまで作品のウィンドウに当たらず、送って (関所を通らずに採らせて) 乗り換えた
+    /// ときに当たる。全画面の頼みが変わっていれば、そのときに頼まれた画面へ当て直す。
+    @Test("送ると、作品のウィンドウは試聴の子へ乗り換え、そのときに試聴の子の大きさ・全画面の頼みを当てる")
+    func sendingAppliesTheAuditionedRequestsOnPromotion() throws {
+        try withFullScreenStage { stage, log, facet, gpu in
+            var kept: [SharedFrameSurface] = []
+            stage.acceptsGeneration = { $0 != 200 }
+            var promoted: [Int32?] = []
+            stage.onGenerationPromoted = { promoted.append($0) }
+            kept.append(
+                try publishAs(
+                    pid: 100, in: facet, gpu: gpu, windowScale: 2, fullScreenDisplay: Self.projector))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100)
+            #expect(log.entered.count == 1 && stage.appliedFullScreen == Self.projector)
+            // 全画面を抜けて、大きさの頼みを見られるようにする
+            log.isFullScreen = false
+            let before = try #require(stage.window?.contentLayoutRect.size)
+
+            // 試聴の版が windowScale 2 → 4、全画面を別の画面へ変えて保存した。送る前は当たらない
+            kept.append(
+                try publishAs(pid: 200, in: facet, gpu: gpu, windowScale: 4, fullScreenDisplay: Self.wall))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100 && stage.window?.contentLayoutRect.size == before)
+            #expect(log.entered.count == 1 && stage.appliedFullScreen == Self.projector)
+
+            // 送る: 見張りが試聴の子の目録を採らせる。試聴の子は 1 枚書いているので、次のリフレッシュで乗り換える
+            #expect(stage.returnToGeneration(pid: 200))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200, "送った世代へ乗り換えない")
+            #expect(promoted.last == 200, "乗り換えの合図が送った世代を名乗らない: \(promoted)")
+            #expect(stage.appliedFullScreen == Self.wall, "送った世代の全画面の頼みを当てない")
+            #expect(log.entered.count == 2)
+        }
+    }
+
+    @Test("送ると、作品のウィンドウの大きさは送った世代の windowScale になり、送る前は変わらない")
+    func sendingAppliesTheAuditionedWindowScaleOnPromotion() throws {
+        try withFullScreenStage { stage, _, facet, gpu in
+            var kept: [SharedFrameSurface] = []
+            stage.acceptsGeneration = { $0 != 200 }
+            // 32x32 を 1 画素 2 点で
+            kept.append(try publishAs(pid: 100, in: facet, gpu: gpu, windowScale: 2))
+            stage.displayLinkFired()
+            #expect(stage.window?.contentLayoutRect.size == NSSize(width: 64, height: 64))
+            kept.append(try publishAs(pid: 200, in: facet, gpu: gpu, windowScale: 4))
+            stage.displayLinkFired()
+            #expect(stage.window?.contentLayoutRect.size == NSSize(width: 64, height: 64), "送る前に大きさが変わった")
+            #expect(stage.returnToGeneration(pid: 200))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200)
+            #expect(stage.window?.contentLayoutRect.size == NSSize(width: 128, height: 128), "送った世代の大きさにならない")
+        }
+    }
+
     /// 積んである投入の結末がすべて届くまで待つ (`DroppedWorkRedeliveryTests` と同じ)。
     private func awaitOutcomes(_ gpu: RenderDevice) {
         _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)

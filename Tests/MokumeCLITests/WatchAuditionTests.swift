@@ -34,6 +34,8 @@ struct WatchAuditionTests {
         var relinquished: [[Int32]] = []
         /// 台が戻れるか (番号ごと)。既定は戻れる。
         var canReturn: (Int32) -> Bool = { _ in true }
+        /// 送る要求が作品のウィンドウに採らせた世代の番号 (#3566)。
+        var adopted: [Int32] = []
         /// 作品のウィンドウが映している世代の番号。既定は、いま走っている本番 (映っている前の世代があればそれ)。
         var windowShows: (() -> Int32?)?
         /// 立てると、次の作り直しは ``releaseRebuild()`` まで終わらない。
@@ -190,6 +192,10 @@ struct WatchAuditionTests {
                 return (session.outgoing ?? session.child)?.processIdentifier
             }
             session.relinquishesDisplay = { [unowned self] pids in relinquished.append(pids) }
+            session.windowAdoptsGeneration = { [unowned self] pid in
+                adopted.append(pid)
+                return true
+            }
             session.serveRequests()
         }
 
@@ -350,10 +356,10 @@ struct WatchAuditionTests {
         #expect(pidOf(again["audition"]) == harness.gens.last?.processIdentifier, "試聴の子の pid も名乗る")
         #expect(stampOf(again["audition"]) == "s2")
 
-        // `send` は後の段が足す。この段は知らない動作として断る
-        let send = try await harness.ask("send")
-        #expect(send["reason"] as? String == "unknownAction")
-        #expect(send["action"] as? String == "send")
+        // 知らない動作は、名乗った綴りのまま断る
+        let unknown = try await harness.ask("promote")
+        #expect(unknown["reason"] as? String == "unknownAction")
+        #expect(unknown["action"] as? String == "promote")
 
         // 型の違う `action` は解けないが、`id` は読めるので応える
         let unreadable = try await harness.ask(json: #"{"id":"bad","action":5}"#)

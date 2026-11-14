@@ -604,6 +604,8 @@ enum WatchCommand {
         }
         // 入る要求が、作品のウィンドウが番号を名乗る本番を映しているかを問う口
         session.windowShowsPID = { [weak window] in window?.displayedPID }
+        // 送る要求が、作品のウィンドウに試聴の子の目録を採らせる口 (関所は通らない・#3566)
+        session.windowAdoptsGeneration = { [weak window] pid in window?.returnToGeneration(pid: pid) ?? false }
     }
 
     /// 絵を渡す区画の場所。**見張っているスケッチの側の基準へ置く** — 道具自身の作業

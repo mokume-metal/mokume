@@ -493,6 +493,11 @@ final class WatchSession {
     /// 試聴を出るとき、プレビューを本番の世代へ戻す口。引数は本番の子の番号で、戻れたかを返す。
     var returnsPreviewToGeneration: (Int32) -> Bool = { _ in false }
 
+    /// 送るとき、作品のウィンドウに試聴の子の目録を採らせる口 (#3566)。引数は試聴の子の番号で、採らせたか (もう映している・
+    /// 控えた) を返す。乗り換えるのは台の普段の経路で、試聴の子が 1 枚書いていれば次のリフレッシュで映り、乗り換えの合図
+    /// (``generationPromoted(pid:)``) が前の本番を止める。ウィンドウを出せた見張りだけが繋ぐ (``WatchCommand``)。
+    var windowAdoptsGeneration: (Int32) -> Bool = { _ in false }
+
     /// 区画 `watch` の要求。**``serveRequests()`` を呼ぶまでは答えない。**
     private var requests: RequestFile<WatchRequest>?
     /// 要求に答えている最中か。**要求は 1 本ずつ処理する** (``answerRequests()``)。
@@ -543,6 +548,9 @@ final class WatchSession {
 
     /// 試聴に入っていない間に最後に書いた記録 — **本番の版の記録。** 試聴を出るとき、区画 `build` の記録をこれへ戻す。
     private var productionReport: BuildReport?
+    /// 最後に試聴の子を起こした作り直しの記録と、その作り直しの通し番号 (``launchBuilds`` と比べる)。送ると、送った子の版の
+    /// 記録が本番の版の記録になる (#3566)。起こし直した試聴の子は同じ作り直しの成果物なので、同じ記録を使う。
+    private var auditionLaunch: (build: Int, report: BuildReport)?
 
     /// 1 枚目の絵を道具のウィンドウに出した世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
@@ -2207,6 +2215,7 @@ final class WatchSession {
             switch request.known {
             case .audition?: report = enterAudition(request, into: &answered)
             case .leave?: report = await leaveAudition(request, into: &answered)
+            case .send?: report = sendAudition(request, into: &answered)
             case .rebuild?: report = askRebuild(request)
             case .restart?: report = askRestart(request, into: &answered)
             case nil: report = refusal(id: request.id, action: request.action, .unknownAction)
@@ -2368,6 +2377,66 @@ final class WatchSession {
         answered.lines = [Self.leftNotice(left)]
         return acceptance(request)
     }
+
+    // MARK: - 送る (#3566)
+
+    /// 送る要求 (#3566)。**試聴の子を本番にして作品のウィンドウを乗り換え、前の本番を止める。送った後も試聴に居る。**
+    ///
+    /// 作品のウィンドウに試聴の子の目録を採らせ (``windowAdoptsGeneration``)、試聴の子を本番の枠 (``child``) へ、前の本番を
+    /// ``outgoing`` へ移して乗り換えを待つ。台が試聴の子へ乗り換えると、その合図 (``generationPromoted(pid:)``) が前の本番を
+    /// 止める — 保存の差し替えと同じ経路で、新しい通信路を作らない。頼み (大きさ・全画面) は、乗り換えのときに台が当てる。
+    /// **前の本番が止まり終えるまで、次の試聴の子は起こさない** (``isProductionSettling`` の門で保留する) — 区画の権利は、
+    /// 前の本番が消えて錠が外れてから次の世代が取る。
+    ///
+    /// 送る試聴の子が居ない回 — 入ってまだ保存していない・試聴の子が落ちた・作り直し (起こし直し) の最中 — と、本番が
+    /// 乗り換えの途中の回は ``WatchReport/Reason/noTarget`` で断り、試聴に留まる。作り直しの完了を待ってから送ることはしない。
+    private func sendAudition(_ request: WatchRequest, into answered: inout Answered) -> WatchReport {
+        guard isAuditioning else {
+            return refusal(id: request.id, action: request.action, .notAuditioning)
+        }
+        guard let sent = auditionChild, sent.isRunning, sent !== stoppingAudition, !isBringingDown(sent),
+            !auditionIsUnidentified, !isRebuilding, !isRestarting, !isProductionSettling,
+            windowAdoptsGeneration(sent.processIdentifier)
+        else {
+            answered.lines = [Self.sendDeclinedLine]
+            answered.notice = Self.sendDeclinedLine
+            return refusal(id: request.id, action: request.action, .noTarget)
+        }
+        let pid = sent.processIdentifier
+        // 試聴の子は本番になる: 作品のウィンドウが採り、乗り換えの合図を本番の入れ替わりとして受ける
+        auditionPIDs.remove(pid)
+        auditionChild = nil
+        hasNamedAuditionDeparture = false
+        // 起こし直した試聴の子だったなら、最初の絵の前に落ちても試聴の時計の場所は戻さない (もう試聴の子ではない)
+        restartedChildren.removeValue(forKey: pid)
+        // 前の本番は乗り換えまで映り続け、合図で止まる。プレビューは送った子を映したまま
+        outgoing = child
+        child = sent
+        awaitingPromotion = true
+        firstFrameSince = nil
+        // 出るときの戻り先は、送った子 (いまの本番)
+        holdsPreviewGeneration([pid])
+        // **区画 `build` の記録とソースの世代の控えは、送った版が本番の版になる。** 出る要求は、この記録と世代へ戻す
+        if let launch = auditionLaunch, launch.build == launchBuilds[pid] {
+            var record = launch.report
+            record.audition = nil
+            productionReport = record
+            lastReport = record
+            write(record)
+        }
+        answered.lines = [Self.sentNotice]
+        return acceptance(request)
+    }
+
+    /// 送ったことを名乗る行。
+    static let sentNotice =
+        "Sent: the work's window switches to the version under audition, and the version it had stops. "
+        + "Still auditioning — saving changes only the preview"
+
+    /// 送れなかったことを名乗る行。
+    static let sendDeclinedLine =
+        "Nothing to send: no version under audition is ready (save to start one, or send again "
+        + "once it is running and no build is under way)"
 
     // MARK: - 作り直す・起こし直す (#3428)
 
@@ -2747,7 +2816,9 @@ final class WatchSession {
                     output: buildOutput, stamp: stamp, configuration: configurationName,
                     timings: timings)
             }
-        return finish(report, audition: true, requested: requested)
+        let written = finish(report, audition: true, requested: requested)
+        if launchFailure == nil { auditionLaunch = (build, written) }
+        return written
     }
 
     /// 試聴の子を起こす手順 (記録は書かない)。作り直しの後 (``launchAudition``) と起こし直し (``performRestart(_:)``) が通る。

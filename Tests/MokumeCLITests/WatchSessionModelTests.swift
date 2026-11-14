@@ -157,11 +157,14 @@ struct WatchSessionModelTests {
         case rebuild
         /// 起こし直す要求 (#3428)。作り直さずに、頼みを読んだ時点の役の子を最初から起こし直す。
         case restart
+        /// 送る要求 (#3566)。試聴の子を本番の側へ移し、作品のウィンドウの乗り換えを待つ。試聴には居続ける。
+        case send
 
         var description: String {
             switch self {
             case .rebuild: "rebuild"
             case .restart: "restart"
+            case .send: "send"
             case .none: "none"
             case .audition: "audition"
             case .leave: "leave"
@@ -225,6 +228,8 @@ struct WatchSessionModelTests {
         .rebuildOverlap([.restart, .rebuild]), .overlap([.audition, .rebuild, .save]),
         // 出る要求が本番の版へ寄せた試聴の頼みを、次の試聴の保存が捨てる (#3428 の 2 回目の反証 5)
         .overlap([.rebuild, .leaveStuck, .audition, .save]),
+        // 送る要求 (#3566)
+        .send, .send, .send,
     ]
 
     /// 列の長さ。縮めると `none` が並ぶので、実際の長さはこれ以下。
@@ -306,6 +311,30 @@ struct WatchSessionModelTests {
         ])
     @MainActor
     func auditionColumnsKeepTheirPostconditions(_ ops: [Op]) async {
+        let outcome = await Driver.runCase(ops: ops, ends: false)
+        #expect(outcome == .pass, "\(outcome)")
+    }
+
+    /// 送る要求 (#3566) を挟む列。**生成する検査の seed に頼らず、決定的に回す。**
+    @Test(
+        "送る要求を挟む列は、役ごとの事後条件を破らない (#3566)",
+        arguments: [
+            // 送る → 乗り換える → 次の保存で試聴の子 → また送る → 出る
+            [Op.save, .promoteWaiting, .audition, .save, .send, .promoteWaiting, .save, .send, .promoteWaiting, .leave],
+            // 送ってから乗り換える前に保存する (試聴の子は保留) → 乗り換える → 保留していた試聴の子が起きる
+            [.save, .promoteWaiting, .audition, .save, .send, .save, .promoteWaiting, .beat, .leave],
+            // 送った子が乗り換えの前に落ちる / 乗り換えの前に出る
+            [.save, .promoteWaiting, .audition, .save, .send, .exitWaitingFailing, .beat, .save],
+            [.save, .promoteWaiting, .audition, .save, .send, .leave, .promoteWaiting, .save],
+            // 断る回: 試聴の外・入って未保存・試聴の子が落ちた・本番が乗り換えの途中
+            [.save, .send, .audition, .send, .save, .exitAudition, .beat, .send, .leave],
+            [.save, .save, .audition, .save, .send, .promoteWaiting, .send],
+            // 本番が試聴中に落ちた後に送る / 送った後に起こし直す
+            [.save, .promoteWaiting, .audition, .save, .exitShown, .beat, .send, .promoteWaiting, .restart, .leave],
+            [.save, .promoteWaiting, .audition, .save, .restart, .send, .promoteWaiting, .save, .leave],
+        ])
+    @MainActor
+    func sendColumnsKeepTheirPostconditions(_ ops: [Op]) async {
         let outcome = await Driver.runCase(ops: ops, ends: false)
         #expect(outcome == .pass, "\(outcome)")
     }
@@ -721,6 +750,8 @@ struct WatchSessionModelTests {
             }
             // プレビューは本番へ戻れる役を演じる (戻れない回は `WatchAuditionRefutationTests` が見る)
             session.returnsPreviewToGeneration = { _ in true }
+            // 送る要求が作品のウィンドウに試聴の子を採らせる (台は作らないので、いつも採れる・#3566)
+            session.windowAdoptsGeneration = { _ in true }
             // 作品のウィンドウは、いま走っている本番を映している (番号を名乗る子) 役を演じる
             session.windowShowsPID = { [unowned self] in
                 (session.outgoing ?? session.child)?.processIdentifier
@@ -1364,6 +1395,52 @@ struct WatchSessionModelTests {
                 // 本番が居ない回は、出た時点のソースで本番を起こし直す (守る相手が居ない)。居る回は動かさない
                 if !productionBefore.isEmpty, productionAlive() != productionBefore {
                     return Violation(number: 7, text: "出る要求で、本番の側が動いた (前 \(name(productionBefore)) → 後 \(name(productionAlive())))")
+                }
+                return nil
+
+            case .send:
+                // 送る (#3566): 試聴に入っていて、生きている試聴の子が居て、本番が乗り換えの途中でなければ受ける。受けると、
+                // その子が本番の側へ移って乗り換えを待ち、前の本番は乗り換えの合図まで生きている。試聴には居続ける。
+                // 断った回は何も動かさない (試聴に入っていなければ notAuditioning、入っていれば noTarget)
+                guard !stopped else { return nil }
+                await settleUnseen()
+                let before = alive()
+                let productionBefore = productionAlive()
+                let target = auditionAlive().first
+                let deferredBefore = deferredStamp
+                let sendable =
+                    auditioning && target != nil && session.waitingGeneration == nil && productionBefore.count <= 1
+                let (report, started) = try await askReport("send")
+                let accepted = report["accepted"] as? Bool == true
+                if accepted != sendable {
+                    return Violation(
+                        number: 7,
+                        text: "送る要求を\(accepted ? "受けた" : "断った") (試聴中 \(auditioning)・試聴の子 \(target.map { "G\($0)" } ?? "なし")・本番 \(name(productionBefore)))")
+                }
+                if report["auditioning"] as? Bool != auditioning {
+                    return Violation(number: 7, text: "送る要求の後の auditioning が \(report["auditioning"] ?? "-")")
+                }
+                guard accepted, let target else {
+                    let reason: WatchReport.Reason = auditioning ? .noTarget : .notAuditioning
+                    if report["reason"] as? String != reason.rawValue {
+                        return Violation(number: 7, text: "送る要求の応答が \(report) (規則では \(reason.rawValue) で断る)")
+                    }
+                    if alive().subtracting(pendingLaunches(started, of: deferredBefore)) != before {
+                        return Violation(number: 7, text: "断った送る要求で、生きている世代が変わった (前 \(name(before)) → 後 \(name(alive())))")
+                    }
+                    return nil
+                }
+                auditionGens.remove(target)
+                // 送った子は、作品のウィンドウの乗り換えを待つ本番 (台の合図は ``Op/promoteWaiting`` が演じる)
+                waiting = target
+                if session.waitingGeneration !== gens[target] {
+                    return Violation(number: 7, text: "送った G\(target) が、乗り換えを待つ本番になっていない")
+                }
+                if alive() != before {
+                    return Violation(number: 7, text: "送る要求で、生きている世代が変わった (前 \(name(before)) → 後 \(name(alive())))")
+                }
+                if productionAlive() != productionBefore.union([target]) {
+                    return Violation(number: 7, text: "送った後の本番の側が \(name(productionAlive())) (規則では \(name(productionBefore.union([target]))))")
                 }
                 return nil
 
