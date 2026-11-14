@@ -562,19 +562,33 @@ struct WatchStopOffMainTests {
         stubborn.waitUntilReady()
         let child = try #require(session.child)
 
+        // **手順の時計は検査が持つ** (``WatchSession/Shutdown/poll(now:)`` は時刻を受け取る)。壁時計で測ると、
+        // 負荷で強制終了から回収までが `killGrace` を越えたとき `.abandoned` に倒れ、期待の `.killed` と食い違う。
+        // 時計は 1 回の poll で `tick` 進め、**消えるのを待つ猶予は検査の長さでは切れない値** (`killGrace`) にする。
+        // 待つ側の期限は poll の回数 (`turns`) で持つ — 越えたら `outcome` が空のまま赤になる
+        let tick: TimeInterval = 0.05
+        let turns = 2000
+        let start = DispatchTime.now()
         var shutdown = WatchSession.Shutdown(
-            child, timeout: 0.3, stopTimeout: 0.1, killGrace: 2, interrupting: false)
+            child, timeout: 0.3, stopTimeout: 0.1, killGrace: tick * Double(turns) * 10,
+            interrupting: false, now: start)
         var extensions: [TimeInterval] = []
         var outcome: WatchSession.StopOutcome?
-        let deadline = DispatchTime.now() + 10
-        while outcome == nil, DispatchTime.now() < deadline {
-            switch shutdown.poll(now: DispatchTime.now()) {
+        var aliveBeforeTheDeadline = true
+        var turn = 0
+        while outcome == nil, turn < turns {
+            let elapsed = tick * Double(turn)
+            // 期限 (0.1 + 延ばした 0.2) を越える前に、子を落とさない
+            if elapsed < 0.3, !child.isRunning { aliveBeforeTheDeadline = false }
+            switch shutdown.poll(now: start + elapsed) {
             case .waiting: break
             case .extending(let remaining): extensions.append(remaining)
             case .finished(let result): outcome = result
             }
+            turn += 1
             try await Task.sleep(for: .milliseconds(5))
         }
+        #expect(aliveBeforeTheDeadline, "期限より先に子が止まった")
         #expect(outcome == .killed)
         // 最初の期限 (0.1) を越えたら、残り (0.2) を 1 度だけ名乗る
         #expect(extensions.count == 1)
