@@ -3923,6 +3923,13 @@ public final class Canvas {
     /// 空になっていた。フレームを開くのは組み立ての前か後にする。断るのは組み立てている面自身のフレーム
     /// だけで、別の面の組み立ての中で描き場所を開くのは今までどおりである。
     ///
+    /// ## スケッチの外で、自分のループから対を回すとき
+    ///
+    /// スケッチの中 (`draw()` の中・``Canvas/draw(_:)`` の中) では、フレームの終わりに autorelease の置き場が空になる。
+    /// **面を直に作って、run loop の外のループで `beginDraw()` / ``endDraw()`` を回すなら、1 回ごとに
+    /// `autoreleasepool { }` で包む** — 対は 2 回の呼び出しに分かれるので、ここでは包めない。包まないと、捨てた
+    /// グラフィックスの GPU のメモリがループを抜けるまで残る ([#4081])。``Canvas/draw(_:)`` は自分で包む。
+    ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
@@ -3933,6 +3940,7 @@ public final class Canvas {
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
     /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
+    /// [#4081]: https://github.com/mokume-metal/mokume/issues/4081
     public func beginDraw() {
         // **組み立ての中では、組み立てている面のフレームを始めない** ([#2201])。捨てる道へ入る前に見る。
         // 始めなかった数を控え、対の ``endDraw()`` が何もしないようにする ([#2834])
@@ -7278,14 +7286,14 @@ extension Canvas: SettlementObserver {
 
 /// `work` を自分の autorelease の置き場の中で走らせ、投げた失敗は置き場を空にしてから投げ直す (#4081)。
 ///
-/// **1 フレームの区切りを呼び手の run loop に頼らないための口。** ウィンドウ・書き出し・流す経路は run loop の
-/// 1 回ごとに置き場が空になるが、検査や道具が面やランタイムを自分のループで回すと区切りが無い。描き場所と面の
-/// 持ち主が死んだ後も、フレームの中で autorelease されたものが捨てた描き場所の確保を掴み続けるので、区切りが無いと
-/// GPU のメモリがループを抜けるまで伸び続ける。
-@MainActor
-func drainingAutoreleased(_ work: () throws(RenderFailure) -> Void) throws(RenderFailure) {
-    let failure: RenderFailure? = autoreleasepool {
-        do throws(RenderFailure) {
+/// **1 フレーム (書き出しなら 1 枚) の区切りを呼び手の run loop に頼らないための口。** ウィンドウ・書き出し・流す
+/// 経路は run loop の 1 回ごとに置き場が空になるが、検査や道具が面やランタイムを自分のループで回すと区切りが無い。
+/// フレームの中で Metal が autorelease で返したもの (列の置き場の `MTLBuffer`・描く encoder・面の記述) は、
+/// 描き場所と置き場の持ち主が死んだ後も置き場に残って確保を掴むので、区切りが無いと GPU のメモリがループを
+/// 抜けるまで伸び続ける。
+nonisolated func drainingAutoreleased<Failure: Error>(_ work: () throws(Failure) -> Void) throws(Failure) {
+    let failure: Failure? = autoreleasepool {
+        do throws(Failure) {
             try work()
             return nil
         } catch {

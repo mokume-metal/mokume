@@ -552,6 +552,14 @@ nonisolated final class MovieFile: MovieOutput {
         guard writerStatus == .writing else {
             throw .writeFailed(path: path, reason: failureReason)
         }
+        // **器へ詰めて渡す所は、1 枚ごとに autorelease の置き場を空にする** (#4081)。書き手の仕事は積まれている間
+        // ループを抜けず、上の待ちが要らない枚は区切りも来ない。AVFoundation と CoreVideo が 1 枚ごとに
+        // autorelease するものを、次の枚へ持ち越さない
+        try drainingAutoreleased { () throws(MovieWriteFailure) in try handOver(image, at: stamp) }
+    }
+
+    /// 借りた器へ 1 枚を詰めて、書き手へ渡す。``append(_:at:)`` の待ちの後の、待たない部分。
+    private func handOver(_ image: DisplayImage, at stamp: CMTime) throws(MovieWriteFailure) {
         // **池を取れない・器を借りられないときは、取れなかった後に状態を読み直す。** 確かめてから取るまでの
         // 間に writer が転ぶと、取れないのは器のせいではない (``bufferFailure()``・#2944)
         guard let pool = pixelBufferPool else { throw bufferFailure() }
