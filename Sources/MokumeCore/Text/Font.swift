@@ -7,16 +7,16 @@ import Foundation
 /// ファイルから読んだ書体 ([#2445])。``SketchPart/loadFont(_:)`` が返し、``SketchPart/textFont(_:)-(Font)``
 /// で選ぶ。
 ///
-/// **手本の `PFont`・`p5.Font` に当たる。** Processing の `createFont(path, size)` と p5.js の
+/// **Processing の `PFont`・p5.js の `p5.Font` に当たる。** Processing の `createFont(path, size)` と p5.js の
 /// `loadFont(path)` が返すものと同じ役目で、大きさは持たない (大きさは ``SketchPart/textSize(_:)`` が
-/// 決める)。名前が手本から離れて `Font` なのは、SwiftUI と衝突する名前は取ってよいと決めたため
+/// 決める)。名前が Processing・p5.js から離れて `Font` なのは、SwiftUI と衝突する名前は取ってよいと決めたため
 /// ([ADR-0020] 決定 1 の 2026-10-14 の改訂)。SwiftUI を import するファイルでは、`mokume.Font` と
 /// 書けば解ける (`Image`・`Shape` と同じ扱い)。
 ///
 /// ## 同じファイルは同じ値
 ///
-/// **同じファイルを、更新されないまま何度読んでも、読んだ値は等しい。** 描いた字は値を鍵に焼き場へ
-/// 預けるので、毎フレーム読み直しても同じ字形を使い回す (それでも ``SketchPart/loadFont(_:)`` は
+/// **同じファイルを、更新されないまま何度読んでも、読んだ値は等しい。** 描いた字は値をキーにアトラスへ
+/// 預けるので、毎フレーム読み直しても同じグリフを使い回す (それでも ``SketchPart/loadFont(_:)`` は
 /// `setup()` で 1 度読む)。ファイルを差し替えれば (更新時刻が変わる)、次に読んだ値は別のものになる。
 ///
 /// ## プロセスへ登録しない

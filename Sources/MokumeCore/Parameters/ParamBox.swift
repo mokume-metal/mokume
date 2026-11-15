@@ -4,10 +4,10 @@
 import MokumeDiagnostics
 import Observation
 
-/// 宣言した値の置き場。``Param(name:)`` の展開が作るもので、手で書くことはない。
+/// 宣言した値のボックス。``Param(name:)`` の展開が作るもので、手で書くことはない。
 ///
-/// **値の実体はここ 1 つだけである** ([ADR-0013] 決定 3)。ウィンドウのつまみも、外からの
-/// 書き込みも、保存からの復元も、この 1 つを読み書きする入口であって値の複製を
+/// **値の実体はここ 1 つだけである** ([ADR-0013] 決定 3)。ウィンドウのノブも、外からの
+/// 書き込みも、保存からの復元も、この 1 つを読み書きする経路であって値の複製を
 /// 持たない。変更の追跡は Observation に載せる (同 決定 1) ので、ウィンドウの更新のために
 /// 登録も通知も書かない。
 ///
@@ -15,51 +15,51 @@ import Observation
 ///
 /// 中身は Swift 6.3 の `@Observable` の展開そのままで、**違いは key path を作る場所
 /// だけ**である。macro の展開は読むたびに `\.value` を書くが、この型は総称なので、
-/// その key path は呼ぶたびに実行時に組み立てられて捨てられる (`swift_getKeyPath`)。
+/// その key path は呼ぶたびに実行時に構築されて捨てられる (`swift_getKeyPath`)。
 /// スケッチが `@Param` の値を 1 回読むのに約 490 ns かかっていた (素の読みは 1 ns
 /// 未満)。作るのを初期化の 1 度にし、以後は同じものを渡す。
 ///
 /// key path は構造で等しさを判定するので、観測の登録と通知は macro の展開と一致する。
 /// **値が同じ再代入は通知しない** ([#2382](https://github.com/mokume-metal/mokume/issues/2382))。
-/// `Value` は `Equatable` を要求しないので、等しさは**面に出る表現** (`ParamValue`) で見る — 展開が
+/// `Value` は `Equatable` を要求しないので、等しさは**外部に出る表現** (`ParamValue`) で見る — 展開が
 /// `Equatable` な値にだけやる `shouldNotifyObservers` と同じ形である。通知しないだけで、値は置く
-/// (面に出ない部分を持つ自作の型の値や `-0.0` を落とさない)。通知はウィンドウの更新・応答の書き直し
-/// (`mokume watch` の下では毎フレーム)・保存の印のすべてを起こすので、`size = min(size, 100)` の
-/// ように値を保つ書き方は、これらを毎フレーム起こしていた。
+/// (外部に出ない部分を持つ自作の型の値や `-0.0` を失わない)。通知はウィンドウの更新・応答の書き直し
+/// (`mokume watch` の下では毎フレーム)・保存のフラグのすべてをトリガーするので、`size = min(size, 100)` の
+/// ように値を保つ書き方は、これらを毎フレームトリガーしていた。
 ///
 /// ## 非有限の数は載せない ([#2271])
 ///
-/// **値が変わる入口の関所は、ここの 1 点である。** NaN も無限も受け取らず、**前の値を保って、
-/// 1 度だけ名乗る** ([ADR-0030] 決定 3)。作者のコードからの代入 (``value`` の setter と
-/// `_modify`)・外からの書き込み・保存からの復元の 3 つの入口が、すべてここを通る。載せたままに
-/// すると、保存 (`params.json`) もつまみの応答も `JSONEncoder` が非有限を拒み、**他の値も含めて
-/// 全部が書けなくなる**。出口ごとに落とし方を書く形は採らない — 出口を足すたびに書き直すことに
+/// **値が変わる経路のゲートは、ここの 1 点である。** NaN も無限も受け取らず、**前の値を保って、
+/// 1 度だけ報告する** ([ADR-0030] 決定 3)。作者のコードからの代入 (``value`` の setter と
+/// `_modify`)・外からの書き込み・保存からの復元の 3 つの経路が、すべてここを通る。載せたままに
+/// すると、保存 (`params.json`) もノブの応答も `JSONEncoder` が非有限を拒み、**他の値も含めて
+/// 全部が書けなくなる**。出力先ごとに除外の仕方を書く形は採らない — 出力先を追加するたびに書き直すことに
 /// なる。
 ///
-/// ## 生まれのときの宣言も、JSON で表せる形へ畳む ([#2394]・[#2475])
+/// ## 生まれのときの宣言も、JSON で表せる形へ正規化する ([#2394]・[#2475])
 ///
 /// 宣言の初期値 (`= .nan`) も、`init` の中の代入 (`init() { radius = .nan }`) も、マクロの
-/// init accessor を通って置き場の初期化へ入り、setter は走らない。前の値が無いので「保つ」が
-/// 成り立たないから、**初期化の 1 点で別の形に畳み、置き場ごとに 1 度だけ名乗る** ([ADR-0030] 決定 3):
+/// init accessor を通ってボックスの初期化へ入り、setter は走らない。前の値が無いので「保つ」が
+/// 成り立たないから、**初期化の 1 点で別の形へ正規化し、ボックスごとに 1 度だけ報告する** ([ADR-0030] 決定 3):
 ///
 /// - **値が非有限なら、型の零を載せる** (`0`・`Vector2(0, 0)`・4 成分とも 0 の色)。作者が書いた値では
-///   なくなるが、非有限は保存も応答も書けないので、書いた値のまま残す道が無い。零は宣言した範囲の
+///   なくなるが、非有限は保存も応答も書けないので、書いた値のまま残す方法が無い。零は宣言した範囲の
 ///   外にもなりうる (範囲は値の不変条件ではない)。自分で書いた ``ParamRepresentable`` が有限の零を
-///   くれないときは畳めず、書かれた値のまま置いて「畳めなかった」と名乗る。**その宣言だけを保存と応答
+///   くれないときは正規化できず、書かれた値のまま置いて「正規化できなかった」と報告する。**その宣言だけを保存と応答
 ///   から外し** (``ParamRegistry/declarations`` の 1 点)、他の値は書ける。値が有限になれば戻る
 ///   ([#2858](https://github.com/mokume-metal/mokume/issues/2858))
-/// - **範囲の端が非有限なら、その範囲を面に出さない** (`0...Double.infinity`)。つまみは出ず
+/// - **範囲の端が非有限なら、その範囲を外部に出さない** (`0...Double.infinity`)。ノブは出ず
 ///   ([ADR-0030] 決定 8)、応答は `min` / `max` を書かない。外からの書き込みは、有限の端があれば
 ///   今までどおりそこへ収める (`-5` → `0`)。両端とも非有限なら収める相手が無い
 ///
 /// ## 値の型は 2 通りの `init` で受ける ([#2438])
 ///
-/// 面に出る値の型 (``ParamRepresentable``) は、その型自身が往復を持つ。**String を生の値に持つ
+/// 外部に出る値の型 (``ParamRepresentable``) は、その型自身が往復を持つ。**String を生の値に持つ
 /// `CaseIterable` の enum** (`enum Palette: String, CaseIterable { … }`) は、型の側に何も書かずに
 /// `@Param var palette: Palette` と宣言できる — `ParamRepresentable` の既定実装では、enum が
-/// `: ParamRepresentable` を宣言しない限り組めないので、**置き場の `init` を型の性質で振り分ける**。
-/// 面に出る型は `string` のままで (ADR-0030 決定 4 の 6 型は増えない)、候補は `allCases` の生の値から
-/// 作る。往復は置き場が `init` の中で持つので、型を伏せた ``DeclaredParam`` の側は enum を知らない。
+/// `: ParamRepresentable` を宣言しない限りビルドできないので、**ボックスの `init` を型の性質で振り分ける**。
+/// 外部に出る型は `string` のままで (ADR-0030 決定 4 の 6 型は増えない)、候補は `allCases` の生の値から
+/// 作る。往復はボックスが `init` の中で持つので、型を伏せた ``DeclaredParam`` の側は enum を知らない。
 ///
 /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
@@ -72,15 +72,15 @@ public final class ParamBox<Value> {
     /// いまの値。
     ///
     /// **非有限の数 (NaN・無限、組と色は成分のどれか) を書いても、前の値のまま**で、そのことを
-    /// 1 度だけ標準エラーへ名乗る。置かなかったときは変化の通知も出さない (値が動いていない)。
+    /// 1 度だけ標準エラーへ報告する。置かなかったときは変化の通知も出さない (値が動いていない)。
     /// 有限の値は範囲の外でも素通しする ([ADR-0030] 決定 3)。
     ///
-    /// **面に出る表現が今と同じ値を書いたときも、変化の通知は出さない** (値は置く)。ウィンドウの更新・応答の
-    /// 書き直し・保存を起こさない ([#2382](https://github.com/mokume-metal/mokume/issues/2382))。
+    /// **外部に出る表現が今と同じ値を書いたときも、変化の通知は出さない** (値は置く)。ウィンドウの更新・応答の
+    /// 書き直し・保存をトリガーしない ([#2382](https://github.com/mokume-metal/mokume/issues/2382))。
     ///
-    /// この関所が塞ぐのは、値が**変わる**入口 (setter・`_modify`・``write(_:)``) である。
-    /// 置き場が**生まれる**ときの値 (宣言の初期値・`init` の中の代入) は前の値が無いので、非有限なら
-    /// 型の零を載せて 1 度名乗る ([#2394](https://github.com/mokume-metal/mokume/issues/2394))。
+    /// このゲートが塞ぐのは、値が**変わる**経路 (setter・`_modify`・``write(_:)``) である。
+    /// ボックスが**生まれる**ときの値 (宣言の初期値・`init` の中の代入) は前の値が無いので、非有限なら
+    /// 型の零を載せて 1 度報告する ([#2394](https://github.com/mokume-metal/mokume/issues/2394))。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public var value: Value {
@@ -159,7 +159,7 @@ public final class ParamBox<Value> {
     /// ``value`` を指す key path。**初期化で 1 度だけ作る** (型の説明を参照)。
     private let valueKeyPath: KeyPath<ParamBox, Value>
 
-    /// 面から指すときの名前。
+    /// 外部から指すときの名前。
     public let name: String
     /// **宣言が生まれたときの値** (面に出る表現)。宣言の初期値か `init` の中の代入で、非有限なら畳んだ後の値。
     ///
@@ -170,16 +170,16 @@ public final class ParamBox<Value> {
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     /// [#2402]: https://github.com/mokume-metal/mokume/issues/2402
     let bornValue: ParamValue
-    /// 外からの書き込みを収める幅。**検めた後の値** — 片方の端だけが非有限の範囲 (`0...Double.infinity`)
+    /// 外からの書き込みを収める幅。**検証した後の値** — 片方の端だけが非有限の範囲 (`0...Double.infinity`)
     /// はそのまま持って有限の端へ収め、両端とも非有限なら収める相手が無いので `nil` になる。端が非有限の
-    /// 範囲は、どちらでも面 (応答の `min` / `max`・ウィンドウのつまみ) には出さない (``declaration``・
+    /// 範囲は、どちらでも外部 (応答の `min` / `max`・ウィンドウのノブ) には出さない (``declaration``・
     /// [#2475](https://github.com/mokume-metal/mokume/issues/2475))。
     public let range: ParamRange?
     /// 書かれたが、端が非有限なので面に出さない範囲。ウィンドウがつまみを出さない理由を言い分けるのに渡す。
     private let unshownRange: ParamRange?
     /// 許した候補。
     public let choices: [String]?
-    /// スライダーの刻み。**検めた後の値** (``ParamStep``)。書かれていない・置かなかったなら `nil`。
+    /// スライダーの刻み幅。**検証した後の値** (``ParamStep``)。書かれていない・置かなかったなら `nil`。
     public let step: Double?
 
     /// 値を面に出る表現へ移す。**置き場が持つ** — `Value` が `ParamRepresentable` かどうかを、
@@ -259,7 +259,7 @@ public final class ParamBox<Value> {
         return written + consequence + " (said once for this knob)"
     }
 
-    /// 面に出る型 (``ParamRepresentable``) の値の置き場。
+    /// 外部に出る型 (``ParamRepresentable``) の値のボックス。
     public convenience init(
         name: String, value: Value, range: ParamRange? = nil, choices: [String]? = nil,
         step: Double? = nil
@@ -269,8 +269,8 @@ public final class ParamBox<Value> {
             toParam: { $0.paramValue }, fromParam: { Value(paramValue: $0) })
     }
 
-    /// **String を生の値に持つ `CaseIterable` の enum の置き場。** 候補は `allCases` の生の値から作る
-    /// ので、`switch` は網羅され、候補の外 (綴り間違い) は外からの書き込みでも断られる。
+    /// **String を生の値に持つ `CaseIterable` の enum のボックス。** 候補は `allCases` の生の値から作る
+    /// ので、`switch` は網羅され、候補の外 (表記の間違い) は外からの書き込みでも断られる。
     public convenience init(
         name: String, value: Value, range: ParamRange? = nil, step: Double? = nil
     ) where Value: RawRepresentable & CaseIterable, Value.RawValue == String {
@@ -284,7 +284,7 @@ public final class ParamBox<Value> {
             })
     }
 
-    /// 面に出る型を自分で書いた enum の置き場。**どちらの `init` にも当たる型を曖昧にしない** —
+    /// 外部に出る型を自分で書いた enum のボックス。**どちらの `init` にも当たる型を曖昧にしない** —
     /// `ParamRepresentable` を自分で書いた enum は、その往復に従い、候補だけ `allCases` から補う。
     public convenience init(
         name: String, value: Value, range: ParamRange? = nil, step: Double? = nil
@@ -315,7 +315,7 @@ extension ParamBox: DeclaredParam {
     /// 保存に併記する既定値 (``bornValue``)。
     package var defaultValue: ParamValue? { bornValue }
 
-    /// 面から見えるいまの姿。
+    /// 外部から見えるいまの姿。
     public var declaration: ParamDeclaration {
         // 端が非有限の範囲は面に出さない (収めには使う)。ウィンドウがつまみを出さない理由を言い分けられる
         // よう、書かれた範囲は別に渡す

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// 描く細かさと出す細かさの間を、どうやって埋めるか。
+/// 描くピクセル密度と出すピクセル密度の間を、どうやって埋めるか。
 ///
 /// 意味の説明は利用者が最初に触る層 (``Sketch``) が正本で、ここは値の定義である
 /// ([ADR-0020] 決定 4)。

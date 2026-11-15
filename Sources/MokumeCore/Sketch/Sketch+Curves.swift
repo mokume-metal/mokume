@@ -6,7 +6,7 @@ extension SketchPart {
     /// 3 次の曲線を 1 本引く。
     ///
     /// **始点・制御点 2 つ・終点を、この順に渡す** (`x1, y1, x2, y2, x3, y3, x4, y4`)。制御点
-    /// (2 つ目と 3 つ目) は通らず、曲線を引っぱる位置になる。1 本で済ませたいときの口で、
+    /// (2 つ目と 3 つ目) は通らず、曲線を引っぱる位置になる。1 本で済ませたいときの API で、
     /// ``beginShape(_:)`` と ``vertex(_:_:)`` と ``bezierVertex(_:_:_:_:_:_:)`` と ``endShape(_:)``
     /// を順に呼んだのと**同じ絵**になる — 線の太さ・色・端の形、``curveDetail(_:)`` の刻みも同じである。
     /// 曲線を繋げたり、ほかの点と混ぜて 1 つの形にしたいときは、``bezierVertex(_:_:_:_:_:_:)`` を使う。
@@ -66,9 +66,9 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 塗りの色が有効なら、手本と同じく、始点と終点を結ばない開いた形のまま塗る。曲線だけを
+    /// 塗りの色が有効なら、Processing と同じく、始点と終点を結ばない開いた形のまま塗る。曲線だけを
     /// 引きたいときは ``noFill()`` を呼ぶ。``beginShape(_:)`` と ``endShape(_:)`` の間で呼んでも、
-    /// 組み立て中の形には点を足さず、その形と別の 1 本として引く。
+    /// 構築中の形には点を追加せず、その形と別の 1 本として引く。
     // shot: 後で撮る
     public func bezier(
         _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
@@ -82,7 +82,7 @@ extension SketchPart {
     /// 3 次の曲線を 1 本引く。始点・制御点 2 つ・終点を `Vector2` で、ラベルを付けて渡す。
     ///
     /// ``bezier(_:_:_:_:_:_:_:_:)`` に 4 つの点の成分を同じ順で渡すのと同じ曲線になる。塗り方・
-    /// 形の組み立ての中での扱いもそちらと同じで、違うのは**どの点が端でどれが制御点かを呼び出しの
+    /// 形の構築の中での扱いもそちらと同じで、違うのは**どの点が端でどれが制御点かを呼び出しの
     /// 行で読める**ことだけである。
     ///
     /// ```swift
@@ -131,7 +131,7 @@ extension SketchPart {
     /// ``beginShape(_:)`` と ``vertex(_:_:_:)`` と ``bezierVertex(_:_:_:_:_:_:_:_:_:)`` と ``endShape(_:)`` を
     /// 順に呼んだのと**同じ絵**になる。線の色・太さ・端の形、``curveDetail(_:)`` の刻みも平面の曲線と同じに効く。
     /// 塗りの色が有効なら、始点と終点を結ばない開いた形のまま塗る。``beginShape(_:)`` と ``endShape(_:)`` の間で
-    /// 呼んでも、組み立て中の形には点を足さず、その形と別の 1 本として引く。
+    /// 呼んでも、構築中の形には点を追加せず、その形と別の 1 本として引く。
     // shot: 後で撮る
     public func bezier(
         _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
@@ -203,7 +203,7 @@ extension SketchPart {
     ///
     /// 塗りの色が有効なら、``bezier(_:_:_:_:_:_:_:_:)`` と同じく、始点と終点を結ばない開いた形のまま塗る。
     /// 曲線だけを引きたいときは ``noFill()`` を呼ぶ。``beginShape(_:)`` と ``endShape(_:)`` の間で呼んでも、
-    /// 組み立て中の形には点を足さず、その形と別の 1 本として引く。
+    /// 構築中の形には点を追加せず、その形と別の 1 本として引く。
     // shot: 後で撮る
     public func curve(
         _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
@@ -218,7 +218,7 @@ extension SketchPart {
     ///
     /// **`control1` は `start` の手前、`control2` は `end` の先にある点**で、どちらも通らずに両端での
     /// 曲がり方を決める。``curve(_:_:_:_:_:_:_:_:)`` に `control1`・`start`・`end`・`control2` の成分を
-    /// この順で渡すのと同じ曲線になる。並べる順が位置引数の形と違うのは、ラベルの綴りを
+    /// この順で渡すのと同じ曲線になる。並べる順が位置引数の形と違うのは、ラベルの名前を
     /// ``bezier(from:control1:control2:to:)-(Vector2,_,_,_)`` に揃え、描く区間の両端を `from:`・`to:` で読めるようにしたからである。
     ///
     /// ```swift
@@ -271,7 +271,7 @@ extension SketchPart {
     ///
     /// ``beginShape(_:)`` と ``curveVertex(_:_:_:)`` を同じ 4 点で 4 回と ``endShape(_:)`` を順に呼んだのと
     /// **同じ絵**になる — ``curveDetail(_:)`` の刻み、``curveTightness(_:)`` の張りも同じに効く。塗り方・
-    /// 組み立て中の形の中での扱いは 8 つの数の形と同じである。
+    /// 構築中の形の中での扱いは 8 つの数の形と同じである。
     // shot: 後で撮る
     public func curve(
         _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
@@ -742,7 +742,7 @@ extension SketchPart {
     /// ``bezierVertex(_:_:_:_:_:_:)`` / ``quadraticVertex(_:_:_:_:)`` / ``curveVertex(_:_:)``
     /// のどれにも効く。
     ///
-    /// 刻みの数は 1…1024。範囲の外は端へ丸め、1 度だけ知らせる — 0 以下は 1 (区間を 1 本の
+    /// 刻みの数は 1…1024。範囲の外は端へ丸め、1 度だけ通知する — 0 以下は 1 (区間を 1 本の
     /// 直線で結ぶ)、1024 を越える値は 1024 として刻む。上の端は、手が滑って大きな値を渡しても
     /// 点を作り続けてフレームが戻らなくならないためのもので、円・楕円・弧の一周の分割の上限と
     /// 同じ数にしてある。
@@ -951,7 +951,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 引数は手本と同じ並びで、``curve(_:_:_:_:_:_:_:_:)`` に渡す 4 つの点の 1 つの軸の値 (`a, b, c, d`) と、
+    /// 引数は Processing と同じ並びで、``curve(_:_:_:_:_:_:_:_:)`` に渡す 4 つの点の 1 つの軸の値 (`a, b, c, d`) と、
     /// 曲線の上の位置 `t` である。平面の曲線なら、`x` の 4 つと `y` の 4 つで 2 回呼ぶ。
     /// **`t` が 0 なら `b` (2 つ目の点)、1 なら `c` (3 つ目の点) がちょうど返る** — 描かれる区間の両端である。
     /// `curvePoint(60, 140, 260, 350, 0)` は 140 を返す。
@@ -964,7 +964,7 @@ extension SketchPart {
     /// **`t` は曲線の長さの割合ではなく、0…1 の外は締めずに曲線を延ばす** (``bezierPoint(_:_:_:_:_:)`` と同じ)。
     /// 数でない値・無限の値が混じったときは `b` を返し (`b` も数でないときは 0)、注意は 1 度だけ言う。
     /// `setup()`・`draw()`・入力のコールバックの外 (部品の `init()` など) で呼ぶと、張りを読む先が無いので、
-    /// 1 度だけ知らせて既定の張り 0 で求めた値を返す。
+    /// 1 度だけ通知して既定の張り 0 で求めた値を返す。
     // shot: 後で撮る
     public func curvePoint(
         _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
@@ -991,7 +991,7 @@ extension SketchPart {
     /// 区間の始点 (`t` が 0) での傾きは `(c - a) / 2` になる。
     ///
     /// **0…1 の外は締めない。** 数でない値・無限の値が混じったときは 0 を返し、注意は 1 度だけ言う。
-    /// `setup()`・`draw()`・入力のコールバックの外で呼ぶと、1 度だけ知らせて既定の張り 0 で求めた値を返す。
+    /// `setup()`・`draw()`・入力のコールバックの外で呼ぶと、1 度だけ通知して既定の張り 0 で求めた値を返す。
     // shot: 参照 curvePoint(_:_:_:_:_:)
     public func curveTangent(
         _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,

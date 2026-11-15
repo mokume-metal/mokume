@@ -16,11 +16,11 @@ public final class EffectShader {
 
     /// この効果の名前。
     public let name: String
-    /// いまのファイルの中身で差し替えられていなければ、その理由 (読めない・組み立てに失敗した)。
+    /// いまのファイルの中身で差し替えられていなければ、その理由 (読めない・ビルドに失敗した)。
     ///
-    /// **いま効いている断片とファイルが揃えば下りる** — 直して組み上がったときだけでなく、失敗した
+    /// **いま効いているシェーダとファイルが揃えば下りる** — 直してビルドできたときだけでなく、失敗した
     /// 後で、いま効いている中身へ戻して保存したときも下りる。同じ中身・同じ理由の失敗は、保存を
-    /// 何度拾っても組み直さず、注意も 1 度しか出さない (#1830)。
+    /// 何度拾っても再ビルドせず、注意も 1 度しか出さない (#1830)。
     public var failure: String? { box.failure }
     /// 何度差し替わったか。**外から「届いたか」を待ち時間ではなく数で判定できる。**
     public var generation: Int { box.generation }
@@ -68,8 +68,8 @@ public final class EffectShader {
 
     /// 渡す値を書き換える。
     ///
-    /// **宣言していない名前は受け付けない** — 断片は組み立てるときに値の宣言ごと
-    /// 組み上がるので、後から名前を増やすと組み直しになる。
+    /// **宣言していない名前は受け付けない** — シェーダはビルドするときに値の宣言ごと
+    /// ビルドされるので、後から名前を増やすと再ビルドになる。
     public func set(_ name: String, _ value: ShaderValue) {
         box.assign(name, value)
     }
@@ -77,7 +77,7 @@ public final class EffectShader {
     /// 渡す値を、Swift の値のまま書き換える (``ShaderValueConvertible``)。
     ///
     /// `Float`・`Int`・`Double` の変数も、`Vector2`・`Vector3`・`LinearRGBA`・`Bool`・`Transform` も
-    /// 包まずに渡せる。宣言と違う型の値は警告して断る。
+    /// 包まずに渡せる。宣言と違う型の値は警告して拒否する。
     public func set(_ name: String, _ value: some ShaderValueConvertible) {
         set(name, value.shaderValue)
     }

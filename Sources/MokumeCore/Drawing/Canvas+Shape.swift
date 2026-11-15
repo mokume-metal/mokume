@@ -13,7 +13,7 @@ import simd
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
 extension Canvas {
-    /// 形を組み立てて保持する。
+    /// 形を構築して保持する。
     public func createShape(_ body: () -> Void) -> Shape {
         // **入口と出口は、ランタイムが持つ乱数の列へも知らせる** (#1936)。中で書いた種は ``Manner`` の
         // 外 (`Canvas` の外) にあるので、出口の戻しはそちらが受ける。早い抜け方 (下の空の形) でも

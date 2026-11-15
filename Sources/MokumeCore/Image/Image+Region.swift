@@ -5,7 +5,7 @@
 //
 // [#3711]: https://github.com/mokume-metal/mokume/issues/3711
 extension Image {
-    /// 絵の一部を切り出した、新しい絵を返す。Processing の `PImage.get(x, y, w, h)` に当たる。**元の絵は変えない。**
+    /// 画像の一部を切り出した、新しい画像を返す。Processing の `PImage.get(x, y, w, h)` に当たる。**元の画像は変えない。**
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -42,23 +42,23 @@ extension Image {
     ///   }
     /// }
     ///
-    /// 範囲は絵の左上を原点とした画素で数える。**絵をはみ出す部分は透明になる** (``get(_:_:)`` が範囲の外で
-    /// 透明を返すのと同じ)。範囲が絵とまったく重ならなくても投げず、全体が透明の絵を返す。画素は作業空間の値の
+    /// 範囲は画像の左上を原点とした画素で数える。**画像をはみ出す部分は透明になる** (``get(_:_:)`` が範囲の外で
+    /// 透明を返すのと同じ)。範囲が画像とまったく重ならなくても投げず、全体が透明の画像を返す。画素は作業空間の値の
     /// まま写す (8 bit を経由しない)。
     ///
-    /// 返した絵は元と画素も面も共有しない (``copy()`` と同じ)。**カメラの `image` から切り出した絵は、カメラの
+    /// 返した画像は元と画素もテクスチャも共有しない (``copy()`` と同じ)。**カメラの `image` から切り出した画像は、カメラの
     /// 次の 1 枚で書き換わらない。**
     ///
-    /// 手本の `PImage.get(x, y, w, h)` は、描き場所 (画面) からも同じ名前で切り出す。画面を切り出すのは
-    /// 別の API ([#3714](https://github.com/mokume-metal/mokume/issues/3714)) で、これは絵からだけ切り出す。
+    /// Processing の `PImage.get(x, y, w, h)` は、キャンバス (画面) からも同じ名前で切り出す。画面を切り出すのは
+    /// 別の API ([#3714](https://github.com/mokume-metal/mokume/issues/3714)) で、これは画像からだけ切り出す。
     ///
     /// - Parameters:
     ///   - x: 切り出す範囲の左端。
     ///   - y: 切り出す範囲の上端。
-    ///   - width: 切り出す幅 (返す絵の幅)。
-    ///   - height: 切り出す高さ (返す絵の高さ)。
+    ///   - width: 切り出す幅 (返す画像の幅)。
+    ///   - height: 切り出す高さ (返す画像の高さ)。
     /// - Returns: `width` x `height` の新しい `Image`。
-    /// - Throws: 幅・高さのどちらかが 1 を割るか面の上限を越えるとき ``ImageFailure/unplaceable(width:height:)``。
+    /// - Throws: 幅・高さのどちらかが 1 を割るかテクスチャの上限を越えるとき ``ImageFailure/unplaceable(width:height:)``。
     ///   1 を割る指定を 1×1 へ丸めない (`createImage(_:_:)` と同じ)。
     // shot: 後で撮る
     public func cropped(x: Int, y: Int, width: Int, height: Int) throws(ImageFailure) -> Image {
@@ -78,7 +78,7 @@ extension Image {
         return try sibling(width: width, height: height, pixels: pixels)
     }
 
-    /// 大きさを変えた、新しい絵を返す。Processing の `PImage.resize(w, h)` に当たる。**元の絵は変えない。**
+    /// 大きさを変えた、新しい画像を返す。Processing の `PImage.resize(w, h)` に当たる。**元の画像は変えない。**
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -117,26 +117,26 @@ extension Image {
     ///   }
     /// }
     ///
-    /// **手本の `resize` は自分を変えるが、これは新しい絵を返して元を変えない** (そのため `resized`。同じ名前で
-    /// 新しい値を返すと同名異義になる)。手本の `resize(150, 0)` (0 で縦横比を保つ) は無い — 1 を割る指定は
+    /// **Processing の `resize` は自分を変えるが、これは新しい画像を返して元を変えない** (そのため `resized`。同じ名前で
+    /// 新しい値を返すと同名異義になる)。Processing の `resize(150, 0)` (0 で縦横比を保つ) は無い — 1 を割る指定は
     /// 丸めずに投げる。縦横比を保つなら、`resized(width: 150, height: 150 * h / w)` と自分で数える。
     ///
-    /// 縦と横は別々に変える。どちらの向きも決まった読み方で、同じ絵と大きさからは同じ画素が出る。
+    /// 縦と横は別々に変える。どちらの向きも決まった読み方で、同じ画像と大きさからは同じ画素が出る。
     ///
     /// - **縮める向き**は、作業空間 (線形・アルファ乗算済み) のまま、**光の量で平均する**。新しい 1 画素が覆う元の
     ///   範囲を、覆う長さの割合で混ぜる (面積の平均)。エンコードした 8 bit の値のまま平均すると、明暗が接する所が
     ///   暗くなる (白と黒の半々が 0.5 ではなく約 0.21 の光になる)。カメラのコマを縮めるときも同じく光の量で混ぜる
-    /// - **広げる向き**は、`image(picture, x, y, w, h)` が絵を引き伸ばして置くときと同じく、隣り合う 2 画素の
+    /// - **広げる向き**は、`image(picture, x, y, w, h)` が画像を引き伸ばして置くときと同じく、隣り合う 2 画素の
     ///   中心の間を直線で補う。端は端の画素の色で延ばす
     ///
-    /// 透けた画素は乗算済みのまま混ぜるので、透明な画素の色が縁へにじまない。返した絵は元と画素も面も共有しない
+    /// 半透明の画素は乗算済みのまま混ぜるので、透明な画素の色が縁へにじまない。返した画像は元と画素もテクスチャも共有しない
     /// (``copy()`` と同じ)。
     ///
     /// - Parameters:
-    ///   - width: 返す絵の幅。
-    ///   - height: 返す絵の高さ。
+    ///   - width: 返す画像の幅。
+    ///   - height: 返す画像の高さ。
     /// - Returns: `width` x `height` の新しい `Image`。大きさが同じなら ``copy()`` と同じ画素になる。
-    /// - Throws: 幅・高さのどちらかが 1 を割るか面の上限を越えるとき ``ImageFailure/unplaceable(width:height:)``。
+    /// - Throws: 幅・高さのどちらかが 1 を割るかテクスチャの上限を越えるとき ``ImageFailure/unplaceable(width:height:)``。
     ///   1 を割る指定を 1×1 へ丸めない (`createImage(_:_:)` と同じ)。
     // shot: 後で撮る
     public func resized(width: Int, height: Int) throws(ImageFailure) -> Image {

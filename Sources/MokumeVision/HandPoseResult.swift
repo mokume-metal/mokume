@@ -54,7 +54,7 @@ public nonisolated struct HandJoint: Sendable, Hashable, Codable {
         case position, confidence
     }
 
-    /// 位置が有限でない、または信頼度が 0〜1 を外れていれば読めない (書き出した列が壊れていたことを黙って通さない)。
+    /// 位置が有限でない、または信頼度が 0〜1 を外れていれば読めない (書き出した列が壊れていたことを通知なしに通さない)。
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let position = try container.decode(Vector2.self, forKey: .position)

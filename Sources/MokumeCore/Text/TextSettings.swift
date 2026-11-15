@@ -129,9 +129,9 @@ public nonisolated struct TextContour: Equatable, Sendable {
     }
 }
 
-/// 文字列の墨が載る範囲 (``SketchPart/textBounds(_:_:_:)``)。
+/// 文字列のインクが載る範囲 (``SketchPart/textBounds(_:_:_:)``)。
 ///
-/// **送り幅ではなく墨を囲む。** 字の左右に書体が付けている余白は入らない。
+/// **送り幅ではなくインクを囲む。** 字の左右に書体が付けている余白は入らない。
 public nonisolated struct TextBounds: Equatable, Sendable {
     /// 左端 (画素)。
     public let x: Float

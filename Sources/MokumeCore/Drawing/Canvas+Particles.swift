@@ -28,7 +28,7 @@ extension Canvas {
         case reference
     }
 
-    /// 粒を用意する。
+    /// パーティクルを用意する。
     public func makeParticles(count: Int) throws(RenderFailure) -> Particles {
         // 1 を割る数は断る。黙って 1 粒へ丸めない (ADR-0020 決定 5・#1642)
         guard count >= 1 else { throw .invalidCount(count) }
@@ -135,9 +135,9 @@ extension Canvas {
             using: &randomness)
     }
 
-    /// 粒に力を効かせる。
+    /// パーティクルに力を効かせる。
     ///
-    /// ``SketchPart/force(_:_:)`` と同じ可変長の形。描き場所の中でだけ積める (`beginDraw()` と `endDraw()` の間)。
+    /// ``SketchPart/force(_:_:)`` と同じ可変長の形。グラフィックスの中でだけ積める (`beginDraw()` と `endDraw()` の間)。
     public func force(_ particles: Particles, _ forces: Force...) {
         force(particles, forces)
     }
@@ -155,16 +155,16 @@ extension Canvas {
         particles.add(forces)
     }
 
-    /// 1 フレーム進めて、生きている粒を描く。
+    /// 1 フレーム進めて、生きているパーティクルを描く。
     ///
-    /// **呼ぶたびに進めて、呼んだ時点の変換で描く** ([#1651])。同じ描き切りの中で同じ群を
-    /// 2 回目以降に置くときは、指定・置き場所・描く引数を呼び出しごとの組へ分ける
-    /// (`Particles.claimDraw(by:)`)。途中の描き切りを挟む形は採らない — 途中の描き切りには
+    /// **呼ぶたびに進めて、呼んだ時点の変換で描く** ([#1651])。同じフラッシュの中で同じ群を
+    /// 2 回目以降に置くときは、指定・位置・描く引数を呼び出しごとの組へ分ける
+    /// (`Particles.claimDraw(by:)`)。途中のフラッシュを挟む形は採らない — 途中のフラッシュには
     /// 既知の破れがある (#1656・#1657)。
     ///
-    /// **刻みの順は、呼んだ順である** ([#1870])。面ごとの描き切りに任せると、本体で先に呼んだ刻みより
-    /// 描き場所で後に呼んだ刻みのほうが先に進むので、計算を頼む口が、別の面が先に頼んだ
-    /// ぶつかる計算を先に投入する (``compute(_:over:by:reads:writes:)``)。
+    /// **ステップの順は、呼んだ順である** ([#1870])。キャンバスごとのフラッシュに任せると、本体で先に呼んだステップより
+    /// グラフィックスで後に呼んだステップのほうが先に進むので、計算を要求する API が、別のキャンバスが先に要求した
+    /// ぶつかる計算を先にコミットする (``compute(_:over:by:reads:writes:)``)。
     ///
     /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870

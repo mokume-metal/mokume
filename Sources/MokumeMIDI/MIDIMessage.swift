@@ -31,7 +31,7 @@ public nonisolated enum MIDIMessage: Codable, Sendable, Equatable {
     case noteOn(channel: Int, note: Int, velocity: Int)
     /// キーを離した。`velocity` は離す速さで、送らないデバイスでは 0。
     case noteOff(channel: Int, note: Int, velocity: Int)
-    /// つまみ・フェーダ・ペダルなどの値が変わった (コントロールチェンジ)。`controller` は 0〜127 の番号で、
+    /// ノブ・フェーダ・ペダルなどの値が変わった (コントロールチェンジ)。`controller` は 0〜127 の番号で、
     /// `value` は 0〜127。
     case controlChange(channel: Int, controller: Int, value: Int)
     /// テンポのクロック。**24 個で 1 ビート** (4 分音符 1 つ) で、再生中の間だけ ``MIDIPort/beat`` に数える。

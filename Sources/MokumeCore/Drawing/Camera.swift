@@ -19,7 +19,7 @@ public struct Camera: Equatable, Sendable {
         ///
         /// - Parameters:
         ///   - fieldOfView: 縦方向の画角 (ラジアン)。
-        ///   - aspect: 横 ÷ 縦の比。面の縦横比と違えると、立体は伸びて写る。**立体の線の太さは
+        ///   - aspect: 横 ÷ 縦の比。キャンバスの縦横比と違えると、立体は伸びて写る。**立体の線の太さは
         ///     伸びず、画面の画素のまま**である。
         ///   - near: 手前の面までの距離。これより手前は写らない。
         ///   - far: 奥の面までの距離。これより奥は写らない。
@@ -29,7 +29,7 @@ public struct Camera: Equatable, Sendable {
         ///
         /// 範囲は**視点から見た座標**で与える。`top` と `bottom` は画面の上端・下端を
         /// 指す — 縦軸が下向きなので `top` のほうが数として小さくなる
-        /// ([ADR-0021] 決定 1 の「画面の側を正とする」)。範囲の横 ÷ 縦を面の縦横比と違えると、
+        /// ([ADR-0021] 決定 1 の「画面の側を正とする」)。範囲の横 ÷ 縦をキャンバスの縦横比と違えると、
         /// 立体は伸びて写る。**立体の線の太さは伸びず、画面の画素のまま**である。
         case orthographic(
             left: Float, right: Float, bottom: Float, top: Float, near: Float, far: Float)

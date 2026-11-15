@@ -6,7 +6,7 @@ extension SketchPart {
     /// 立方体を置く。
     ///
     /// 中心は原点で、大きさは画素で数える。**何も指定しなければ画素の大きさで
-    /// 見える** — 既定の視点は面がちょうど収まる位置に置いてあるので、`box(120)` は
+    /// 見える** — 既定の視点はキャンバスがちょうど収まる位置に置いてあるので、`box(120)` は
     /// 120 画素の箱として出る。動かすには ``translate(_:_:_:)`` と ``rotateY(_:)``
     /// などを重ねる。
     ///
@@ -30,7 +30,7 @@ extension SketchPart {
     ///   ``noFill()`` にすれば線だけになる。どの立体も同じ規則で線を引く。
     ///
     /// **面ごとに明るさが違う**ので、同じ塗り 1 色でも角が読める。下の絵はどれも
-    /// ``lights()`` を置き、面のまん中へ運んでから斜めに回して見ている。
+    /// ``lights()`` を置き、キャンバスのまん中へ運んでから斜めに回して見ている。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -88,7 +88,7 @@ extension SketchPart {
 
     /// 球を置く。
     ///
-    /// **`detail` を落とすと面が見えてくる。** 下の 2 枚は同じ半径で、割り方だけを
+    /// **`detail` を下げると面が見えてくる。** 下の 2 枚は同じ半径で、割り方だけを
     /// 変えている (既定は 24)。
     ///
     /// @Row {
@@ -134,12 +134,12 @@ extension SketchPart {
     /// - Parameters:
     ///   - radius: 半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 上下は半周なので、その半分で割る。
-    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ通知する。
     ///
-    /// - Note: **`detail` は手本とは違う形である。** p5.js の `sphere(radius, detailX, detailY)` は
+    /// - Note: **`detail` は p5.js・Processing とは違う形である。** p5.js の `sphere(radius, detailX, detailY)` は
     ///   経度と緯度を別々の位置引数で渡し、Processing は状態の `sphereDetail()` で決める。こちらは
     ///   形をまたいで同じ意味の 1 本 (一周をいくつに割るか) にそろえた。同じ値を渡して形ごとに違う
-    ///   細かさになるのを避けるためで、手本の `detailX` / `detailY` に当たる別々の指定は無い
+    ///   細かさになるのを避けるためで、p5.js の `detailX` / `detailY` に当たる別々の指定は無い
     ///   ([ADR-0020] 決定 1)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -197,7 +197,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 同じ形は ``scale(_:_:_:)`` と ``sphere(_:detail:)`` でも作れるが、そちらは**置き場所の変換を動かす**ので、
+    /// - Note: 同じ形は ``scale(_:_:_:)`` と ``sphere(_:detail:)`` でも作れるが、そちらは**配置の変換を動かす**ので、
     ///   後続へ残さないよう ``push(_:)`` の閉包で包む必要がある。`ellipsoid` は形の側が半径を持つので変換は汚れない。
     ///
     /// - Parameters:
@@ -205,9 +205,9 @@ extension SketchPart {
     ///   - y: 縦の半径 (画素)。
     ///   - z: 奥行きの半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 球と同じく、上下は半周なのでその半分で割る。
-    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ通知する。
     ///
-    /// - Note: **`detail` は手本とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
+    /// - Note: **`detail` は p5.js・Processing とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
     // shot: 1 snippet=b469d265
     // shot: 2 snippet=44cb3b83
     public func ellipsoid(
@@ -253,7 +253,7 @@ extension SketchPart {
 
     /// 円柱を置く。軸は縦。
     ///
-    /// こちらも `detail` を落とすと面が見えてくる。下の 2 枚は同じ寸法で、割り方だけを
+    /// こちらも `detail` を下げると面が見えてくる。下の 2 枚は同じ寸法で、割り方だけを
     /// 変えている。
     ///
     /// @Row {
@@ -300,9 +300,9 @@ extension SketchPart {
     ///   - radius: 半径 (画素)。
     ///   - height: 高さ (画素)。
     ///   - detail: **一周をいくつに割るか。**
-    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ通知する。
     ///
-    /// - Note: **`detail` は手本とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
+    /// - Note: **`detail` は p5.js・Processing とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
     // shot: 1 snippet=3382160f
     // shot: 2 snippet=14bac537
     public func cylinder(
@@ -339,9 +339,9 @@ extension SketchPart {
     ///   - radius: 底の半径 (画素)。
     ///   - height: 高さ (画素)。
     ///   - detail: **一周をいくつに割るか。**
-    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ通知する。
     ///
-    /// - Note: **`detail` は手本とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
+    /// - Note: **`detail` は p5.js・Processing とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
     // shot: 1 snippet=c6e05232
     public func cone(
         _ radius: some ScalarConvertible, _ height: some ScalarConvertible,
@@ -401,9 +401,9 @@ extension SketchPart {
     ///   - radius: 中心から管の中心までの距離 (画素)。
     ///   - tubeRadius: 管の半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 輪の一周も管の一周も同じ数で割る。
-    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ通知する。
     ///
-    /// - Note: **`detail` は手本とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
+    /// - Note: **`detail` は p5.js・Processing とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
     // shot: 1 snippet=7978e71b
     // shot: 2 snippet=21763f89
     public func torus(

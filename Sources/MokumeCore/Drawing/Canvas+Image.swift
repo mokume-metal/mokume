@@ -7,13 +7,13 @@ import simd
 extension Canvas {
     // MARK: - 読む・作る
 
-    /// 絵を読む。読み終わるまで返らない。
+    /// 画像を読む。読み終わるまで返らない。
     ///
-    /// **同じファイルを二度読んでも、探索と復号は一度だけ。** 返る絵は毎回新しいので、
+    /// **同じファイルを二度読んでも、探索と復号は一度だけ。** 返る画像は毎回新しいので、
     /// 読んでから塗り替えても次の読み込みには影響しない ([#886])。
     ///
-    /// **読んだ絵の成分は、面が表せる範囲へ移る。** 数でない成分・無限の成分はそのまま残り (図形を描く
-    /// 経路が面へ移すときと同じ)、有限の成分は面が表せる ±65504 で止まる。浮動小数の絵 (TIFF・
+    /// **読んだ画像の成分は、キャンバスが表せる範囲へ移る。** 数でない成分・無限の成分はそのまま残り (図形を描く
+    /// 経路がキャンバスへ移すときと同じ)、有限の成分はキャンバスが表せる ±65504 で止まる。浮動小数の画像 (TIFF・
     /// OpenEXR など) の、白をずっと越える成分も同じである。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
@@ -26,8 +26,8 @@ extension Canvas {
         try loadImage(path, kind: nil)
     }
 
-    /// 種類の手がかり (拡張子) を添えて絵を読む。手がかりは中身から種類が分からないときだけ効く
-    /// (`ImageFile.hints(_:)`)。**控えの鍵は名前だけ** — 同じ名前を手がかりを変えて読んでも、2 度目は控えを返す。
+    /// 種類の手がかり (拡張子) を添えて画像を読む。手がかりは中身から種類が分からないときだけ効く
+    /// (`ImageFile.hints(_:)`)。**キャッシュのキーは名前だけ** — 同じ名前を手がかりを変えて読んでも、2 度目はキャッシュを返す。
     public func loadImage(_ path: String, extension kind: String) throws(ImageFailure) -> Image {
         try loadImage(path, kind: Optional(kind))
     }
@@ -48,18 +48,18 @@ extension Canvas {
         return try makeImage(decoded)
     }
 
-    /// 絵を読む。**読んでいる間、他の仕事を止めない。**
+    /// 画像を読む。**読んでいる間、他の仕事を止めない。**
     ///
-    /// 控えに当たれば別の仕事を起こさない (`requestModel` と同じ形)。
+    /// キャッシュに当たれば別の仕事を起動しない (`requestModel` と同じ形)。
     ///
-    /// **読んだ絵の成分は、面が表せる範囲へ移る。** 数でない成分・無限の成分はそのまま残り (図形を描く
-    /// 経路が面へ移すときと同じ)、有限の成分は面が表せる ±65504 で止まる。浮動小数の絵 (TIFF・
+    /// **読んだ画像の成分は、キャンバスが表せる範囲へ移る。** 数でない成分・無限の成分はそのまま残り (図形を描く
+    /// 経路がキャンバスへ移すときと同じ)、有限の成分はキャンバスが表せる ±65504 で止まる。浮動小数の画像 (TIFF・
     /// OpenEXR など) の、白をずっと越える成分も同じである。
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
         try await requestImage(path, kind: nil)
     }
 
-    /// 種類の手がかり (拡張子) を添えて絵を読む。読んでいる間、他の仕事を止めない。手がかりと控えの
+    /// 種類の手がかり (拡張子) を添えて画像を読む。読んでいる間、他の仕事を止めない。手がかりとキャッシュの
     /// 扱いは ``loadImage(_:extension:)`` と同じ。
     public func requestImage(_ path: String, extension kind: String) async throws(ImageFailure) -> Image {
         try await requestImage(path, kind: Optional(kind))
@@ -120,16 +120,16 @@ extension Canvas {
         imageCache.insert(DecodedImage(origin: origin, decoded: decoded), for: ImageRequest(path: path))
     }
 
-    /// 空の絵を作る。中身は透明。
+    /// 空の画像を作る。中身は透明。
     ///
-    /// **範囲の外の指定は、画素を組む前に断る。** 範囲は面の関所と同じ
-    /// `RenderDevice.textureSides` の 1 つで、後段 (`RenderDevice.makeTexture`) も同じ範囲を
-    /// 見る。ここで先に見るのは**組めないもの・捨てるものを作らない**ため — 20000×20000 は
-    /// Metal に触る前に 3.2 GB の画素配列を組むことになり
+    /// **範囲の外の指定は、画素を生成する前に拒否する。** 範囲は描画先を作るときの検証と同じ
+    /// `RenderDevice.textureSides` で、後段 (`RenderDevice.makeTexture`) も同じ範囲を
+    /// 見る。ここで先に見るのは**作れないもの・捨てるものを作らない**ため — 20000×20000 は
+    /// Metal に触る前に 3.2 GB の画素配列を生成することになり
     /// ([#885](https://github.com/mokume-metal/mokume/issues/885))、負の辺では画素配列の数が
-    /// 組めない。
+    /// 算出できない。
     ///
-    /// **1 を割る指定を 1 へ丸めない** — 丸めると 1×1 の絵が黙って返る
+    /// **1 を割る指定を 1 へ丸めない** — 丸めると 1×1 の画像が通知なしに返る
     /// ([#1642](https://github.com/mokume-metal/mokume/issues/1642))。
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
         let sides = RenderDevice.textureSides
@@ -146,7 +146,7 @@ extension Canvas {
 
     public func imageMode(_ mode: ShapeMode) { style.imageMode = mode }
 
-    /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
+    /// 画像に掛ける色。**掛け算なので、白は何も変えない。**
     public func tint(_ color: LinearRGBA) {
         // 数でない成分・無限の成分は、色合いを変えずに断る (#1706)
         guard color.isFinite else { return warnNotANumberColor(.tint) }
@@ -160,7 +160,7 @@ extension Canvas {
     // これから置く塗りに絵を貼る。
     public func texture(_ image: Image) { style.picture = .loaded(image) }
 
-    /// 描き場所を貼る。
+    /// グラフィックスを貼る。
     public func texture(_ graphics: Canvas) {
         note(placing: graphics)
         style.picture = graphics.drawnPicture
@@ -172,8 +172,8 @@ extension Canvas {
     /// 置いた時点の単位で読んだまま変わらない (#3717)。
     public func textureMode(_ mode: TextureMode) { style.textureMode = mode }
 
-    /// 貼る絵の端の外の読み方を選ぶ。**呼んだ後に置く塗りから効く** (#3717)。効くのは組み込みの塗りが
-    /// 貼る絵を読むときだけで、断片の `mokume_sample` は端の色で延ばしたまま。
+    /// 貼るテクスチャの端の外の読み方を選ぶ。**呼んだ後に置く塗りから効く** (#3717)。効くのは組み込みの塗りが
+    /// 貼るテクスチャを読むときだけで、シェーダの `mokume_sample` は端の色で延ばしたまま。
     public func textureWrap(_ wrap: TextureWrap) { style.textureWrap = wrap }
 
     // MARK: - 置く
@@ -188,21 +188,21 @@ extension Canvas {
     /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
     var drawnPicture: Picture { .drawn(output, width: Int(width), height: Int(height)) }
 
-    /// 絵を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは絵の画素数のまま。
+    /// 画像を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは画像の画素数のまま。
     public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible) {
         let (a, b) = (a.asFloat, b.asFloat)
         place(.loaded(image), a, b)
     }
 
-    /// 絵を、指定した寸法に合わせて置く。
+    /// 画像を、指定した寸法に合わせて置く。
     public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         place(.loaded(image), a, b, c, d)
     }
 
-    /// 絵の一部を切り出して置く。
+    /// 画像の一部を切り出して置く。
     ///
-    /// 前の 4 つが置き先、後の 4 つが**絵の中のどこを切り出すか** (左上と大きさ)。
+    /// 前の 4 つが置き先、後の 4 つが**画像の中のどこを切り出すか** (左上と大きさ)。
     public func image(
         _ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
@@ -211,21 +211,21 @@ extension Canvas {
         place(.loaded(image), a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 
-    /// 描き場所を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは描き場所の座標の大きさのまま (書き出しの倍率の下でも変わらない)。
+    /// グラフィックスを等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさはグラフィックスの座標の大きさのまま (書き出しの倍率の下でも変わらない)。
     public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible) {
         let (a, b) = (a.asFloat, b.asFloat)
         note(placing: graphics)
         place(graphics.drawnPicture, a, b)
     }
 
-    /// 描き場所を、指定した寸法に合わせて置く。
+    /// グラフィックスを、指定した寸法に合わせて置く。
     public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         note(placing: graphics)
         place(graphics.drawnPicture, a, b, c, d)
     }
 
-    /// 描き場所の一部を切り出して置く。
+    /// グラフィックスの一部を切り出して置く。
     public func image(
         _ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
@@ -241,13 +241,13 @@ extension Canvas {
     // **`imageMode` に従わない** — `Rect` は左上で置く値なので、値のとおり左上から置く
     // (ADR-0045 決定 5・`Rect.draw()` が `rectMode` に従わないのと同じ)。
 
-    /// 絵を `destination` に合わせて置く。``imageMode(_:)`` が既定 (`.corner`) のときの
+    /// 画像を `destination` に合わせて置く。``imageMode(_:)`` が既定 (`.corner`) のときの
     /// `image(_:_:_:_:_:)` に `destination` の左上と大きさを渡すのと同じ。
     public func image(_ image: Image, in destination: Rect) {
         place(.loaded(image), destination.left, destination.top, destination.width, destination.height, mode: .corner)
     }
 
-    /// 絵の `source` の範囲を切り出して `destination` に置く。``imageMode(_:)`` が既定のときの
+    /// 画像の `source` の範囲を切り出して `destination` に置く。``imageMode(_:)`` が既定のときの
     /// 9 つの引数の形に、2 つの範囲の左上と大きさを渡すのと同じ。
     public func image(_ image: Image, in destination: Rect, from source: Rect) {
         place(
@@ -255,7 +255,7 @@ extension Canvas {
             source.left, source.top, source.width, source.height, mode: .corner)
     }
 
-    /// 描き場所を `destination` に合わせて置く。``imageMode(_:)`` が既定のときの 5 つの引数の形と同じ。
+    /// グラフィックスを `destination` に合わせて置く。``imageMode(_:)`` が既定のときの 5 つの引数の形と同じ。
     public func image(_ graphics: Canvas, in destination: Rect) {
         note(placing: graphics)
         place(
@@ -263,7 +263,7 @@ extension Canvas {
             mode: .corner)
     }
 
-    /// 描き場所の `source` の範囲を切り出して `destination` に置く。``imageMode(_:)`` が既定のときの
+    /// グラフィックスの `source` の範囲を切り出して `destination` に置く。``imageMode(_:)`` が既定のときの
     /// 9 つの引数の形と同じ。
     public func image(_ graphics: Canvas, in destination: Rect, from source: Rect) {
         note(placing: graphics)

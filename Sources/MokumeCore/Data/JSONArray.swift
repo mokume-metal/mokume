@@ -5,7 +5,7 @@ import Foundation
 
 /// JSON の配列 (`[ 値, … ]`)。オブジェクトの中の配列は ``JSONObject/getJSONArray(_:)`` で、最上位が
 /// 配列の JSON は ``SketchPart/loadJSONArray(_:)`` で読んで作り、`for-in` で回すか、番号で値を
-/// 取り出す。空から作って (``init()``) 値を足し (``append(_:)-(Int)``)、``SketchPart/saveJSONArray(_:_:)``
+/// 取り出す。空から作って (``init()``) 値を追加し (``append(_:)-(Int)``)、``SketchPart/saveJSONArray(_:_:)``
 /// で書き出すこともできる。
 ///
 /// <!-- example: 文脈 var quakes: JSONObject? -->
@@ -37,29 +37,29 @@ import Foundation
 /// 配列は `RandomAccessCollection` で、要素の型は ``JSONObject`` である。`for-in`・`count`・`isEmpty`・
 /// `first`・`map`・`enumerated()` がそのまま使える。**数え方は `count` だけ**で、`size()` は持たない。
 /// オブジェクトでない要素 (`[1, 2, 3]` の数) をオブジェクトとして取り出すと、空のオブジェクトになって
-/// 知らせる。数・文字・真偽の配列は、番号で ``getFloat(_:)``・``getString(_:)``・``getInt(_:)``・
+/// 通知する。数・文字・真偽の配列は、番号で ``getFloat(_:)``・``getString(_:)``・``getInt(_:)``・
 /// ``getBoolean(_:)`` と読む。
 ///
 /// ## 値の型である
 ///
-/// 代入すると写しになる (``JSONObject`` と同じ)。書き換える口 (``append(_:)-(Int)``・``remove(_:)``・
+/// 代入するとコピーになる (``JSONObject`` と同じ)。書き換えるメソッド (``append(_:)-(Int)``・``remove(_:)``・
 /// ``setFloat(_:_:)`` ほか) は `mutating` で、`var` で持った配列にだけ書ける。入れ子の配列やオブジェクトへは
-/// 直に書けないので、写しを書き換えて ``setJSONArray(_:_:)``・``setJSONObject(_:_:)`` で戻す
+/// 直に書けないので、コピーを書き換えて ``setJSONArray(_:_:)``・``setJSONObject(_:_:)`` で戻す
 /// (``JSONObject`` の「値の型である」と同じ)。
 ///
-/// **範囲の外の番号には書かず、初回だけ理由を知らせる** (2026-10-31 の決定)。Processing は間を `null` で
-/// 埋めて伸ばすが、番号の打ち間違いが黙って長い配列を作らないようにする。伸ばすのは ``append(_:)-(Int)``
+/// **範囲の外の番号には書かず、初回だけ理由を通知する** (2026-10-31 の決定)。Processing は間を `null` で
+/// 埋めて伸ばすが、番号の打ち間違いが通知なしに長い配列を作らないようにする。伸ばすのは ``append(_:)-(Int)``
 /// である。
-/// 読み出しは main actor の上にあるので、`DispatchQueue.concurrentPerform` などで並列に回すときは、分ける前に値へ写しておく (形は ``map(_:_:_:_:_:)`` の説明)。
+/// 読み出しは main actor の上にあるので、`DispatchQueue.concurrentPerform` などで並列に回すときは、分ける前に値へコピーしておく (形は ``map(_:_:_:_:_:)`` の説明)。
 ///
 /// ## 値が無くても落ちない
 ///
-/// 範囲の外の番号や、思っていたのと違う種類の要素を取り出しても、取り出す口は落ちない。
+/// 範囲の外の番号や、思っていたのと違う種類の要素を取り出しても、取り出すメソッドは落ちない。
 /// ``JSONObject`` の欠けたキーと同じく、読もうとした種類の空の値 (``getFloat(_:)`` は NaN、
 /// ``getString(_:)`` は空の文字、``getInt(_:)`` は 0、``getBoolean(_:)`` は `false`、
-/// オブジェクトは空のオブジェクト、配列は空の配列) を返し、**初回だけ理由を知らせる**
-/// ([ADR-0020] 決定 5)。知らせるのは、口の名前と事情 (範囲の外・種類の違い) の組ごとに 1 度で、番号ごと
-/// ではない (大きな配列でも、知らせは口ごとに高々 2 つ)。
+/// オブジェクトは空のオブジェクト、配列は空の配列) を返し、**初回だけ理由を通知する**
+/// ([ADR-0020] 決定 5)。通知するのは、メソッドの名前と事情 (範囲の外・種類の違い) の組ごとに 1 度で、番号ごと
+/// ではない (大きな配列でも、通知はメソッドごとに高々 2 つ)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public struct JSONArray: Equatable, Sendable {
@@ -70,7 +70,7 @@ public struct JSONArray: Equatable, Sendable {
         self.items = items
     }
 
-    /// 空の配列を作る。値は ``append(_:)-(Int)`` で足し、``SketchPart/saveJSONArray(_:_:)`` で書き出す。
+    /// 空の配列を作る。値は ``append(_:)-(Int)`` で追加し、``SketchPart/saveJSONArray(_:_:)`` で書き出す。
     /// Processing の `new JSONArray()`。
     ///
     /// <!-- example: 文脈 var clicks = JSONArray() -->
@@ -89,7 +89,7 @@ public struct JSONArray: Equatable, Sendable {
 
     // MARK: - 足す・除く
 
-    /// 末尾に整数を足す。整数の綴り (`2`) で書かれる。
+    /// 末尾に整数を追加する。整数の表記 (`2`) で書かれる。
     ///
     /// <!-- example: 文脈 var counts = JSONArray() -->
     /// ```swift
@@ -99,7 +99,7 @@ public struct JSONArray: Equatable, Sendable {
         items.append(.integer(value))
     }
 
-    /// 末尾に数を足す。書き出すと `Float` の最も短い綴りになる (``JSONObject/setFloat(_:_:)`` と同じ)。
+    /// 末尾に数を追加する。書き出すと `Float` の最も短い表記になる (``JSONObject/setFloat(_:_:)`` と同じ)。
     ///
     /// <!-- example: 文脈 var coordinates = JSONArray() -->
     /// ```swift
@@ -107,14 +107,14 @@ public struct JSONArray: Equatable, Sendable {
     /// coordinates.append(mouseY)
     /// ```
     ///
-    /// **NaN と無限は足さず、初回だけ理由を知らせる** (口ごとに 1 度。``JSONObject/setFloat(_:_:)`` と同じ
+    /// **NaN と無限は追加せず、初回だけ理由を通知する** (メソッドごとに 1 度。``JSONObject/setFloat(_:_:)`` と同じ
     /// 決まり)。
     public mutating func append(_ value: Float) {
         guard finite(value, call: "append", index: nil) else { return }
         items.append(.number(shortest: value))
     }
 
-    /// 末尾に文字を足す。
+    /// 末尾に文字を追加する。
     ///
     /// <!-- example: 文脈 var names = JSONArray() -->
     /// ```swift
@@ -124,7 +124,7 @@ public struct JSONArray: Equatable, Sendable {
         items.append(.string(value))
     }
 
-    /// 末尾に真偽を足す。
+    /// 末尾に真偽を追加する。
     ///
     /// <!-- example: 文脈 var flags = JSONArray() -->
     /// ```swift
@@ -134,7 +134,7 @@ public struct JSONArray: Equatable, Sendable {
         items.append(.bool(value))
     }
 
-    /// 末尾にオブジェクトを足す。足すのは渡した時点の写しである。
+    /// 末尾にオブジェクトを追加する。追加するのは渡した時点のコピーである。
     ///
     /// <!-- example: 文脈 var features = JSONArray() -->
     /// ```swift
@@ -146,7 +146,7 @@ public struct JSONArray: Equatable, Sendable {
         items.append(.object(value.members))
     }
 
-    /// 末尾に配列を足す。配列の配列 (GeoJSON の `coordinates`) はこれで組む。足すのは渡した時点の写しである。
+    /// 末尾に配列を追加する。配列の配列 (GeoJSON の `coordinates`) はこれで構築する。追加するのは渡した時点のコピーである。
     ///
     /// <!-- example: 文脈 var ring = JSONArray() -->
     /// ```swift
@@ -167,10 +167,10 @@ public struct JSONArray: Equatable, Sendable {
     /// if history.count > 60 { history.remove(0) }
     /// ```
     ///
-    /// 除いた値は返さない。要素の種類が決まらず、`Any` を面に出さないため ([ADR-0020] 決定 6)。値が要るなら
+    /// 除いた値は返さない。要素の種類が決まらず、`Any` を公開 API に出さないため ([ADR-0020] 決定 6)。値が要るなら
     /// 先に ``getFloat(_:)`` などで読む。
     ///
-    /// **範囲の外の番号には何もせず、初回だけ理由を知らせる** (口ごとに 1 度)。
+    /// **範囲の外の番号には何もせず、初回だけ理由を通知する** (メソッドごとに 1 度)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public mutating func remove(_ index: Int) {
@@ -187,7 +187,7 @@ public struct JSONArray: Equatable, Sendable {
     /// flags.setBoolean(0, true)
     /// ```
     ///
-    /// **範囲の外の番号には書かず、初回だけ理由を知らせる** (口ごとに 1 度。2026-10-31 の決定)。伸ばすのは
+    /// **範囲の外の番号には書かず、初回だけ理由を通知する** (メソッドごとに 1 度。2026-10-31 の決定)。伸ばすのは
     /// ``append(_:)-(Bool)`` である。
     public mutating func setBoolean(_ index: Int, _ value: Bool) {
         set(index, .bool(value), call: "setBoolean")
@@ -200,7 +200,7 @@ public struct JSONArray: Equatable, Sendable {
     /// levels.setFloat(0, mouseX / width)
     /// ```
     ///
-    /// 範囲の外の番号の扱いは ``setBoolean(_:_:)`` と同じ。**NaN と無限は書かず、初回だけ理由を知らせる**
+    /// 範囲の外の番号の扱いは ``setBoolean(_:_:)`` と同じ。**NaN と無限は書かず、初回だけ理由を通知する**
     /// (``append(_:)-(Float)`` と同じ決まり)。
     public mutating func setFloat(_ index: Int, _ value: Float) {
         guard inRange(index, call: "setFloat", doing: "Nothing was written"),
@@ -209,7 +209,7 @@ public struct JSONArray: Equatable, Sendable {
         items[index] = .number(shortest: value)
     }
 
-    /// 番号の要素を整数で置き換える。整数の綴り (`2`) で書かれる。
+    /// 番号の要素を整数で置き換える。整数の表記 (`2`) で書かれる。
     ///
     /// <!-- example: 文脈 var counts: JSONArray! -->
     /// ```swift
@@ -233,7 +233,7 @@ public struct JSONArray: Equatable, Sendable {
         set(index, .string(value), call: "setString")
     }
 
-    /// 番号の要素をオブジェクトで置き換える。入れ子のオブジェクトは、写しを書き換えてここで戻す。
+    /// 番号の要素をオブジェクトで置き換える。入れ子のオブジェクトは、コピーを書き換えてここで戻す。
     ///
     /// <!-- example: 文脈 var features: JSONArray! -->
     /// ```swift
@@ -247,7 +247,7 @@ public struct JSONArray: Equatable, Sendable {
         set(index, .object(value.members), call: "setJSONObject")
     }
 
-    /// 番号の要素を配列で置き換える。入れ子の配列は、写しを書き換えてここで戻す。
+    /// 番号の要素を配列で置き換える。入れ子の配列は、コピーを書き換えてここで戻す。
     ///
     /// <!-- example: 文脈 var ring: JSONArray! -->
     /// ```swift
@@ -272,9 +272,9 @@ public struct JSONArray: Equatable, Sendable {
     /// circle(x, y, 8)
     /// ```
     ///
-    /// 読み方は ``JSONObject/getFloat(_:)`` と同じ (数の値はそのまま、数の文字は 10 進の綴りだけを
-    /// 数として読む)。**数にならないときは NaN を返し、初回だけ理由を知らせる** — 範囲の外の番号・
-    /// 要素が数でないのどちらでも (口ごとに 1 度)。
+    /// 読み方は ``JSONObject/getFloat(_:)`` と同じ (数の値はそのまま、数の文字は 10 進の表記だけを
+    /// 数として読む)。**数にならないときは NaN を返し、初回だけ理由を通知する** — 範囲の外の番号・
+    /// 要素が数でないのどちらでも (メソッドごとに 1 度)。
     public func getFloat(_ index: Int) -> Float {
         guard let value = element(index, call: "getFloat", reading: "NaN") else { return .nan }
         if let number = value.asFloat { return number }
@@ -300,8 +300,8 @@ public struct JSONArray: Equatable, Sendable {
     /// ["9007199254740993.0"]  getInt(0) → 9007199254740993 (数の文字。桁のまま)
     /// ```
     ///
-    /// **整数にならないときは 0 を返し、初回だけ理由を知らせる** — 範囲の外の番号・整数でない値の
-    /// どちらでも (口ごとに 1 度)。
+    /// **整数にならないときは 0 を返し、初回だけ理由を通知する** — 範囲の外の番号・整数でない値の
+    /// どちらでも (メソッドごとに 1 度)。
     public func getInt(_ index: Int) -> Int {
         guard let value = element(index, call: "getInt", reading: "0") else { return 0 }
         if let number = value.asInt { return number }
@@ -319,7 +319,7 @@ public struct JSONArray: Equatable, Sendable {
     /// ```
     ///
     /// 読み方は ``JSONObject/getString(_:)`` と同じ (文字の値だけを読む)。**文字にならないときは空の
-    /// 文字を返し、初回だけ理由を知らせる** — 範囲の外の番号・要素が文字でないのどちらでも (口ごとに 1 度)。
+    /// 文字を返し、初回だけ理由を通知する** — 範囲の外の番号・要素が文字でないのどちらでも (メソッドごとに 1 度)。
     public func getString(_ index: Int) -> String {
         guard let value = element(index, call: "getString", reading: "an empty string") else { return "" }
         if let text = value.asString { return text }
@@ -338,8 +338,8 @@ public struct JSONArray: Equatable, Sendable {
     /// ```
     ///
     /// 読み方は ``JSONObject/getBoolean(_:)`` と同じ (`true` / `false` だけを読む)。**真偽にならない
-    /// ときは `false` を返し、初回だけ理由を知らせる** — 範囲の外の番号・要素が真偽でないのどちらでも
-    /// (口ごとに 1 度)。
+    /// ときは `false` を返し、初回だけ理由を通知する** — 範囲の外の番号・要素が真偽でないのどちらでも
+    /// (メソッドごとに 1 度)。
     public func getBoolean(_ index: Int) -> Bool {
         guard let value = element(index, call: "getBoolean", reading: "false") else { return false }
         if let flag = value.asBool { return flag }
@@ -356,7 +356,7 @@ public struct JSONArray: Equatable, Sendable {
     /// ```
     ///
     /// ``subscript(_:)`` と同じ。**オブジェクトでないときは空のオブジェクトを返し、初回だけ理由を
-    /// 知らせる** — 範囲の外の番号・要素がオブジェクトでないのどちらでも (口ごとに 1 度)。
+    /// 通知する** — 範囲の外の番号・要素がオブジェクトでないのどちらでも (メソッドごとに 1 度)。
     public func getJSONObject(_ index: Int) -> JSONObject {
         guard let value = element(index, call: "getJSONObject", reading: "an empty object") else {
             return JSONObject([:])
@@ -375,8 +375,8 @@ public struct JSONArray: Equatable, Sendable {
     /// circle(corner.getFloat(0), corner.getFloat(1), 8)
     /// ```
     ///
-    /// **配列でないときは空の配列を返し、初回だけ理由を知らせる** — 範囲の外の番号・要素が配列でない
-    /// のどちらでも (口ごとに 1 度)。
+    /// **配列でないときは空の配列を返し、初回だけ理由を通知する** — 範囲の外の番号・要素が配列でない
+    /// のどちらでも (メソッドごとに 1 度)。
     public func getJSONArray(_ index: Int) -> JSONArray {
         guard let value = element(index, call: "getJSONArray", reading: "an empty array") else {
             return JSONArray([])
@@ -395,8 +395,8 @@ public struct JSONArray: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// 番号が範囲の中かは `count` で分かる。**知らせない** — 値が欠けているかもしれないことを分かって
-    /// 尋ねる口である (``JSONObject/isNull(_:)`` と同じ)。
+    /// 番号が範囲の中かは `count` で分かる。**通知しない** — 値が欠けているかもしれないことを分かって
+    /// 尋ねるメソッドである (``JSONObject/isNull(_:)`` と同じ)。
     public func isNull(_ index: Int) -> Bool {
         guard items.indices.contains(index) else { return true }
         return items[index] == .null
@@ -467,9 +467,9 @@ extension JSONArray: @MainActor RandomAccessCollection {
 
     /// 番号の要素を、オブジェクトとして取り出す。
     ///
-    /// **範囲の外の番号でも落ちない** (`Collection` の約束より緩い)。空のオブジェクトを返し、初回だけ
-    /// 知らせる。オブジェクトでない要素も同じ。番号を ``getJSONObject(_:)`` と同じに読むので、
-    /// `for-in` で回したときの知らせもその口の名前で出る。
+    /// **範囲の外の番号でも落ちない** (`Collection` の契約より緩い)。空のオブジェクトを返し、初回だけ
+    /// 通知する。オブジェクトでない要素も同じ。番号を ``getJSONObject(_:)`` と同じに読むので、
+    /// `for-in` で回したときの通知もそのメソッドの名前で出る。
     public subscript(position: Int) -> JSONObject {
         getJSONObject(position)
     }

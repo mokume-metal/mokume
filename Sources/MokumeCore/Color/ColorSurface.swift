@@ -212,7 +212,7 @@ nonisolated enum ColorValues {
 /// 色を作る。**素の数値は 0–255** ([ADR-0033] 決定 1)。
 ///
 /// 3 つなら赤・緑・青、4 つ目は不透明度。書いた値は画面で見える明るさの目盛りで、
-/// 線形の光の量ではない。**原色は sRGB** — 手本の色見本と同じ数から同じ色が出る
+/// 線形の光の量ではない。**原色は sRGB** — Processing の色見本と同じ数から同じ色が出る
 /// (作業空間へ移す変換は ``LinearRGBA/display(red:green:blue:alpha:)`` と同じ)。
 ///
 /// ```swift
@@ -220,13 +220,13 @@ nonisolated enum ColorValues {
 /// let veil = color(35, 75, 95, 128)
 /// ```
 ///
-/// 描く口へそのまま数値を渡す形 (``SketchPart/fill(_:_:_:_:)``) と同じ目盛りなので、
+/// 描画関数へそのまま数値を渡す形 (``SketchPart/fill(_:_:_:_:)``) と同じ目盛りなので、
 /// 色を変数に持ちたいときだけこちらを使う。
 ///
 /// **不透明度は 0–255 に締める。色の成分は締めない。** `color(255, 204, 0, 400)` は
 /// 不透明度 255 と同じ色になり、`color(510, 0, 0)` の赤は 510 のまま残る
-/// ([ADR-0033] 決定 3 の改訂・決定 6)。**不透明度を締めたときは、口の名前・範囲・渡した値を 1 度だけ
-/// 知らせる** (ADR-0020 決定 5)。
+/// ([ADR-0033] 決定 3 の改訂・決定 6)。**不透明度を締めたときは、関数の名前・範囲・渡した値を 1 度だけ
+/// 通知する** (ADR-0020 決定 5)。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public nonisolated func color(
@@ -260,7 +260,7 @@ nonisolated func makeColor(red: Float, green: Float, blue: Float, alpha: Float) 
 /// let veil = color(0, 64)
 /// ```
 ///
-/// **不透明度は 0–255 に締める (締めたときは 1 度だけ知らせる)。灰色の値は締めない**
+/// **不透明度は 0–255 に締める (締めたときは 1 度だけ通知する)。灰色の値は締めない**
 /// (``color(_:_:_:_:)`` と同じ)。
 public nonisolated func color(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) -> LinearRGBA {
     let gray = gray.asFloat
@@ -277,7 +277,7 @@ public nonisolated func color(_ gray: some ScalarConvertible, _ alpha: some Scal
 /// ``SketchPart/fill(_:_:)-(LinearRGBA,_)`` の色の値と不透明度の形と同じ式で、描く状態ではなく**色の値**を作る。
 /// ``Placement/fill`` や
 /// ``SketchPart/emit(_:from:toward:rate:speed:life:size:color:)`` の `color`、``lerpColor(_:_:_:)`` の
-/// 両端のように、色の値を受ける口へ薄めた色を渡したいときに使う。色の成分 (乗算済み) を手で縮める
+/// 両端のように、色の値を受ける API へ薄めた色を渡したいときに使う。色の成分 (乗算済み) を手で縮める
 /// 必要は無い。
 ///
 /// @Row {
@@ -299,8 +299,8 @@ public nonisolated func color(_ gray: some ScalarConvertible, _ alpha: some Scal
 ///     ```
 ///   }
 ///   @Column {
-///     <!-- shot: 橙色の横帯の上に正方形が 3 つ。左は帯がほとんど透ける薄い墨、中央は帯が半分透ける墨、右だけが帯を隠す墨 | symmetric=y -->
-///     ![橙色の横帯の上に正方形が 3 つ。左は帯がほとんど透ける薄い墨、中央は帯が半分透ける墨、右だけが帯を隠す墨](https://i.gyazo.com/1a08d115e280d388319ca73fb21a578e.png)
+///     <!-- shot: 橙色の横帯の上に正方形が 3 つ。左は帯がほとんど透ける薄い色、中央は帯が半分透ける色、右だけが帯を隠す色 | symmetric=y -->
+///     ![橙色の横帯の上に正方形が 3 つ。左は帯がほとんど透ける薄い色、中央は帯が半分透ける色、右だけが帯を隠す色](https://i.gyazo.com/1a08d115e280d388319ca73fb21a578e.png)
 ///     <!-- /shot -->
 ///   }
 /// }
@@ -314,11 +314,11 @@ public nonisolated func color(_ gray: some ScalarConvertible, _ alpha: some Scal
 ///
 /// **範囲の外は締める。色の成分は締めない** — 不透明度の 400 は 255 と同じで `c` のまま、-100 は 0 と
 /// 同じで完全な透明になる (掛ける率を 0–1 に締める)。成分は掛けるだけなので、255 を越える明るさの色は
-/// 越えたまま薄まる ([ADR-0033] 決定 3 の改訂・決定 6)。**締めたときは、口の名前・範囲・渡した値を
-/// 1 度だけ知らせる** (ADR-0020 決定 5)。
+/// 越えたまま薄まる ([ADR-0033] 決定 3 の改訂・決定 6)。**締めたときは、関数の名前・範囲・渡した値を
+/// 1 度だけ通知する** (ADR-0020 決定 5)。
 ///
 /// **不透明度が数でない値・無限のときは受けず、透明な色を返す** (``color(_:_:_:_:)`` と同じ扱いで、
-/// 注意は 1 度だけ言う)。`c` の成分は検めない — 受ける口が断る。
+/// 注意は 1 度だけ言う)。`c` の成分は検証しない — 受け取る側が拒否する。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 // shot: 1 snippet=8273a2d1
@@ -333,13 +333,13 @@ public nonisolated func color(_ color: LinearRGBA, _ alpha: some ScalarConvertib
     return faded
 }
 
-/// 16 進の綴りから色を作る。
+/// 16 進の表記から色を作る。
 ///
 /// ```swift
 /// let amber = color(hex: 0xFF_CC00)
 /// ```
 ///
-/// 読むのは下位 24 bit で、上位は落とす。手本 (Processing) の習慣で不透明度を
+/// 読むのは下位 24 bit で、上位は切り捨てる。Processing の習慣で不透明度を
 /// 上位バイトに付けた `0xFFFF_CC00` を渡しても、色は同じ `0xFF_CC00` になる。
 /// 不透明度を変えたいときは ``color(_:_:_:_:)`` を使う。
 public nonisolated func color(hex: Int) -> LinearRGBA {
@@ -356,31 +356,31 @@ public nonisolated func color(hex: Int) -> LinearRGBA {
 /// let dusk = lerpColor(color(255, 170, 60), color(40, 50, 120), 0.5)
 /// ```
 ///
-/// 引数は始まりの色・終わりの色・その間のどこか、の順 (手本と同じ並び)。`amount` が 0 なら
+/// 引数は始まりの色・終わりの色・その間のどこか、の順 (Processing と同じ並び)。`amount` が 0 なら
 /// `start`、1 なら `stop` が**ちょうど**返る。
 ///
-/// **手本には寄せない** — 手本に倣うのは名前と引数の順序までで、同じ中間の色が出ることは
-/// 約束しない ([ADR-0020] 決定 1 の 2026-09-09 改訂)。違いは 2 つある。
+/// **Processing には近づけない** — Processing に倣うのは名前と引数の順序までで、同じ中間の色が出ることは
+/// 保証しない ([ADR-0020] 決定 1 の 2026-09-09 改訂)。違いは 2 つある。
 ///
-/// - **線形の光の量で混ぜるので、中間の色が手本より明るい。** 黒と白の真ん中は ``red(_:)`` で
-///   約 187.5 と読める (手本は 127.5)。0–255 の数を成分ごとに ``lerp(_:_:_:)`` で混ぜていた式
+/// - **線形の光の量で混ぜるので、中間の色が Processing より明るい。** 黒と白の真ん中は ``red(_:)`` で
+///   約 187.5 と読める (Processing は 127.5)。0–255 の数を成分ごとに ``lerp(_:_:_:)`` で混ぜていた式
 ///   から置き換えると、中間の色が動く ([ADR-0011] 決定 1)
 /// - **乗算済みの値で混ぜるので、透明へ寄せても暗くならない。**
-///   `lerpColor(.transparent, color(255, 0, 0), 0.5)` は不透明度が半分の赤のままで、手本の
+///   `lerpColor(.transparent, color(255, 0, 0), 0.5)` は不透明度が半分の赤のままで、Processing の
 ///   ように暗い赤にはならない ([ADR-0011] 決定 4)
 ///
-/// **`amount` は 0…1 に締める (締めたときは 1 度だけ知らせる)** — `lerpColor(a, b, 2)` は `b` を返す。0…1 の外へ伸ばす
-/// ``lerp(_:_:_:)`` とはここが違うが、手本も `lerpColor` では締める。締めないと、不透明度の
+/// **`amount` は 0…1 に締める (締めたときは 1 度だけ通知する)** — `lerpColor(a, b, 2)` は `b` を返す。0…1 の外へ伸ばす
+/// ``lerp(_:_:_:)`` とはここが違うが、Processing も `lerpColor` では締める。締めないと、不透明度の
 /// 違う 2 色から 0–255 の外の不透明度ができる ([ADR-0033] 決定 3 の改訂・決定 7 の改訂)。
 ///
 /// **HSB で混ぜる形は無い。** `colorMode()` を持たないので、混ぜる空間は 1 つである
 /// ([ADR-0033] 決定 4)。色相を回して混ぜたいときは
 /// `color(hue: lerp(20, 200, t), saturation: 80, brightness: 90)` と書く。
 ///
-/// **`amount` が数でない値・無限のときは `start` を返す。** 毎フレーム呼ばれる口が数でない色を
-/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。色の成分は検めない —
-/// 数でない成分を持つ色は、それを作った 0–1 の口や乗算済みの口と同じく、そのまま混ぜる。混ぜた
-/// 色を受ける口 (`fill(_:)` など) が断って知らせる。
+/// **`amount` が数でない値・無限のときは `start` を返す。** 毎フレーム呼ばれる関数が数でない色を
+/// 返すと、**絵が通知なしに消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。色の成分は検証しない —
+/// 数でない成分を持つ色は、それを作った 0–1 の関数や乗算済みの初期化子と同じく、そのまま混ぜる。混ぜた
+/// 色を受け取る関数 (`fill(_:)` など) が拒否して通知する。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -438,7 +438,7 @@ public nonisolated func lerpColor(
 ///
 /// 返す値には 3 つの契約がある。**不透明度が 0 の色は 0 を返す** (乗算済みの表現から
 /// 元の色は復元できない)。**範囲の外は丸めない** — `red(color(510, 0, 0))` は 510 を
-/// 返す。**数でない値は 0 へ倒す**。
+/// 返す。**数でない値は 0 にする**。
 ///
 /// 値は ``color(_:_:_:_:)`` と同じ **sRGB の原色**の目盛りで返す (作業空間から sRGB へ
 /// 移してから読む — [ADR-0011] 決定 3)。だから `red(color(255, 204, 0))` は 255 に戻る。
@@ -463,11 +463,11 @@ public nonisolated func blue(_ color: LinearRGBA) -> Float {
 /// 不透明度を 0–255 の目盛りで読む。
 ///
 /// **伝達関数を通さない** — 不透明度は光の量ではなく覆いの割合なので、目盛りを
-/// 255 倍するだけである。数でない値は 0 へ倒す。
+/// 255 倍するだけである。数でない値は 0 にする。
 ///
 /// **書いた不透明度は 0–255 に締まっている** — `alpha(color(0, 0, 0, 400))` は 255、
 /// `alpha(color(0, 0, 0, -100))` は 0 を返す。色の成分は締めないので、``red(_:)`` は
-/// 範囲の外の値も返す ([ADR-0033] 決定 3 の改訂・決定 6)。乗算済みの口
+/// 範囲の外の値も返す ([ADR-0033] 決定 3 の改訂・決定 6)。乗算済みの初期化子
 /// (``LinearRGBA/init(premultipliedRed:green:blue:alpha:)``) で作った色は締めずに読む。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md

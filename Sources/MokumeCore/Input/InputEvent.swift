@@ -3,22 +3,22 @@
 
 import Foundation
 
-/// 入ってくる出来事。
+/// 入ってくるイベント。
 ///
 /// ウィンドウからの実操作も、外から送られたものも、同じ形でここへ集まる。
 public enum InputEvent: Equatable, Sendable {
     /// `clickCount` は、この押下が何回目の連続した押下か (1 で単発、2 でダブルクリック)。
-    /// ウィンドウは `NSEvent.clickCount` をそのまま運び、外から送る線は省くと 1 と読む。
+    /// ウィンドウは `NSEvent.clickCount` をそのまま運び、外から送る入力チャネルは省くと 1 と読む。
     case mouseDown(x: Float, y: Float, button: MouseButton, clickCount: Int = 1)
     case mouseUp(x: Float, y: Float, button: MouseButton)
     case mouseMoved(x: Float, y: Float)
     /// どこへではなく、**どれだけ**動いたか (描く解像度の画素・縦軸は下向き)。位置は動かさない。
     ///
     /// カーソルを捕まえている間 (``SketchPart/requestPointerLock()``) のウィンドウは、位置が動かないので
-    /// これを送る ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。外から送る線
+    /// これを送る ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。外から送る入力チャネル
     /// (`mouseMovedBy`) も同じ形で、捕まえていなくても量として届く。
     case mouseMovedBy(dx: Float, dy: Float)
-    /// スクロールされた。**量の単位は点** (ウィンドウはホイールの 1 行を 10 点に換算して流す。外から送る線は
+    /// スクロールされた。**量の単位は点** (ウィンドウはホイールの 1 行を 10 点に換算して流す。外から送る入力チャネルは
     /// 点として扱い、換算しない・[#2442](https://github.com/mokume-metal/mokume/issues/2442))。
     /// 指を離した後の慣性の続きも同じ量として届く。
     case scrolled(dx: Float, dy: Float)
@@ -26,35 +26,35 @@ public enum InputEvent: Equatable, Sendable {
     /// `NSEvent.magnification` と同じ量である ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
     /// スケッチからはフレームの合計 (``SketchPart/pinch``) として読む。
     case pinched(amount: Float)
-    /// ウィンドウへファイルが落とされた。`paths` は**ファイルの絶対パスだけ** (中身は運ばない)。落とした
-    /// 所は `x`・`y` で、スケッチからは ``SketchPart/mouseX``・``SketchPart/mouseY`` に当たる
+    /// ウィンドウへファイルがドロップされた。`paths` は**ファイルの絶対パスだけ** (中身は運ばない)。ドロップした
+    /// 位置は `x`・`y` で、スケッチからは ``SketchPart/mouseX``・``SketchPart/mouseY`` に当たる
     /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
     ///
-    /// ウィンドウは `SketchSurface` がファイルの URL だけを受け、1 本も無いドロップは送らない。外から送る線
-    /// (`fileDropped`) は、`paths` が空の 1 件を読めない 1 件として落とす。
+    /// ウィンドウは `SketchSurface` がファイルの URL だけを受け、1 本も無いドロップは送らない。外から送る入力チャネル
+    /// (`fileDropped`) は、`paths` が空の 1 件を読めない 1 件として捨てる。
     case fileDropped(paths: [String], x: Float, y: Float)
     /// ファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) の結果。選んだファイルの絶対パスで、
     /// **取り消しは `nil`** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
     ///
-    /// 線では `paths` の配列で運ぶ — 選んだ 1 本か、空の配列 (取り消し)。`paths` の無い出来事と、2 本以上
-    /// の出来事は読めない 1 件にする。待っている ``SketchPart/selectInput(_:)`` が無いときは、合流点が
+    /// ワイヤ形式では `paths` の配列で運ぶ — 選んだ 1 本か、空の配列 (取り消し)。`paths` の無いイベントと、2 本以上
+    /// のイベントは読めない 1 件にする。待っている ``SketchPart/selectInput(_:)`` が無いときは、合流点が
     /// 捨てる。
     ///
-    /// `serial` は**どの頼みへの答えか** (``SketchPart/selectInput(_:)`` の頼みの通し番号)。**省ける** —
-    /// 道具のウィンドウが子へ送る結果は載せ、外から送る結果は載せなくてよい。載っていれば、合流点は**いまの待ちと番号が
-    /// 同じときだけ**待ちを終え、違う番号の結果 (前の待ちの古い答え・待ちが終わった後の送り直し) は黙って捨てる。
-    /// 載っていなければ今の待ちへ届く。番号があるので、道具は頼みが残っている間、落ちた結果を送り直せる。
+    /// `serial` は**どのリクエストへの答えか** (``SketchPart/selectInput(_:)`` のリクエストの通し番号)。**省ける** —
+    /// `mokume watch` のウィンドウが子へ送る結果は載せ、外から送る結果は載せなくてよい。載っていれば、合流点は**いまの待ちと番号が
+    /// 同じときだけ**待ちを終え、違う番号の結果 (前の待ちの古い答え・待ちが終わった後の送り直し) は通知なしに捨てる。
+    /// 載っていなければ今の待ちへ届く。番号があるので、`mokume watch` はリクエストが残っている間、落ちた結果を送り直せる。
     case fileSelected(path: String?, serial: Int? = nil)
     /// ウィンドウが前に出た (`true`)・前から退いた (`false`) ([#3709](https://github.com/mokume-metal/mokume/issues/3709))。
     /// スケッチからは ``SketchPart/focused`` として読む。
     ///
-    /// 届いたフレームから ``SketchPart/focused`` が変わる。**この出来事そのものは押下を離さない。** 退いたときに離すのは
-    /// ウィンドウが流した押下だけで、ウィンドウが `false` に続けて解放の出来事を流す
+    /// 届いたフレームから ``SketchPart/focused`` が変わる。**このイベントそのものは押下を離さない。** 退いたときに離すのは
+    /// ウィンドウが流した押下だけで、ウィンドウが `false` に続けて解放のイベントを流す
     /// ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。外から注入した押下は、注入した側の解放まで残る —
     /// `false` の間も押されたままでありうる。
     ///
-    /// 自前のウィンドウと道具のウィンドウ (`mokume watch`) は、ウィンドウが key になった・外れたときにこれを送る。
-    /// 道具のウィンドウは 1 行にして子へ渡すので、子の ``SketchPart/focused`` も道具のウィンドウに従う。外から送る線
+    /// 自前のウィンドウと `mokume watch` のウィンドウは、ウィンドウが key になった・外れたときにこれを送る。
+    /// `mokume watch` のウィンドウは 1 行にして子へ渡すので、子の ``SketchPart/focused`` も `mokume watch` のウィンドウに従う。外から送る入力チャネル
     /// (`focusChanged`) は `focused` (真偽) が要り、無い・`null` の 1 件は読めない 1 件にする。
     case focusChanged(focused: Bool)
     case keyDown(code: Key, characters: String, isRepeat: Bool)
@@ -63,7 +63,7 @@ public enum InputEvent: Equatable, Sendable {
 
 extension String {
     /// 絶対パスの綴りか (`/` で始まる)。**ウィンドウの落としはファイルの URL だけを受け、パスは必ず絶対パスになる**
-    /// ので、外から送る線も同じ約束を守らせる — 空文字列・`https://…`・相対パスは、ウィンドウなら届かないもので、
+    /// ので、外から送る入力チャネルも同じ規約を守らせる — 空文字列・`https://…`・相対パスは、ウィンドウなら届かないもので、
     /// 作例の `loadImage(paths[0])` が別のものを読む元になる。
     var isAbsolutePath: Bool { hasPrefix("/") }
 }

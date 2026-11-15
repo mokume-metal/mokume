@@ -39,7 +39,7 @@ extension Canvas {
         }
     }
 
-    /// 組版した文字列の墨が載る範囲。墨が無ければ `nil`。
+    /// 組版した文字列のインクが載る範囲。インクが無ければ `nil`。
     public func shapedTextBounds(
         _ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible
     ) -> TextBounds? {

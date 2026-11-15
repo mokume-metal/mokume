@@ -25,8 +25,8 @@ import Foundation
 ///
 /// ## 型で読む
 ///
-/// 形が決まっている JSON は、型として宣言して Foundation の `JSONDecoder` で読む道もある。mokume の口では
-/// なく、`import Foundation` を書き、手元の資材の場所を ``SketchPart/assetURL(_:)`` で引いて渡す。次は
+/// 形が決まっている JSON は、型として宣言して Foundation の `JSONDecoder` で読む方法もある。mokume の API では
+/// なく、`import Foundation` を書き、手元のアセットの場所を ``SketchPart/assetURL(_:)`` で引いて渡す。次は
 /// ``JSONArray`` の例と同じ地震の GeoJSON を、キーを辿る代わりに型で読む例である。
 ///
 /// ```swift
@@ -65,20 +65,20 @@ import Foundation
 /// **必須のキーと省いてよいキーが、型に出る。** 型で読むと、必須のキー (`place`) が 1 件でも欠ければ、読み全体が
 /// `DecodingError` (`keyNotFound`) で失敗し、`setup() throws` の中の `try` が起動の失敗として止める。省いてよい
 /// キー (`mag: Float?`) が欠ければ `nil` になる。型を書かずに読む側は逆で、どちらのキーが欠けても落ちず、空の
-/// 値 (NaN や空の文字) を返してキーごとに 1 度知らせる。欠けても絵を続けたい値は型を書かずに読む側が、欠けたら
+/// 値 (NaN や空の文字) を返してキーごとに 1 度通知する。欠けても絵を続けたい値は型を書かずに読む側が、欠けたら
 /// 読み全体を止めたい値は型で読む側が向く。
 ///
-/// **この道は Foundation の口で、失敗は mokume の失敗 (``DataFailure``) ではなく Foundation の `DecodingError`
-/// で届く。** 読めるのは手元の資材で、URL から読むときは ``SketchPart/requestJSONObject(_:)`` か
+/// **この方法は Foundation の API で、失敗は mokume の失敗 (``DataFailure``) ではなく Foundation の `DecodingError`
+/// で届く。** 読めるのは手元のアセットで、URL から読むときは ``SketchPart/requestJSONObject(_:)`` か
 /// ``SketchPart/loadJSONObject(_:)`` を使う。
 ///
 /// ## 値の型である
 ///
-/// 代入すると写しになる (``Table`` と同じ)。書き換える口 (``setFloat(_:_:)`` ほか) は `mutating` で、
+/// 代入するとコピーになる (``Table`` と同じ)。書き換えるメソッド (``setFloat(_:_:)`` ほか) は `mutating` で、
 /// `var` で持ったオブジェクトにだけ書ける。
 ///
-/// **入れ子へは直に書けない。** 取り出した値 (``getJSONObject(_:)``) は写しなので、
-/// `o.getJSONObject("main").setFloat("temp", 1)` はコンパイルが止める。写しを `var` で受けて書き換え、
+/// **入れ子へは直に書けない。** 取り出した値 (``getJSONObject(_:)``) はコピーなので、
+/// `o.getJSONObject("main").setFloat("temp", 1)` はコンパイルが止める。コピーを `var` で受けて書き換え、
 /// ``setJSONObject(_:_:)`` で戻す:
 ///
 /// <!-- example: 文脈 var weather = JSONObject() -->
@@ -88,16 +88,16 @@ import Foundation
 /// weather.setJSONObject("main", main)
 /// ```
 ///
-/// 読み出しは main actor の上にあるので、`DispatchQueue.concurrentPerform` などで並列に回すときは、分ける前に値へ写しておく (形は ``map(_:_:_:_:_:)`` の説明)。
+/// 読み出しは main actor の上にあるので、`DispatchQueue.concurrentPerform` などで並列に回すときは、分ける前に値へコピーしておく (形は ``map(_:_:_:_:_:)`` の説明)。
 ///
 /// ## 値が無くても落ちない
 ///
-/// 無いキーや、思っていたのと違う種類の値を取り出しても、取り出す口は落ちない。``getFloat(_:)``
+/// 無いキーや、思っていたのと違う種類の値を取り出しても、取り出すメソッドは落ちない。``getFloat(_:)``
 /// は NaN、``getString(_:)`` は空の文字、``getInt(_:)`` は 0、``getBoolean(_:)`` は `false`、
 /// ``getJSONObject(_:)`` は空のオブジェクト、``getJSONArray(_:)`` は空の配列を返し、**キーごとに
-/// 1 度だけ理由を知らせる** ([ADR-0020] 決定 5)。だから入れ子を繋いだまま書ける — 途中のキーが
-/// 欠けていれば、最後の数が NaN になり、知らせが欠けたキーを名指す。キーがあるかを先に確かめたい
-/// ときは ``hasKey(_:)`` で、知らせずに分かる。
+/// 1 度だけ理由を通知する** ([ADR-0020] 決定 5)。だから入れ子を繋いだまま書ける — 途中のキーが
+/// 欠けていれば、最後の数が NaN になり、通知が欠けたキーを名指す。キーがあるかを先に確かめたい
+/// ときは ``hasKey(_:)`` で、通知なしに分かる。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public struct JSONObject: Equatable, Sendable {
@@ -120,7 +120,7 @@ public struct JSONObject: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// 最初の `getInt("clicks")` はキーが無いので 0 を返し、1 度だけ知らせる。知らせずに分けるなら
+    /// 最初の `getInt("clicks")` はキーが無いので 0 を返し、1 度だけ通知する。通知なしに分けるなら
     /// ``hasKey(_:)`` で先に確かめる。
     public init() {
         members = [:]
@@ -146,10 +146,10 @@ public struct JSONObject: Equatable, Sendable {
     /// weather.setFloat("temp", -3.5)
     /// ```
     ///
-    /// 書き出すと、`Float` の最も短い 10 進の綴りになる (`0.1` は `0.1`、`2` は `2.0`)。整数の綴りで
+    /// 書き出すと、`Float` の最も短い 10 進の表記になる (`0.1` は `0.1`、`2` は `2.0`)。整数の表記で
     /// 書くのは ``setInt(_:_:)`` である。
     ///
-    /// **NaN と無限は書かず、初回だけ理由を知らせる** (キーごとに 1 度)。JSON には NaN と無限の綴りが
+    /// **NaN と無限は書かず、初回だけ理由を通知する** (キーごとに 1 度)。JSON には NaN と無限の表記が
     /// 無く、書けば読み直せないファイルになるためで、投げない ([ADR-0020] 決定 5)。既にあるキーの値も
     /// 置き換えない。Processing は例外を投げる。
     ///
@@ -172,7 +172,7 @@ public struct JSONObject: Equatable, Sendable {
     /// record.setInt("count", 2)
     /// ```
     ///
-    /// 整数の綴り (`2`) で書き、``getInt(_:)`` で読み直すと同じ整数に戻る。
+    /// 整数の表記 (`2`) で書き、``getInt(_:)`` で読み直すと同じ整数に戻る。
     public mutating func setInt(_ key: String, _ value: Int) {
         members[key] = .integer(value)
     }
@@ -189,7 +189,7 @@ public struct JSONObject: Equatable, Sendable {
         members[key] = .string(value)
     }
 
-    /// キーにオブジェクトを書く。入れ子は、写しを書き換えてここで戻す (``JSONObject`` の「値の型である」)。
+    /// キーにオブジェクトを書く。入れ子は、コピーを書き換えてここで戻す (``JSONObject`` の「値の型である」)。
     ///
     /// <!-- example: 文脈 var weather = JSONObject() -->
     /// ```swift
@@ -198,12 +198,12 @@ public struct JSONObject: Equatable, Sendable {
     /// weather.setJSONObject("main", main)
     /// ```
     ///
-    /// 書くのは渡した時点の写しで、後で `main` を書き換えても `weather` の中は変わらない。
+    /// 書くのは渡した時点のコピーで、後で `main` を書き換えても `weather` の中は変わらない。
     public mutating func setJSONObject(_ key: String, _ value: JSONObject) {
         members[key] = .object(value.members)
     }
 
-    /// キーに配列を書く。渡した時点の写しを書く (``setJSONObject(_:_:)`` と同じ)。
+    /// キーに配列を書く。渡した時点のコピーを書く (``setJSONObject(_:_:)`` と同じ)。
     ///
     /// <!-- example: 文脈 var record = JSONObject(); var history: JSONArray! -->
     /// ```swift
@@ -221,15 +221,15 @@ public struct JSONObject: Equatable, Sendable {
     /// circle(width / 2, height / 2, 100 + temp * 4)
     /// ```
     ///
-    /// 数の値はそのまま、数の文字 (`"18.5"`) は数として読む。数の文字とするのは **10 進の綴り
-    /// だけ** (`"-2"`・`"+5"`・`".5"`・`"1e3"`) で、前後の空白は改行も含めて落とす。`Float` に
+    /// 数の値はそのまま、数の文字 (`"18.5"`) は数として読む。数の文字とするのは **10 進の表記
+    /// だけ** (`"-2"`・`"+5"`・`".5"`・`"1e3"`) で、前後の空白は改行も含めて取り除く。`Float` に
     /// 収まらない数 (`1e39`・`"1e39"`) は無限大になる。
     ///
-    /// **数にならないときは NaN を返し、初回だけ理由を知らせる** — キーが無い・値が
+    /// **数にならないときは NaN を返し、初回だけ理由を通知する** — キーが無い・値が
     /// `true` / `false` / `null`・オブジェクト・配列・数でない文字のどれでも (キーごとに 1 度)。
     /// 文字の `"nan"`・`"NaN"`・`"inf"`・`"Infinity"`・16 進 (`"0x10"`) も、数でない文字である。
     /// 読み取りは落ちない ([ADR-0020] 決定 5)。NaN は表の ``TableRow/getFloat(_:)-(String)`` が
-    /// 欠けた値に返すものと同じで、0 のように黙って別の値に化けない。
+    /// 欠けた値に返すものと同じで、0 のように通知なしに別の値に化けない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func getFloat(_ key: String) -> Float {
@@ -251,7 +251,7 @@ public struct JSONObject: Equatable, Sendable {
     /// background(lerp(70, 240, warmth), lerp(130, 140, warmth), lerp(220, 60, warmth))
     /// ```
     ///
-    /// **オブジェクトでないときは空のオブジェクトを返し、初回だけ理由を知らせる** — キーが
+    /// **オブジェクトでないときは空のオブジェクトを返し、初回だけ理由を通知する** — キーが
     /// 無い・値が数や文字や配列のどれでも (キーごとに 1 度)。空のオブジェクトから
     /// ``getFloat(_:)`` で読むと NaN になるので、繋いだまま書いてよい。
     public func getJSONObject(_ key: String) -> JSONObject {
@@ -272,9 +272,9 @@ public struct JSONObject: Equatable, Sendable {
     /// text(name, 20, 40)
     /// ```
     ///
-    /// **文字の値だけを読む。** 数や真偽を綴りにして返すことはしない (`18.5` は文字ではない)。
+    /// **文字の値だけを読む。** 数や真偽を文字に変換して返すことはしない (`18.5` は文字ではない)。
     ///
-    /// **文字にならないときは空の文字を返し、初回だけ理由を知らせる** — キーが無い・値が文字
+    /// **文字にならないときは空の文字を返し、初回だけ理由を通知する** — キーが無い・値が文字
     /// でない (数・`true` / `false` / `null`・オブジェクト・配列) のどれでも (キーごとに 1 度)。
     /// 読み取りは落ちない ([ADR-0020] 決定 5)。
     ///
@@ -299,21 +299,21 @@ public struct JSONObject: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// **丸めない** — `2` と `2.0` は `2` で、`2.5` は `0` を返して知らせる (黙って別の値を返さない。
+    /// **丸めない** — `2` と `2.0` は `2` で、`2.5` は `0` を返して通知する (通知なしに別の値を返さない。
     /// OSC の `int(_:)` と同じく、整数の値だけを読む)。小数が要るときは ``getFloat(_:)``。
-    /// 数の文字は、``getFloat(_:)`` と同じ 10 進の綴りで整数の値のもの (`"3"`・`"1e3"`) だけを読む。
+    /// 数の文字は、``getFloat(_:)`` と同じ 10 進の表記で整数の値のもの (`"3"`・`"1e3"`) だけを読む。
     ///
     /// **JSON の数の値は、`JSONSerialization` が返した値で整数かを決める。** 読み込みの時点で、端数や
-    /// 下位の桁が失われる場合がある (綴りが 17 桁前後の端数、2⁵³ を越える小数つきの綴り、39 桁以上の綴り)。失われた後の値が
+    /// 下位の桁が失われる場合がある (表記が 17 桁前後の端数、2⁵³ を越える小数つきの表記、39 桁以上の表記)。失われた後の値が
     /// 整数なら、そのまま整数として読む。正確な整数が要るときは、同じ桁を文字で渡す。数の文字は
-    /// 綴りの桁を丸めずに読む。
+    /// 表記の桁を丸めずに読む。
     ///
     /// ```
     /// {"id": 9007199254740993.0}    getInt("id") → 9007199254740992 (数の値。下位の桁が失われた後の整数)
     /// {"id": "9007199254740993.0"}  getInt("id") → 9007199254740993 (数の文字。桁のまま)
     /// ```
     ///
-    /// **整数にならないときは 0 を返し、初回だけ理由を知らせる** — キーが無い・整数でない数・`Int`
+    /// **整数にならないときは 0 を返し、初回だけ理由を通知する** — キーが無い・整数でない数・`Int`
     /// に収まらない数・数でない値のどれでも (キーごとに 1 度)。読み取りは落ちない
     /// ([ADR-0020] 決定 5)。
     ///
@@ -339,7 +339,7 @@ public struct JSONObject: Equatable, Sendable {
     ///
     /// **`true` / `false` だけを読む。** 数の `1` / `0` や文字の `"true"` は真偽ではない。
     ///
-    /// **真偽にならないときは `false` を返し、初回だけ理由を知らせる** — キーが無い・値が真偽でない
+    /// **真偽にならないときは `false` を返し、初回だけ理由を通知する** — キーが無い・値が真偽でない
     /// のどれでも (キーごとに 1 度)。読み取りは落ちない ([ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -365,7 +365,7 @@ public struct JSONObject: Equatable, Sendable {
     ///
     /// 返る ``JSONArray`` は `for-in` で回せる。
     ///
-    /// **配列でないときは空の配列を返し、初回だけ理由を知らせる** — キーが無い・値が配列でない
+    /// **配列でないときは空の配列を返し、初回だけ理由を通知する** — キーが無い・値が配列でない
     /// のどれでも (キーごとに 1 度)。空の配列は何も回さないので、繋いだまま書いてよい。
     public func getJSONArray(_ key: String) -> JSONArray {
         guard let value = member(key, call: "getJSONArray") else { return JSONArray([]) }
@@ -386,7 +386,7 @@ public struct JSONObject: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// **知らせない** — キーが無いかもしれないことを分かって尋ねる口である。
+    /// **通知しない** — キーが無いかもしれないことを分かって尋ねるメソッドである。
     public func hasKey(_ key: String) -> Bool {
         members[key] != nil
     }
@@ -401,11 +401,11 @@ public struct JSONObject: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// 値が `null` なのか、キーが無いのかを分けるなら ``hasKey(_:)`` と組む
+    /// 値が `null` なのか、キーが無いのかを分けるなら ``hasKey(_:)`` と組み合わせる
     /// (`hasKey("rain") && isNull("rain")` は「キーはあり、値が `null`」)。
     ///
-    /// **知らせない** — 値が欠けているかもしれないことを分かって尋ねる口である。`null` の値を
-    /// ``getFloat(_:)`` などで読むと空の値と知らせになるので、読む前にこれで確かめる。
+    /// **通知しない** — 値が欠けているかもしれないことを分かって尋ねるメソッドである。`null` の値を
+    /// ``getFloat(_:)`` などで読むと空の値と通知になるので、読む前にこれで確かめる。
     public func isNull(_ key: String) -> Bool {
         guard let value = members[key] else { return true }
         return value == .null
@@ -421,8 +421,8 @@ public struct JSONObject: Equatable, Sendable {
     /// ```
     ///
     /// Swift の辞書の順は実行ごとに変わるので、そのまま渡すと同じ JSON から違う絵ができる。
-    /// 文字の順にそろえてあるので、何度走らせても同じ並びになる (JSON のオブジェクトは書かれた順を
-    /// 約束しないので、書かれた順では返さない)。
+    /// 文字の順にそろえてあるので、何度実行しても同じ並びになる (JSON のオブジェクトは書かれた順を
+    /// 保証しないので、書かれた順では返さない)。
     public var keys: [String] {
         members.keys.sorted()
     }

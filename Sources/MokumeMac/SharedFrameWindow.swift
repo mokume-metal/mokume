@@ -77,58 +77,58 @@ package final class SharedFrameWindow {
         set { stage.onInput = newValue }
     }
 
-    /// 表示する世代が切り替わったことの通知。
+    /// 表示する子プロセスが切り替わったことの通知。
     ///
-    /// **切り替わるのは、新しい世代が最初のフレームを描画したときである** — マニフェストに現れた
+    /// **切り替わるのは、新しい子プロセスが最初のフレームを描画したときである** — マニフェストに現れた
     /// 瞬間ではない ([#1142](https://github.com/mokume-metal/mokume/issues/1142))。受け取る側は
-    /// これをきっかけに、前の世代を実行していた子プロセスを止められる。**引数は切り替わった先の世代の子プロセスの PID**
+    /// これをきっかけに、前の子プロセスを止められる。**引数は切り替わった先の子プロセスの PID**
     /// ([#2982](https://github.com/mokume-metal/mokume/issues/2982))で、PID を報告しない子プロセス (古いライブラリ) なら `nil`。
     public var onGenerationPromoted: ((Int32?) -> Void)? {
         get { stage.onGenerationPromoted }
         set { stage.onGenerationPromoted = newValue }
     }
 
-    /// このステージが、待機中の世代のフレームを受け取れないことの通知 ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+    /// このステージが、待機中の子プロセスのフレームを受け取れないことの通知 ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
     ///
     /// **切り替えの通知が来ない形のうち、ツールだけが知るもの** (``UndeliverableGeneration``) である。
-    /// 受け取る側は、切り替えを待っている世代のぶんだけ、前の世代を終了できる。**2 つ目の引数は、読めたマニフェストが
+    /// 受け取る側は、切り替えを待っている子プロセスのぶんだけ、前の子プロセスを終了できる。**2 つ目の引数は、読めたマニフェストが
     /// 報告した子プロセスの PID**で、読めないマニフェスト・PID を報告しない子プロセスなら `nil` (#2982)。
     public var onGenerationUndeliverable: ((UndeliverableGeneration, Int32?) -> Void)? {
         get { stage.onGenerationUndeliverable }
         set { stage.onGenerationUndeliverable = newValue }
     }
 
-    /// `mokume watch` が、いま映している世代を手放したと伝える ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
+    /// `mokume watch` が、いま映している子プロセスを手放したと伝える ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
     ///
-    /// 終了した世代のカーソルの要求 (捕まえる・隠す) を取り下げ、その世代の要求を次の切り替えまで読まない。
+    /// 終了した子プロセスのカーソルの要求 (捕まえる・隠す) を取り下げ、その子プロセスの要求を次の切り替えまで読まない。
     /// **最後のフレームと入力のコピーの寸法は残す。**
-    /// 受け取れない世代の通知 (``onGenerationUndeliverable``) はステージが自分で気付くが、クラッシュした子プロセス・子プロセスの離脱・
-    /// 通知の来ないまま次の保存が来た回はステージを通らないので、ツールが伝える。**終了した・居なくなったと決めた世代に
-    /// ついてだけ呼ぶ** — 生きてフレームを書き続ける世代へ当たると、その世代は次の切り替えまでカーソルを要求できない。
+    /// 受け取れない子プロセスの通知 (``onGenerationUndeliverable``) はステージが自分で気付くが、クラッシュした子プロセス・子プロセスの離脱・
+    /// 通知の来ないまま次の保存が来た回はステージを通らないので、ツールが伝える。**終了した・居なくなったと決めた子プロセスに
+    /// ついてだけ呼ぶ** — 生きてフレームを書き続ける子プロセスへ当たると、その子プロセスは次の切り替えまでカーソルを要求できない。
     ///
-    /// - Parameter pids: 手放す世代の子プロセスの PID ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
-    ///   映っている世代のマニフェストが報告する PID と照合し、手放す世代でなければ当てない。まだ採用していないマニフェストも、
-    ///   手放した PID のものは生成時から手放した扱いにする。PID を報告しない世代 (古いライブラリ) は
+    /// - Parameter pids: 手放す子プロセスの PID ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    ///   映っている子プロセスのマニフェストが報告する PID と照合し、手放す子プロセスでなければ当てない。まだ採用していないマニフェストも、
+    ///   手放した PID のものは生成時から手放した扱いにする。PID を報告しない子プロセス (古いライブラリ) は
     ///   照合できないので手放す。
     public func relinquishGeneration(pids: [Int32]) {
         stage.relinquishSource(pids: pids)
     }
 
-    /// `mokume watch` が、待機中の世代へ切り替えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// `mokume watch` が、待機中の子プロセスへ切り替えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
     /// 起動に失敗した新しいビルドを捨てて前のビルドを現行に戻した回に呼ぶ。失敗した子プロセスのマニフェストが待機中にあれば破棄し、
-    /// 後から来ても採用しない。**既に切り替えて映している世代がその子プロセスなら、前のビルドへ映し直す** — 子プロセスが 1 フレーム書いて
+    /// 後から来ても採用しない。**既に切り替えて映しているのがその子プロセスなら、前のビルドへ映し直す** — 子プロセスが 1 フレーム書いて
     /// 切り替わった後、描画が見送られたティックで終了すると、最初のフレームの通知は発火しない。
     ///
-    /// - Parameter pids: 切り替えない世代の子プロセスの PID。
+    /// - Parameter pids: 切り替えない子プロセスの PID。
     public func abandonGeneration(pids: [Int32]) {
         stage.abandonIncoming(pids: pids)
     }
 
     /// `mokume watch` が新しい子プロセスを起動した ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
-    /// その PID を、切り替えないと決めた世代と手放した世代の記録から外す。PID は使い回されるので、残すと同じ PID の
-    /// 新しい子プロセスのマニフェストを黙って破棄し、その子プロセスの要求を読まない。
+    /// その PID を、切り替えないと決めた子プロセスと手放した子プロセスの記録から外す。PID は使い回されるので、残すと同じ PID の
+    /// 新しい子プロセスのマニフェストを通知なしに破棄し、その子プロセスの要求を読まない。
     ///
     /// - Parameter pids: 起動した子プロセスの PID。
     public func expectGeneration(pids: [Int32]) {
@@ -178,13 +178,13 @@ package final class SharedFrameWindow {
         stage.returnToGeneration(pid: pid)
     }
 
-    /// 表示する世代の最初のフレームを画面へ出したことの通知。
+    /// 表示する子プロセスの最初のフレームを画面へ出したことの通知。
     ///
-    /// **切り替えの通知より遅いことがある。** 最初の世代はフレームが来る前に採用されるので、
+    /// **切り替えの通知より遅いことがある。** 最初の子プロセスはフレームが来る前に採用されるので、
     /// 「フレームが見えるようになった」を待つ側はこちらを使う
     /// ([#2875](https://github.com/mokume-metal/mokume/issues/2875))。
     ///
-    /// **引数は、最初のフレームを出した世代のマニフェストが報告した子プロセスの PID** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// **引数は、最初のフレームを出した子プロセスのマニフェストが報告した PID** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     /// PID を報告しない子プロセス (古いライブラリ) は `nil`。`mokume watch` は、その子プロセスがフレームを出す前に終わったかを、これで読む。
     public var onGenerationShown: ((Int32?) -> Void)? {
         get { stage.onGenerationShown }

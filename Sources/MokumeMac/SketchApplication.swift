@@ -351,11 +351,11 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private var activity: (any NSObjectProtocol)?
     /// ディスプレイが勝手に消えるのを断っているもの。**ウィンドウを出す経路でだけ持つ。**
     private var displaySleepBlock: DisplaySleepBlock?
-    /// 走っている間、ディスプレイが消えるのを断るか。**既定は断る** (#874)。書き出す経路 (`mokume render`) は
-    /// 画面に出さないので、この値に依らず断らない (#3474)。
+    /// 走っている間、ディスプレイが消えるのを防ぐか。**既定は防ぐ** (#874)。書き出す経路 (`mokume render`) は
+    /// 画面に出さないので、この値に依らず防がない (#3474)。
     ///
-    /// 外してよいのは、**画面が消えることそのものを測る検査**だけである
-    /// (`scripts/check-observation-roundtrip.sh --display-asleep`)。断ったまま測ると
+    /// 外してよいのは、**画面が消えることそのものを測るテスト**だけである
+    /// (`scripts/check-observation-roundtrip.sh --display-asleep`)。防いだまま測ると
     /// 「スリープを作れなかったのに緑」という嘘が出る。
     public var blocksDisplaySleep = true
 
@@ -396,13 +396,13 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         let windowTitle: String?
     }
 
-    /// 名乗ってよい速さ。**測れていなければ `nil`。**
+    /// 報告してよい速さ。**測れていなければ `nil`。**
     ///
     /// 数えるのは**進めたフレーム**で、画面へ出した回数ではない。ウィンドウが見えていない間も
     /// スケッチは進み続けるので、ここで出した回数を数えると「最小化したら 0 になった」
     /// と読めてしまう — 測りたいのは絵が進んでいるかである。
     ///
-    /// **ウィンドウはここでも読み手である** ([ADR-0030] 決定 7)。自分では数えず、観測の応答が
+    /// **ウィンドウはここでも読み取り側である** ([ADR-0030] 決定 7)。自分では数えず、観測の応答が
     /// 返すのと同じ集計器を読む。止まったスケッチや起動直後は測れていないので `nil` を
     /// 返す — **欠測を 0 に化けさせると「とても重い」と誤読される** ([ADR-0029] 決定 3)。
     ///
@@ -410,7 +410,7 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public var currentFrameRate: Double? { runtime.frameNumbers.frameRate }
 
-    /// 面を取れずに見送ったフレームの数。
+    /// ドローアブルを取得できずに見送ったフレームの数。
     public var missedFrames: Int { presenter.missedFrames }
 
     /// 画面へ出しながら回す扱いか (`SketchRuntime.isOnScreen`)。**検査が読む。**
@@ -441,13 +441,13 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// スケッチを画面に出す用意をする。
     ///
     /// 時刻の出どころは**既定で実時間**にする — 画面に出しながら動かす経路なので、
-    /// 実際に流れた時間で動くのが正しい。作品が ``SketchSettings/clock`` で
+    /// 実際に流れた時間で動くのが正しい。スケッチが ``SketchSettings/clock`` で
     /// ``SketchSettings/ClockMode/frames`` を選んでいれば、宣言の刻みのフレーム番号にする。
     ///
-    /// 道具が書き出しを頼んだとき (`mokume render`・``StartupReads/render``) だけは、ウィンドウを
+    /// ツールが書き出しを要求したとき (`mokume render`・``StartupReads/render``) だけは、ウィンドウを
     /// 開かずに決めた枚数を書き出す。その経路の時刻はフレーム番号から導く。
     ///
-    /// **頼みの合図が在って読めなければ、ウィンドウへ倒さず投げる** (``RenderFailure/unreadableRenderRequest(value:)``・
+    /// **要求の指定が在って読めなければ、ウィンドウへフォールバックせず投げる** (``RenderFailure/unreadableRenderRequest(value:)``・
     /// [#2481](https://github.com/mokume-metal/mokume/issues/2481))。
     public convenience init(sketch: any Sketch, gpu: RenderDevice) throws(RenderFailure) {
         try self.init(sketch: sketch, gpu: gpu, embedded: false)
@@ -563,10 +563,10 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         render == nil ? given : nil
     }
 
-    /// アプリケーションとして走らせる。戻らない。
+    /// アプリケーションとして実行する。戻らない。
     ///
-    /// **1 プロセスに走らせられるのは 1 つだけである。** 既に走っているものが在れば、
-    /// 2 つ目の呼び出しは断ったことを 1 度だけ標準エラーへ言い、何にも触れずにすぐ戻る。
+    /// **1 プロセスで実行できるのは 1 つだけである。** 既に走っているものが在れば、
+    /// 2 つ目の呼び出しは拒否したことを 1 度だけ標準エラーへ言い、何にも触れずにすぐ戻る。
     /// 走っている 1 つ目は何も変わらず、撮っている動画も、終わり方によらず開けるまま残る
     /// ([#2027](https://github.com/mokume-metal/mokume/issues/2027))。
     public func run() {
@@ -1865,7 +1865,7 @@ final class SketchApplicationDelegate: NSObject, NSApplicationDelegate {
 extension Sketch {
     /// スケッチを起動する (`@main` から呼ばれる)。
     ///
-    /// **既に 1 つ走っていれば、組み立てずに戻る** (`SketchApplication.run()` と同じ断り・
+    /// **既に 1 つ走っていれば、構築せずに戻る** (`SketchApplication.run()` と同じ拒否・
     /// [#2027](https://github.com/mokume-metal/mokume/issues/2027))。
     public static func main() {
         // 組み立てより前に断る。組み立てが投げると下の `exit(1)` が、走っている 1 つ目を

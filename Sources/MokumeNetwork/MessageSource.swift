@@ -5,10 +5,10 @@ import Foundation
 import MokumeCore
 import Synchronization
 
-/// メッセージの出どころ。**実物のポートも注入した列も、同じ落とさない列 (``ExternalQueue``) へ
+/// メッセージの出どころ。**実物のポートも注入した列も、同じ取りこぼさないキュー (``ExternalQueue``) へ
 /// メッセージを入れる** ([ADR-0028] 決定 6・[ADR-0042] 決定 4 の「供給元を差し替えられる」)。
 ///
-/// 列から先 (``OSCPort``・``TextPort``) は出どころを知らない。だから注入した列で回した検査が、
+/// キューから先 (``OSCPort``・``TextPort``) は出どころを知らない。だから注入した列で回した検査が、
 /// 実物で受けたときの受け渡しの正しさをそのまま固定する。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
@@ -167,7 +167,7 @@ nonisolated final class ListenerStatus: Sendable {
     }
 }
 
-/// UDP のポートで受ける出どころ。届いた datagram をその場で読み、メッセージにして列へ入れる。
+/// UDP のポートで受ける出どころ。届いた datagram をその場で読み、メッセージにしてキューへ入れる。
 ///
 /// 読み方 (`decode`) だけを差し替える — OSC はパケットを読み、文字列は 1 datagram を 1 つの
 /// 文字列にする。読めなかった数は列に数える。**ちょうど ``Datagram/sizeLimit`` バイトの datagram は、

@@ -93,7 +93,7 @@ extension Canvas {
         warnOnce(.insidePath(refusal), refusal.notice)
     }
 
-    /// 道を組み立てて返す。
+    /// パスを構築して返す。
     public func createPath(_ body: () -> Void) -> Path {
         let recorder = PathRecorder()
         // 組み立ての中の記録は捨てる。道に入るのは、閉じた形の周と穴だけ (`recorder` に控える)。控えを立てるのは
@@ -105,7 +105,7 @@ extension Canvas {
         return Path(subpaths: recorder.subpaths)
     }
 
-    /// 道を描く。道を記録している間 (``createPath(_:)`` の中) なら、描かずに、外の道へ部分道を足す。
+    /// パスを描く。パスを記録している間 (``createPath(_:)`` の中) なら、描かずに、外のパスへサブパスを追加する。
     public func shape(_ path: Path, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
         let offset = SIMD2(x.asFloat, y.asFloat)
         let subpaths = path.subpaths.filter { !$0.points.isEmpty }

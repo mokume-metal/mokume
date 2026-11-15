@@ -4,7 +4,7 @@
 import Foundation
 
 /// 空間の点や向き・大きさを表す、3 つの数の組。視点の位置 (``Camera/eye``)・モデルの大きさ
-/// (``Model/size``) のように、公開の面で 3 次元の値を渡すときの型である。
+/// (``Model/size``) のように、公開 API で 3 次元の値を渡すときの型である。
 ///
 /// ``Vector2`` の 3 次元版で、数は `Float`・`Double`・`Int` のどれでも渡せる ([ADR-0035])。
 /// 奥行き (`z`) は、視点に向かって手前が正である ([ADR-0021] 決定 1)。
@@ -25,7 +25,7 @@ import Foundation
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
 /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
 public nonisolated struct Vector3: Sendable, Hashable {
-    /// SIMD との出入り口。Metal のシェーダへ渡すときなどに使う。
+    /// SIMD の値としての表現。Metal のシェーダへ渡すときなどに使う。
     ///
     /// 中身はこの SIMD の値で、``x``・``y``・``z`` はその成分を読み書きする。
     // shot: 撮れない 値の入れ物の出入り口で、描く結果が無い
@@ -73,7 +73,7 @@ nonisolated extension Vector3: ExpressibleByArrayLiteral {
     /// 3 つの数の配列リテラルから作る (`[200, 150, 500]`)。
     ///
     /// 要素は数のリテラルに限る。`Int` の変数を混ぜるときは ``init(_:_:_:)`` で書く。
-    /// **要素が 3 つでなければ止まる** — 書いた場所で必ず起きる誤りなので、その行で知らせる
+    /// **要素が 3 つでなければ止まる** — 書いた場所で必ず起きる誤りなので、その行で報告する
     /// (``Vector2`` の配列リテラルと同じ)。`Vector2` と `Vector3` を同じラベルで受ける API (曲線のラベル付きの形など) に
     /// `Vector3` の変数とリテラルを混ぜて渡すと、リテラルも `Vector3` として読まれ、`[1, 2]` は要素の数が合わずに
     /// 実行時に止まる。リテラルにも `Vector2(…)`・`Vector3(…)` と型を書けば避けられる。
@@ -154,7 +154,7 @@ nonisolated extension Vector3 {
         Vector3(lhs.simd / rhs.asFloat)
     }
 
-    /// 足して入れる。`eye += Vector3(0, 0, 10)` で視点を引く。
+    /// 加算して代入する。`eye += Vector3(0, 0, 10)` で視点を引く。
     // shot: 撮れない 値を書き換えるだけで、描く結果が無い
     public static func += (lhs: inout Vector3, rhs: Vector3) {
         lhs.simd += rhs.simd
@@ -307,7 +307,7 @@ nonisolated extension Vector3 {
     /// 2 つの値のどちらにも直角な値で、長さは 2 つが作る平行四辺形の面積。**右手系** — 横 (`x`) の
     /// 正の向きから縦 (`y`) の正の向きへ回したときの法線を返すので、`Vector3(1, 0, 0).cross(Vector3(0, 1, 0))`
     /// は `Vector3(0, 0, 1)`、順を入れ替えると向きが反対になる。縦軸が下向き・奥行きが手前正の
-    /// この面の座標でも、**数式として右手系の規則を守る** (画面上で見える向きは座標系に従う)。
+    /// この座標系でも、**数式として右手系の規則を守る** (画面上で見える向きは座標系に従う)。
     // shot: 撮れない 値を返すだけで、描く結果が無い
     public func cross(_ other: Vector3) -> Vector3 {
         let (a, b) = (simd, other.simd)

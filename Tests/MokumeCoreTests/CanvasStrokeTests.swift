@@ -419,7 +419,7 @@ extension CanvasTests {
 
         @Test("太さ 1 の線は、整数の座標では 1 画素に収まる")
         func hairlineCoversExactlyOneColumn() throws {
-            // 座標の約束のうち、線を半画素寄せているかを見る検査 (ADR-0039 決定 2)。
+            // 座標の規約のうち、線を半画素寄せているかを見る検査 (ADR-0039 決定 2)。
             // 寄せが無いと、縁が画素の中心に乗って隣の列が塗られるか 2 列にまたがる。
             // 経路ごとの寄せは `PixelGridTests.strokesSitOnPixelCenters` が見る
             let canvas = try makeCanvas()

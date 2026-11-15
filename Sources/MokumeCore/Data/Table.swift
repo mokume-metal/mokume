@@ -21,12 +21,12 @@ import Foundation
 ///
 /// ## 値の型である
 ///
-/// **代入すると写しになる。** 2 つの変数で持った表は、片方を書き換えてももう片方は変わらない。
-/// 行 (``rows``) も読むための写しなので、書き換えは表に対して、行の番号を渡して行う
+/// **代入するとコピーになる。** 2 つの変数で持った表は、片方を書き換えてももう片方は変わらない。
+/// 行 (``rows``) も読むためのコピーなので、書き換えは表に対して、行の番号を渡して行う
 /// (``setFloat(_:_:_:)-(_,String,_)``)。Processing の `Table` は参照で持つので、行から
 /// 書き換える (`row.setFloat(…)`) 書き方は、ここでは表から書き換える書き方になる。
 ///
-/// 読み出しは main actor の上にあるので、`DispatchQueue.concurrentPerform` などで並列に回すときは、分ける前に値へ写しておく (形は ``map(_:_:_:_:_:)`` の説明)。
+/// 読み出しは main actor の上にあるので、`DispatchQueue.concurrentPerform` などで並列に回すときは、分ける前に値へコピーしておく (形は ``map(_:_:_:_:_:)`` の説明)。
 ///
 /// ## 値は文字で持つ
 ///
@@ -44,7 +44,7 @@ public struct Table: Equatable, Sendable {
         cells = parsed.rows
     }
 
-    /// 見出しだけを持つ、行の無い表を作る。行は ``addRow(_:)`` で足す。Processing の `new Table()` と
+    /// 見出しだけを持つ、行の無い表を作る。行は ``addRow(_:)`` で追加する。Processing の `new Table()` と
     /// `addColumn()` をまとめた形。
     ///
     /// <!-- example: 文脈 var log = Table(columns: ["frame", "x", "y"]) -->
@@ -85,27 +85,27 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// **読むための写しである。** 行には書き換える口が無く、書き換えは
+    /// **読むためのコピーである。** 行には書き換えるメソッドが無く、書き換えは
     /// ``setFloat(_:_:_:)-(_,String,_)`` で表に対して行う。
     public var rows: [TableRow] {
         cells.indices.map { TableRow(titles: titles, cells: cells[$0], index: $0) }
     }
 
-    /// 右端に列を 1 つ足す。足した列のセルはどの行も空 (`""`)。
+    /// 右端に列を 1 つ追加する。追加した列のセルはどの行も空 (`""`)。
     ///
-    /// 見出しの行を読まなかった表に足すと、表は見出しを持つようになる。もとからある列の
+    /// 見出しの行を読まなかった表に追加すると、表は見出しを持つようになる。もとからある列の
     /// 名前は空になり、書き出すと見出しの行が付く。
     public mutating func addColumn(_ title: String) {
         titles = (titles ?? Array(repeating: "", count: columnCount)) + [title]
         for row in cells.indices { cells[row].append("") }
     }
 
-    /// 下端に行を 1 つ足す。`values` は左の列から並べた数で、**列の数と同じだけ渡す。**
+    /// 下端に行を 1 つ追加する。`values` は左の列から並べた数で、**列の数と同じだけ渡す。**
     ///
-    /// 数は ``setFloat(_:_:_:)-(_,String,_)`` と同じ綴りで文字にして持つ (`10` は `"10.0"`)。文字の
-    /// セルは、足した行へ ``setString(_:_:_:)-(_,String,_)`` で書く (行の番号は足す前の ``rowCount``)。
+    /// 数は ``setFloat(_:_:_:)-(_,String,_)`` と同じ表記で文字にして持つ (`10` は `"10.0"`)。文字の
+    /// セルは、追加した行へ ``setString(_:_:_:)-(_,String,_)`` で書く (行の番号は追加する前の ``rowCount``)。
     ///
-    /// **列の数と合わない並びは足さず、初回だけ理由を知らせる。** 無い列に書かない
+    /// **列の数と合わない並びは追加せず、初回だけ理由を通知する。** 無い列に書かない
     /// ``setFloat(_:_:_:)-(_,String,_)`` と同じく投げない ([ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -123,11 +123,11 @@ public struct Table: Equatable, Sendable {
     /// セルに数を書く。`row` は 0 から数えた行の番号、`column` は列の名前。
     ///
     /// 数は文字にして持つ (`12.5` は `"12.5"`)。NaN と無限は `"nan"`・`"inf"`・`"-inf"` と
-    /// 書かれ、10 進の綴りでないので、``TableRow/getFloat(_:)-(String)`` で読み直すと数でない
-    /// 文字として NaN になる (知らせが出る)。
+    /// 書かれ、10 進の表記でないので、``TableRow/getFloat(_:)-(String)`` で読み直すと数でない
+    /// 文字として NaN になる (通知が出る)。
     ///
-    /// **無い列・表の外の行には書かず、初回だけ理由を知らせる。** 描く口と同じく投げない
-    /// ([ADR-0020] 決定 5)。列を足すのは ``addColumn(_:)`` である。
+    /// **無い列・表の外の行には書かず、初回だけ理由を通知する。** 描画関数と同じく投げない
+    /// ([ADR-0020] 決定 5)。列を追加するのは ``addColumn(_:)`` である。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public mutating func setFloat(_ row: Int, _ column: String, _ value: Float) {
@@ -169,10 +169,10 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// 整数の綴りで書く (`3` は `"3"`。``setFloat(_:_:_:)-(_,String,_)`` は `"3.0"`)。``getInt(_:_:)-(_,String)``
+    /// 整数の表記で書く (`3` は `"3"`。``setFloat(_:_:_:)-(_,String,_)`` は `"3.0"`)。``getInt(_:_:)-(_,String)``
     /// で読み直すと同じ整数に戻る。
     ///
-    /// 無い列・表の外の行の扱いは ``setFloat(_:_:_:)-(_,String,_)`` と同じ (書かずに、初回だけ知らせる)。
+    /// 無い列・表の外の行の扱いは ``setFloat(_:_:_:)-(_,String,_)`` と同じ (書かずに、初回だけ通知する)。
     public mutating func setInt(_ row: Int, _ column: String, _ value: Int) {
         let index = TableValues.column(named: column, in: titles, call: "setInt")
         write(row, index, String(value), call: "setInt")
@@ -187,7 +187,7 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// 綴りと、無い列・表の外の行の扱いは ``setInt(_:_:_:)-(_,String,_)`` と同じ。
+    /// 表記と、無い列・表の外の行の扱いは ``setInt(_:_:_:)-(_,String,_)`` と同じ。
     public mutating func setInt(_ row: Int, _ column: Int, _ value: Int) {
         let index = TableValues.column(numbered: column, width: columnCount, call: "setInt")
         write(row, index, String(value), call: "setInt")
@@ -217,7 +217,7 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// **表の外の行には何もせず、初回だけ理由を知らせる** (``setFloat(_:_:_:)-(_,String,_)`` と同じく
+    /// **表の外の行には何もせず、初回だけ理由を通知する** (``setFloat(_:_:_:)-(_,String,_)`` と同じく
     /// 投げない。[ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -242,7 +242,7 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// **無い列には何もせず、初回だけ理由を知らせる** (表にある列の名前を添える。投げない)。
+    /// **無い列には何もせず、初回だけ理由を通知する** (表にある列の名前を添える。投げない)。
     public mutating func removeColumn(_ column: String) {
         remove(column: TableValues.column(named: column, in: titles, call: "removeColumn"))
     }
@@ -261,7 +261,7 @@ public struct Table: Equatable, Sendable {
         remove(column: TableValues.column(numbered: column, width: columnCount, call: "removeColumn"))
     }
 
-    /// すべてのセルの前後の空白を落とす。空白には改行とタブも含める (`"  12 \t"` は `"12"`)。
+    /// すべてのセルの前後の空白を取り除く。空白には改行とタブも含める (`"  12 \t"` は `"12"`)。
     ///
     /// <!-- example: 文脈 var table: Table! -->
     /// ```swift
@@ -271,28 +271,28 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// 整えるのはセルだけで、見出し (列の名前) は書き換えない。数として読む口
-    /// (``getFloat(_:_:)-(_,String)``) は前後の空白を落として読むので、整えなくても数は読める。
+    /// 整えるのはセルだけで、見出し (列の名前) は書き換えない。数として読むメソッド
+    /// (``getFloat(_:_:)-(_,String)``) は前後の空白を取り除いて読むので、整えなくても数は読める。
     /// 整えるのは、文字のまま比べる・書き出すときである。
     public mutating func trim() {
         rewrite(column: nil) { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
-    /// 列の名前を名指して、その列のセルだけ前後の空白を落とす。
+    /// 列の名前を名指して、その列のセルだけ前後の空白を取り除く。
     ///
     /// <!-- example: 文脈 var table: Table! -->
     /// ```swift
     /// table.trim("name")
     /// ```
     ///
-    /// 落とす空白は ``trim()`` と同じ。**無い列には何もせず、初回だけ理由を知らせる。**
+    /// 取り除く空白は ``trim()`` と同じ。**無い列には何もせず、初回だけ理由を通知する。**
     public mutating func trim(_ column: String) {
         let index = TableValues.column(named: column, in: titles, call: "trim")
         guard let index else { return }
         rewrite(column: index) { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
-    /// 列の番号 (0 から) を名指して、その列のセルだけ前後の空白を落とす。見出しの無い表はこちら。
+    /// 列の番号 (0 から) を名指して、その列のセルだけ前後の空白を取り除く。見出しの無い表はこちら。
     ///
     /// <!-- example: 文脈 var table: Table! -->
     /// ```swift
@@ -331,7 +331,7 @@ public struct Table: Equatable, Sendable {
     /// prices.removeTokens(",$", "price")
     /// ```
     ///
-    /// 除く文字は ``removeTokens(_:)`` と同じ。**無い列には何もせず、初回だけ理由を知らせる。**
+    /// 除く文字は ``removeTokens(_:)`` と同じ。**無い列には何もせず、初回だけ理由を通知する。**
     public mutating func removeTokens(_ tokens: String, _ column: String) {
         let index = TableValues.column(named: column, in: titles, call: "removeTokens")
         guard let index else { return }
@@ -381,10 +381,10 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// **番号で回すときは ``rows`` ではなくこの口で読む。** ``rows`` は呼ぶたびに全行の写しを作るので、
-    /// ループの中で `rows[i]` と引くと、行の数の 2 乗の手間になる。この口は行を写さずにセルを読む。
+    /// **番号で回すときは ``rows`` ではなくこのメソッドで読む。** ``rows`` は呼ぶたびに全行のコピーを作るので、
+    /// ループの中で `rows[i]` と引くと、行の数の 2 乗の手間になる。このメソッドは行をコピーせずにセルを読む。
     ///
-    /// **無い列・表の外の行なら空の文字を返し、初回だけ理由を知らせる** (``TableRow/getString(_:)-(String)``
+    /// **無い列・表の外の行なら空の文字を返し、初回だけ理由を通知する** (``TableRow/getString(_:)-(String)``
     /// と同じ空の値)。読み取りは落ちない ([ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -418,11 +418,11 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// 数とする綴りと、数にならないときの扱い (NaN と、列ごとに 1 度の知らせ) は
+    /// 数とする表記と、数にならないときの扱い (NaN と、列ごとに 1 度の通知) は
     /// ``TableRow/getFloat(_:)-(String)`` と同じ。番号で回すときに ``rows`` を経ない理由は
     /// ``getString(_:_:)-(_,String)`` にある。
     ///
-    /// **無い列・表の外の行なら NaN を返し、初回だけ理由を知らせる。**
+    /// **無い列・表の外の行なら NaN を返し、初回だけ理由を通知する。**
     public func getFloat(_ row: Int, _ column: String) -> Float {
         let index = TableValues.column(named: column, in: titles, call: "getFloat")
         let text = read(row, index, call: "getFloat", reading: "NaN")
@@ -456,10 +456,10 @@ public struct Table: Equatable, Sendable {
     /// ```
     ///
     /// 読み方は ``TableRow/getInt(_:)-(String)`` と同じ (**丸めない**。`"2"`・`"2.0"`・`"1e3"` は整数で、
-    /// `"2.5"` は 0 を返して知らせる)。番号で回すときに ``rows`` を経ない理由は
+    /// `"2.5"` は 0 を返して通知する)。番号で回すときに ``rows`` を経ない理由は
     /// ``getString(_:_:)-(_,String)`` にある。
     ///
-    /// **無い列・表の外の行なら 0 を返し、初回だけ理由を知らせる。**
+    /// **無い列・表の外の行なら 0 を返し、初回だけ理由を通知する。**
     public func getInt(_ row: Int, _ column: String) -> Int {
         let index = TableValues.column(named: column, in: titles, call: "getInt")
         let text = read(row, index, call: "getInt", reading: "0")
@@ -519,7 +519,7 @@ public struct Table: Equatable, Sendable {
 /// }
 /// ```
 ///
-/// **読むための写しである。** 書き換えは表に対して行う (``Table/setFloat(_:_:_:)-(_,String,_)``)。
+/// **読むためのコピーである。** 書き換えは表に対して行う (``Table/setFloat(_:_:_:)-(_,String,_)``)。
 public struct TableRow: Sendable {
     let titles: [String]?
     let cells: [String]
@@ -528,7 +528,7 @@ public struct TableRow: Sendable {
 
     /// 列の名前で、セルを文字のまま読む。
     ///
-    /// **無い列なら空の文字を返し、初回だけ理由を知らせる** (表にある列の名前を添える)。
+    /// **無い列なら空の文字を返し、初回だけ理由を通知する** (表にある列の名前を添える)。
     /// 読み取りは落ちない ([ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -551,13 +551,13 @@ public struct TableRow: Sendable {
     /// circle(width / 2, height / 2, mean * 4)
     /// ```
     ///
-    /// 数とするのは **10 進の綴りだけ** (`"12.5"`・`"-2"`・`"+5"`・`".5"`・`"1e3"`) で、前後の
-    /// 空白は改行も含めて落とす (`"3\n"` は 3)。`Float` に収まらない数 (`"1e39"`) は無限大になる。
+    /// 数とするのは **10 進の表記だけ** (`"12.5"`・`"-2"`・`"+5"`・`".5"`・`"1e3"`) で、前後の
+    /// 空白は改行も含めて取り除く (`"3\n"` は 3)。`Float` に収まらない数 (`"1e39"`) は無限大になる。
     ///
-    /// **数にならないときは NaN を返し、初回だけ理由を知らせる** — セルが空・数でない文字
+    /// **数にならないときは NaN を返し、初回だけ理由を通知する** — セルが空・数でない文字
     /// (`"N/A"` など)・無い列のどれでも。`"nan"`・`"NaN"`・`"inf"`・`"Infinity"`・16 進 (`"0x10"`)
     /// も、数でない文字である。読み取りは落ちない ([ADR-0020] 決定 5)。NaN は
-    /// Processing の `getFloat` が欠けた値に返すものと同じで、0 のように黙って別の値に
+    /// Processing の `getFloat` が欠けた値に返すものと同じで、0 のように通知なしに別の値に
     /// 化けない。幅や高さが NaN の矩形は描かれないので、欠けた日は縦棒の抜けとして見える。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -568,7 +568,7 @@ public struct TableRow: Sendable {
 
     /// 列の番号 (0 から) で、セルを数として読む。見出しの無い表はこちらで読む。
     ///
-    /// 数とする綴りと、数にならないときの扱いは ``getFloat(_:)-(String)`` と同じ。
+    /// 数とする表記と、数にならないときの扱いは ``getFloat(_:)-(String)`` と同じ。
     public func getFloat(_ column: Int) -> Float {
         let index = TableValues.column(numbered: column, width: cells.count, call: "getFloat")
         return number(index, named: "\(column)")
@@ -584,11 +584,11 @@ public struct TableRow: Sendable {
     /// }
     /// ```
     ///
-    /// **丸めない** — `"2"`・`"2.0"`・`"1e3"` は整数で、`"2.5"` は 0 を返して知らせる (黙って別の値を
-    /// 返さない。``JSONObject/getInt(_:)`` と同じ)。数とする綴りは ``getFloat(_:)-(String)`` と同じ
-    /// 10 進だけで、前後の空白は落とす。小数が要るときは ``getFloat(_:)-(String)``。
+    /// **丸めない** — `"2"`・`"2.0"`・`"1e3"` は整数で、`"2.5"` は 0 を返して通知する (通知なしに別の値を
+    /// 返さない。``JSONObject/getInt(_:)`` と同じ)。数とする表記は ``getFloat(_:)-(String)`` と同じ
+    /// 10 進だけで、前後の空白は取り除く。小数が要るときは ``getFloat(_:)-(String)``。
     ///
-    /// **整数にならないときは 0 を返し、初回だけ理由を知らせる** — セルが空・整数でない数・`Int` に
+    /// **整数にならないときは 0 を返し、初回だけ理由を通知する** — セルが空・整数でない数・`Int` に
     /// 収まらない数・数でない文字 (`"N/A"` など)・無い列のどれでも (列ごとに 1 度)。読み取りは落ちない
     /// ([ADR-0020] 決定 5)。
     ///

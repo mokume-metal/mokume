@@ -30,7 +30,7 @@ public struct Keyboard {
     /// ```
     ///
     /// 1 フレームの中で押して離すと、``justReleased(_:)`` と両方 `true` になり、
-    /// ``isPressed(_:)`` は `false` になる。速い連打を落とさない。
+    /// ``isPressed(_:)`` は `false` になる。速い連打を取りこぼさない。
     public func justPressed(_ key: Key) -> Bool {
         key.sides.contains(where: state.justPressedKeys.contains)
     }

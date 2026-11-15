@@ -3,7 +3,7 @@
 
 import simd
 
-/// 粒がどこから出るか。
+/// パーティクルがどこから出るか。
 ///
 /// 使い方は ``SketchPart/emit(_:from:toward:rate:speed:life:size:color:)`` にある。
 ///

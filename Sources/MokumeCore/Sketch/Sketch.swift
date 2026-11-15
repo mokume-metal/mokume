@@ -48,7 +48,7 @@ public protocol Sketch: AnyObject, SketchPart {
     ///
     /// **`throws` で書ける。** 読み込みの失敗を `try?` で捨てずに、`try` で書いて投げられる。投げたら、
     /// ``draw()`` を 1 度も呼ばずにスケッチは起動の失敗として止まり、投げた失敗の全文 (何を読めなかったかと、
-    /// 次にすること) が標準エラーに出る。ウィンドウで走らせても `mokume render` で書き出しても、同じ文面で止まる。
+    /// 次にすること) が標準エラーに出る。ウィンドウで実行しても `mokume render` で書き出しても、同じ文面で止まる。
     ///
     /// <!-- example: 文脈 var cat: Image! -->
     /// ```swift
@@ -76,7 +76,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// これは構造的に起きる ([#723])。
     ///
     /// 読める値 (``SketchPart/mouseX`` / ``SketchPart/mouseY`` / ``SketchPart/isMousePressed`` / ``SketchPart/mouseButton``) は、
-    /// **その出来事を当てた直後の姿**である。`draw()` の直前に、届いた順で呼ばれる。
+    /// **そのイベントを当てた直後の姿**である。`draw()` の直前に、届いた順で呼ばれる。
     ///
     /// **押下と解放の対は保証されない。** バッファする上限を越えたぶんは古いほうから破棄される
     /// ので、描画が長く停滞すれば押下だけ・解放だけが届くことがある。
@@ -104,7 +104,7 @@ public protocol Sketch: AnyObject, SketchPart {
     ///
     /// 押下を伴わない解放 (ウィンドウの外で押して中で離した、など) では呼ばれない。押していたボタンをウィンドウが
     /// 退いて離した扱いにしたときは呼ばれる (``mouseReleased()``)。
-    /// 時刻を見ないので、外から送った出来事でもウィンドウでの実操作と同じように起きる。
+    /// 時刻を見ないので、外から送ったイベントでもウィンドウでの実操作と同じように起きる。
     func mouseClicked()
 
     /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged()`` (と、続けて ``mouseDragged(deltaX:deltaY:)``) が呼ばれる。
@@ -143,7 +143,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// 押したまま動いたとき呼ばれる。押していない間は ``mouseMoved()`` が呼ばれる。
     ///
     /// Processing・p5.js の `mouseDragged()` と同じ引数なしの形で、中で読む
-    /// ``SketchPart/mouseX`` / ``SketchPart/mouseY`` は、その出来事まで当てた位置になる。
+    /// ``SketchPart/mouseX`` / ``SketchPart/mouseY`` は、そのイベントまで当てた位置になる。
     /// 動いた量が要るなら ``mouseDragged(deltaX:deltaY:)`` を書く — ここの直後に続けて呼ばれる。
     ///
     /// **``SketchPart/dragX`` / ``SketchPart/dragY`` をここで読んではいけない。** あちらはフレームの頭から
@@ -247,12 +247,12 @@ public protocol Sketch: AnyObject, SketchPart {
     /// ([ADR-0041](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0041-standard-scope-map.md))。
     /// iOS と、セキュリティスコープ付きの URL は、まだ決めていない
     /// ([#2605](https://github.com/mokume-metal/mokume/issues/2605))。
-    /// 外から送る線の `{"type": "fileDropped", "paths": ["/tmp/a.png"], "x": 10, "y": 20}` も同じ呼び出しになる。
+    /// 外から送る入力チャネルの `{"type": "fileDropped", "paths": ["/tmp/a.png"], "x": 10, "y": 20}` も同じ呼び出しになる。
     ///
     /// **`mokume watch` のウィンドウでは、1 回のドロップが大きすぎると届かない。** ウィンドウが拾ったドロップは、子の標準入力へ
     /// 1 行にして渡る。その 1 行が 1 MiB (1,048,576 バイト・長いパスでおよそ 5000 本以上) を越えると、子へ
     /// 流さずに捨て、`mokume watch` が 1 度だけ `Dropped an input event of N bytes: …` と出力する。分けて
-    /// 送ることはしない — 1 回のドロップは 1 回の呼び出しのままである。直に走らせたウィンドウには、この上限は無い。
+    /// 送ることはしない — 1 回のドロップは 1 回の呼び出しのままである。直接実行したウィンドウには、この上限は無い。
     ///
     /// ``SketchPart/noLoop()`` で止めている間も呼ばれる。
     func fileDropped(_ paths: [String])
@@ -267,13 +267,13 @@ public protocol Sketch: AnyObject, SketchPart {
     /// ```
     ///
     /// OS のキーリピートは、文字を打つ ``keyTyped()`` にだけ届く。**Processing は連射するが、
-    /// 引き継がない** — 「1 回だけ切り替える」に、押したままかの印を作者が持つ必要があった
+    /// 引き継がない** — 「1 回だけ切り替える」に、押したままかのフラグを作者が持つ必要があった
     /// ([#2400](https://github.com/mokume-metal/mokume/issues/2400))。p5.js と同じ振る舞いである。
     /// 押している間ずっと効かせたいもの (矢印で動かす、など) は、`draw()` で
     /// ``SketchPart/keyboard`` の `isPressed(_:)` を読む。
     ///
     /// 呼ばれるのは押されていないキーが押されたとき (と、押されているはずのキーにリピートでない
-    /// 押下が届いたとき。解放を取りこぼした印として、押し直しに数える) で、**修飾キー (Shift・Control・Option・
+    /// 押下が届いたとき。解放を取りこぼしたとみなして、押し直しに数える) で、**修飾キー (Shift・Control・Option・
     /// Command) では呼ばれない**。修飾キーは `keyboard.isPressed(.shift)` で問う。
     ///
     /// ``SketchPart/noLoop()`` で止めている間も呼ばれる (止まっている間もコールバックは呼ばれる)。
@@ -329,7 +329,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// 出す高さ (画素)。
     public var height: Int
     /// 1 秒あたりのフレーム数の目標。**1 以上。** 0 以下は起動の構築で
-    /// ``RenderFailure/invalidFrameRate(_:)`` として断り、1 fps へ丸めない。止めたいなら
+    /// ``RenderFailure/invalidFrameRate(_:)`` として拒否し、1 fps へ丸めない。止めたいなら
     /// ``SketchPart/noLoop()`` を呼ぶ。
     ///
     /// **起動のときに読む。** 実行中に代入しても、画面の刻みも ``SketchPart/time`` /
@@ -341,7 +341,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// Processing / p5 の `frameRate(n)` は実行中に呼べるが、ここには
     /// 実行中に速さを変える API が無い。
     public var frameRate: Int
-    /// ウィンドウで走らせるときの時計。既定は ``ClockMode/wallClock`` (実際に流れた時間)。
+    /// ウィンドウで実行するときの時計。既定は ``ClockMode/wallClock`` (実際に流れた時間)。
     ///
     /// ``ClockMode/frames`` にすると、ウィンドウの中でも ``Sketch/draw()`` 1 回がちょうど
     /// ``frameRate`` 分の 1 秒になる。書き出し (`mokume render`) と同じ時計で、``SketchPart/time`` は
@@ -388,8 +388,8 @@ public struct SketchSettings: Equatable, Sendable {
     /// | ``SketchPart/redraw()`` | 1 回 | +1 | 1/fps 進む | 1/fps | 届く |
     /// | 外からの停止 (`watch`・MCP) | 呼ばれない | 止まる | 止まる | 再開した枚は 1/fps | 溜まる |
     ///
-    /// ゲームの一時停止は「自分の印 + ``SketchPart/pauseTime()``」で書く。足して進めるもの
-    /// (`ball.move(by:)`) は自分の印で止め、``SketchPart/time`` から作る動きは `pauseTime()` で止まる。
+    /// ゲームの一時停止は「自分のフラグ + ``SketchPart/pauseTime()``」で書く。足して進めるもの
+    /// (`ball.move(by:)`) は自分のフラグで止め、``SketchPart/time`` から作る動きは `pauseTime()` で止まる。
     /// 描画は続くので、止めた画面に「PAUSED」を出せる。画面ごと凍らせてよいなら
     /// ``SketchPart/noLoop()`` / ``SketchPart/loop()`` を使う。
     ///
@@ -432,7 +432,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// (``SketchPart/pixelWidth``・`pixels`) だけが倍率を掛けた数になる。
     ///
     /// 使えるのは 0 より大きく 1 以下。1 を超える指定 (出すより細かく描く) は
-    /// 引き受けないので、構築の時点で断る。
+    /// 引き受けないので、構築の時点で拒否する。
     ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
     public var pixelDensity: Float
@@ -485,7 +485,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// ## 使える値
     ///
     /// 0 より大きい有限の数。0 以下・無限大・NaN は、構築の時点で
-    /// ``RenderFailure/invalidWindowScale(_:)`` として断る。**画面に収まらない大きさは、
+    /// ``RenderFailure/invalidWindowScale(_:)`` として拒否する。**画面に収まらない大きさは、
     /// 縦横比を保って画面へ収まるまで縮めて開き**、縮めたことを 1 行言う — 同じスケッチでも
     /// 画面が大きければ呼んだとおりに開くので、値そのものは断らない。
     ///
@@ -499,13 +499,13 @@ public struct SketchSettings: Equatable, Sendable {
     /// 書き方と、全画面のときに何が変わるかは ``fullScreen(_:)`` にある。**起動のときに読む。**
     public var fullScreenDisplay: Int?
 
-    /// 走っている間、別のアプリ (マッパー・録画の道具など) の一覧に名乗り、繋いできたアプリへ絵を渡すか。**既定は `true`。**
+    /// 走っている間、別のアプリ (マッパー・録画のツールなど) の一覧に登録し、繋いできたアプリへ絵を渡すか。**既定は `true`。**
     ///
-    /// 何も書かなければ、ウィンドウを持って走る作品は別のアプリの一覧に出て、繋がれたらそのアプリが用意した面へ、画面と同じ
-    /// 値の絵を毎フレーム渡す。渡している間は、メニューバーの名乗りに相手が出る。作品のコードにも起動の仕方にも何も足さずに、
-    /// 制作中の作品も配った `.app` も、そのまま外の画面へ出せるようにするためである。
+    /// 何も書かなければ、ウィンドウを持って走るスケッチは別のアプリの一覧に出て、繋がれたらそのアプリが用意したサーフェスへ、画面と同じ
+    /// 値の絵を毎フレーム渡す。渡している間は、メニューバーの表示に相手が出る。スケッチのコードにも起動の仕方にも何も足さずに、
+    /// 制作中のスケッチも配った `.app` も、そのまま外の画面へ出せるようにするためである。
     ///
-    /// 渡したくない作品は `false` にする。`fullScreenDisplay` と同じく、返った設定へ代入して書く:
+    /// 渡したくないスケッチは `false` にする。`fullScreenDisplay` と同じく、返った設定へ代入して書く:
     ///
     /// ```swift
     /// var settings: SketchSettings {
@@ -515,11 +515,11 @@ public struct SketchSettings: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// `false` の作品は、どの起こし方 (直に走らせる・`mokume run`・束ねた `.app`・`mokume watch`) でも一覧に出ず、
+    /// `false` のスケッチは、どの起動方法 (直接実行する・`mokume run`・束ねた `.app`・`mokume watch`) でも一覧に出ず、
     /// 繋ぐための名前も登録しない。
     ///
-    /// **渡すことを考え直したほうがよい作品**: カメラ・マイク・入力監視の許可で受けるキー・書類やデスクトップなど守られた
-    /// 場所から選んだファイルを描く作品。これらは画面収録の許可の外で守られているが、作品が描いた絵は、その許可を持たない
+    /// **渡すことを考え直したほうがよいスケッチ**: カメラ・マイク・入力監視の許可で受けるキー・書類やデスクトップなど守られた
+    /// 場所から選んだファイルを描くスケッチ。これらは画面収録の許可の外で守られているが、スケッチが描いた絵は、その許可を持たない
     /// 同じ利用者のアプリにも渡る。
     ///
     /// **起動のときに読む。** 実行中に代入しても変わらない。
@@ -609,7 +609,7 @@ public struct SketchSettings: Equatable, Sendable {
     ///
     /// ## 選んだディスプレイが無いとき
     ///
-    /// **起動の構築で断り、別の画面へは出さない** — 番号が 1 を割れば
+    /// **起動の構築で拒否し、別の画面へは出さない** — 番号が 1 を割れば
     /// ``RenderFailure/invalidDisplay(_:)``、繋がっていなければ
     /// ``RenderFailure/displayNotConnected(_:connected:)`` (いま繋がっている一覧を添える)。
     /// 繋がっていなければウィンドウで開く、とするなら ``SketchPart/displays`` を読んで選ぶ。手元ではウィンドウで書き、
@@ -901,7 +901,7 @@ extension SketchPart {
     /// アプリの起動・ウィンドウの作成・``Sketch/setup()`` の中で済む計算にかかった時間は乗らない — 数え始める
     /// のは最初のフレームからである。ただし ``Sketch/setup()`` で ``jumpTime(_:)`` した最初のフレームは
     /// 飛び先の秒、時刻を指定した観測が撮る最初のフレームはその秒になる。`mokume watch --keep-time` で作り直した
-    /// 後の最初のフレームは、前の世代の作者の時計の続きの秒 (止めていれば止めた秒) になり、
+    /// 後の最初のフレームは、前のプロセスの作者の時計の続きの秒 (止めていれば止めた秒) になり、
     /// ``Sketch/setup()`` の中で読む ``time`` もその秒である (``pauseTime()`` の「書き出しと作り直し」)。
     ///
     /// ウィンドウに出して動かしている間は、既定で**実際に流れた時間**で、フレームが何枚落ちても
@@ -933,11 +933,11 @@ extension SketchPart {
     ///
     /// スケッチの側から止める・飛ぶこともできる (``pauseTime()`` / ``jumpTime(_:)``)。
     ///
-    /// **長く走らせるほど、`Float` の刻みは粗くなる。** 時計の中は `Double` の秒だが、ここへ渡すときに
+    /// **長く実行するほど、`Float` の刻みは粗くなる。** 時計の中は `Double` の秒だが、ここへ渡すときに
     /// `Float` へ落ちるので、約 1.5 日を超えると刻みは約 15.6 ms (60 fps の 1 フレームとほぼ同じ)、
     /// 約 3 日を超えると約 31 ms、約 6 日を超えると約 62.5 ms (実質 16 fps)、約 24 日を超えると約 250 ms
     /// になる。`sin(time * 0.8)` も `noise(time * 0.5)` も、その刻みの段になる ([ADR-0025] 決定 6 の表)。
-    /// **周期のある動きは ``phase(period:)`` で書く** — 倍精度の秒から周期の位相を取るので、何日走らせても
+    /// **周期のある動きは ``phase(period:)`` で書く** — 倍精度の秒から周期の位相を取るので、何日実行しても
     /// 刻みは周期の長さで決まる。周期の無い使い方 (`noise(time)`) は、長い展示なら日に 1 度は
     /// 起動し直す。
     ///
@@ -1010,7 +1010,7 @@ extension SketchPart {
     /// ``jumpTime(_:)`` した最初のフレームと、時刻を指定した観測が撮る最初のフレームは 0 である。
     ///
     /// **最初のフレームの中で使った時間は、2 枚目に乗る** (上限まで・実時間の時計)。``Sketch/setup()`` で
-    /// 置いた図形・画素・背景は最初のフレームへ持ち越されてその中で組まれ、最初の ``Sketch/draw()`` の
+    /// 置いた図形・画素・背景は最初のフレームへ持ち越されてその中で構築され、最初の ``Sketch/draw()`` の
     /// 重い準備もその中で走るので、ほかのフレームと同じく次の枚の経過になる。
     ///
     /// **止まっていた時間まるごとは渡らない。** ディスプレイのスリープなどでフレームが
@@ -1028,7 +1028,7 @@ extension SketchPart {
     /// ## 加算した状態が揃うかは、時計で決まる
     ///
     /// - **フレームの時計では揃う。** 刻みが毎回ちょうど 1 / fps なので、同じ入力をフレームの番号
-    ///   つきで流せば、加算した状態 (位置・速さ・残り時間) は何度走らせても同じになる
+    ///   つきで流せば、加算した状態 (位置・速さ・残り時間) は何度実行しても同じになる
     /// - **実時間の時計では揃わない。** 刻み方が実行ごとに違い、同じ合計時間でも刻み方が違えば
     ///   結果が変わる。フレーム落ちの起き方が違う 2 つの実行は、加算した状態が合わない — 揃えたい
     ///   ものは ``time`` から導く ([ADR-0025] 決定 6)

@@ -3,8 +3,8 @@
 
 /// 外から届くものの出どころが、いまどうなっているか。
 ///
-/// カメラ・マイク・機材・通信のどれでも同じ型で名乗る ([ADR-0042] 決定 4)。領域ごとに
-/// 失敗の伝え方が分かれると (投げる・旗・コールバック)、利用者は領域の数だけ作法を覚える
+/// カメラ・マイク・機材・通信のどれでも同じ型で報告する ([ADR-0042] 決定 4)。領域ごとに
+/// 失敗の伝え方が分かれると (投げる・フラグ・コールバック)、利用者は領域の数だけ作法を覚える
 /// ことになる。
 ///
 /// **値が来ないことの理由を区別するためにある** ([ADR-0028] 決定 4)。許可を待っている
@@ -56,11 +56,11 @@ public nonisolated struct Arrival: Sendable, Equatable {
     }
 }
 
-/// 入り口 1 つの名乗り。観測の応答の `inputs` に 1 行として載る ([ADR-0028] 決定 4)。
+/// `Inlet` 1 つの報告。観測の応答の `inputs` に 1 行として載る ([ADR-0028] 決定 4)。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public nonisolated struct SourceReport: Sendable, Equatable, Encodable {
-    /// 何の入り口か (読み手が見分けるための名前)。
+    /// 何の `Inlet` か (読む側が見分けるための名前)。
     public let name: String
     /// 出どころの状態。
     public let state: SourceState
@@ -77,7 +77,7 @@ public nonisolated struct SourceReport: Sendable, Equatable, Encodable {
         case name, state, lastFrame, lastTime
     }
 
-    /// 応答では届いた瞬間の host time を出さない。機械ごとの起点に依る数で、読み手が
+    /// 応答では届いた瞬間の host time を出さない。機械ごとの起点に依る数で、読む側が
     /// 比べられるのはフレームの番号と時刻のほうである。
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)

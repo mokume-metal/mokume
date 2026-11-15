@@ -29,7 +29,7 @@ import Synchronization
 /// 従わない — 時刻を指定した観測で `time` が差し替わった 1 枚で終わると、**観測がゲームの状態を変える**
 /// ことになる。
 ///
-/// | 口 | 残り時間 |
+/// | 場合 | 残り時間 |
 /// | --- | --- |
 /// | 普通のフレーム | その枚の `deltaTime` だけ減る |
 /// | ``SketchPart/pauseTime()`` の間 | 減らない |
@@ -38,14 +38,14 @@ import Synchronization
 ///
 /// **フレームの時計** (``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``) では `deltaTime` が
 /// ちょうど 1 / fps なので、60 fps の `Countdown(seconds: 1)` は数え始めてから 60 枚目で終わり、何度
-/// 走らせても同じ枚で終わる。実時間の時計では、終わる枚が実行ごとに揺れる。
+/// 実行しても同じ枚で終わる。実時間の時計では、終わる枚が実行ごとに揺れる。
 ///
-/// ゲームの一時停止は「自分の印 + ``SketchPart/pauseTime()``」で書く。`pauseTime()` を呼べば
-/// `Countdown` も止まる。自分の印だけで止めると、`Countdown` は進み続ける。
+/// ゲームの一時停止は「自分のフラグ + ``SketchPart/pauseTime()``」で書く。`pauseTime()` を呼べば
+/// `Countdown` も止まる。自分のフラグだけで止めると、`Countdown` は進み続ける。
 ///
 /// ## どこから数えるか
 ///
-/// **``init(seconds:)`` で作った値は、スケッチの時間の原点 (最初のフレームの頭) から数える。** 作る口は
+/// **``init(seconds:)`` で作った値は、スケッチの時間の原点 (最初のフレームの頭) から数える。** 作る初期化子は
 /// スケッチが走っていない所 (プロパティの初期値・`Task` の中) からも呼べるので、作った瞬間の時間を
 /// 読まない。走っている途中から数えるなら ``restart()`` を呼ぶ — `draw()` の途中で
 /// `Countdown(seconds: 1)` と作り直すと、既に 1 秒以上走っていればその場で終わっている。
@@ -79,7 +79,7 @@ import Synchronization
 /// }
 /// ```
 ///
-/// 手本に同じ型は無い。名前は Foundation の `Timer` との衝突を避けて採った ([ADR-0020] 決定 1)。
+/// Processing にも p5.js にも同じ型は無い。名前は Foundation の `Timer` との衝突を避けて採った ([ADR-0020] 決定 1)。
 ///
 /// [#2602]: https://github.com/mokume-metal/mokume/issues/2602
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -91,7 +91,7 @@ public nonisolated struct Countdown: Sendable, Hashable, Codable {
 
     /// `seconds` 秒を測る値を作る。スケッチの時間の原点から数える (「どこから数えるか」)。
     ///
-    /// 数でない値・無限・負の値は、0 秒として受け取る (作ったときから終わっている)。黙って倒さず、
+    /// 数でない値・無限・負の値は、0 秒として受け取る (作ったときから終わっている)。通知なしに 0 秒にせず、
     /// 1 度だけ警告する ([ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md

@@ -22,7 +22,7 @@ package enum ExposedValue: Encodable, Equatable, Sendable {
     case string(String)
     case bool(Bool)
 
-    /// 形式の中で名乗る型の名前。
+    /// 形式の中に出力する型の名前。
     public var typeName: String { paramType.rawValue }
 
     /// 名乗る型。綴りの正典は ``ParamValue`` と同じ ``ParamTypeName``。

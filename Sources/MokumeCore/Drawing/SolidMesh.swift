@@ -17,7 +17,7 @@ nonisolated struct SolidMesh {
         /// 貼る絵のどこを読むか (0…1)。**貼る絵が無いときは使われない** —
         /// そのときの頂点は焼き場の白い区画を指す (``Canvas/appendTriangle``)。
         ///
-        /// 縦は**下向き** (面の座標の約束・[ADR-0021] 決定 1) なので、0 が絵の上端に
+        /// 縦は**下向き** (面の座標の規約・[ADR-0021] 決定 1) なので、0 が絵の上端に
         /// あたる。上を向いた面に貼った絵が逆さにならないのはこのためである。
         ///
         /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
