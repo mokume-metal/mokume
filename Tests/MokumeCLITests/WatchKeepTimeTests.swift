@@ -100,6 +100,26 @@ struct WatchKeepTimeTests {
         #expect(RunCommand.childEnvironment([readOnly: "1"], keepTime: "/tmp/clock")[readOnly] == nil, "親の合図を継いだ")
         #expect(RunCommand.childEnvironment([:], keepTime: "/tmp/clock", keepTimeReadOnly: true)[readOnly] == "1")
         #expect(RunCommand.childEnvironment([:], keepTimeReadOnly: true)[readOnly] == nil, "場所なしで載せた")
+        // 従う子の番号は、読むだけの合図と一緒にだけ載り、親の環境からは継がない (#3566)
+        let follows = StartupReads.keepTimeFollows.key
+        #expect(RunCommand.childEnvironment([follows: "7"], keepTime: "/tmp/clock", keepTimeReadOnly: true)[follows] == nil)
+        #expect(
+            RunCommand.childEnvironment([:], keepTime: "/tmp/clock", keepTimeReadOnly: true, keepTimeFollows: 7)[follows]
+                == "7")
+        #expect(RunCommand.childEnvironment([:], keepTime: "/tmp/clock", keepTimeFollows: 7)[follows] == nil, "書く子に載せた")
+        #expect(RunCommand.childEnvironment([:], keepTimeReadOnly: true, keepTimeFollows: 7)[follows] == nil, "場所なしで載せた")
+        // 子の口は、読むだけの子にだけ番号を持たせ、0 以上の整数でなければ従う子が分からないとする
+        let take = { (env: [String: String]) in ClockHandover.startup(environment: env, unset: { _ in }) }
+        let base = [StartupReads.keepTime.key: "/tmp/clock"]
+        #expect(take(base.merging([readOnly: "1", follows: "42"]) { $1 })?.follows == 42)
+        #expect(take(base.merging([readOnly: "1", follows: "0"]) { $1 })?.follows == 0)
+        #expect(take(base.merging([readOnly: "1", follows: "-3"]) { $1 })?.follows == nil)
+        #expect(take(base.merging([readOnly: "1", follows: "x"]) { $1 })?.follows == nil)
+        #expect(take(base.merging([readOnly: "1"]) { $1 })?.follows == nil)
+        #expect(take(base.merging([follows: "42"]) { $1 })?.follows == nil, "書く子が番号を持った")
+        var unset: [String] = []
+        _ = ClockHandover.startup(environment: base.merging([follows: "42"]) { $1 }, unset: { unset.append($0) })
+        #expect(unset.contains(follows), "番号を孫へ継がせる")
         // 書き出しの子にも、渡さなければ落ちる
         let request = RenderRequest(frameRate: 60, frameCount: 1, destination: "/tmp/x.mov")
         #expect(RunCommand.childEnvironment([key: "/tmp/clock"], rendering: request)[key] == nil)
@@ -111,11 +131,13 @@ struct WatchKeepTimeTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let seen = directory.appendingPathComponent("seen")
         let readOnly = directory.appendingPathComponent("read-only")
+        let followed = directory.appendingPathComponent("follows")
         let executable = directory.appendingPathComponent("sketch")
         try """
             #!/bin/sh
             printf '%s' "$\(StartupReads.keepTime.key)" > '\(seen.path)'
             printf '%s' "$\(StartupReads.keepTimeReadOnly.key)" > '\(readOnly.path)'
+            printf '%s' "$\(StartupReads.keepTimeFollows.key)" > '\(followed.path)'
             """.write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
@@ -143,18 +165,23 @@ struct WatchKeepTimeTests {
                 try String(contentsOf: seen, encoding: .utf8) == (given.map { $0 + "-1" } ?? ""),
                 "番号 1: \(given ?? "渡さない")")
             // **読むだけを選べば、合図が場所と一緒に載る** (試聴の子・#4070)。旗の無い見張りは場所が無いので載せない
-            hooks.selectClock(.init(place: 0, readsOnly: true))
+            hooks.selectClock(.init(place: 0, readsOnly: true, follows: 4321))
             let auditioned = try hooks.launch(executable, directory, nil, nil)
             auditioned.waitUntilExit()
             #expect(try String(contentsOf: seen, encoding: .utf8) == (given ?? ""), "読むだけ: \(given ?? "渡さない")")
             #expect(
                 try String(contentsOf: readOnly, encoding: .utf8) == (given == nil ? "" : "1"),
                 "読むだけ: \(given ?? "渡さない")")
-            hooks.selectClock(.init(place: 0))
+            #expect(
+                try String(contentsOf: followed, encoding: .utf8) == (given == nil ? "" : "4321"),
+                "従う子: \(given ?? "渡さない")")
+            // 書く子には、従う子の番号を選んでも載せない
+            hooks.selectClock(.init(place: 0, follows: 4321))
             let back = try hooks.launch(executable, directory, nil, nil)
             back.waitUntilExit()
             #expect(try String(contentsOf: seen, encoding: .utf8) == (given ?? ""), "番号 0: \(given ?? "渡さない")")
             #expect(try String(contentsOf: readOnly, encoding: .utf8) == "", "選び直せば書く子: \(given ?? "渡さない")")
+            #expect(try String(contentsOf: followed, encoding: .utf8) == "", "書く子に番号: \(given ?? "渡さない")")
         }
     }
 
@@ -265,23 +292,62 @@ struct WatchKeepTimeTests {
     private struct Child {
         let handover: ClockHandover
         let sink: ClockHandover.FileSink
+        let timers: Timers
 
-        init(path: String, audition: Bool = false, pid: Int32, generation: Double, living: Living) throws {
-            let environment = RunCommand.childEnvironment([:], keepTime: path, keepTimeReadOnly: audition)
+        /// - Parameter follows: 読むだけの子 (`audition`) が従う本番の子の番号。見張りの環境を通して渡る。
+        init(
+            path: String, audition: Bool = false, follows: Int32? = nil, pid: Int32, generation: Double,
+            living: Living, timers: Timers = Timers()
+        ) throws {
+            let environment = RunCommand.childEnvironment(
+                [:], keepTime: path, keepTimeReadOnly: audition, keepTimeFollows: follows)
             let given = try #require(ClockHandover.startup(environment: environment, unset: { _ in }))
             living.start(pid)
             let sink = ClockHandover.FileSink(path: path, warn: { _ in }, isAlive: { living.contains($0) })
             self.sink = sink
+            self.timers = timers
             handover = ClockHandover(
                 read: { ClockHandover.read(path: path) }, write: { sink.submit($0) },
                 isAlive: { living.contains($0) }, warn: { _ in }, writer: pid, generation: generation,
-                path: path, readsOnly: given.readsOnly)
+                path: path, readsOnly: given.readsOnly, follows: given.follows, now: { timers.now },
+                schedule: { delay, work in timers.add(delay, work) })
         }
 
-        func publish(_ seconds: Double, held: Bool = false, at moment: Double) {
+        func publish(_ seconds: Double, held: Bool = false, still: Bool = false, at moment: Double) {
             handover.publish(
-                seconds: seconds, isHeld: held, isStill: false, kind: .realtime, frames: 0, at: moment)
+                seconds: seconds, isHeld: held, isStill: still, kind: .realtime, frames: 0, at: moment)
             sink.settle()
+        }
+
+        /// 頼まれた見直しを、時計を `moment` へ進めて走らせる。走らせた数を返す。
+        @discardableResult
+        func fire(at moment: Double) -> Int {
+            let count = timers.fire(at: moment)
+            sink.settle()
+            return count
+        }
+    }
+
+    /// 止まっている間の見直しの替え玉。実時間を待たず、検査が時刻を決めて走らせる。
+    @MainActor
+    private final class Timers {
+        private(set) var now: Double = 0
+        private var works: [@MainActor () -> Void] = []
+        /// 頼まれた数 (走らせたものも含む)。
+        private(set) var requested = 0
+
+        func add(_ delay: Double, _ work: @escaping @MainActor () -> Void) {
+            #expect(delay == ClockHandover.refreshInterval)
+            requested += 1
+            works.append(work)
+        }
+
+        func fire(at moment: Double) -> Int {
+            now = moment
+            let due = works
+            works = []
+            for work in due { work() }
+            return due.count
         }
     }
 
@@ -297,7 +363,7 @@ struct WatchKeepTimeTests {
         let production = try Child(path: path, pid: 10, generation: 1, living: living)
         production.publish(120, held: true, at: 100)
         // 保存して試聴に入る。試聴の子は本番の時計を引き継いで、止めた 120 秒から始まる
-        let audition = try Child(path: path, audition: true, pid: 11, generation: 2, living: living)
+        let audition = try Child(path: path, audition: true, follows: 10, pid: 11, generation: 2, living: living)
         let inherited = audition.handover.predecessor()?.start(at: 130)
         #expect(inherited?.seconds == 120 && inherited?.isHeld == true, "\(String(describing: inherited))")
         // 試聴の中で作者が時計を動かす (150 秒へ飛んで止める)。本番の子は止めたまま描き続ける
@@ -323,7 +389,7 @@ struct WatchKeepTimeTests {
 
         let production = try Child(path: path, pid: 10, generation: 1, living: living)
         production.publish(120, at: 100)
-        let audition = try Child(path: path, audition: true, pid: 11, generation: 2, living: living)
+        let audition = try Child(path: path, audition: true, follows: 10, pid: 11, generation: 2, living: living)
         // 試聴の子は 120 秒から走り、作者が 200 秒へ飛ぶ
         audition.publish(120, at: 100.1)
         audition.publish(200, at: 100.2)
@@ -340,6 +406,263 @@ struct WatchKeepTimeTests {
             return
         }
         #expect(read.writer == 10 && read.seconds == 121, "本番の子の時計が書かれていない: \(read)")
+    }
+
+    // MARK: - 送った版の時計 (#3566 の決定 2)
+
+    private func written(_ path: String) -> ClockHandover.Snapshot? {
+        guard case .found(let snapshot) = ClockHandover.read(path: path) else { return nil }
+        return snapshot
+    }
+
+    @Test("送った子は、前の本番が最後に書いて止まってから書き始める。次の試聴の子は送った子の時計を読むだけ")
+    @MainActor
+    func theSentChildStartsWritingAfterThePreviousProductionStops() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+
+        let production = try Child(path: path, pid: 10, generation: 1, living: living)
+        production.publish(120, at: 100)
+        let sent = try Child(path: path, audition: true, follows: 10, pid: 11, generation: 2, living: living)
+        // 送った後・乗り換えの前: 前の本番が生きている間、送った子は読むだけ
+        sent.publish(150, at: 100.1)
+        #expect(written(path)?.writer == 10 && sent.sink.writeCount == 0, "\(String(describing: written(path)))")
+        // 前の本番が最後に書き、止まる
+        production.publish(125, held: true, at: 105)
+        living.end(10)
+        #expect(written(path)?.writer == 10 && written(path)?.seconds == 125)
+        // 送った子が書き始める
+        sent.publish(156, at: 106)
+        let after = try #require(written(path))
+        #expect(after.writer == 11 && after.seconds == 156, "送った子が書き手にならない: \(after)")
+        #expect(sent.handover.tookOver)
+        // 次の試聴の子は、送った子 (いまの本番) と時計を分け持つので読むだけ
+        let next = try Child(path: path, audition: true, follows: 11, pid: 12, generation: 3, living: living)
+        next.publish(300, at: 107)
+        #expect(written(path)?.writer == 11 && next.sink.writeCount == 0, "次の試聴の子が書いた")
+        let started = next.handover.predecessor()?.start(at: 107)
+        #expect(started?.seconds == 157 && started?.isHeld == false, "\(String(describing: started))")
+    }
+
+    @Test("逆の順: 前の本番が書く前に送った子が書こうとしても見送り、前の本番の最後の時計は上書きされない")
+    @MainActor
+    func theSentChildYieldsUntilThePreviousProductionIsGone() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+
+        let production = try Child(path: path, pid: 10, generation: 1, living: living)
+        production.publish(120, at: 100)
+        let sent = try Child(path: path, audition: true, follows: 10, pid: 11, generation: 2, living: living)
+        // 送った子が先に書こうとする (前の本番はまだ止まりかけで生きている)
+        sent.publish(150, held: true, at: 101)
+        // 止まりかけの前の本番が、その後に最後の時計を書く — 世代の新しい送った子はまだ書いていないので見送らない
+        production.publish(130, held: true, at: 102)
+        #expect(written(path)?.writer == 10 && written(path)?.seconds == 130, "\(String(describing: written(path)))")
+        // 同時: 前の本番が生きている間は、同じ時刻に頼んでも送った子の時計は載らない
+        production.publish(131, held: true, at: 102.6)
+        sent.publish(151, held: true, at: 102.6)
+        #expect(written(path)?.writer == 10 && written(path)?.seconds == 131 && sent.sink.writeCount == 0)
+        // 前の本番が止まった直後は、まだ見直す前 (前に見てから ``refreshInterval`` 未満)。見直すと書く
+        living.end(10)
+        sent.publish(151, held: true, at: 102.7)
+        #expect(written(path)?.writer == 10, "見直しの間隔の前に書いた")
+        sent.publish(151, held: true, at: 103.2)
+        #expect(written(path)?.writer == 11 && written(path)?.seconds == 151, "\(String(describing: written(path)))")
+    }
+
+    @Test("送った後に起きた次の試聴の子は、送った子より先に前の本番の死を見ても書き手にならず、試聴の秒は本番の場所に残らない")
+    @MainActor
+    func theNextAuditionDoesNotTakeOverFromTheSentChild() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+
+        let production = try Child(path: path, pid: 10, generation: 1, living: living)
+        production.publish(120, held: true, at: 100)
+        // 送った子 (前の本番に従う)。送った後に起きた次の試聴の子 (送った子に従う)
+        let sent = try Child(path: path, audition: true, follows: 10, pid: 11, generation: 2, living: living)
+        let next = try Child(path: path, audition: true, follows: 11, pid: 12, generation: 3, living: living)
+        // 前の本番が止まる。次の試聴の子が、送った子より先に見直す (試聴の中で 300 秒へ飛んで止めた)
+        living.end(10)
+        next.publish(300, held: true, at: 101)
+        #expect(written(path)?.writer == 10 && next.sink.writeCount == 0, "次の試聴の子が書いた: \(String(describing: written(path)))")
+        // 送った子が書き手になり、試聴を捨てた後の本番の版は送った子の時計から始まる
+        sent.publish(130, held: true, at: 101.1)
+        living.end(12)
+        sent.publish(130, held: true, at: 102)
+        let after = try #require(written(path))
+        #expect(after.writer == 11 && after.seconds == 130, "\(after)")
+    }
+
+    @Test("従う子が分からない読むだけの子 (古い見張り) は書かない。従う本番が居なかった子 (0) は書く")
+    @MainActor
+    func aReadOnlyChildWithoutALeaderNeverWrites() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+        let production = try Child(path: path, pid: 10, generation: 1, living: living)
+        production.publish(120, held: true, at: 100)
+        living.end(10)
+        let unknown = try Child(path: path, audition: true, pid: 11, generation: 2, living: living)
+        unknown.publish(130, held: true, at: 101)
+        unknown.publish(131, held: true, at: 102)
+        #expect(written(path)?.writer == 10 && !unknown.handover.tookOver, "従う子の分からない子が書いた")
+        // 試聴に入ったときに本番が走っていなかった (落ちていた): 守る本番の時計が無いので書く (受け入れ済みの代償)
+        let orphan = try Child(path: path, audition: true, follows: 0, pid: 12, generation: 3, living: living)
+        orphan.publish(140, held: true, at: 103)
+        #expect(written(path)?.writer == 12 && written(path)?.seconds == 140)
+    }
+
+    @Test("送った子が noLoop() で止まっていても、前の本番が止まった後の見直しで、ウィンドウに出ている枚の秒を書く")
+    @MainActor
+    func aStillSentChildTakesOverOnTheRecheck() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+
+        let production = try Child(path: path, pid: 10, generation: 1, living: living)
+        production.publish(120, at: 100)
+        let timers = Timers()
+        let sent = try Child(
+            path: path, audition: true, follows: 10, pid: 11, generation: 2, living: living, timers: timers)
+        // 送った子が最初の枚で止まる (`noLoop()`)。前の本番が生きているので書かず、見直しを 1 つだけ頼む
+        sent.publish(42, still: true, at: 100.1)
+        #expect(written(path)?.writer == 10 && timers.requested == 1)
+        // 見直したときも前の本番が生きている: また 1 つ頼む
+        #expect(sent.fire(at: 100.6) == 1)
+        #expect(written(path)?.writer == 10 && timers.requested == 2)
+        // 前の本番が最後に書いて止まる。枚は来ないまま、次の見直しで書き手になり、止まった枚の秒を書く
+        production.publish(125, at: 100.9)
+        living.end(10)
+        #expect(sent.fire(at: 101.1) == 1)
+        let after = try #require(written(path))
+        #expect(after.writer == 11 && after.seconds == 42 && after.isStill, "止まった送った子が書かない: \(after)")
+        #expect(timers.requested == 2, "書き手になった後も見直しを頼んだ")
+        // 次の版は、止まった枚の秒から始まる (止まっていた間を足さない)
+        let next = try Child(path: path, pid: 12, generation: 3, living: living)
+        #expect(next.handover.predecessor()?.start(at: 200).seconds == 42)
+    }
+
+    @Test("見直しを頼むのは、読むだけで止まっている子だけ: 走っている読むだけの子・書く子・動き出した子は頼まない")
+    @MainActor
+    func onlyAStillReadOnlyChildSchedulesARecheck() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+        let writerTimers = Timers()
+        let production = try Child(path: path, pid: 10, generation: 1, living: living, timers: writerTimers)
+        production.publish(120, still: true, at: 100)
+        #expect(writerTimers.requested == 0, "書く子が見直しを頼んだ")
+        let timers = Timers()
+        let audition = try Child(
+            path: path, audition: true, follows: 10, pid: 11, generation: 2, living: living, timers: timers)
+        audition.publish(130, held: true, at: 100.1)
+        #expect(timers.requested == 0, "走っている読むだけの子が見直しを頼んだ")
+        // 止まってから動き出すと、頼んであった見直しは何もせず、頼み直さない
+        audition.publish(131, still: true, at: 100.2)
+        audition.publish(132, at: 100.3)
+        living.end(10)
+        #expect(audition.fire(at: 100.8) == 1)
+        #expect(written(path)?.writer == 10 && timers.requested == 1, "動き出した子が見直しで書いた")
+    }
+
+    @Test("受け入れた代償: 試聴の間に本番が自分で落ちると試聴の子が書き始め、出た後に同じ場所で起きた本番はその秒から始まる")
+    @MainActor
+    func anAuditionTakesOverWhenTheProductionCrashes() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        let living = Living()
+        let production = try Child(path: path, pid: 10, generation: 1, living: living)
+        production.publish(120, held: true, at: 100)
+        let audition = try Child(path: path, audition: true, follows: 10, pid: 11, generation: 2, living: living)
+        // 本番が落ちる。試聴の子が書き手になる (試聴の中で 150 秒へ飛んで止めた)
+        living.end(10)
+        audition.publish(150, held: true, at: 101)
+        #expect(written(path)?.writer == 11 && written(path)?.seconds == 150)
+        // `leave` で試聴の子が止まり、見張りは出た時点のソースで本番を同じ場所から起こす
+        living.end(11)
+        let recovered = try Child(path: path, pid: 12, generation: 3, living: living)
+        let started = recovered.handover.predecessor()?.start(at: 110)
+        #expect(started?.seconds == 150 && started?.isHeld == true, "\(String(describing: started))")
+    }
+
+    @Test("受け入れた代償の見張りの側: 試聴中に本番が落ちてから出ると、本番は同じ場所 (書く子) で起き直す")
+    @MainActor
+    func leavingAfterTheProductionCrashedRestartsOnTheSamePlace() async throws {
+        let harness = try WatchAuditionTests.Harness()
+        let production = try #require(await harness.save())
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        _ = try #require(await harness.save())
+        #expect(harness.followedClocks.last == production.processIdentifier)
+        harness.tell(production, "crash")
+        await harness.beat()
+        let launched = harness.gens.count
+        #expect(try await harness.ask("leave")["accepted"] as? Bool == true)
+        await harness.beat()
+        await harness.beat()
+        try #require(harness.gens.count > launched, "出た後に本番を起こしていない")
+        #expect(harness.clocks.last == 0 && harness.readOnlyClocks.last == false, "\(harness.clocks)")
+    }
+
+    @Test("通し: 見張りが選んだ場所・読むだけ・従う子を実物の時計の口に通すと、送った子だけが書き手になり、次の試聴の子は書かない")
+    @MainActor
+    func theWatcherChoicesKeepOneWriterAfterASend() async throws {
+        let harness = try WatchAuditionTests.Harness()
+        let production = try #require(await harness.save())
+        #expect(try await harness.ask("audition")["accepted"] as? Bool == true)
+        let sent = try #require(await harness.save())
+        #expect(try await harness.ask("send")["accepted"] as? Bool == true)
+        await harness.session.generationPromoted(pid: sent.processIdentifier, from: .window)
+        harness.wait(production)
+        try #require(!production.isRunning)
+        let next = try #require(await harness.save())
+        #expect(harness.session.auditionChild === next)
+        // 見張りが選んだ値: 本番 (書く)・送った子 (読むだけ・本番に従う)・次の試聴の子 (読むだけ・送った子に従う)
+        #expect(harness.clocks == [0, 0, 0] && harness.readOnlyClocks == [false, true, true], "\(harness.clocks)")
+        #expect(
+            harness.followedClocks == [nil, production.processIdentifier, sent.processIdentifier],
+            "\(harness.followedClocks)")
+
+        // その値を本物の環境と口 (`childEnvironment` → `ClockHandover.startup`) に通し、実のプロセスの生死で書かせる
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        func handover(_ index: Int, _ process: Process) throws -> (ClockHandover, ClockHandover.FileSink) {
+            let environment = RunCommand.childEnvironment(
+                [:], keepTime: path, keepTimeReadOnly: harness.readOnlyClocks[index],
+                keepTimeFollows: harness.followedClocks[index])
+            let given = try #require(ClockHandover.startup(environment: environment, unset: { _ in }))
+            let sink = ClockHandover.FileSink(path: path, warn: { _ in })
+            return (
+                ClockHandover(
+                    read: { ClockHandover.read(path: path) }, write: { sink.submit($0) }, warn: { _ in },
+                    writer: process.processIdentifier, generation: Double(index + 1), path: path,
+                    readsOnly: given.readsOnly, follows: given.follows),
+                sink
+            )
+        }
+        let (sentClock, sentSink) = try handover(1, sent)
+        let (nextClock, nextSink) = try handover(2, next)
+        // 次の試聴の子が先に見直す (試聴の中で 300 秒へ飛んだ)。送った子が生きているので書かない
+        nextClock.publish(seconds: 300, isHeld: true, isStill: false, kind: .realtime, frames: 0, at: 10)
+        nextSink.settle()
+        #expect(nextSink.writeCount == 0, "次の試聴の子が書いた")
+        // 送った子は、従う前の本番が居ないので書く
+        sentClock.publish(seconds: 42, isHeld: true, isStill: false, kind: .realtime, frames: 0, at: 10.1)
+        sentSink.settle()
+        #expect(written(path)?.writer == sent.processIdentifier && written(path)?.seconds == 42)
+        nextClock.publish(seconds: 301, isHeld: true, isStill: false, kind: .realtime, frames: 0, at: 11)
+        nextSink.settle()
+        #expect(nextSink.writeCount == 0 && written(path)?.seconds == 42, "次の試聴の子の秒が本番の場所に載った")
     }
 
     @Test("見張りは、本番の場所を受ける試聴の子だけを読むだけにする: 本番の子・起こし直した試聴の子・出た後の本番の子は書く")
