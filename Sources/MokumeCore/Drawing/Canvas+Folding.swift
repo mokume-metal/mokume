@@ -208,10 +208,24 @@ extension Canvas {
         folding form: FlatForm, at anchor: SIMD2<Float>,
         outline makeOutline: (_ ringSegments: Int) -> Outline
     ) {
-        // 畳める弧の閉じ方は 2 つだけ (扇と、弦で結んだ形の塗り)。周の作り方 (`makeOutline`) も `ringRadius`・`placesDiscs` も
-        // 閉じ方を見ないので、輪郭を開いた弧で引く閉じ方 (既定・`.open`) は雛形にできない — 呼ぶ側が畳まない口へ送る
+        draw(folding: form, at: anchor, outline: makeOutline, line: nil)
+    }
+
+    /// 塗りと輪郭を別の周で出す形を畳む (#3759)。`makeOutline` の周は塗りだけを、`makeLine` の周は輪郭だけを出す
+    /// (既定・`.open` の弧: 塗りは扇か弦で結んだ形、輪郭は開いた弧)。畳まずに置くときは 2 つの周をこの順に `draw(_:)` へ
+    /// 渡し、雛形も塗りの後に輪郭を積む (塗りの上に輪郭)。
+    /// `makeLine` が `nil` なら、``draw(folding:at:outline:)`` と同じ (1 つの周が塗りも輪郭も出す)。
+    func draw(
+        folding form: FlatForm, at anchor: SIMD2<Float>,
+        outline makeOutline: (_ ringSegments: Int) -> Outline,
+        line makeLine: ((_ ringSegments: Int) -> Outline)?
+    ) {
+        // 輪郭を塗りと別の周 (開いた弧) で引く閉じ方 (既定・`.open`) は、輪郭の周を受けたときだけ雛形にできる。
+        // 扇と弦で結んだ形は、1 つの周が塗りも輪郭も出す
         if case .arc(_, _, _, _, let closure) = form {
-            precondition(closure == .pie || closure == .chord, "only a pie and a chord fill fold (\(closure))")
+            precondition(
+                (closure == .pie || closure == .chord) == (makeLine == nil),
+                "a pie and a chord fold from one outline, and an open arc line needs its own (\(closure))")
         }
         // 区間の外では、畳む相手の控えも雛形も動かさない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -274,10 +288,15 @@ extension Canvas {
         //
         // 保持する形を記録している最中も畳まない (`recordingShape`)
         // **破線の輪郭は畳まない** ([#2835])。破線の片は置き場所ごとの輪郭から刻むので、雛形にならない
+        //
+        // **開いた弧の細い輪郭 (``FlatKey/strokeLinear`` を持つ) も畳まない** (#3759)。細い線の開いた端は描く画素の列の
+        // 境目で切る (``thinEnds(_:outline:thin:offset:)``・#3764) ので、切る位置が置き場所の平行移動で決まり、雛形に積めない
         guard !(key.texture != nil && key.hasStroke && !shadesWithoutPicture), !recordingShape,
-            !(hasStroke && style.strokeDash != nil)
+            !(hasStroke && style.strokeDash != nil), !(makeLine != nil && key.strokeLinear != nil)
         else {
-            return draw(makeOutline(ringSegments).moved(by: anchor))
+            draw(makeOutline(ringSegments).moved(by: anchor))
+            if let makeLine { drawLine(makeLine(ringSegments).moved(by: anchor)) }
+            return
         }
 
         // **畳んだ置き場所は ``beginFlat()`` も ``useTexture(_:)`` も通らない**ので、描き場所を
@@ -297,10 +316,12 @@ extension Canvas {
         // 置き場所も大きい片の数の雛形に受ける** (片の数が上がったときだけ、新しい雛形になる)
         if let open = openFlat, open.key == key || open.key.holds(key) {
             appendFolded(
-                placement(at: anchor), thinFill: thinFill, outline: { makeOutline(ringSegments) })
+                placement(at: anchor), thinFill: thinFill,
+                outline: { (makeOutline(ringSegments), makeLine?(ringSegments)) })
             return
         }
         let outline = makeOutline(ringSegments)
+        let line = makeLine?(ringSegments)
 
         // **2 つ目が来てから畳む。** 1 つ目で雛形を開くと、矩形と円を交互に置いた絵で
         // 図形の数だけ列が分かれる — 平面は元から 1 つの列にまとまるので、それは
@@ -319,10 +340,10 @@ extension Canvas {
                 flatStrokeStencilSections.removeLast()
             }
             pendingFlat = nil
-            openFlatTemplate(key: joined, outline: outline)
+            openFlatTemplate(key: joined, outline: outline, line: line)
             flatInstances.append(waiting.placement)
             if let waitingFill = waiting.thinFill { addThinFill(waitingFill) }
-            appendFolded(placement(at: anchor), thinFill: thinFill, outline: { outline })
+            appendFolded(placement(at: anchor), thinFill: thinFill, outline: { (outline, line) })
             return
         }
 
@@ -331,6 +352,7 @@ extension Canvas {
         let batchesBefore = batches.count
         let vertexStart = vertices.count
         draw(outline.moved(by: anchor))
+        if let line { drawLine(line.moved(by: anchor)) }
         guard batches.count == batchesBefore, vertices.count > vertexStart else {
             pendingFlat = nil
             return
@@ -347,20 +369,27 @@ extension Canvas {
     /// 変わってしまう**ためである。周は上限に達したときしか要らないので閉包で受け取る。
     private func appendFolded(
         _ placement: FlatInstance, thinFill: ThinFillPlacing?,
-        outline makeOutline: () -> Outline
+        outline makeOutline: () -> (outline: Outline, line: Outline?)
     ) {
         // 描き場所を置いた記録は、呼び手 (``draw(folding:at:outline:)``) が組み替えの前に取っている
         if let open = openFlat, isBatchFull(flatInstances.count, since: open.instanceStart) {
             // 開き直す雛形は、開いていた雛形の片の数を引き継ぐ (片の数が上がった後に小さい片の数へ戻さない)
-            openFlatTemplate(key: open.key, outline: makeOutline())
+            let made = makeOutline()
+            openFlatTemplate(key: open.key, outline: made.outline, line: made.line)
         }
         flatInstances.append(placement)
         // 細い塗りの雛形は、置き場所ごとの記述を同じ番号で足す (#2208)
         if let thinFill { addThinFill(thinFill) }
     }
 
-    /// 雛形を 1 つ積んで開く。**開いていた列は閉じる。**
-    private func openFlatTemplate(key: FlatKey, outline: Outline) {
+    /// 畳まない道で、塗りと別の周の輪郭 (開いた弧) を引く。形の切り抜きの記録 (``clip(_:)``) は塗りだけを読むので、
+    /// 塗りを持たない周は描かない。描くと、塗りのある弧が「塗りの無い形」として断られる (#2431)。
+    private func drawLine(_ line: Outline) {
+        if clipRecorder == nil { draw(line) }
+    }
+
+    /// 雛形を 1 つ積んで開く。**開いていた列は閉じる。** `line` があれば、輪郭は `outline` でなくその周で引く。
+    private func openFlatTemplate(key: FlatKey, outline: Outline, line: Outline?) {
         beginFlat()
         closeBatch()
         // 読む面は雛形を積み始める前に決める。積んでいる途中で変わると、雛形が
@@ -408,13 +437,14 @@ extension Canvas {
         // 相似な置き場所の矩形の細い輪郭は、頂点段で置き場所ごとに広げ直す形で積む (#3733)
         var thinStrokeParams: SIMD4<Float>?
         if key.hasStroke {
+            let stroked = line ?? outline
             if key.strokeLinear?.widensInVertexStage == true {
-                thinStrokeParams = appendWidenedTemplateStroke(outline)
+                thinStrokeParams = appendWidenedTemplateStroke(stroked)
                 // 鍵と額縁は同じ規則 (``framesThinRect(width:height:weight:join:drawn:)``) で決めるので、ここで
                 // 組めないことは無い。組めないまま積むと、回した置き場所へ 1 つ目の向きの広げ方を使い回す
                 assert(thinStrokeParams != nil, "the key promised a vertex-stage thin rect, but the frame was not built")
             }
-            if thinStrokeParams == nil { strokeOutline(outline, discSegments: key.discSegments) }
+            if thinStrokeParams == nil { strokeOutline(stroked, discSegments: key.discSegments) }
         }
         buildingFlatTemplate = false
         templateStrokeMatrix = nil

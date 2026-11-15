@@ -451,9 +451,12 @@ public final class Canvas {
         /// 4 つの角を `radius` で丸めた矩形。`radius` は 0 より大きく、幅・高さの半分以下 (``Canvas/rect(_:_:_:_:_:)``)
         case roundedRect(width: Float, height: Float, radius: Float)
         case ellipse(radiusX: Float, radiusY: Float)
-        /// 円弧。`closure` は弧の閉じ方 (``FormInstance/ArcClosure``)。**畳んで置いてよいのは、扇 (`.pie`) と、輪郭を引かない
-        /// 弦で結んだ形 (`.chord`) だけ** (#3248・``Canvas/draw(folding:at:outline:)`` が前提にする)。既定・`.open` を持つ形は、
-        /// 畳まない口 (``Canvas/placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``) がベクターの控えに渡すためだけに作る。
+        /// 円弧。`closure` は弧の閉じ方 (``FormInstance/ArcClosure``)。扇 (`.pie`) と弦で結んだ形 (`.chord`・輪郭を引かない
+        /// `.open` も) は 1 つの周が塗りも輪郭も出し、既定・`.open` は輪郭を開いた弧の別の周で引く
+        /// (``Canvas/draw(folding:at:outline:line:)`` が前提にする・#3759)。
+        ///
+        /// 円板を置くかの規則 (``placesDiscs(cap:join:)``) は、閉じた周で答える。開いた弧は点が 2 つで端が丸くなければ
+        /// 円板を置かないが、鍵が円板の分割数を余分に持つだけで、雛形の絵は変わらない。
         case arc(
             radiusX: Float, radiusY: Float, start: Float, sweep: Float,
             closure: FormInstance.ArcClosure)

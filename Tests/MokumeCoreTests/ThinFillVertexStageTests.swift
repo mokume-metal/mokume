@@ -625,12 +625,14 @@ struct ThinFillVertexStageTests {
                         Canvas.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
                             .moved(by: SIMD2(-w / 2, -h / 2)))
                 }
+                // 塗りだけは畳まれる。輪郭つきも畳む (#3759) が、太さ 0.7 は描く画素で細く、置き場所の 2x2 が畳みの鍵
+                // なので、回転が全部違う並び (`spin` が 0 でない) は畳む相手が無い。回転を揃えた並び (`spin: 0`・倍率は
+                // どの置き場所も同じ) は畳まれる
                 if folding {
-                    // 塗りだけは畳まれ、輪郭つきは畳まれない (置き場所ごとに組む・#3170 の決定)
-                    if stroke {
-                        #expect(canvas.openFlat == nil, "\(name): 輪郭つきが畳まれた")
-                    } else {
+                    if !stroke || spin == 0 {
                         #expect(canvas.openFlat != nil, "\(name): 畳まれていない")
+                    } else {
+                        #expect(canvas.openFlat == nil, "\(name): 2x2 の違う細い輪郭が畳まれた")
                     }
                 }
             }
@@ -644,9 +646,7 @@ struct ThinFillVertexStageTests {
             if unfolded.components[index] > 0 { lit += 1 }
         }
         #expect(lit > 0, "\(name): 絵が空")
-        // **どの場面も許容 0。** 輪郭つきは畳まずに置き場所ごとに組むので、畳まない道と同じ頂点を同じ順で置く
-        // (畳んだ雛形は輪郭の頂点を「雛形の座標を置き場所の行列で移す」順で置き、縁の頂点が 1 ulp 違って
-        // 縁の画素が入れ替わるため、輪郭つきは畳まない)
+        // **どの場面も許容 0**
         #expect(
             differing == 0, "\(name): 畳まずに置いた絵と画素の成分が \(differing) 個違う (点いている成分 \(lit))")
     }
@@ -663,6 +663,11 @@ struct ThinFillVertexStageTests {
         try expectSameAsUnfolded("半径が締まる角丸 rect", size: (16, 10, 100), spin: 0.3)
         try expectSameAsUnfolded("輪郭つきの細い角丸 rect", stroke: true, size: (28, 0.8, 0.3), spin: 0.3)
         try expectSameAsUnfolded("輪郭つきの細くない角丸 rect", stroke: true, size: (16, 10, 3), spin: 0.3)
+        // 回転を揃えると、輪郭つきも 1 つの雛形に畳まれる (#3759)
+        try expectSameAsUnfolded("回転を揃えた輪郭つきの細い角丸 rect", stroke: true, size: (28, 0.8, 0.3), spin: 0)
+        try expectSameAsUnfolded(
+            "回転を揃えた輪郭つきの細くない角丸 rect", density: 0.5, stroke: true, size: (16, 10, 3), spin: 0,
+            scale: { _ in (-1.2, 0.9) })
         try expectSameAsUnfolded("貼る絵の細くない角丸 rect", texture: true, size: (16, 10, 3), spin: 0.27)
         // 鏡映 (行列式が負)・縦横で倍率の違う輪郭つき・半径が短い辺の半分ちょうど (円板状) の向き
         try expectSameAsUnfolded(

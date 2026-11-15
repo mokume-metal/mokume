@@ -68,30 +68,14 @@ extension Canvas {
         // 角を丸めた矩形は、貼る絵 (`texture()`) か利用者の断片 (`shader()`) が効いている間だけ
         // ここへ来る。距離関数の経路に入れないので、角を円弧の刻みで繋いだ周で描く。
         if radius > 0 {
-            // **塗りだけのときは、角を丸めない矩形と同じく畳む** (#3170)。周は形自身の座標で作って左上の角を
-            // 置き場所として渡し、角の弧の刻みは鍵が持つ数 (置き場所の拡大で決まる整数) で刻む。
-            // **輪郭があれば畳まず、置き場所ごとに組む。** #3170 のときは、畳んだ雛形が輪郭の頂点を「雛形の座標を
-            // 置き場所の行列で移す」順で置き、縁の頂点が 1 ulp 違って縁の画素が畳まない絵と変わった (16×10・半径 5・
-            // `strokeWeight(0.7)`・回転 0.29 で 3 成分)。頂点段は #3555 で畳まない道と同じ順に置くようになったので、
-            // 畳む側へ寄せられるはずだが、許容 0 を検査で縛るまでは今までの道に残す (#3759)
-            if !(style.hasStroke && style.strokeWeight > 0) {
-                return draw(folding: .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y)) {
-                    segments in
-                    Self.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
-                }
-            }
-            let segments = Self.segmentCount(
-                forRadius: radius, scale: Self.splitScale(of: flatTransform.matrix))
-            // ベクターへは、周を刻んだ折れ線でなく**角丸の矩形そのもの**を書く (#3271)。控えは描く前に済ませ、
-            // 内側の `draw(_:)` が周を 2 度控えないよう止める — 描く道は触らないので、絵は変わらない。
-            // 区間の外では置かないので、控えもしない (``Canvas/canPlace``・#1672)
-            guard canPlace else { return warnOutsideFrame(.placing) }
-            let heldVector = suspendVectorRecordingShadedFigure(
-                .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y))
-            defer { resumeVector(heldVector) }
-            return draw(
+            // **角を丸めない矩形と同じく畳む** (#3170・#3759)。周は形自身の座標で作って左上の角を置き場所として渡し、
+            // 角の弧の刻みは鍵が持つ数 (置き場所の拡大で決まる整数) で刻む。輪郭つきも、畳んだ絵が畳まない道と
+            // 許容 0 で一致することを `FoldedPlacementTests` が見る。ベクターへは角丸の矩形そのものを書く (#3271・
+            // 控えは畳む口が済ませる)
+            return draw(folding: .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y)) {
+                segments in
                 Self.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
-                    .moved(by: SIMD2(box.x, box.y)))
+            }
         }
         // 周は**形自身の座標**で作り、左上の角を置き場所として渡す。畳まないときは
         // 角を足し戻すだけなので、絵は 1 ビットも変わらない (足す順が入れ替わるだけ)
@@ -243,11 +227,10 @@ extension Canvas {
     /// 閉じ方の違う `arc` が同じ列に並ぶ性質も、`.pie` と変わらない。
     ///
     /// 距離関数の経路を使えないとき — `texture()` か `shader()` を効かせた塗りは三角形の経路へ — は、輪郭の周
-    /// (``Outline``) を描く。**畳むのは、扇 (一周・`.pie`・輪郭を引かない既定) と、輪郭を引かず貼る絵も無い `.chord` / `.open`
-    /// の塗り**で、同じ形が続く間は 1 つの雛形に畳む (``draw(folding:at:outline:)``・#3248)。輪郭つきの弧と、貼る絵つきの
-    /// `.chord` / `.open` は畳まず、部分ごとに組んで描く (``placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``。
-    /// #3248 のときは畳むと縁の数成分が畳まない絵と違った。#3555 で頂点段の順を揃えた後に畳む側へ寄せるのは #3759)。
-    /// 破線の輪郭 (#2835) は、塗りを距離関数のまま置き、輪郭だけを周の片で引く。
+    /// (``Outline``) を描く。**どの閉じ方も、同じ形が続く間は 1 つの雛形に畳む** (``draw(folding:at:outline:line:)``・
+    /// #3248・#3759)。塗りと輪郭の周が違う閉じ方 (輪郭つきの既定・`.open`: 塗りは扇か弦で結んだ形、輪郭は開いた弧) は、
+    /// 塗りの周と輪郭の周を分けて渡す。貼る絵と輪郭が同居する弧と破線の輪郭は、畳む口が畳まずに周を順に描く。
+    /// 距離関数の経路の破線の輪郭 (#2835) は、塗りを距離関数のまま置き、輪郭だけを周の片で引く。
     ///
     /// **一周は、どの閉じ方でも楕円と同じ** (終わりが始まりの 2π 以上先なら、閉じ方に差が出る端が無い)。
     /// `boxMode` が `nil` なら 4 つの数を ``ellipseMode(_:)`` で読む (`Rect` を取る形は `.corner` を渡す)。
@@ -301,17 +284,37 @@ extension Canvas {
                     .arc, center: center, half: SIMD2(radiusX, radiusY),
                     arc: SIMD2(start, sweep), arcClosure: closure, fills: true)
         }
-        // **畳むのは、扇 (一周・`.pie`・輪郭を引かない既定) と、輪郭を引かず貼る絵も無い `.chord` / `.open` の塗り**
-        // (どちらも弦で結んだ形の塗り・#3248)。輪郭つきと貼る絵つきの `.chord` / `.open`・輪郭つきの既定は、#3248 のときは
-        // 畳んだ絵が畳まない絵と縁の数成分違った (置き場所の変換を GPU で掛けるぶん)。頂点段は #3555 で畳まない道と
-        // 同じ順に置くようになったが、許容 0 を検査で縛るまでは今までの道 (``placeArcInParts``) に残す (#3759)。
-        // 利用者の断片だけを当てた塗り (白い 1×1 を読む・#3797) はここに残して畳む — 畳んだ読み取り位置が
-        // 白い絵を貼って畳まないときと画素で一致することは ShaderUVWithoutPictureTests が見る
-        let foldsChordFill = !drawsStroke && style.picture == nil && (mode == .chord || mode == .open)
-        guard isFullTurn || mode == .pie || (mode == nil && !drawsStroke) || foldsChordFill else {
-            return placeArcInParts(
-                mode: mode, center: center, radiusX: radiusX, radiusY: radiusY, start: start,
-                sweep: sweep)
+        // **どの閉じ方も畳む** (#3248・#3759)。周は閉じ方で決まる:
+        // - 一周・`.pie`・輪郭を引かない既定: 扇の周 1 つ (塗りも輪郭も)
+        // - `.chord`・輪郭を引かない `.open`: 弦で結んだ形の周 1 つ (輪郭を引かない `.open` は `.chord` と同じ雛形に畳む)
+        // - 輪郭を引く既定・`.open`: 塗りの周 (扇か弦で結んだ形) と、輪郭の周 (開いた弧) の 2 つ
+        // 畳んだ絵が畳まない道 (周を順に `draw(_:)` へ渡す) と許容 0 で一致することは `ArcClosureFoldingTests`・
+        // `FoldedPlacementTests` が見る。貼る絵と輪郭が同居する弧・破線の輪郭は、畳む口が畳まずに置く
+        if !isFullTurn, mode != .pie, mode != nil || drawsStroke {
+            func ring(_ segments: Int, _ piece: Outline.Ring.Piece) -> Outline {
+                Self.ringOutline(
+                    Outline.Ring(
+                        radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, segments: segments,
+                        piece: piece))
+            }
+            func form(_ closure: FormInstance.ArcClosure) -> FlatForm {
+                .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, closure: closure)
+            }
+            switch mode {
+            case .chord?:
+                return draw(folding: form(.chord), at: center) { ring($0, .chord) }
+            case .open? where !drawsStroke:
+                return draw(folding: form(.chord), at: center) { ring($0, .chord) }
+            case .open?:
+                return draw(
+                    folding: form(.open), at: center, outline: { ring($0, .chordFill) }, line: { ring($0, .arcLine) })
+            case nil:
+                return draw(
+                    folding: form(.standard), at: center, outline: { ring($0, .sectorFill) },
+                    line: { ring($0, .arcLine) })
+            case .pie?:
+                preconditionFailure("a pie is placed as a single sector")
+            }
         }
         // **一周で破線の輪郭を引くときは、破線だけを角度 0 から数える** (#3314)。距離関数の道・楕円・SVG は
         // 角度 0 から破線を数えるので、貼る絵 (`texture()`) や断片を足しただけで破線が `start` ぶん動かないよう
@@ -319,9 +322,7 @@ extension Canvas {
         // 角度 0 から作り直して持たせる (``Outline/dashPoints``)
         let dashesFromAngleZero = isFullTurn && dashedStroke != nil
         draw(
-            folding: .arc(
-                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
-                closure: foldsChordFill && !isFullTurn ? .chord : .pie),
+            folding: .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, closure: .pie),
             at: center
         ) { segments in
             // 周の点はどれも円板で埋める。弧の点は刻みで、**扇の 3 つの角 (中心と弧の両端)
@@ -332,7 +333,7 @@ extension Canvas {
             var outline = Self.ringOutline(
                 Outline.Ring(
                     radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
-                    segments: segments, piece: foldsChordFill && !isFullTurn ? .chord : .sector))
+                    segments: segments, piece: .sector))
             if dashesFromAngleZero {
                 outline.dashPoints = Self.ringOutline(
                     Outline.Ring(
@@ -341,54 +342,6 @@ extension Canvas {
                 ).points
             }
             return outline
-        }
-    }
-
-    /// 距離関数の経路を使えない (貼る絵か断片が塗りに効いている) とき、弧の塗りと輪郭が 1 つの扇の形では出せない
-    /// 閉じ方 (既定・`.chord`・`.open`) を、輪郭の周を部分ごとに組んで置く。
-    ///
-    /// - 既定: 塗りは扇、輪郭は開いた弧
-    /// - `.chord`: 弦で結んだ形の塗りと、その周の輪郭
-    /// - `.open`: 弦で結んだ形の塗りと、開いた弧の輪郭
-    ///
-    /// 塗りの後に輪郭を引くので、重なりの順は輪郭を実線で引くときと同じ (塗りの上に輪郭)。
-    /// 破線の輪郭は、開いた弧の周を刻むので、ここでも ``strokeOutline(_:discSegments:)`` が引き受ける。
-    /// **周は区間の中だと分かってから組む。**
-    func placeArcInParts(
-        mode: ArcMode?, center: SIMD2<Float>, radiusX: Float, radiusY: Float, start: Float,
-        sweep: Float
-    ) {
-        guard canPlace else { return warnOutsideFrame(.placing) }
-        func outline(_ piece: Outline.Ring.Piece) -> Outline {
-            ringOutlineForDash(
-                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, piece: piece,
-                at: center)
-        }
-        // ベクターへは、塗りの部分と輪郭の部分を別々の折れ線でなく、**弧 1 つを閉じ方どおりの真の形**で書く
-        // (貼る絵の無い同じ弧と同じ要素・#3295)。塗りは落とし、輪郭だけ書く。描く前に控えを済ませ、内側の
-        // `draw(_:)` が周を 2 度控えないよう止める — 描く道は触らないので、絵は変わらない。書けないものは
-        // 図形 1 つにつき 1 度だけ数える (#3139)
-        let held = suspendVectorRecordingShadedFigure(
-            .arc(
-                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
-                closure: mode.map(\.closure) ?? .standard),
-            at: center)
-        defer { resumeVector(held) }
-        // 形の切り抜きの記録 (``clip(_:)``) は塗りだけを読むので、塗りを持たない弧の線の回は描かない。
-        // 描くと、塗りのある弧が「塗りの無い形」として断られる (#2431)
-        let strokesArc = clipRecorder == nil
-        switch mode {
-        case nil:
-            draw(outline(.sectorFill))
-            if strokesArc { draw(outline(.arcLine)) }
-        case .chord:
-            draw(outline(.chord))
-        case .open:
-            draw(outline(.chordFill))
-            if strokesArc { draw(outline(.arcLine)) }
-        case .pie:
-            // 呼ぶ側が扇を 1 つの形で出す。ここへは来ない
-            preconditionFailure("a pie is placed as a single form")
         }
     }
 

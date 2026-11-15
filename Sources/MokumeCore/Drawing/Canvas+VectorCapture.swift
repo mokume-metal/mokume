@@ -273,8 +273,8 @@ extension Canvas {
     /// 真の形 (矩形・楕円・弧) で書く。
     ///
     /// **弧の閉じ方は、形 (``FlatForm/arc(radiusX:radiusY:start:sweep:closure:)``) が持つ 1 つだけを読む。** 輪郭の形と
-    /// 破線を刻む周の部分が閉じ方で決まる。畳みの口 (``Canvas/draw(folding:at:outline:)``) は扇か弦で結んだ形を、
-    /// 畳まない口 (``Canvas/placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``) は既定・`.chord`・`.open` を渡す。
+    /// 破線を刻む周の部分が閉じ方で決まる。畳みの口 (``Canvas/draw(folding:at:outline:line:)``) は輪郭を引く弧には
+    /// 利用者が選んだ閉じ方を、輪郭を引かない `.open` には塗りが同じ `.chord` を渡す (輪郭が無いので書く形は変わらない)。
     func suspendVectorRecordingShadedFigure(
         _ form: FlatForm, at anchor: SIMD2<Float>
     ) -> VectorCapture? {
@@ -293,9 +293,7 @@ extension Canvas {
                     arcClosure: .pie, cornerRadius: 0, fills: writable.fills, strokes: writable.strokes,
                     cap: style.strokeCap, dash: writable.strokes ? vectorDash(of: corners, isClosed: true) : [])
             case .roundedRect(let width, let height, let radius):
-                // 畳む道が来るのは塗りだけの角丸 (#3170) で、塗りは落とすので何も書かない。輪郭つきの角丸は
-                // 畳まず ``placeRect`` が直接呼ぶ (#3271)。どちらも他の形と同じく、輪郭は真の形 (角丸の矩形・
-                // 貼る絵の無い角丸が書くものと同じ) で書く。
+                // 塗りは落とす。輪郭は他の形と同じく真の形 (角丸の矩形・貼る絵の無い角丸が書くものと同じ) で書く (#3271)。
                 // 破線は、画面が刻む角丸の周 (``placeRect`` が破線の輪郭に使うものと同じ刻み) から作る
                 let half = SIMD2(width / 2, height / 2)
                 let outline =
@@ -456,7 +454,7 @@ extension Canvas {
     ///   (黙って輪郭まで失わない)。
     /// - 図形の塗りと輪郭を何度かの口に分けて控える図形 (破線で塗りもある図形。塗りは ``appendForm``、輪郭は
     ///   ``recordVectorDashedForm`` が控える) は、``countingOneVectorFigure(_:)`` で括り、同じ図形を 2 度数えない。
-    ///   貼る絵が効く弧 (畳む口 ``Canvas/draw(folding:at:outline:)`` と畳まない口 ``Canvas/placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``) は、
+    ///   貼る絵が効く弧 (畳む口 ``Canvas/draw(folding:at:outline:line:)``。塗りと輪郭の周を分けて描くときも) は、
     ///   弧 1 つを真の形で 1 度に控えるので、括りは要らない。
     ///
     /// 書くものが無ければ nil。
