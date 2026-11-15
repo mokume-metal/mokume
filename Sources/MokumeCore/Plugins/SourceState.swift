@@ -19,6 +19,9 @@ public nonisolated enum SourceState: String, Sendable, Equatable, Encodable {
     case denied
     /// 動いている。値が届きうる。
     case running
+    /// 用意している。値を出せるようになる前の準備 (推論のモデルの読み込みなど) の間で、済めば
+    /// ``running`` になる。**描画は止まらない** — 用意の間に描いたフレームには、まだ値が届かない。
+    case preparing
     /// 使える機材が無い。**挿されたら始まる** — 投げて外さないのはこのためである。
     case unavailable
     /// 使っていた機材が抜かれた・向こうが終わった。

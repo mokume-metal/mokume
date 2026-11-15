@@ -151,6 +151,7 @@ final class CaptureAndMirror: Sketch {
         let label: String
         switch camera.state {
         case .running: label = "動いている"
+        case .preparing: label = "用意している"
         case .waitingForPermission: label = "許可を待っている (OS の確認に答える)"
         case .denied: label = "許可が拒まれている (システム設定でカメラの許可を見直す)"
         case .unavailable: label = "カメラが無い (繋ぐと始まる)"
