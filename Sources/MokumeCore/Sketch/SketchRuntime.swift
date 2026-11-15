@@ -1006,11 +1006,15 @@ package final class SketchRuntime {
     ///
     /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
     package func advance(displayTime: Double?) throws(RenderFailure) {
-        // **描く前に済ませる。** 名乗りのメニューが開くとしたらこの中なので、そのとき
-        // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
-        // 止まっているスケッチも、居座っていることに変わりはない
-        updatePresence()
-        try runFrame(displayTime: displayTime)
+        // **1 回ぶん全体を自分の autorelease の置き場で包む** (``drainingAutoreleased(_:)``・#4081)。区切りを、
+        // `advance()` を呼ぶループの形 (run loop か、検査や道具のループか) に頼らない
+        try drainingAutoreleased { () throws(RenderFailure) in
+            // **描く前に済ませる。** 名乗りのメニューが開くとしたらこの中なので、そのとき
+            // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
+            // 止まっているスケッチも、居座っていることに変わりはない
+            updatePresence()
+            try runFrame(displayTime: displayTime)
+        }
     }
 
     /// フレームを 1 つ進める本体。**名乗りの世話は含まない。**
@@ -2203,7 +2207,8 @@ package final class SketchRuntime {
             return
         }
         do throws(RenderFailure) {
-            try runFrame()
+            // ``advance(displayTime:)`` と同じく、1 回ぶんを自分の置き場で包む (#4081)
+            try drainingAutoreleased { () throws(RenderFailure) in try runFrame() }
         } catch {
             // **`setup()` が投げた失敗は捨てない** ([#2401])。直らない失敗なので、ウィンドウの経路へ知らせて終わらせる。
             // それ以外の失敗は、次の回でやり直す
