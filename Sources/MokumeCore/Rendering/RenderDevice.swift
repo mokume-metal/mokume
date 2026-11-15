@@ -11,7 +11,7 @@ import MokumeDiagnostics
 // `isolated deinit` が「隔離されていないクラスに付いている」として compile を止める
 // (#761)。debug と製品の release では出ない。明示すれば取り込み側にも隔離が伝わる。
 
-/// GPU 側の一式を束ねる — デバイス・コマンドの発行口・コマンドの置き場・リソースの常駐。
+/// GPU 側の一式をまとめる — デバイス・コマンドキュー・コマンドのアロケーター・リソースの常駐。
 ///
 /// ## なぜ常駐をここに集めるのか
 ///
@@ -21,13 +21,13 @@ import MokumeDiagnostics
 /// そこで確保したリソースは必ずここを通し、常駐の集合をこの型が持つ。
 ///
 /// 集合は**寿命で 2 つに分けてある** — 確保したものが全部入る `residencySet` と、
-/// 表示に差し出す面だけが入る `drawableResidency` である。差し出す面の環は Metal
-/// 側が持っていて、面の大きさが変わると環ごと作り直される。混ぜると、古い面だけを
-/// 畳む手が無い ([#357](https://github.com/mokume-metal/mokume/issues/357))。
+/// 表示に差し出すサーフェスだけが入る `drawableResidency` である。差し出すサーフェスのリングバッファは Metal
+/// 側が持っていて、サーフェスの大きさが変わるとリングごと作り直される。混ぜると、古いサーフェスだけを
+/// 破棄する方法が無い ([#357](https://github.com/mokume-metal/mokume/issues/357))。
 ///
 /// ## 使い方
 ///
-/// **作って、`gpu:` を取る初期化子へ手渡す。** コマンドの発行そのものは外へ開いていない
+/// **作って、`gpu:` を取る初期化子へ渡す。** コマンドの発行そのものは外へ開いていない
 /// ので、外から書けるのはこの形である。1 枚だけ描く経路はこれで足りる。
 ///
 /// ```swift
@@ -48,7 +48,7 @@ import MokumeDiagnostics
 ///
 /// 描くのは 1 フレームだけで、``Canvas/draw(_:)`` を抜けた時点で GPU は描き終えている
 /// ([#727](https://github.com/mokume-metal/mokume/issues/727))。フレームを回す経路は
-/// ``Sketch`` が土台ごと持つので、この形を書くのは 1 枚だけ描くときと、絵を回す道具を
+/// ``Sketch`` が土台ごと持つので、この形を書くのは 1 枚だけ描くときと、絵を回すツールを
 /// 自分で書くときである。
 // 以下は**面に出さない** (`///` ではなく `//`)。名指しているコマンドの口 —
 // `withCommands(_:)` / `commitAndWait(_:)` / `commit(_:retaining:)` / `settle()` — は
@@ -113,28 +113,28 @@ import MokumeDiagnostics
         }
     }
 
-    /// この実行環境で描画の土台を組み立てられるか。
+    /// この実行環境で描画の土台を構築できるか。
     ///
     /// **GPU があるかだけでは足りない。** 仮想化された実行環境には、GPU としては
     /// 見えるのにこの世代のコマンド構造に対応していないものがあり、そこでは
-    /// コマンドの発行口が作れない。[ADR-0009] 決定 2 により旧世代へのフォールバック
+    /// コマンドキューが作れない。[ADR-0009] 決定 2 により旧世代へのフォールバック
     /// 経路は持たないので、そういう環境では描画そのものが成立しない。
     ///
     /// 判定を「実際に必要なところまで試す」形にしてあるのは、GPU の有無だけを見て
     /// 「使える」と答えると、GPU を要する検証がスキップされずに失敗するため。
     ///
-    /// 隔離の外から呼べる形にしてあるのは、検査の実行可否を決める前提条件として
+    /// 隔離の外から呼べる形にしてあるのは、テストの実行可否を決める前提条件として
     /// 隔離の外で評価されるため。問い合わせは GPU を持ち出さないので状態を跨がない。
     ///
     /// **同じプロセスで GPU の完了を待つのが一度 ``waitLimitSeconds`` を越えた後は、`false` を
-    /// 返す。** そのとき発行口は作らずに答える。答えない GPU に使い捨ての発行口を足すことも、
-    /// 止まった発行口を溜める側に数える ([#2052])。土台の初期化子も、同じ時点から
-    /// ``RenderFailure/gpuNotResponding`` で断る。
+    /// 返す。** そのときコマンドキューは作らずに答える。応答しない GPU に使い捨てのコマンドキューを追加することも、
+    /// 止まったコマンドキューが溜まる側に数える ([#2052])。土台の初期化子も、同じ時点から
+    /// ``RenderFailure/gpuNotResponding`` で拒否する。
     ///
     /// **別のプロセスの期限切れの記録 (`scripts/gpu-slot.py` の下・#2235) だけがあるときは、`true` を返す**
-    /// (発行口は作らない)。`false` にすると、`.enabled(if: RenderDevice.isAvailable, …)` の GPU の suite が
-    /// 「GPU が無い実行環境」として全部飛び、`swift test` が緑で終わる。名乗って止まるのは、土台の初期化子が
-    /// ``RenderFailure/gpuNotResponding`` で断って suite が赤になる形である。
+    /// (コマンドキューは作らない)。`false` にすると、`.enabled(if: RenderDevice.isAvailable, …)` の GPU の suite が
+    /// 「GPU が無い実行環境」として全部飛び、`swift test` が緑で終わる。報告して止まるのは、土台の初期化子が
+    /// ``RenderFailure/gpuNotResponding`` で拒否して suite が赤になる形である。
     ///
     /// [ADR-0009]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0009-platform-floor-and-toolchain.md
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
@@ -742,7 +742,7 @@ import MokumeDiagnostics
     /// 既定の GPU で作る。
     ///
     /// 同じプロセスで GPU の完了を待つのが一度 ``waitLimitSeconds`` を越えた後は、作らずに
-    /// ``RenderFailure/gpuNotResponding`` で断る。``init(device:)`` も同じである。
+    /// ``RenderFailure/gpuNotResponding`` で拒否する。``init(device:)`` も同じである。
     public convenience init() throws(RenderFailure) {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw .deviceUnavailable

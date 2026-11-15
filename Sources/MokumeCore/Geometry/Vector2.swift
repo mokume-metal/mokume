@@ -53,7 +53,7 @@ import Foundation
 /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
 // shot: 1 snippet=c3124a0b
 public nonisolated struct Vector2: Sendable, Hashable {
-    /// SIMD との出入り口。Metal のシェーダへ渡すときなどに使う。
+    /// SIMD の値としての表現。Metal のシェーダへ渡すときなどに使う。
     ///
     /// 中身はこの SIMD の値で、``x``・``y`` はその成分を読み書きする。
     ///
@@ -217,7 +217,7 @@ nonisolated extension Vector2: ExpressibleByArrayLiteral {
     /// 2 つの数の配列リテラルから作る (`[300, 300]`)。
     ///
     /// 要素は数のリテラルに限る。`Int` の変数を混ぜるときは ``init(_:_:)`` で書く。
-    /// **要素が 2 つでなければ止まる** — 書いた場所で必ず起きる誤りなので、その行で知らせる
+    /// **要素が 2 つでなければ止まる** — 書いた場所で必ず起きる誤りなので、その行で報告する
     /// (`SIMD2` の配列リテラルと同じ)。`Vector2` と `Vector3` を同じラベルで受ける API (曲線のラベル付きの形など) に
     /// `Vector2` の変数とリテラルを混ぜて渡すと、リテラルも `Vector2` として読まれ、`[1, 2, 3]` は要素の数が合わずに
     /// 実行時に止まる。リテラルにも `Vector2(…)`・`Vector3(…)` と型を書けば避けられる。
@@ -417,7 +417,7 @@ nonisolated extension Vector2 {
         Vector2(lhs.simd / rhs.asFloat)
     }
 
-    /// 足して入れる。`position += velocity` で位置を進める。
+    /// 加算して代入する。`position += velocity` で位置を進める。
     // shot: 参照 Vector2.+(_:_:)
     public static func += (lhs: inout Vector2, rhs: Vector2) {
         lhs.simd += rhs.simd

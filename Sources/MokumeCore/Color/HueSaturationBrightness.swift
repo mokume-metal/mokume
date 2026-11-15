@@ -116,11 +116,11 @@ nonisolated enum HueSaturationBrightness {
 /// **彩度と明度は上へ突き抜けられる。** `brightness: 150` は表示範囲を超えた明るさ、
 /// `saturation: 120` は色域の外の色を指す — 作業空間はどちらも保つ ([ADR-0011] 決定 1)。
 /// 負の値だけは 0 として扱う (負にすると色相が 180 度回ってしまい、値を保つのではなく
-/// 引数の意味が変わるため)。**丸めたときは、1 度だけ知らせる** (`saturation: -20` なら、彩度が 0 以上を
+/// 引数の意味が変わるため)。**丸めたときは、1 度だけ通知する** (`saturation: -20` なら、彩度が 0 以上を
 /// 取ることと、渡した値と、0 を使ったことを言う。彩度・明度・不透明度は別々に数える)。
 ///
 /// **不透明度は 0–255 に締める** (``color(_:_:_:_:)`` と同じ)。`alpha: 400` は 255 と同じ色になり、
-/// 締めたときは 1 度だけ知らせる ([ADR-0033] 決定 3 の改訂)。
+/// 締めたときは 1 度だけ通知する ([ADR-0033] 決定 3 の改訂)。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md

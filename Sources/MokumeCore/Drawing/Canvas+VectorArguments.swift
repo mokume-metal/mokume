@@ -53,7 +53,7 @@ extension Canvas {
         vertex(point.x, point.y, point.z)
     }
 
-    /// 貼る絵の読み取り位置つきで頂点を 1 つ置く。``vertex(_:_:_:_:)`` に `point` と `uv` の成分を
+    /// 貼るテクスチャの読み取り位置つきで頂点を 1 つ置く。``vertex(_:_:_:_:)`` に `point` と `uv` の成分を
     /// 渡すのと同じ (#3782)。
     public func vertex(_ point: Vector2, uv: Vector2) {
         vertex(point.x, point.y, uv.x, uv.y)

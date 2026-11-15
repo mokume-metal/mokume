@@ -10,8 +10,8 @@ import CoreGraphics
 /// ([ADR-0011] 決定 3・6)。
 ///
 /// 色は **Display P3 の原色に sRGB の転送関数を掛けた値**である ([ADR-0011] 決定 6)。
-/// `CGImage` などへ渡すときは、この色空間を名乗らせる。画面の色空間
-/// (DeviceRGB) と名乗ると、P3 ではない画面で彩度がずれる (#3683)。
+/// `CGImage` などへ渡すときは、この色空間を指定する。画面の色空間
+/// (DeviceRGB) を指定すると、P3 ではない画面で彩度がずれる (#3683)。
 ///
 /// アルファは乗算していない (straight)。作業空間の内側では乗算済みで運ぶが、外へ出す
 /// 境界で戻す ([ADR-0011] 決定 4)。
@@ -20,10 +20,10 @@ import CoreGraphics
 ///
 /// ## 向きを持たない
 ///
-/// **この型が名乗るのは絵の「形」であって、出ていく向きではない。** 出口が
+/// **この型が表すのは絵の「形」であって、出ていく向きではない。** 出力先が
 /// ``OutputFrame/bytes()`` で出すのと同じ形を、``Image/write(_:)-(DisplayImage)`` は受け取る —
-/// 外から届いた映像を毎フレーム絵にする道がそこである。出た絵をそのまま書き戻せば
-/// 元の絵に戻る、が往復の約束になる。
+/// 外から届いた映像を毎フレーム絵にする経路がそこである。出た絵をそのまま書き戻せば
+/// 元の絵に戻る、が往復の不変条件になる。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 public nonisolated struct DisplayImage: Equatable, Sendable {
@@ -37,7 +37,7 @@ public nonisolated struct DisplayImage: Equatable, Sendable {
     /// 大きさとバイト列から作る。
     ///
     /// バイト列は `width * height * 4` の長さで、左上を原点に行優先。**行の間に
-    /// 詰め物を置かない** — 詰め物のある元から作るときは、詰め物を落としてから渡す。
+    /// 詰め物を置かない** — 詰め物のある元から作るときは、詰め物を削除してから渡す。
     ///
     /// 長さが合わないものは受け取らない。**絵にならない値をそのまま持ち回ると、
     /// 落ちる場所が渡した所から遠ざかる**ので、作る所で止める。
@@ -57,8 +57,8 @@ public nonisolated struct DisplayImage: Equatable, Sendable {
     /// 指定した位置の 4 成分。原点は左上。
     ///
     /// 範囲の外は透明 (0, 0, 0, 0) を返す (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
-    /// 読み出した画素 (``PixelBuffer``)・画素の面 (``Pixels``)・絵 (``Image/get(_:_:)``) も
-    /// 範囲の外で透明を返すので、どの口で読んでも答えは変わらない。
+    /// 読み出した画素 (``PixelBuffer``)・画素のサーフェス (``Pixels``)・絵 (``Image/get(_:_:)``) も
+    /// 範囲の外で透明を返すので、どの API で読んでも答えは変わらない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public subscript(x: Int, y: Int) -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8) {

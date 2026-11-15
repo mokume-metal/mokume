@@ -212,7 +212,7 @@ extension Canvas {
 
     /// 描くものを、下にある絵とどう混ぜるか。
     ///
-    /// **溜めている列をその場で閉じる。** 既に置いた図形が後の混ぜ方で描かれないように
+    /// **溜めているキューをその場で閉じる。** 既に置いた図形が後の混ぜ方で描かれないように
     /// するためで、閉じ忘れは「設定を変えたときだけ絵が崩れる」形で現れる。
     public func blendMode(_ mode: BlendMode) {
         guard mode != style.blendMode else { return }

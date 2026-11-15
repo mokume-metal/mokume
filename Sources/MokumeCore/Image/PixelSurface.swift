@@ -5,28 +5,28 @@ import CoreVideo
 import IOSurface
 import Synchronization
 
-/// 外から届いた 1 枚を、**CPU で画素を作り直さずに**絵へ書くための値。``Image/write(_:)-(PixelSurface)`` が受ける。
+/// 外から届いた 1 枚を、**CPU で画素を作り直さずに**画像へ書くための値。``Image/write(_:)-(PixelSurface)`` が受ける。
 ///
-/// 動画とカメラのコマは、OS が GPU と共有する面 (`IOSurface`) に載って届く。``DisplayImage`` を作るには、
-/// その全画素を CPU で Display P3 の 8 bit へ変換して並べ直す必要がある (4K で 1 枚数 ms)。この値は面を
+/// 動画とカメラのコマは、OS が GPU と共有するサーフェス (`IOSurface`) に載って届く。``DisplayImage`` を作るには、
+/// その全画素を CPU で Display P3 の 8 bit へ変換して並べ直す必要がある (4K で 1 枚数 ms)。この値はサーフェスを
 /// そのまま持ち、色の変換は ``ColorTable`` を GPU で引いて行う
 /// ([#2962](https://github.com/mokume-metal/mokume/issues/2962))。結果は、同じ表で CPU が作った
 /// ``DisplayImage`` を書いたときと 1 bit も違わない。
 ///
-/// ## 受ける面
+/// ## 受けるサーフェス
 ///
-/// **32 bit の BGRA (`kCVPixelFormatType_32BGRA`)・平面を持たない面だけを受け、他は `nil` を返す。**
-/// 色は ``ColorTable`` が決め、不透明度は持たない (いつも不透明として書く)。透けた画素を持つ面・
-/// YpCbCr の面は、今までどおり ``DisplayImage`` にして ``Image/write(_:)-(DisplayImage)`` で書く。
+/// **32 bit の BGRA (`kCVPixelFormatType_32BGRA`)・平面を持たないサーフェスだけを受け、他は `nil` を返す。**
+/// 色は ``ColorTable`` が決め、不透明度は持たない (いつも不透明として書く)。半透明の画素を持つサーフェス・
+/// YpCbCr のサーフェスは、今までどおり ``DisplayImage`` にして ``Image/write(_:)-(DisplayImage)`` で書く。
 ///
-/// ## 面の寿命
+/// ## サーフェスの寿命
 ///
-/// **値を作った時点で、面を「使用中」にする** (`IOSurfaceIncrementUseCount`)。値の写しが全部消えると
-/// 「使用中」を外す。`CVPixelBuffer` の置き場 (プール) は、使用中の面を使い回さない — だから元の
-/// `CVPixelBuffer` を先に手放しても、この値を持っている間は中身が書き換わらない。絵に書いた面は、
-/// 絵が次の 1 枚に書き換わるか、絵が捨てられるまで絵が持つ (GPU が読み終わるまでは描画の側も持つ)。
+/// **値を作った時点で、サーフェスを「使用中」にする** (`IOSurfaceIncrementUseCount`)。値のコピーが全部消えると
+/// 「使用中」を外す。`CVPixelBuffer` のプールは、使用中のサーフェスを使い回さない — だから元の
+/// `CVPixelBuffer` を先に手放しても、この値を持っている間は中身が書き換わらない。画像に書いたサーフェスは、
+/// 画像が次の 1 枚に書き換わるか、画像が捨てられるまで画像が持つ (GPU が読み終わるまでは描画の側も持つ)。
 ///
-/// 外のパッケージ (別のアプリから面を受け取る道など) も、同じ口で書ける:
+/// 外のパッケージ (別のアプリからサーフェスを受け取る方法など) も、同じ API で書ける:
 ///
 /// <!-- example: 組めない 面と表は外から受け取るもので、例の中で用意できない -->
 /// ```swift
@@ -38,18 +38,18 @@ import Synchronization
 public nonisolated struct PixelSurface: Sendable {
     /// 面と、使用中の印。
     let lease: SurfaceLease
-    /// 面の 8 bit の色を、Display P3 の 8 bit の色へ写す表。
+    /// サーフェスの 8 bit の色を、Display P3 の 8 bit の色へ変換する表。
     public let conversion: ColorTable
     /// 横の画素数。
     public var width: Int { lease.surface.width }
     /// 縦の画素数。
     public var height: Int { lease.surface.height }
 
-    /// 面と表から作る。BGRA でない面・平面を持つ面なら `nil`。
+    /// サーフェスと表から作る。BGRA でないサーフェス・平面を持つサーフェスなら `nil`。
     ///
     /// - Parameters:
-    ///   - surface: 32 bit の BGRA の面。作った時点で「使用中」になる。
-    ///   - conversion: 面の色の意味 (色空間・伝達関数) に合わせて作った表。
+    ///   - surface: 32 bit の BGRA のサーフェス。作った時点で「使用中」になる。
+    ///   - conversion: サーフェスの色の意味 (色空間・伝達関数) に合わせて作った表。
     public init?(_ surface: IOSurface, conversion: ColorTable) {
         guard surface.pixelFormat == kCVPixelFormatType_32BGRA, surface.planeCount == 0,
             surface.bytesPerElement == 4, surface.width > 0, surface.height > 0
@@ -86,10 +86,10 @@ public nonisolated struct PixelSurface: Sendable {
 
     /// 8 bit の RGB → Display P3 の 8 bit の RGB の写像を、全 16,777,216 色ぶん小さく詰めた表。
     ///
-    /// **色の意味は作り手が決める。** 表は「どの 8 bit の色が、Display P3 のどの 8 bit の色になるか」だけを
-    /// 持ち、色空間や伝達関数を知らない。作り手は、面と同じ色の意味を持つ 256×256 の絵を青の値ごとに
+    /// **色の意味は作る側が決める。** 表は「どの 8 bit の色が、Display P3 のどの 8 bit の色になるか」だけを
+    /// 持ち、色空間や伝達関数を知らない。作る側は、サーフェスと同じ色の意味を持つ 256×256 の画像を青の値ごとに
     /// 256 枚、自分の変換に通して渡す (mokume のカメラと動画は、``DisplayImage`` を作るのと同じ変換を
-    /// 通す)。だから表で引いた色は、作り手が ``DisplayImage`` を作ったときの色と同じになる。
+    /// 通す)。だから表で引いた色は、作る側が ``DisplayImage`` を作ったときの色と同じになる。
     ///
     /// ## 詰め方
     ///
@@ -99,7 +99,7 @@ public nonisolated struct PixelSurface: Sendable {
     /// 1. 出力の赤と緑は、入力の青に依らない
     /// 2. 入力の赤を 1 段上げたとき、出力の青は変わらないか 1 段上がる
     ///
-    /// **満たさない写像からは作れず、作る口が `nil` を返す。** そのときは ``DisplayImage`` の道を使う。
+    /// **満たさない写像からは作れず、初期化子が `nil` を返す。** そのときは ``DisplayImage`` を使う方法を選ぶ。
     /// 表を作るのは全色を数えるので数十 ms かかる。毎フレームではなく、色の意味が決まったとき (動画を
     /// 開いたときなど) に 1 度作り、使い回す。
     public nonisolated final class ColorTable: Sendable {
@@ -113,10 +113,10 @@ public nonisolated struct PixelSurface: Sendable {
         /// 1 枚の絵 (青の値ごとの) の画素の数。
         private static let sliceCount = 256 * 256
 
-        /// 青の値ごとの絵から作る。写像が詰め方の性質を満たさなければ `nil`。
+        /// 青の値ごとの画像から作る。写像が詰め方の性質を満たさなければ `nil`。
         ///
         /// - Parameter slice: 入力の青 (0–255) を受け、その青で赤 (列) と緑 (行) を 0–255 まで並べた
-        ///   256×256 の絵の変換の結果を返す。並びは RGBA の 8 bit で、`((緑 × 256) + 赤) × 4` の位置から
+        ///   256×256 の画像の変換の結果を返す。並びは RGBA の 8 bit で、`((緑 × 256) + 赤) × 4` の位置から
         ///   4 バイト。不透明度はどれも 255 でなければならない。
         public init?(converting slice: (_ blue: Int) throws -> [UInt8]) rethrows {
             var redGreen = [UInt8](repeating: 0, count: Self.sliceCount * 2)

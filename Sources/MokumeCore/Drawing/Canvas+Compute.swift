@@ -59,7 +59,7 @@ extension Canvas {
         try makeComputation(name: name, url: nil, body: body, values: values)
     }
 
-    /// ファイルから計算を読み込む。**入口の関数の名前はファイル名**になる。
+    /// ファイルから計算を読み込む。**エントリポイント関数の名前はファイル名**になる。
     public func loadComputation(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
@@ -100,7 +100,7 @@ extension Canvas {
         return name.allSatisfy { $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }
     }
 
-    /// 1 次元で走らせる。
+    /// 1 次元で実行する。
     public func compute(
         _ computation: Computation, over count: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
@@ -108,7 +108,7 @@ extension Canvas {
         compute(computation, over: count, by: 1, reads: reads, writes: writes)
     }
 
-    /// 2 次元で走らせる。
+    /// 2 次元で実行する。
     public func compute(
         _ computation: Computation, over width: Int, by height: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
@@ -314,7 +314,7 @@ extension Canvas {
 
     /// 計算が書いた値を読む。意味の説明は `Sketch` が正本。
     ///
-    /// **溜めている図形には触らない。** 画素の読み戻し (`loadPixels()`) は描き切りを
+    /// **溜めている図形には触らない。** 画素の読み戻し (`loadPixels()`) はフラッシュを
     /// 呼ぶのでフレームの構造が変わるが、ここは計算だけを別のコマンドに載せて流す。
     /// だから図形を 1 つも置いていないフレームでも読めるし、読んだあとに描いたものが
     /// 消えることもない ([#389] の完了条件 — 副作用として同期している経路に頼らせない)。

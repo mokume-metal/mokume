@@ -4,33 +4,33 @@
 /// 画像を読む・作るときに起こりうる失敗。
 ///
 /// 起こりうる失敗が列挙できるので typed throws で運ぶ ([ADR-0010] 決定 7)。
-/// **読み込みは投げる** — 失敗したら別の道を選ぶ判断が要るので、黙って既定へ
-/// 倒してはいけない ([ADR-0020] 決定 5)。
+/// **読み込みは投げる** — 失敗したら別の方法を選ぶ判断が要るので、通知なしに既定へ
+/// フォールバックしてはいけない ([ADR-0020] 決定 5)。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public enum ImageFailure: Error, Equatable, Sendable {
-    /// その名前の資材が見つからない。
+    /// その名前のアセットが見つからない。
     case notFound(path: String, searched: [String])
-    /// 見つかったが、開けない。`location` は名前が解けた場所 (`..` を畳んだもの)、`reason` は
-    /// OS が名乗った開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の形式とは
-    /// 関係が無いので、直すのは `location` にあるものの置き場か権利である
+    /// 見つかったが、開けない。`location` は名前が解けた場所 (`..` を解決したもの)、`reason` は
+    /// OS が返した開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の形式とは
+    /// 関係が無いので、直すのは `location` にあるものの場所か権利である
     /// (``DataFailure/unopenable(path:location:reason:)`` と同じ形・
     /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
     ///
     /// **親のフォルダに入れず、在るかを確かめられない場合も、この case で運ぶ** — `location` は確かめられ
     /// なかった場所で、`reason` は `cannot tell whether it exists (Permission denied)` の形になる。説明は
-    /// 「見つかった」と言わず、資源の宣言の助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
+    /// 「見つかった」と言わず、リソースの宣言の助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
     case unopenable(path: String, location: String, reason: String)
     /// 開けたが、画像として読めない。
     case undecodable(path: String)
-    /// GPU 側へ置けない — 読めたが置き場が足りない、あるいは辺が 1 を割るか面の上限より大きい。
+    /// GPU 側へ置けない — 読めたがメモリが足りない、あるいは辺が 1 を割るかテクスチャの上限より大きい。
     ///
-    /// **下の端も同じ case で運ぶ。** 呼ぶ側がすることは上限を越えたときと同じ (頼む大きさを
+    /// **下の端も同じ case で運ぶ。** 呼ぶ側がすることは上限を越えたときと同じ (要求する大きさを
     /// 直す) で、分けても選び分ける先が無い (``RenderFailure/invalidSize(width:height:)`` と
     /// 同じ理由・[#1642](https://github.com/mokume-metal/mokume/issues/1642))。
     case unplaceable(width: Int, height: Int)
-    /// 書き出せなかった。`path` は頼んだ行き先、`reason` は書けなかった事情 (置き場が無い・書く権利が
+    /// 書き出せなかった。`path` は要求した行き先、`reason` は書けなかった事情 (ディレクトリが無い・書く権利が
     /// 無いなど)。``Image/save(_:)`` と、`.png` で終わらない URL を渡された `SketchRuntime.renderFrame(to:)` が投げる
     /// (``DataFailure/unwritable(path:reason:)`` と同じ形)。
     case unwritable(path: String, reason: String)
@@ -39,14 +39,14 @@ public enum ImageFailure: Error, Equatable, Sendable {
     /// この case でなく ``undecodable(path:)`` で投げる (``DataFailure/unreachable(url:reason:)`` と
     /// 同じ形・[#3715](https://github.com/mokume-metal/mokume/issues/3715))。
     case unreachable(url: String, reason: String)
-    /// 走っている面を取れない所で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
-    /// (`"loadImage(_:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// 実行中のコンテキストを取れない所で、この型を投げるリソースの API を呼んだ。`call` は呼んだ API の名前
+    /// (`"loadImage(_:)"` など)。返すものを実行中のコンテキストからしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
     ///
-    /// 面を取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで起こした
+    /// コンテキストを取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで生成した
     /// `Task` の中も) だけで、初期化子の中・後片付けの後・`Task` の中からは取れない。**名前に反して、
-    /// スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで起こした `Task` から
-    /// 同期の口を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)
+    /// スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで生成した `Task` から
+    /// 同期の API を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)
     /// と同じ事情)。
     case notRunning(call: String)
 }

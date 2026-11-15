@@ -399,14 +399,14 @@ extension SketchPart {
     ///
     /// ## 組 (threadgroup) の幅は 32
     ///
-    /// 1 次元の計算の組の幅は **32** (GPU の `threadExecutionWidth`) で、断片の
+    /// 1 次元の計算の組の幅は **32** (GPU の `threadExecutionWidth`) で、シェーダの
     /// `[[dispatch_threads_per_threadgroup]]` の x にその値が見える。`threadgroup` のメモリの配列を 32 で確保して
-    /// 使ってよい。要素数や断片によって幅は変わらない。要素数が 32 で割り切れないときは、最後の組だけが端数の
+    /// 使ってよい。要素数やシェーダによって幅は変わらない。要素数が 32 で割り切れないときは、最後の組だけが端数の
     /// 数のスレッドになり、`[[threads_per_threadgroup]]` はその組でだけ端数の数を返す (割り切れるなら全部の組で 32)。
-    /// ただし、断片が使う資源が多く、GPU がその断片に許す 1 組あたりのスレッド数
+    /// ただし、シェーダが使うリソースが多く、GPU がそのシェーダに許す 1 組あたりのスレッド数
     /// (`maxTotalThreadsPerThreadgroup`) が 32 に満たないときは、その数に収まる。
     ///
-    /// 2 次元の ``compute(_:over:by:reads:writes:)`` の組の大きさは**約束しない**。断片ごとに変わりうるので、
+    /// 2 次元の ``compute(_:over:by:reads:writes:)`` の組の大きさは**保証しない**。シェーダごとに変わりうるので、
     /// `[[dispatch_threads_per_threadgroup]]` で読んで使う (`[[threads_per_threadgroup]]` は端の組で端数になる)。
     ///
     /// ## 描くところで呼ぶ
@@ -737,7 +737,7 @@ extension SketchPart {
     ///
     /// シェーダは `uint2 at [[thread_position_in_grid]]` で位置を受け取る。ほかは 1 次元の
     /// ``compute(_:over:reads:writes:)`` と同じ。
-    /// 組の大きさだけは違い、2 次元では約束しない (断片ごとに変わりうる。全部の組で同じ値が読めるのは `[[dispatch_threads_per_threadgroup]]` で、
+    /// 組の大きさだけは違い、2 次元では保証しない (シェーダごとに変わりうる。全部の組で同じ値が読めるのは `[[dispatch_threads_per_threadgroup]]` で、
     /// `[[threads_per_threadgroup]]` は端の組で端数になる)。
     ///
     /// 下は、8 × 6 の升目 (CPU が市松に埋めたもの) を 3 枚用意し、実行された位置の升を白くする計算を、

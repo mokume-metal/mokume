@@ -129,7 +129,7 @@ extension ParamDeclaration: Codable {
         case name, type, value, min, max, choices, step
     }
 
-    /// 宣言 1 つぶん。**値と一緒に、動ける幅と許した候補も出す** — 読み手が別の面を
+    /// 宣言 1 つぶん。**値と一緒に、動ける幅と許した候補も出す** — 読み込み側が別の場所を
     /// 見に行かなくて済むようにするため ([ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 2)。
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -158,8 +158,8 @@ extension ParamDeclaration: Codable {
 
     /// 宣言 1 つぶんを読む。
     ///
-    /// **読む側が要るのは道具である** — 見張りが出すプレビューはスケッチを持っていないので、
-    /// つまみに並べる宣言をこの面から引く ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 5)。
+    /// **読む側が要るのは `mokume watch` である** — `mokume watch` が出すプレビューはスケッチを持っていないので、
+    /// ノブに並べる宣言をこの形式から引く ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 5)。
     ///
     /// 型と値は**書いた側と同じ組**として読む — 宣言は `type` と `value` を隣に持つので、
     /// 値の読み方 (``ParamValue/init(from:)``) をそのまま当てられる。書き方だけを 2 度

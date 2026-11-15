@@ -71,10 +71,10 @@ public struct Orbit: Equatable, Sendable {
     /// なる (``Camera/isUsable`` が弾く条件そのもの)。
     static let pitchLimit: Float = .pi / 2 - 0.01
 
-    /// 面がちょうど収まる視点から始める操作。
+    /// キャンバスがちょうど収まる視点から始める操作。
     ///
     /// **既定の視点 (`Camera.fitting(width:height:)`) と同じ位置に置く。** だから
-    /// `orbitControl()` を足しただけでは絵が動かない。寄り・引きの限界も既定の投影の
+    /// `orbitControl()` を追加しただけでは絵が動かない。寄り・引きの限界も既定の投影の
     /// 手前・奥の面に合わせるので、限界まで動かしても切れない。
     public static func fitting(width: some ScalarConvertible, height: some ScalarConvertible)
         -> Orbit
@@ -109,16 +109,16 @@ public struct Orbit: Equatable, Sendable {
     /// ```
     ///
     /// 既定の整え方で読んだモデルは中心が原点に来るので、見ている先も原点になる (``fitting(width:height:)``
-    /// の面の中央ではない)。`model(_:)` を `translate()` で動かして置くときは、``center`` を同じだけ
+    /// のキャンバスの中央ではない)。`model(_:)` を `translate()` で動かして置くときは、``center`` を同じだけ
     /// ずらす。
     ///
-    /// - Important: **横長と正方形の面で収まる。縦長の面では左右が切れうる。** 収める画角は既定の
-    ///   投影の縦の画角で、横の画角は面の縦横比で決まる。ここは面の大きさを受け取らないので、縦長の
-    ///   面で横が縦より狭くなる分は見ていない。縦長の面で全体を見たいときは、``distance`` を伸ばす。
+    /// - Important: **横長と正方形のキャンバスで収まる。縦長のキャンバスでは左右が切れうる。** 収める画角は既定の
+    ///   投影の縦の画角で、横の画角はキャンバスの縦横比で決まる。ここはキャンバスの大きさを受け取らないので、縦長の
+    ///   キャンバスで横が縦より狭くなる分は見ていない。縦長のキャンバスで全体を見たいときは、``distance`` を伸ばす。
     ///
     /// - Note: 大きさの無いモデル (面が 1 つも無い・1 点だけ) は収める大きさが無いので、距離 1 の
     ///   視点を返す (限界は ``init(center:distance:yaw:pitch:inertia:minimumDistance:maximumDistance:)``
-    ///   の既定)。見ている先が数でない・無限なら原点へ倒す。
+    ///   の既定)。見ている先が数でない・無限なら原点へフォールバックする。
     public static func fitting(_ model: Model) -> Orbit {
         let center = model.center
         let usableCenter = center.x.isFinite && center.y.isFinite && center.z.isFinite

@@ -21,10 +21,10 @@ import Foundation
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 package struct ObservationReport: Encodable, Equatable, Sendable {
-    /// この形式の版。上げ方は [ADR-0018] 決定 5。
+    /// この形式のバージョン。上げ方は [ADR-0018] 決定 5。
     ///
     /// **先頭の格納プロパティである** — 合成の `encode` は宣言順に書き出すので、
-    /// 置き場所が鍵の並びを決める。
+    /// 宣言の位置がキーの並びを決める。
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     public let schemaVersion = 2
@@ -35,10 +35,10 @@ package struct ObservationReport: Encodable, Equatable, Sendable {
         public let height: Int
     }
 
-    /// 撮った 1 枚。目録の 1 行。
+    /// 撮った 1 枚。マニフェストの 1 行。
     ///
     /// **絵のほかに数字も持つ。** 動いたかどうかを判定するのに何十枚も画像を開かせては、
-    /// 目録の意味が無い。``stats`` の差と ``values`` の差だけで「動いている / 止まって
+    /// マニフェストの意味が無い。``stats`` の差と ``values`` の差だけで「動いている / 止まって
     /// いる」を言えるようにしてある。
     public struct CapturedFrame: Encodable, Equatable, Sendable {
         /// 書き出した画像のファイル名 (応答からの相対)。
@@ -62,31 +62,31 @@ package struct ObservationReport: Encodable, Equatable, Sendable {
     public let frame: Int
     /// この絵を描いたフレームの時刻 (秒)。
     public let time: Double
-    /// 描いた面の大きさ。
+    /// 描いたキャンバスの大きさ。
     public let size: Size
     /// 採取の過程で起きたことわり。
     public let warnings: [String]
     /// 絵の要約。画像を開かずに「真っ黒か」「隅に寄っていないか」を判定するため。
     public let stats: FrameStats?
-    /// 走らせている重さ。速い遅いを絵からの推測ではなく数値で答えるため。
+    /// 実行中の負荷。速い遅いを絵からの推測ではなく数値で答えるため。
     public let load: RuntimeLoad?
     /// スケッチがこのフレームで差し出した値。測って残っている値 (``SketchPart/measure(_:_:)``) を含む。
     public let values: [String: ExposedValue]?
-    /// 外から届くものを受ける入り口の状態 (``Inlet/report``)。名乗る入り口が無ければ `nil`。
+    /// 外から届くものを受ける入力の状態 (``Inlet/report``)。報告する入力が無ければ `nil`。
     ///
     /// 「なぜ値が来ないか」(許可を待っている・機材が無い・抜かれた) と、最後に値が届いた
     /// フレームを、絵を開かずに読めるようにする ([ADR-0028] 決定 4)。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public let inputs: [SourceReport]?
-    /// この絵を生んだ入力の世代。読み手は等値比較だけを行う。
+    /// この絵を生んだ入力の世代。読み込み側は等値比較だけを行う。
     public let stamp: String?
-    /// 撮った絵の目録。撮った順に並ぶ。**枚数によらず在る**。
+    /// 撮った絵のマニフェスト。撮った順に並ぶ。**枚数によらず在る**。
     public let frames: [CapturedFrame]
-    /// 指定を適用して撮れた秒。時刻指定の成功時だけ在る。目録の時刻と照合する。
+    /// 指定を適用して撮れた秒。時刻指定の成功時だけ在る。マニフェストの時刻と照合する。
     public let appliedTime: Double?
-    /// 持ち出した組 (``ObservationRequest/keep``) の置き場。**この応答からの相対** (`../kept/<id>`)。持ち出しを
-    /// 頼まなかった・持ち出せなかったときは `nil` で、鍵ごと落ちる — 頼まなかった応答は持ち出しを知らない版と
+    /// 持ち出した組 (``ObservationRequest/keep``) のディレクトリ。**この応答からの相対** (`../kept/<id>`)。持ち出しを
+    /// 要求しなかった・持ち出せなかったときは `nil` で、キーごと出力されない — 要求しなかった応答は持ち出しを知らないバージョンと
     /// 1 バイトも変わらない ([#2618](https://github.com/mokume-metal/mokume/issues/2618))。
     public let kept: String?
 

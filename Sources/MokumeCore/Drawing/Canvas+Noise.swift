@@ -28,7 +28,7 @@ extension Canvas {
         }
     }
 
-    /// 揺らぎの細かさ。``noiseDetail(_:_:)`` に `octaves`・`falloff` を渡すのと同じで、`falloff` の既定値
+    /// ノイズのディテール。``noiseDetail(_:_:)`` に `octaves`・`falloff` を渡すのと同じで、`falloff` の既定値
     /// (0.5) も同じ (#3785)。
     public func noiseDetail(octaves: Int, falloff: some ScalarConvertible = 0.5) {
         noiseDetail(octaves, falloff)

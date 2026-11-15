@@ -8,7 +8,7 @@ import Foundation
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 extension Canvas {
-    /// 断片を読み込む。
+    /// シェーダを読み込む。
     public func loadShader(
         _ path: String, values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:], numbers: [String: Numbers] = [:]
@@ -95,7 +95,7 @@ extension Canvas {
             path: path, count: numbers.count, capacity: ShapePipeline.namedNumbersCapacity)
     }
 
-    /// これから描くものを、この断片で塗る。**溜めている列をその場で閉じる。**
+    /// これから描くものを、このシェーダで塗る。**溜めているキューをその場で閉じる。**
     public func shader(_ shader: Shader) {
         guard shader !== currentShader else { return }
         closeBatch()

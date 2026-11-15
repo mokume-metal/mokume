@@ -16,13 +16,13 @@ public enum Clock: Equatable, Sendable {
 
     /// フレーム番号から導く。
     ///
-    /// **同じスケッチを 2 回走らせると、同じ絵になる。** 実時間を混ぜると、走らせる
+    /// **同じスケッチを 2 回実行すると、同じ絵になる。** 実時間を混ぜると、実行する
     /// たびに数フレームぶんずれた絵が出る — 機械が「変わっていない」と言えなくなる。
     case frameIndex(frameRate: Int)
 }
 
 extension SketchSettings {
-    /// ウィンドウで走らせるときの時計の選び方 (``SketchSettings/clock``)。
+    /// ウィンドウで実行するときの時計の選び方 (``SketchSettings/clock``)。
     ///
     /// 走っている時計そのもの (``Clock``) とは別の型にしてある。選ぶ側は刻みを書かずに
     /// ``frames`` と書き、刻みは ``SketchSettings/frameRate`` から採る — 刻みを 2 か所に書くと、

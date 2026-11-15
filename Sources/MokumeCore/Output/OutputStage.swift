@@ -31,7 +31,7 @@ import simd
 package nonisolated enum OutputStage {
     /// 作業空間の画素を、表示できる形へ変換する。
     ///
-    /// 明るさを写す段の設定は**画面が持つ**ので、画面を経由しないこの入口では
+    /// トーンマッピングの設定は**画面が持つ**ので、画面を経由しないこの関数では
     /// 既定 — 何も変えない設定 — が使われる。
     public static func encode(_ pixels: PixelBuffer) -> DisplayImage {
         encode(pixels, brightness: .default)

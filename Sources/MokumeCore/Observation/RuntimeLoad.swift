@@ -36,7 +36,7 @@ package struct RuntimeLoad: Encodable, Equatable, Sendable {
     /// 起動してから、1 フレームの予算 (1 / ``SketchSettings/frameRate`` 秒) を越えたフレームの数。
     ///
     /// **フレームの時計 (``SketchSettings/ClockMode/frames``) では、越えたフレームがそのまま処理落ち
-    /// になる。** 測るのはフレームの仕事 (時刻を進めてから組み終えるまで) の長さで、`setup()` と
+    /// になる。** 測るのはフレームの仕事 (時刻を進めてから構築し終えるまで) の長さで、`setup()` と
     /// 画面の更新を待つ間は含まない ([#2601](https://github.com/mokume-metal/mokume/issues/2601))。
     public let overBudgetFrames: Int
     /// 起動してから、仕事がいちばん長かったフレーム。まだ 1 枚も測っていなければ `nil`。

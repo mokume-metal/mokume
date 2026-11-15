@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// 走らせたまま動かせる値の、面に出る表現。
+/// 実行したまま動かせる値の、外部に出る表現。
 ///
-/// **型を値の隣に書く。** 値だけを裸で置くと、読み手は 1.0 が実数なのか整数なのかを
-/// 推測することになる。名乗り方は観測が差し出す値と同じ形で、同じ意味の表現を
+/// **型を値の隣に書く。** 値だけを裸で置くと、読み込み側は 1.0 が実数なのか整数なのかを
+/// 推測することになる。型の出し方は観測が差し出す値と同じ形で、同じ意味の表現を
 /// 2 つ持たない ([ADR-0030] 決定 4)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
@@ -17,7 +17,7 @@ public enum ParamValue: Equatable, Sendable {
     case vector2(Vector2)
     case vector3(Vector3)
 
-    /// 形式の中で名乗る型の名前。
+    /// 形式の中に出力する型の名前。
     public var typeName: String { paramType.rawValue }
 
     /// 名乗る型。**綴りの正典は ``ParamTypeName``** で、読む側も同じものを引く —
@@ -37,7 +37,7 @@ public enum ParamValue: Equatable, Sendable {
     /// 数として読めるか。
     ///
     /// **範囲が意味を持つかの判定には使わない** — 範囲は組にも成分ごとに効く
-    /// (つまみは `KnobKind.forDeclaration(_:)`、外からの収めは `ParamBox` が持つ)。
+    /// (ノブは `KnobKind.forDeclaration(_:)`、外からの収めは `ParamBox` が持つ)。
     public var isNumber: Bool {
         switch self {
         case .float, .int: true
@@ -85,16 +85,16 @@ public enum ParamValue: Equatable, Sendable {
     }
 }
 
-/// 面に出せる値。
+/// 外部に出せる値。
 ///
-/// 面に出る型は最小に保つ ([ADR-0024] 決定 8)。単位を持つ値 (角度・時間・長さ) を
+/// 外部に出る型は最小に保つ ([ADR-0024] 決定 8)。単位を持つ値 (角度・時間・長さ) を
 /// 型で分けないのは同じ規律で、単位は名前と説明が持つ。
 ///
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
 public protocol ParamRepresentable: Sendable {
-    /// 面に出る表現。
+    /// 外部に出る表現。
     var paramValue: ParamValue { get }
-    /// 面から来た表現を、この型として読む。型が違えば `nil`。
+    /// 外部から来た表現を、この型として読む。型が違えば `nil`。
     init?(paramValue: ParamValue)
 }
 
@@ -107,8 +107,8 @@ extension Double: ParamRepresentable {
 }
 
 extension Float: ParamRepresentable {
-    /// `Float` と `Double` はどちらも `float` を名乗る。面に出る形は数値なので、
-    /// 精度の違いを型の名前で分けても読み手にできることが増えない。
+    /// `Float` と `Double` はどちらも `float` として出力される。外部に出る形は数値なので、
+    /// 精度の違いを型の名前で分けても読み込み側にできることが増えない。
     public var paramValue: ParamValue { .float(Double(self)) }
     public init?(paramValue: ParamValue) {
         guard case .float(let value) = paramValue else { return nil }
@@ -141,7 +141,7 @@ extension String: ParamRepresentable {
 }
 
 extension LinearRGBA: ParamRepresentable {
-    /// 色は作業空間の表現そのものを出す。公開の面に出る色の型がそれである以上
+    /// 色は作業空間の表現そのものを出す。公開 API に出る色の型がそれである以上
     /// ([ADR-0020] 決定 6)、往復に変換を挟まない ([ADR-0030] 決定 4)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md

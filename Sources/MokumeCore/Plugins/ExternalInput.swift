@@ -6,18 +6,18 @@ import Synchronization
 
 /// 外から届く値の、最新の 1 つを預かる入れ物。
 ///
-/// 外から届くものを受ける入り口の、共通の土台である ([ADR-0042] 決定 4)。受け渡しは
+/// 外から届くものを受ける入力の、共通の土台である ([ADR-0042] 決定 4)。受け渡しは
 /// 3 層で、この型はその真ん中を持つ。
 ///
 /// 1. **OS のコールバック層** — 任意のスレッドで ``send(_:hostTime:)`` と
 ///    ``setState(_:)`` を呼ぶ
 /// 2. **入れ物** — この型。最新の 1 つだけを持ち、新しいものが古いものを上書きする
 ///    ([ADR-0028] 決定 2 の「最新の 1 つ」)。溜まらない
-/// 3. **フレーム** — 入り口の ``Inlet/supply()`` が ``take()`` で取り出す。
+/// 3. **フレーム** — 入力の ``Inlet/supply()`` が ``take()`` で取り出す。
 ///    取り出したフレームが ``Arrival`` に記録される
 ///
 /// **差し替えはここで行う** ([ADR-0028] 決定 6)。実機・記録の再生・合成した値の
-/// どれも、同じ ``send(_:hostTime:)`` へ入れる。入り口から先は、出どころを知らない。
+/// どれも、同じ ``send(_:hostTime:)`` へ入れる。入力から先は、出どころを知らない。
 ///
 /// ```swift
 /// final class Thermometer: Inlet {
@@ -31,14 +31,14 @@ import Synchronization
 /// }
 /// ```
 ///
-/// **``Inlet/close()`` で ``discardWaiting()`` を呼ぶ。** 外した入り口は `attach(_:)` で足し直されうる
-/// (``Inlet/open()``)。外す前に届いて読まれなかった値が残っていると、足し直した最初のフレームの
+/// **``Inlet/close()`` で ``discardWaiting()`` を呼ぶ。** 取り外した入力は `attach(_:)` で追加し直されうる
+/// (``Inlet/open()``)。外す前に届いて読まれなかった値が残っていると、追加し直した最初のフレームの
 /// ``take()`` が古い値を出す。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 public nonisolated final class ExternalInput<Value: Sendable>: Sendable {
-    /// 何の入り口か。観測の応答に出る名前。
+    /// 何の入力か。観測の応答に出る名前。
     public let name: String
 
     private let latest = Mutex<(value: Value, hostTime: UInt64)?>(nil)
@@ -95,14 +95,14 @@ public nonisolated final class ExternalInput<Value: Sendable>: Sendable {
 
     /// まだ取り出されていない値を、読まずに捨てる。
     ///
-    /// 入り口が ``Inlet/close()`` で呼ぶ。外した入り口は足し直されうる (``Inlet/open()``) ので、外す前に届いて
-    /// 読まれなかった値を残すと、足し直した最初の ``take()`` が古い値を出す。``lastArrival`` は変えない。
+    /// 入力が ``Inlet/close()`` で呼ぶ。取り外した入力は追加し直されうる (``Inlet/open()``) ので、外す前に届いて
+    /// 読まれなかった値を残すと、追加し直した最初の ``take()`` が古い値を出す。``lastArrival`` は変えない。
     /// 出どころ (OS のコールバックなど) が止まった後に呼ぶ — 先に捨てると、止まる間際に届いたものが残る。
     public func discardWaiting() {
         latest.withLock { $0 = nil }
     }
 
-    /// 観測の応答に載せる名乗り。``Inlet/report`` から返す。
+    /// 観測の応答に載せる報告。``Inlet/report`` から返す。
     public var report: SourceReport {
         SourceReport(name: name, state: state, lastArrival: lastArrival)
     }

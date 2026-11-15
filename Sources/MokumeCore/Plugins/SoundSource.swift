@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// 書き出しの動画の音声トラックへ載せる、音の 1 ウィンドウ (1 フレームぶんの標本)。
+/// 書き出しの動画の音声トラックへ載せる、音の 1 ウィンドウ (1 フレームぶんのサンプル)。
 ///
-/// ウィンドウはフレームの番号から決まる。**フレーム `N` は標本 `[⌊N·sr/fps⌋, ⌊(N+1)·sr/fps⌋)`** で、原点は固定の時計の
-/// フレーム 0 の頭 (標本 0)。ウィンドウの長さを丸めて足さないので、`sr` が `fps` の倍数でないとき (48000 Hz・144 fps) は
-/// ウィンドウごとの長さが 1 標本ずつ違うだけで、継ぎ目に欠けも重なりも無い ([ADR-0042] 決定 6 の改訂)。
+/// ウィンドウはフレームの番号から決まる。**フレーム `N` はサンプル `[⌊N·sr/fps⌋, ⌊(N+1)·sr/fps⌋)`** で、原点は固定の時計の
+/// フレーム 0 の頭 (サンプル 0)。ウィンドウの長さを丸めて足さないので、`sr` が `fps` の倍数でないとき (48000 Hz・144 fps) は
+/// ウィンドウごとの長さが 1 サンプルずつ違うだけで、境界に欠けも重なりも無い ([ADR-0042] 決定 6 の改訂)。
 ///
 /// ``SoundSource`` が、渡されたウィンドウへ自分の音を**足す**。Core はすべての音源が足した和を音声トラックへ書く。
 ///
@@ -26,19 +26,19 @@
 ///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 public nonisolated struct SoundWindow: Sendable, Equatable {
-    /// 音の流れの標本化率 (Hz)。書き出しの音声トラックはこの率で書く。
+    /// 音の流れのサンプルレート (Hz)。書き出しの音声トラックはこの率で書く。
     public static let sampleRate = 48_000
 
     /// フレームの番号 (固定の時計のフレーム 0 が 0)。
     public let frame: Int
-    /// ウィンドウの先頭の標本の番号 (`⌊frame·sampleRate/fps⌋`)。
+    /// ウィンドウの先頭のサンプルの番号 (`⌊frame·sampleRate/fps⌋`)。
     public let start: Int
-    /// 左の標本 (-1〜1 が全振幅)。最初は全部 0。音源が足す。
+    /// 左のサンプル (-1〜1 が全振幅)。最初は全部 0。音源が足す。
     public var left: [Float]
-    /// 右の標本。最初は全部 0。音源が足す。
+    /// 右のサンプル。最初は全部 0。音源が足す。
     public var right: [Float]
 
-    /// ウィンドウの長さ (標本)。
+    /// ウィンドウの長さ (サンプル)。
     public var count: Int { left.count }
 
     /// 無音のウィンドウを作る。
@@ -49,12 +49,12 @@ public nonisolated struct SoundWindow: Sendable, Equatable {
         right = [Float](repeating: 0, count: count)
     }
 
-    /// フレーム `frame` のウィンドウの先頭の標本の番号 `⌊frame·sampleRate/frameRate⌋`。絶対のフレーム番号から直に求める。
+    /// フレーム `frame` のウィンドウの先頭のサンプルの番号 `⌊frame·sampleRate/frameRate⌋`。絶対のフレーム番号から直に求める。
     public static func start(ofFrame frame: Int, frameRate: Int) -> Int {
         Int((Double(frame) * Double(sampleRate) / Double(max(1, frameRate))).rounded(.down))
     }
 
-    /// フレーム `frame` のウィンドウの長さ (標本)。`⌊(frame+1)·sampleRate/frameRate⌋ − ⌊frame·sampleRate/frameRate⌋`。
+    /// フレーム `frame` のウィンドウの長さ (サンプル)。`⌊(frame+1)·sampleRate/frameRate⌋ − ⌊frame·sampleRate/frameRate⌋`。
     public static func count(ofFrame frame: Int, frameRate: Int) -> Int {
         start(ofFrame: frame + 1, frameRate: frameRate) - start(ofFrame: frame, frameRate: frameRate)
     }
@@ -67,17 +67,17 @@ public nonisolated struct SoundWindow: Sendable, Equatable {
     }
 }
 
-/// 音を出す入り口の印 — 書き出しの動画の音声トラックへ、音をウィンドウごとに載せる差込口。
+/// 音を出す入力のマーカー — 書き出しの動画の音声トラックへ、音をウィンドウごとに載せる拡張点。
 ///
-/// 音の流れ (再生・合成・エフェクトを通した音) を持つ入り口 (``Inlet``) が、``Inlet`` に加えて準拠する。
-/// **組み込みの音の入り口も外のパッケージの音源も、同じこの口を通る** ([ADR-0024] 決定 10)。``Inlet`` を
+/// 音の流れ (再生・合成・エフェクトを通した音) を持つ入力 (``Inlet``) が、``Inlet`` に加えて準拠する。
+/// **組み込みの音の入力も外のパッケージの音源も、同じこの API を通る** ([ADR-0024] 決定 10)。``Inlet`` を
 /// 継がない独立の protocol なのは、``Inlet`` の準拠が既定でメインアクターに隔離されるので、継ぐと準拠の隔離が
 /// 食い違うため (Swift 6.3 で「隔離された準拠に依る」と断られる)。
 ///
 /// ## 載せる条件と時刻
 ///
 /// 固定の時計 (``Clock/frameIndex(frameRate:)``) で、画面へ出さずに `.mov` を録り始めたとき、
-/// **録りを頼まれたフレームの `draw()` が終わった時点**で、スケッチに ``SoundSource`` の入り口が居れば音声トラックが
+/// **録りを要求されたフレームの `draw()` が終わった時点**で、スケッチに ``SoundSource`` の入力が居れば音声トラックが
 /// 付く (居なければ付かない)。付いたら、毎フレーム `draw()` が終わった後・次のフレームの供給の前に、
 /// そのフレームのウィンドウ (``SoundWindow``) をすべての音源に足させて書く。ウィンドウ `N` は、フレーム `N` の `draw()` の後に
 /// 描くので、**音源がフレーム `N` の `draw()` で頼まれた操作をウィンドウ `N` の先頭から効かせるか、次のウィンドウから効かせるかは、
@@ -86,7 +86,7 @@ public nonisolated struct SoundWindow: Sendable, Equatable {
 /// そのことを 1 度だけ診断に出す。
 ///
 /// 載せない録り (実時間の時計・画面へ出す録り・MP4・GIF・連番) で音源が居れば、載せないことを 1 度だけ診断に出す。
-/// 動画の書き損じと同じく、音声の書き損じ (標本を動画へ書けなかった) も `mokume render` の終了コードに現れる。
+/// 動画の書き込み失敗と同じく、音声の書き込み失敗 (サンプルを動画へ書けなかった) も `mokume render` の終了コードに現れる。
 ///
 /// ## 動画の長さで切る・音源が描けなかったとき
 ///
@@ -95,17 +95,17 @@ public nonisolated struct SoundWindow: Sendable, Equatable {
 ///   (途中で落ちた絵は番号の穴で、ウィンドウの時刻はずれない)
 /// - **音源がウィンドウを描けなかったこと (組み込みの音源の流れが続けて失敗するなど) は、`mokume render` の終了コードに
 ///   現れない。** 終了コードに現れるのは動画へ書けなかったときで、音源が無音で返したウィンドウは書けたウィンドウである。描けなかった
-///   ことは、診断に 1 度だけ出る。外の音源が同じことを知らせたいときも、診断に出す
+///   ことは、診断に 1 度だけ出る。外の音源が同じことを通知したいときも、診断に出す
 ///
-/// ## 外のパッケージの音の入り口が守ること
+/// ## 外のパッケージの音の入力が守ること
 ///
-/// 組み込みの音の入り口が使う目印と音の時計は、外のパッケージに開いていない ([ADR-0042] 決定 3 の改訂)。外の入り口は、代わりに
+/// 組み込みの音の入力が使う目印と音の時計は、外のパッケージに開いていない ([ADR-0042] 決定 3 の改訂)。外の入力は、代わりに
 /// 次の 2 つを守る。
 ///
-/// - **ウィンドウで実時間に音を鳴らすなら、``Inlet/report`` を返す。** 返した入り口を使った記録は、再現できないと名乗る。
-///   返さないと、絵が実時間の音に依っていても、記録は再現できると誤って約束する
-/// - **音声トラックの標本の位置は、``SoundWindow/start`` と ``SoundWindow/count`` で数える。** 単精度の `authorTime` から
-///   数えると、長く回したときにウィンドウの継ぎ目がずれる
+/// - **ウィンドウで実時間に音を鳴らすなら、``Inlet/report`` を返す。** 返した入力を使った記録は、再現できないと報告する。
+///   返さないと、絵が実時間の音に依っていても、記録は再現できると誤って保証する
+/// - **音声トラックのサンプルの位置は、``SoundWindow/start`` と ``SoundWindow/count`` で数える。** 単精度の `authorTime` から
+///   数えると、長く回したときにウィンドウの境界がずれる
 ///
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
@@ -114,7 +114,7 @@ public protocol SoundSource: AnyObject {
     /// 音源には、足された直後に呼ばれる。`frameRate` は録りの fps。
     func beginTrack(frameRate: Int)
 
-    /// ウィンドウへ、自分の音を足す。**ウィンドウの外の標本を足さない**。毎フレーム 1 度、ウィンドウの番号の順に呼ばれる。
+    /// ウィンドウへ、自分の音を足す。**ウィンドウの外のサンプルを足さない**。毎フレーム 1 度、ウィンドウの番号の順に呼ばれる。
     func mix(into window: inout SoundWindow)
 
     /// 録りが終わった。以後、ウィンドウは来ない。**`beginTrack(frameRate:)` を呼ばれた音源にだけ届く。**

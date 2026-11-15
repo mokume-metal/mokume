@@ -31,8 +31,8 @@ public struct PixelBuffer: Equatable, Sendable {
     /// 指定した位置の色。原点は左上。
     ///
     /// 範囲の外を読むと透明が返る (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
-    /// 画素の面 (``Pixels``) と絵 (``Image/get(_:_:)``) も範囲の外で同じ値を返すので、
-    /// どの口で読んでも答えは変わらない。
+    /// 画素のサーフェス (``Pixels``) と画像 (``Image/get(_:_:)``) も範囲の外で同じ値を返すので、
+    /// どの API で読んでも答えは変わらない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public nonisolated subscript(x: Int, y: Int) -> LinearRGBA {

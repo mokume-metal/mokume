@@ -7,14 +7,14 @@
 ///
 /// 番号は macOS の `NSEvent.buttonNumber` で、0 が左 (主)・1 が右 (副)・2 が中である。
 /// **ブラウザの `MouseEvent.button` (1 が中・2 が副) とは 1 と 2 の並びが逆**なので、
-/// 数で比べる書き方を面に置かない — 定数の名前で書く。
+/// 数で比べる書き方を公開 API に置かない — 定数の名前で書く。
 ///
 /// 名前を持たないボタンも ``init(rawValue:)`` で表せる。**外から任意の番号が送られて
 /// くる**ので ([ADR-0018] 決定 1)、名前の付いたものしか表せない形にすると、戻る・進む
-/// のような 4 番目以降のボタンを押しただけで出来事が消える。
+/// のような 4 番目以降のボタンを押しただけでイベントが消える。
 ///
-/// **数のリテラルからは作れない。** 手本を写した `mouseButton == 37` や、ブラウザの番号を
-/// 覚えている人の `mouseButton == 2` は、黙って別のボタンになるのではなくコンパイルで止まる。
+/// **数のリテラルからは作れない。** Processing からコピーした `mouseButton == 37` や、ブラウザの番号を
+/// 覚えている人の `mouseButton == 2` は、通知なしに別のボタンになるのではなくコンパイルで止まる。
 /// - Note: **隔離の外に置く。** ライブラリ全体が main actor を既定の隔離としているので
 ///   ([ADR-0010](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md) 決定 1)、
 ///   何も書かないと `Hashable` の準拠まで隔離され、隔離の外から比べられなくなる。
@@ -25,8 +25,8 @@
 public nonisolated struct MouseButton: Sendable, Hashable {
     /// macOS の `NSEvent.buttonNumber`。**外から送る `button` と同じ数。**
     ///
-    /// この数を手で書く必要は無い — 名前の付いたボタンは下の定数で書ける。線を組み立てる
-    /// 側 (道具・エージェント) のために公開している。
+    /// この数を手で書く必要は無い — 名前の付いたボタンは下の定数で書ける。ワイヤ形式を生成する
+    /// 側 (ツール・エージェント) のために公開している。
     public let rawValue: Int
 
     /// 番号からボタンを作る。**知らない番号も表せる** (弾かない)。
@@ -39,10 +39,10 @@ public nonisolated struct MouseButton: Sendable, Hashable {
 // [#1274](https://github.com/mokume-metal/mokume/issues/1274))。型に書いただけでは、
 // ここで宣言する静的な定数は既定の隔離 (main actor) に載る。
 nonisolated extension MouseButton {
-    /// 左のボタン (主ボタン)。手本の `LEFT`。
+    /// 左のボタン (主ボタン)。Processing の `LEFT`。
     public static let left = MouseButton(rawValue: 0)
-    /// 右のボタン (副ボタン)。手本の `RIGHT`。
+    /// 右のボタン (副ボタン)。Processing の `RIGHT`。
     public static let right = MouseButton(rawValue: 1)
-    /// 中のボタン (ホイールの押し込み)。手本の `CENTER`。
+    /// 中のボタン (ホイールの押し込み)。Processing の `CENTER`。
     public static let center = MouseButton(rawValue: 2)
 }
