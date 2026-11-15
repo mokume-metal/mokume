@@ -465,12 +465,25 @@ extension Canvas {
             case .full: break
             }
             guard atlas.canGrow else { return nil }
-            closeBatch()
-            do { try atlas.grow(gpu: gpu) } catch { return nil }
-            atlasPageFrame = framesDrawn
-            currentTexture = atlas.held
-            whiteUV = atlas.whiteUV
+            do { try replaceGlyphPage() } catch { return nil }
         }
+    }
+
+    /// 焼き場の頁を替える。**広げられれば広げ、上限の頁なら同じ大きさで焼き直す。** 読む面と白い区画の
+    /// 位置 (``whiteUV``) も新しい頁へ移す。
+    ///
+    /// 替える前に列を閉じる — 閉じた列は前の頁を持ち主ごと抱えて読み続ける (``GlyphAtlas/grow(gpu:)``)。
+    /// 字を焼く前の白い区画だけの頁 (``GlyphAtlas/whiteOnlySize``) も、最初の字をここで替える (#4082)。
+    func replaceGlyphPage() throws(RenderFailure) {
+        closeBatch()
+        if atlas.canGrow {
+            try atlas.grow(gpu: gpu)
+        } else {
+            try atlas.rebake(gpu: gpu)
+        }
+        atlasPageFrame = framesDrawn
+        currentTexture = atlas.held
+        whiteUV = atlas.whiteUV
     }
 
     /// 拡大した字が、1 字の大きさか頁の上限で、頼んだ段より低い段の画素で描かれたことを、初回だけ知らせる。
@@ -521,19 +534,7 @@ extension Canvas {
                 if reportsFull { warnAtlasFullInOneFrameOnce() }
                 return nil
             }
-            closeBatch()
-            do {
-                if atlas.canGrow {
-                    try atlas.grow(gpu: gpu)
-                } else {
-                    try atlas.rebake(gpu: gpu)
-                }
-            } catch {
-                return nil
-            }
-            atlasPageFrame = framesDrawn
-            currentTexture = atlas.held
-            whiteUV = atlas.whiteUV
+            do { try replaceGlyphPage() } catch { return nil }
         }
     }
 

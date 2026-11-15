@@ -63,16 +63,19 @@ struct FrameAutoreleaseTests {
     /// 1 本も拾えなかったら ``Watched/missed`` に名前を残す。呼び手が空でないことと missed が空であることを見る。
     static func watchBuffers(of graphics: Canvas) -> Watched {
         var watched = Watched()
+        // 描き場所の列は、まだ 1 個以上を要求されていない置き場に、装置に 1 本の空の置き場を貸す。
+        // 誰も手放さない共有の置き場は、捨てた描き場所の置き場ではないので数えない
+        let empty = try? graphics.gpu.emptyBuffer()
         func visit(_ value: Any, name: String, depth: Int) {
             if let buffer = value as? any MTLBuffer {
-                watched.direct.append(WeakBuffer(buffer: buffer))
+                if buffer !== empty { watched.direct.append(WeakBuffer(buffer: buffer)) }
                 return
             }
             if let growable = value as? GrowableBuffer {
                 var found: [WeakBuffer] = []
                 for child in Mirror(reflecting: growable).children {
                     if let buffers = child.value as? [any MTLBuffer] {
-                        found += buffers.map { WeakBuffer(buffer: $0) }
+                        found += buffers.filter { $0 !== empty }.map { WeakBuffer(buffer: $0) }
                     }
                 }
                 if found.isEmpty, growable.capacity > 0 { watched.missed.append(name) }
@@ -80,7 +83,7 @@ struct FrameAutoreleaseTests {
                 return
             }
             if let buffers = value as? [any MTLBuffer] {
-                watched.direct += buffers.map { WeakBuffer(buffer: $0) }
+                watched.direct += buffers.filter { $0 !== empty }.map { WeakBuffer(buffer: $0) }
                 return
             }
             // 辿るのは描き場所自身・値の型 (``ShadowBake`` など) だけ。ほかの参照の型 (装置・本体の面・
@@ -110,6 +113,15 @@ struct FrameAutoreleaseTests {
                 graphics.beginDraw()
                 graphics.background(Float(index * 60), 80, 120)
                 graphics.circle(9, 7, 6)
+                // 描き場所は使う種類の置き場だけ取る (#4082)。被覆の置き場は細い線 (出す画素より細い) を引いて初めて取る
+                graphics.stroke(255)
+                graphics.strokeWeight(0.4)
+                graphics.noFill()
+                graphics.beginShape()
+                graphics.vertex(2, 2)
+                graphics.vertex(9, 13)
+                graphics.vertex(16, 2)
+                graphics.endShape()
                 graphics.endDraw()
                 main.image(graphics, Float(index * 16), 0)
                 let seen = Self.watchBuffers(of: graphics)
@@ -122,7 +134,8 @@ struct FrameAutoreleaseTests {
         try gpu.settle()
         try #require(!watched.isEmpty, "描き場所が列の置き場を取っていない")
         try #require(missed.isEmpty, "置き場を取った列から 1 本も拾えていない (格納の形が変わった): \(Set(missed).sorted())")
-        // 症状の本体は環のスロット。直に持つ置き場だけで緑にならないよう、束ねる種類ごとに 1 本以上を求める
+        // 症状の本体は環のスロット。直に持つ置き場だけで緑にならないよう、束ねる種類ごとに 1 本以上を求める。
+        // 場面は 4 種類すべてを実際に使う (被覆は細い線、置き場所は円、列の値と行列はフレームごと)
         for kind in ["coverageStorage", "flatInstanceStorage", "uniformsStorage", "matrixStorage"] {
             #expect(slotNames.contains(kind), "\(kind) の環のスロットを拾えていない (拾えた列: \(slotNames.sorted()))")
         }

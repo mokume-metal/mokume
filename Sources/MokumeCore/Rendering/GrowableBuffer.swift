@@ -54,14 +54,20 @@ import Metal
     /// [#1790]: https://github.com/mokume-metal/mokume/issues/1790
     private(set) var writes = 0
 
+    /// まだ置き場を取っていないときの 0 個の要求に、装置に 1 本の空の置き場を返すか (``buffer(holding:)``)。
+    /// 偽なら 0 個の要求でも最小の容量を取る。
+    private let lendsEmptyBuffer: Bool
+
     init(
-        gpu: RenderDevice, ring: FrameRing, stride: Int, minimumCapacity: Int, label: String
+        gpu: RenderDevice, ring: FrameRing, stride: Int, minimumCapacity: Int, label: String,
+        lendsEmptyBuffer: Bool = false
     ) {
         self.gpu = gpu
         self.ring = ring
         self.stride = stride
         self.minimumCapacity = max(1, minimumCapacity)
         self.label = label
+        self.lendsEmptyBuffer = lendsEmptyBuffer
     }
 
     /// **いまの世代の置き場を常駐から退かせる** ([#795])。
@@ -97,8 +103,18 @@ import Metal
     /// 書いてよい。効果のパイプラインは作るときに置き場を取るが、作るのは頼まれたときで、前の
     /// 投入でスロットの印が落ちた後のこともある。
     ///
+    /// ## 0 個の要求は、まだ置き場を取らない (#4082)
+    ///
+    /// **空の置き場を貸す置き場 (``lendsEmptyBuffer``・描き場所の置き場) は、1 度も 1 個以上を要求されて
+    /// いなければ、装置に 1 本の空の置き場** (``RenderDevice/emptyBuffer()``) を返す。0 個の並びは誰も読まないので、束ねる口を埋められれば足りる。取るのは初めて 1 個以上を
+    /// 要求されたときで、空の置き場は誰の持ち物でもないので取り直しの待ちも要らない。そのため、1 フレーム
+    /// の中で 0 個の要求の後に大きい要求が来ても、先に束ねた番地は死なない。
+    ///
     /// [#2258]: https://github.com/mokume-metal/mokume/issues/2258
     func buffer(holding count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if lendsEmptyBuffer, buffers.isEmpty, count == 0 {
+            return try gpu.emptyBuffer()
+        }
         if buffers.isEmpty || count > capacity {
             try grow(to: count)
         } else {

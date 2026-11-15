@@ -65,8 +65,14 @@ import simd
     static let initialSize = 256
     /// 広げられる上限 (画素)。
     static let maximumSize = 4096
-    /// 初めの大きさから上限まで、頁を広げられる回数 (大きさは倍々に広がる)。
-    static let maximumGrowths = (maximumSize / initialSize).trailingZeroBitCount
+    /// 白い区画だけの頁 (``whiteOnlySize``) から上限まで、頁を広げられる回数。白い区画だけの頁からは
+    /// ``initialSize`` へ、その先は倍々に広がる。
+    static let maximumGrowths = (maximumSize / initialSize).trailingZeroBitCount + 1
+    /// 字を焼く前の頁の一辺 (画素)。**白い区画だけでできている** (#4082)。
+    ///
+    /// 字を 1 つも置かない描き場所は、図形が読む白い区画しか使わない。最初の字を焼くとき、
+    /// 頁を広げる道 (``grow(gpu:)``) で ``initialSize`` の頁へ替わる。
+    static let whiteOnlySize = whiteBlock
     /// 字形の絵の周りに置く余白 (画素)。
     ///
     /// **この余白は送り位置に混ざってはならない。** 焼くときに余白ぶんずらし、
@@ -534,8 +540,11 @@ import simd
     /// 言った注意の控え。**検査が読む。**
     private(set) var warnings = WarningLog<Warning>()
 
-    init(gpu: RenderDevice) throws(RenderFailure) {
-        self.size = Self.initialSize
+    /// - Parameter whiteOnly: 白い区画だけの頁 (``whiteOnlySize``) から始めるか。偽なら ``initialSize`` の頁から
+    ///   始める。白い区画だけの頁には字が入らないので、最初の字は頁を広げる道を通る (呼ぶ側が
+    ///   ``grow(gpu:)`` の後に読む面と白い区画の位置を替える)。
+    init(gpu: RenderDevice, whiteOnly: Bool = false) throws(RenderFailure) {
+        self.size = whiteOnly ? Self.whiteOnlySize : Self.initialSize
         self.page = try GlyphPage(side: size, gpu: gpu)
         self.pageSerial = Self.takePageSerial()
         self.cursorX = Self.reservedCorner
@@ -630,7 +639,8 @@ import simd
     /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
     /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
     func grow(gpu: RenderDevice) throws(RenderFailure) {
-        try startPage(side: min(Self.maximumSize, size * 2), gpu: gpu)
+        // 白い区画だけの頁からは、倍々ではなく最初の大きさへ飛ぶ (#4082)
+        try startPage(side: size < Self.initialSize ? Self.initialSize : min(Self.maximumSize, size * 2), gpu: gpu)
     }
 
     /// 同じ大きさの新しい頁へ替え、焼いた字形を捨てる。**上限の面が埋まったときに使う**

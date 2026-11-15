@@ -43,7 +43,8 @@ extension Canvas {
         // 前のフレームの上に積み上がる絵が書ける。奥行きは作りたての面では持ち越さない
         // 扱い (`depthIsHeld = false`) なので、最初の描き切りが必ず消す
         let graphics = try Canvas(
-            output: target, gpu: gpu, pixelDensity: 1, upscale: .spatial, outputScale: scale)
+            output: target, gpu: gpu, pixelDensity: 1, upscale: .spatial, outputScale: scale,
+            defersStorage: true)
         // 時刻と刻み・揺らぎの種と細かさの置き場を、作った面と同じものに繋ぐ (``bind(_:)``)
         bind(graphics)
         // 字形を置くかも引き継ぐ (``placesGlyphs``・#1559)。描き場所に書いた字も同じ絵に載る
