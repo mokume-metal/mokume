@@ -112,6 +112,29 @@ final class MoviePrefetcher {
         mailbox.state.withLock { $0.idle && $0.seen == serial }
     }
 
+    /// 係が最後に頼みを見て 1 歩に取りかかった時刻。**検査が読む。**
+    var lastStep: ContinuousClock.Instant {
+        mailbox.state.withLock { $0.progressed }
+    }
+
+    /// 係が走り出したか (動画を開く前の印)。**検査が読む。**
+    var hasStarted: Bool {
+        mailbox.state.withLock { $0.started }
+    }
+
+    /// 係の今の状態を 1 行にしたもの。**検査が待ち切れの説明に載せる** — 係が進んでいるのに遅い (遅れ) のか、
+    /// 頼みが新しいのに休んでいる (取りこぼし) のかを、記録 1 回で読み分けるため。
+    ///
+    /// 読み方:
+    /// - `started=false`: 係の仕事がまだ走り出していない (協調プールの `.utility` が混んでいる)
+    /// - `started=true idle=false seen=0`: 走り出したが、動画を開いている最中
+    /// - `idle=true` で `seen` が `request` より小さい: 取りこぼし (頼みが新しいのに休んでいる)
+    /// - `idle=false`: 1 歩の最中。`lastStep` は 1 歩に取りかかってからの経過なので、大きければ長い 1 歩
+    ///   (復号が遅い) であり、取りこぼしの印ではない。`idle=true` のときの `lastStep` は休んでからの長さを含む
+    var diagnosis: String {
+        mailbox.state.withLock { $0.describe(requested: serial, now: .now) }
+    }
+
     /// 係が動画を開けなかったか。開けなければ ``Movie`` は同期の読みに戻る。
     var isBroken: Bool {
         mailbox.state.withLock { $0.broken }
@@ -156,6 +179,7 @@ final class MoviePrefetcher {
     private nonisolated static func run(
         source: MovieSource, mailbox: PrefetchMailbox, wakes: AsyncStream<Void>, pause: (@Sendable () -> Void)?
     ) async {
+        mailbox.state.withLock { $0.started = true }
         guard let frames = open(source) else {
             mailbox.state.withLock {
                 $0.broken = true
@@ -255,6 +279,17 @@ nonisolated final class PrefetchMailbox: Sendable {
         /// 係が読み手を閉じて抜けた。
         var exited = false
         var restarts = 0
+        /// 係の仕事が走り出した (動画を開く前)。
+        var started = false
+        /// 係が最後に頼みを見て 1 歩に取りかかった時刻。
+        var progressed = ContinuousClock.now
+
+        /// 待ち切れの説明に載せる 1 行。`requested` は main が最後に出した頼みの番号。
+        func describe(requested: Int, now: ContinuousClock.Instant) -> String {
+            "started=\(started) idle=\(idle) seen=\(seen) request=\(requested) frames=\(frames.count) "
+                + "failure=\(failure != nil) ended=\(ended) broken=\(broken) stopping=\(stopping) exited=\(exited) "
+                + "lastStep=\(now - progressed) ago"
+        }
     }
 
     let state = Mutex(State())
@@ -293,6 +328,7 @@ nonisolated struct PrefetchWorker {
                 guard !state.stopping, let request = state.request else { return nil }
                 state.seen = request.serial
                 state.idle = false
+                state.progressed = .now
                 let limit = PrefetchKey(lap: request.lap, time: request.position + Playhead.tolerance)
                 let ahead = state.frames.count(where: { $0.generation == request.generation && $0.key > limit })
                 return (request, ahead, state.ended)
