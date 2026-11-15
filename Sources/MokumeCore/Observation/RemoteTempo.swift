@@ -21,20 +21,22 @@
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-struct RemoteTempo {
+package struct RemoteTempo {
     /// 最後に受け取った数字。**まだ 1 つも来ていなければ無い。**
     private var latest: FrameNumbers?
     /// それを受け取った時刻。
     private var receivedAt: Double?
 
+    package init() {}
+
     /// 新しい絵から読んだ数字を受け取る。
-    mutating func record(_ numbers: FrameNumbers, at now: Double) {
+    package mutating func record(_ numbers: FrameNumbers, at now: Double) {
         latest = numbers
         receivedAt = now
     }
 
     /// いま名乗ってよい数字。**古ければ `nil`。**
-    func numbers(now: Double) -> FrameNumbers? {
+    package func numbers(now: Double) -> FrameNumbers? {
         guard let latest, let receivedAt else { return nil }
         guard now - receivedAt < FrameTempo.staleAfter else { return nil }
         return latest

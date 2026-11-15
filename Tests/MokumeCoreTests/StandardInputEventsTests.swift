@@ -6,6 +6,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 標準入力から受け取る、道具のウィンドウの出来事。
 @Suite("ウィンドウの出来事を標準入力から受ける")

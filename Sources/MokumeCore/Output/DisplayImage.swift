@@ -72,5 +72,5 @@ public nonisolated struct DisplayImage: Equatable, Sendable {
 nonisolated extension DisplayImage {
     /// 画素の色が名乗る色空間 (Display P3)。本体の中で `CGImage` を作る口はすべてこれを使い、
     /// 名乗りを写しで持たない (写しの 1 つが DeviceRGB に外れていた。#3683)。
-    static let colorSpace = CGColorSpace(name: CGColorSpace.displayP3)!
+    package static let colorSpace = CGColorSpace(name: CGColorSpace.displayP3)!
 }

@@ -201,7 +201,7 @@ SPDX-License-Identifier: MIT
 
 この経路は [ADR-0024](0024-extension-seams.md) の `Outlet` ではない。あちらは**外から足せる受け手**のための継ぎ目で (だから決定 6 が 8 bit を渡す)、こちらは**画面の出口そのものが外のプロセスに在る**形である。混ぜない。
 
-> **EDR 出力はまだ実装されていない。** [ADR-0011](0011-color-model.md) 決定 5 が opt-in と定めた**有効化の口がどこにも無く**、画面へ差し出す層は `wantsExtendedDynamicRangeContent = false` を明示している (`Sources/MokumeCore/Display/SketchSurface.swift`)。だからこの決定が今日避けているのは、**将来 EDR を入れる日に運ぶ形から作り直すこと**である。運ぶ形は最も後から変えにくいところなので、ここだけは先に決めておく。
+> **EDR 出力はまだ実装されていない。** [ADR-0011](0011-color-model.md) 決定 5 が opt-in と定めた**有効化の口がどこにも無く**、画面へ差し出す層は `wantsExtendedDynamicRangeContent = false` を明示している (`Sources/MokumeMac/SketchSurface.swift`)。だからこの決定が今日避けているのは、**将来 EDR を入れる日に運ぶ形から作り直すこと**である。運ぶ形は最も後から変えにくいところなので、ここだけは先に決めておく。
 
 **採らなかった案 A — 既にある `Outlet` の 8 bit をそのまま使う。** 実装は軽い。**何が示されたら採るか**: 半精度で運ぶ経路が実装できないと分かったとき。そのときは EDR が制作中に効かないことを道具が名乗る。
 

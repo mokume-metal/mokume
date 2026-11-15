@@ -396,7 +396,7 @@ extension ShapeExit {
             "defersEnlargedGlyphBakes": "先送りを許す組み方か (#2446)。ウィンドウ・共有面の経路が組み立てのときに 1 度だけ立てる実行の制御で、形に焼き付く値を生まない",
             "exportsOneFrame": "1 枚の書き出しの最中の印 (#2446)。拡大した字の焼きを次へ送らないために読む実行の制御で、形に焼き付く値を生まない",
             "frameIsObserved": "観測が撮るフレームの印 (#2446)。拡大した字の焼きを次へ送らないために読む実行の制御で、形に焼き付く値を生まない",
-            "presence": control,
+            "madePresence": control,
             "presenceReceivers": "絵を渡している相手の名前 (#3921)。メニューバーの名乗りが読む実行の制御で、形に焼き付く値を生まない",
             "outlets": seam, "inlets": seam, "seamVisitDepth": seam, "deferredSeamChanges": seam,
             "seamsClosed": seam, "outletJoinedAt": seam,

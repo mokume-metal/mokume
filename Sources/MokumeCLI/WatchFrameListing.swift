@@ -5,6 +5,7 @@ import Darwin
 import Metal
 import MokumeCore
 import MokumeDiagnostics
+import MokumeMac
 
 /// 見張りの下で、道具が作品のウィンドウの持ち主として目録へ名乗る ([ADR-0049] 決定 2・[#3919])。
 ///

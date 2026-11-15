@@ -7,6 +7,7 @@ import MokumeDiagnostics
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// GPU の待ちが期限を越えたプロセスでは、新しい発行口を作らない
 /// ([#2052](https://github.com/mokume-metal/mokume/issues/2052))。GPU を要する。

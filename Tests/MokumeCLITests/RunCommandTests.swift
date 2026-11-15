@@ -7,6 +7,7 @@ import Testing
 import mokume
 
 @testable import MokumeCLI
+@testable import MokumeMac
 
 /// 走らせたスケッチの終わり方が、道具の終わり方にどう出るか。
 ///

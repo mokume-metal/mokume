@@ -6,6 +6,7 @@ import Metal
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 押下の 3 語 (``Keyboard``) と、押下の集合の出入りで決まる呼び出し
 /// ([#2599](https://github.com/mokume-metal/mokume/issues/2599))。

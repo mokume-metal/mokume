@@ -571,7 +571,7 @@ extension Image: PendingUpload {
     /// 打ち切りの後に書き換えていれば、既に送る旗が立っているので、送るのは 1 回である。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+    package func submissionSettled(_ submission: UInt64, dropped: Bool) {
         if submission == wholeDeliveredBy {
             wholeDeliveredBy = 0
             guard dropped else { return }

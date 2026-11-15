@@ -8,6 +8,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ファイルを選ばせるダイアログ (`selectInput`) の結果を、入力の出来事 `fileSelected` として受ける
 /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。

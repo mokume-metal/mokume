@@ -35,7 +35,7 @@ import MokumeDiagnostics
 ///
 /// フレームごとに `advance()` 1 回の時間 (CPU の側。描いた枚の組み立てと投入まで) を残し、いちばん重いフレームを名乗る。
 /// 全体の時間は、最初の枚の前から最後の枚の絵を読み戻し終える (GPU の完了) まで。
-final class ReplayPlayer: UnreproducibleSink {
+package final class ReplayPlayer: UnreproducibleSink {
     /// 結果のファイルの名前 (区画 `replay` の下)。
     static let reportName = "report.json"
     /// 結果の書式の版。
@@ -65,7 +65,7 @@ final class ReplayPlayer: UnreproducibleSink {
     }
 
     /// `.mokume/replay/report.json` の中身。
-    struct Report: Encodable {
+    package struct Report: Encodable {
         struct Timing: Encodable {
             /// 最初の枚の前から、最後の枚の絵を読み戻し終えるまで (秒)。
             let seconds: Double
@@ -77,7 +77,7 @@ final class ReplayPlayer: UnreproducibleSink {
         let schemaVersion: Int
         let record: String
         let id: String?
-        let matched: Bool
+        package let matched: Bool
         let steps: Int
         let frames: Int
         /// 食い違った照合の数。記録の回ごと・開始のつまみ・最後の枚のそれぞれで高々 1。
@@ -91,7 +91,7 @@ final class ReplayPlayer: UnreproducibleSink {
     /// 打たれた記録の場所 (結果に載せる)。
     let source: String
     /// 読んだ記録。読めなければ `nil` で、``problem`` が理由を持つ。
-    let record: ReplayRecord?
+    package let record: ReplayRecord?
     /// 結果を書く先。`nil` なら書かない (検査)。
     let reportURL: URL?
     /// 流せなかった理由 (記録が読めない・大きさが違う・途中で止まった)。
@@ -113,7 +113,7 @@ final class ReplayPlayer: UnreproducibleSink {
     /// 記録が名乗った理由と ``noticed`` の和。同じ理由を重ねないかを、並びを連結・走査せずに見る。
     private var named: Set<String> = []
     /// 書いた結果。**1 度だけ書く。**
-    private(set) var report: Report?
+    package private(set) var report: Report?
 
     init(record: ReplayRecord, source: String, reportURL: URL?) {
         self.record = record
@@ -150,7 +150,7 @@ final class ReplayPlayer: UnreproducibleSink {
     /// 作品がふつうに走り出す。理由を持った係を返し、``SketchApplication`` が最初の回の前に結果を書いて 0 以外で終わる。
     ///
     /// **環境を読むのはここだけ** — 一覧 (``StartupReads``) が読み場所としてこのファイルを名指している。
-    static func startup(
+    package static func startup(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         unset: (String) -> Void = { unsetenv($0) },
         reportURL: URL? = ReplayPlayer.defaultReport
@@ -174,7 +174,7 @@ final class ReplayPlayer: UnreproducibleSink {
 
     /// 作者の時計の開始を当てる口。**最初の枚の秒が 0 でないか止めている記録だけ** (`watch --keep-time` で作り直した
     /// 世代)。前の世代を外挿せず、記録の秒と止めているかをそのまま返す。書く先は持たない。
-    var clockStart: ClockHandover? {
+    package var clockStart: ClockHandover? {
         guard let record, record.startSeconds != 0 || record.startPaused else { return nil }
         let snapshot = ClockHandover.Snapshot(
             seconds: record.startSeconds, isHeld: record.startPaused, isStill: false, rate: nil, at: 0,
@@ -194,7 +194,7 @@ final class ReplayPlayer: UnreproducibleSink {
     }
 
     /// 記録が名乗った再現を保証しない理由を、流す側でも 1 度ずつ名乗る。
-    func announceUnreproducible() {
+    package func announceUnreproducible() {
         for reason in record?.unreproducible ?? [] {
             Diagnostics.warn("Replaying: the record says \(reason)")
         }
@@ -334,7 +334,7 @@ final class ReplayPlayer: UnreproducibleSink {
     // MARK: - 進み
 
     /// `advance()` を 1 回始める。最初の 1 回の時刻が全体の時間の起点になる。
-    func beginAdvance(at time: Double) {
+    package func beginAdvance(at time: Double) {
         if began == nil { began = time }
         advances += 1
         // 入力を配る回に届かないまま進み続ける (止まった・観測を待ち続ける) なら、流せないと名乗る
@@ -346,12 +346,12 @@ final class ReplayPlayer: UnreproducibleSink {
     }
 
     /// 描いた枚の時間 (`advance()` 1 回ぶん)。
-    func noteFrameTime(frame: Int, seconds: Double) {
+    package func noteFrameTime(frame: Int, seconds: Double) {
         frameTimes.append(FrameTime(frame: frame, seconds: seconds))
     }
 
     /// 記録の回をすべて流し終えたか、流せなくなったか。
-    var isFinished: Bool { problem != nil || (openOrdinal == nil && nextOrdinal > lastOrdinal) }
+    package var isFinished: Bool { problem != nil || (openOrdinal == nil && nextOrdinal > lastOrdinal) }
 
     /// 流し終えた。**最後の枚を照らし、結果を書く。** 2 度目からは何もしない。
     ///
@@ -402,7 +402,7 @@ final class ReplayPlayer: UnreproducibleSink {
     }
 
     /// 結果を人へ 1 行で言う (道具の端末へ出る)。再現を保証しない理由があれば、後ろに並べる (#3575)。
-    static func summary(of report: Report) -> String {
+    package static func summary(of report: Report) -> String {
         let place = report.record
         if let problem = report.problem { return "Could not replay \(place): \(problem)" + caveats(report) }
         let timing = report.timing

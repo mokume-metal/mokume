@@ -3,6 +3,7 @@
 
 import AppKit
 import MokumeCore
+import MokumeMac
 import SwiftUI
 
 /// スケッチを SwiftUI のアプリの中に映すビュー。**`import MokumeUI` で使う。**
@@ -132,7 +133,7 @@ public struct SketchView: View {
 
     /// - Parameter sketch: 映すスケッチ。**ビューの同一性ごとに 1 度だけ評価する。**
     public init(_ sketch: @autoclosure @escaping () -> some Sketch) {
-        _host = StateObject(wrappedValue: SketchHost(sketch: sketch()))
+        _host = StateObject(wrappedValue: SketchHost(make: { sketch() }))
     }
 
     public var body: some View {
@@ -145,8 +146,11 @@ public struct SketchView: View {
 final class SketchHost: ObservableObject {
     let sketch: any Sketch
 
-    init(sketch: any Sketch) {
-        self.sketch = sketch
+    /// スケッチの実体を作る。**作る前に外枠の部品を差し込む** — スケッチの `init` が画面の一覧
+    /// (``SketchPart/displays``) を読んでもよいように (``MacPlatform/install()``・#3804)。
+    init(make: () -> any Sketch) {
+        MacPlatform.install()
+        self.sketch = make()
     }
 }
 

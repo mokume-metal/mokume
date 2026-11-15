@@ -33,7 +33,7 @@ extension InputEvent {
     /// そのまま子の標準入力へ書ける 1 行 (改行を含む)。
     ///
     /// **必ず作れる。** 送るのは自分が組み立てた出来事なので、組めない値は入ってこない。
-    var wireLine: String {
+    package var wireLine: String {
         var fields: [(String, String)] = [("type", Self.quoted(wireType.rawValue))]
         for (key, value) in wireFields { fields.append((key, value)) }
         return "{" + fields.map { "\(Self.quoted($0.0)):\($0.1)" }.joined(separator: ",") + "}\n"

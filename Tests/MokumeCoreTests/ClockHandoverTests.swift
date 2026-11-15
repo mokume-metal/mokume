@@ -7,6 +7,7 @@ import Synchronization
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 作り直しをまたいで作者の時計を渡す (`mokume watch --keep-time`・[#2414])。GPU は要らない。
 ///

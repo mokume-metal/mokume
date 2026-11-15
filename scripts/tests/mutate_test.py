@@ -250,6 +250,37 @@ class BundleTest(unittest.TestCase):
                 mutate.load_bundle(path)
 
 
+class TestTargetsTest(unittest.TestCase):
+    """回す test target の選び方。下の層から切り出したモジュール (MokumeMac・ADR-0050) の変異は、下の層の
+    test target に残った検査 (共有の手伝いに頼るもの) まで回さないと、殺し手が走らない。"""
+
+    PACKAGE = {"targets": [
+        {"name": "Core", "type": "regular", "dependencies": []},
+        {"name": "Mac", "type": "regular", "dependencies": [{"byName": ["Core", None]}]},
+        {"name": "CoreTests", "type": "test", "dependencies": [{"byName": ["Core", None]}]},
+        {"name": "MacTests", "type": "test", "dependencies": [{"byName": ["Mac", None]}]},
+    ]}
+
+    def repo_with(self, root, core_test_source):
+        repo = Path(root)
+        for target, source in (("CoreTests", core_test_source), ("MacTests", "@testable import Mac\n")):
+            (repo / "Tests" / target).mkdir(parents=True)
+            (repo / "Tests" / target / "A.swift").write_text(source)
+        return repo
+
+    def test_a_split_out_module_also_runs_the_lower_tests_that_import_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self.repo_with(root, "import Testing\n@testable import Mac\n")
+            self.assertEqual(mutate.test_targets(self.PACKAGE, "Mac", repo), ["MacTests", "CoreTests"])
+            # 逆向きには広げない (上の層の test target は下の層の依存ではない)
+            self.assertEqual(mutate.test_targets(self.PACKAGE, "Core", repo), ["CoreTests"])
+
+    def test_a_lower_test_target_that_does_not_import_it_is_not_added(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self.repo_with(root, "// import Mac はコメントなので数えない\nimport MacSupport\n")
+            self.assertEqual(mutate.test_targets(self.PACKAGE, "Mac", repo), ["MacTests"])
+
+
 class ClassifyTest(unittest.TestCase):
     RELATED = {"T.GuardTests"}
 

@@ -5,11 +5,16 @@
 ///
 /// 走らせている子 1 つが起動から言った警告の数と、最後の 1 行。**速さの数字と違い、新しい絵が来なくなっても
 /// 消さない** — `noLoop()` で絵を書かない間に言った警告は、次に絵を書くまで出ないが、出たら子が入れ替わるまで残る。
-struct WarningSummary: Equatable {
+package struct WarningSummary: Equatable {
     /// 言った警告の数。1 以上 (言っていなければこの型の値を作らない)。
     let count: Int
     /// 最後に言った警告の文面。
     let last: String
+
+    package init(count: Int, last: String) {
+        self.count = count
+        self.last = last
+    }
 
     /// 警告の 1 行を省かずに載せ・出す長さ。**書き手 (``SharedFrameSurface``) の切り方と読み手
     /// (``KnobText/warnings(_:)``) の切り方は、この 1 つの定数と ``line(_:)`` を共有する** — 別々に持つと
@@ -45,13 +50,13 @@ struct WarningSummary: Equatable {
 /// 測れた 0 と区別が付かなくなる。応答が鍵ごと省くのと同じ形にし、ウィンドウは「—」と描く。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-struct FrameNumbers: Equatable {
+package struct FrameNumbers: Equatable {
     /// 進めた枚数。
-    let frameCount: Int
+    package let frameCount: Int
     /// スケッチの時刻 (秒)。
     let time: Double
     /// 直近で実際に出ている速さ。**測れていなければ `nil`。**
-    let frameRate: Double?
+    package let frameRate: Double?
     /// 直近のフレーム時間の平均 (ミリ秒)。**測れていなければ `nil`。**
     let frameTimeMs: Double?
     /// 1 フレームの予算 (1 / fps 秒) を越えたフレームの数 (``FrameBudget``)。数え上げなので常に測れている。
@@ -63,7 +68,7 @@ struct FrameNumbers: Equatable {
     /// **速さの数字と違い、測れていないことは無い** (数え上げ) が、ウィンドウは古くなっても消さない
     /// (``SharedFrameStage/warnings``)。観測の `warnings` が持っていく行 (``Diagnostics/takeUnreported()``) とは
     /// 別に数えるので、ウィンドウに出しても観測の側から行が消えない ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
-    var warningCount = 0
+    package var warningCount = 0
     /// 最後に言った警告の文面。**まだ何も言っていなければ `nil`。**
-    var lastWarning: String?
+    package var lastWarning: String?
 }

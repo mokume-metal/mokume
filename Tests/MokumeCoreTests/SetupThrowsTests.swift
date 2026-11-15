@@ -6,6 +6,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// `setup()` は `throws` で書ける ([#2401])。
 ///

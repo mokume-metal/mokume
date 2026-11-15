@@ -40,7 +40,8 @@ robin) にする — 全体の期限で打ち切ったとき、先頭のファ�
 ループの終わりの条件を反転した変異が、全体の期限を食い潰さないため。
 
 **関連の suite は 2 段で選ぶ。** (1) 変異したファイルのモジュールの test target
-(`swift package dump-package` の依存から)、(2) 変異を囲む宣言 (型・関数) の名前を、その test
+(`swift package dump-package` の依存から。下の層の test target がそのモジュールを import していれば
+それも — ``test_targets``)、(2) 変異を囲む宣言 (型・関数) の名前を、その test
 target の原文から語で grep して当たったファイルの suite。`--since` の候補はまず (2) に絞って
 回し、殺せなければ (1) の target 全体と (2) へ広げてから `survived` と言う (狭い集合だけで
 生き残りと言わない)。束は帰属を正しく数えるため、最初から広い集合で回す。選んだ target・名前・
@@ -342,19 +343,28 @@ def module_of(path):
     return parts[1] if len(parts) > 2 and parts[0] == "Sources" else None
 
 
-def test_targets(package, module):
+def test_targets(package, module, repo=None):
     """モジュールの test target。`<モジュール>Tests` が在ればそれ、無ければ直に依存する test target、
-    それも無ければ (MokumeDiagnostics のような下の層) 推移的に依存する test target。"""
+    それも無ければ (MokumeDiagnostics のような下の層) 推移的に依存する test target。
+
+    `<モジュール>Tests` が在っても、**直に依存する下の層の test target がこのモジュールを名指しで import
+    していれば、それも回す** (`repo` を渡したとき)。下の層から切り出したモジュール (MokumeMac・ADR-0050) は、
+    共有の手伝いに頼る検査を下の層の test target (MokumeCoreTests) に残しているので、自分の test target
+    だけでは殺し手が走らない。"""
     targets = {t["name"]: t for t in package.get("targets", [])}
     tests = sorted(name for name, t in targets.items() if t.get("type") == "test")
-    if module + "Tests" in tests:
-        return [module + "Tests"]
 
     def dependencies(name):
         for dependency in targets.get(name, {}).get("dependencies", []):
             for value in dependency.values():
                 if isinstance(value, list) and value and isinstance(value[0], str):
                     yield value[0]
+
+    if module + "Tests" in tests:
+        lower = [] if repo is None else [
+            dependency + "Tests" for dependency in sorted(set(dependencies(module)))
+            if dependency + "Tests" in tests and imports_module(repo, dependency + "Tests", module)]
+        return [module + "Tests"] + lower
 
     def reaches(name, seen):
         for dependency in dependencies(name):
@@ -364,6 +374,13 @@ def test_targets(package, module):
 
     direct = [name for name in tests if module in dependencies(name)]
     return direct or [name for name in tests if reaches(name, {name})]
+
+
+def imports_module(repo, target, module):
+    """test target の原文のどれかが、モジュールを名指しで import しているか (`@testable` も)。"""
+    statement = re.compile(r"^\s*(?:@testable\s+)?import\s+" + re.escape(module) + r"\s*$", re.MULTILINE)
+    return any(statement.search(path.read_text(encoding="utf-8"))
+               for path in sorted((repo / "Tests" / target).rglob("*.swift")))
 
 
 def suites_mentioning(repo, targets, names):
@@ -677,7 +694,7 @@ def evaluate(runner, package, mutant, wide_only):
     original = path.read_text(encoding="utf-8")
     mutated, reason = apply(original, mutant)
     module = module_of(mutant["file"])
-    targets = test_targets(package, module) if module else []
+    targets = test_targets(package, module, repo) if module else []
     line = mutant.get("line") or (original[: original.find(mutant["find"])].count("\n") + 1
                                   if mutated is not None else 1)
     names = enclosing_names(original, line)

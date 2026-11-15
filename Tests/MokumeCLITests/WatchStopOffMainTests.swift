@@ -7,6 +7,7 @@ import Testing
 import mokume
 
 @testable import MokumeCLI
+@testable import MokumeMac
 
 /// 子を止める待ちが main actor を塞がないこと
 /// ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。

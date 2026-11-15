@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+@testable import MokumeMac
 
 /// 検査からウィンドウへ送れるキーの出来事。
 ///

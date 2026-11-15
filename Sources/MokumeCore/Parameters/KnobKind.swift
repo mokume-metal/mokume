@@ -8,7 +8,7 @@
 /// 立ち上げずに検められる必要があり、ウィンドウの中に埋めるとそれができない。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-enum KnobKind: Equatable {
+package enum KnobKind: Equatable {
     /// 実数のスライダー。`step` を書いていれば、その刻みで動く ([#2438](https://github.com/mokume-metal/mokume/issues/2438))。
     case slider(ParamRange, step: Double? = nil)
     /// 整数のスライダー。刻みは 1。
@@ -26,7 +26,7 @@ enum KnobKind: Equatable {
 
     /// つまみを出さない理由。**黙って消さない** — ウィンドウに並ばない値があると、書いたのに
     /// 効かないのか出していないだけなのかが読み手には区別できない。
-    enum Reason: Equatable {
+    package enum Reason: Equatable {
         /// 数値だが範囲を書いていない。
         case rangeNotDeclared
         /// 数値で範囲を書いたが、端が非有限なので面に出していない (`0...Double.infinity`・
@@ -37,7 +37,7 @@ enum KnobKind: Equatable {
         case choicesNotDeclared
 
         /// ウィンドウに添える 1 行。**次に何を書けばよいかまで書く。**
-        var note: String {
+        package var note: String {
             switch self {
             case .rangeNotDeclared: "declare a range and a knob appears"
             case .rangeNotFinite: "the range has an end that is not a finite number; give both ends and a knob appears"
@@ -60,7 +60,7 @@ extension KnobKind {
     /// 説明できない。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-    static func forDeclaration(_ declaration: ParamDeclaration) -> KnobKind {
+    package static func forDeclaration(_ declaration: ParamDeclaration) -> KnobKind {
         switch declaration.value {
         case .float:
             guard let range = declaration.range else { return .none(missingRange(declaration)) }

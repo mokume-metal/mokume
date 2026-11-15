@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ウィンドウを開かずに、固定の fps で決めた枚数を書き出す経路 (`mokume render`・[#1282])。
 ///

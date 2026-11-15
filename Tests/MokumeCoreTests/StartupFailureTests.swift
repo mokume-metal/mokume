@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 起動できなかったときに出る文面 (#527・#600)。GPU は要らない。
 ///

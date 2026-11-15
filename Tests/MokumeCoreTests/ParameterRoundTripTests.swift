@@ -7,6 +7,7 @@ import SwiftUI
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 @testable import mokume
 
 /// 同じ 1 つの値が、3 つの入口 (ウィンドウ・面・保存) から往復すること。

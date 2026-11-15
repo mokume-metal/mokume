@@ -7,6 +7,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// スケッチが自分で持つウィンドウ ([#714](https://github.com/mokume-metal/mokume/issues/714))。
 ///

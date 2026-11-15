@@ -109,7 +109,7 @@ import Synchronization
 /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
 /// [#2054]: https://github.com/mokume-metal/mokume/issues/2054
 /// [#2235]: https://github.com/mokume-metal/mokume/issues/2235
-nonisolated final class CommandQueueGate: Sendable {
+package nonisolated final class CommandQueueGate: Sendable {
     /// 期限を越えた待ちの種類。GPU の待ちは 4 つで、どれも `RenderDevice` の `signalReached(_:while:)` を通る。
     enum Wait: Sendable, Equatable {
         /// 土台を畳む前の待ち (`deinit`)。**投げない**ので、待った検査は緑のまま残りうる
@@ -133,7 +133,7 @@ nonisolated final class CommandQueueGate: Sendable {
     }
 
     /// 最初に印を立てた待ち。
-    struct Closure: Sendable, Equatable {
+    package struct Closure: Sendable, Equatable {
         let wait: Wait
         /// その待ちの期限
         let limit: Duration
@@ -252,7 +252,7 @@ nonisolated final class CommandQueueGate: Sendable {
     var expiryRecordPath: URL? { expiryRecord?.path }
 
     /// 最初に印を立てた待ち。立っていなければ `nil`。
-    var closure: Closure? { state.withLock { $0.closure } }
+    package var closure: Closure? { state.withLock { $0.closure } }
 
     /// 土台が手放した発行口を引き取る。**すぐには解放せず、後から ``retiredQueueLimit`` 本が手放された
     /// ときに解放する** (#2054。上の「手放した発行口の解放を遅らせる」)。

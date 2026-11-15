@@ -145,7 +145,7 @@ package final class InputState {
     /// ファイルを選ばせる頼みの待ち (``SketchPart/selectInput(_:)``)。結果は入力の出来事
     /// (``InputEvent/fileSelected(path:serial:)``) としてここへ届くので、待ちも合流点が持つ
     /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
-    let selection = SelectionBroker()
+    package let selection = SelectionBroker()
 
     /// 溜められた出来事を知らせる先。**記録 (``ReplayRecorder``) が差す** ([#3570](https://github.com/mokume-metal/mokume/issues/3570))。
     /// 溜める前の生の形で渡すので、溢れて先に当てた 1 件も、和が溢れて捨てる 1 件も落とさない。記録していない実行では `nil`。

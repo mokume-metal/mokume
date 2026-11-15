@@ -15,7 +15,7 @@ import QuartzCore
 /// 同じ経路を通れる — [ADR-0012] 決定 1 の「成果物はテクスチャ」がそのまま効く。
 ///
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
-protocol PresentableFrame {
+package protocol PresentableFrame {
     var texture: any MTLTexture { get }
     var width: Int { get }
     var height: Int { get }
@@ -27,7 +27,7 @@ protocol PresentableFrame {
 extension RenderTarget: PresentableFrame {}
 
 @MainActor
-final class FramePresenter {
+package final class FramePresenter {
     private let gpu: RenderDevice
     let pipeline: PresentPipeline
 
@@ -35,7 +35,7 @@ final class FramePresenter {
     ///
     /// 面が足りないときは待たずに見送る。**「見送った」ことを数えて外から読めるように
     /// しておく** — 絵が出ない・動きが飛ぶといった症状の出どころが、ここを見れば分かる。
-    private(set) var missedFrames = 0
+    package private(set) var missedFrames = 0
 
     /// 前回差し出した面の大きさ。まだ 1 枚も差し出していなければ `(0, 0)`。
     ///
@@ -52,7 +52,7 @@ final class FramePresenter {
     /// (`SketchApplication`) は出し直しを待つ必要が無く、番号を要らないためである。
     ///
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
-    private(set) var lastSubmission: UInt64 = 0
+    package private(set) var lastSubmission: UInt64 = 0
 
     /// 描いた絵を画面へ出すべきか。
     ///
@@ -62,11 +62,11 @@ final class FramePresenter {
     /// **最初の 1 回は無条件に通す。** 見えているかの判定はウィンドウが出てから更新されるので、
     /// それを待たずに描き終えるスケッチ (1 枚しか描かないもの) が、永久に何も表示
     /// しないことになる。
-    static func shouldPresent(windowIsVisible: Bool, hasPresented: Bool) -> Bool {
+    package static func shouldPresent(windowIsVisible: Bool, hasPresented: Bool) -> Bool {
         hasPresented ? windowIsVisible : true
     }
 
-    init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
+    package init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
         self.gpu = gpu
         self.pipeline = try PresentPipeline(gpu: gpu, pixelFormat: pixelFormat)
     }
@@ -75,7 +75,7 @@ final class FramePresenter {
     ///
     /// - Returns: 差し出したら `true`。面を取れずに見送ったら `false`。
     @discardableResult
-    func present(_ source: some PresentableFrame, to layer: CAMetalLayer) throws(RenderFailure) -> Bool {
+    package func present(_ source: some PresentableFrame, to layer: CAMetalLayer) throws(RenderFailure) -> Bool {
         guard let drawable = layer.nextDrawable() else {
             missedFrames += 1
             return false
@@ -116,7 +116,7 @@ final class FramePresenter {
     /// [#748]: https://github.com/mokume-metal/mokume/issues/748
     /// - Returns: 振った投入番号。
     @discardableResult
-    func draw(_ source: some PresentableFrame, into destination: any MTLTexture) throws(RenderFailure)
+    package func draw(_ source: some PresentableFrame, into destination: any MTLTexture) throws(RenderFailure)
         -> UInt64
     {
         let submission = try gpu.withCommands { commands throws(RenderFailure) in

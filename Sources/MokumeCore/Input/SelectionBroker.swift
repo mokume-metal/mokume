@@ -32,9 +32,9 @@ import Foundation
 ///
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
-final class SelectionBroker {
+package final class SelectionBroker {
     /// 何を選ばせるか。ウィンドウを持つ側は種類に合うパネルを出す (``FilePicker``)。
-    enum Kind: String, CaseIterable, Sendable {
+    package enum Kind: String, CaseIterable, Sendable {
         /// 在るファイルを 1 つ (``SketchPart/selectInput(_:)``)。
         case file
         /// 保存先 (``SketchPart/selectOutput(_:)``)。まだ無いファイルの名前も選べる。
@@ -44,10 +44,10 @@ final class SelectionBroker {
     }
 
     /// ウィンドウを持つ側へ渡す頼み。通し番号は 1 から数え、頼むたびに進む (種類を問わず 1 つの列)。
-    struct Request: Equatable, Sendable {
-        let serial: Int
-        let prompt: String
-        let kind: Kind
+    package struct Request: Equatable, Sendable {
+        package let serial: Int
+        package let prompt: String
+        package let kind: Kind
 
         init(serial: Int, prompt: String, kind: Kind = .file) {
             self.serial = serial
@@ -57,7 +57,7 @@ final class SelectionBroker {
     }
 
     /// いま待っている頼み。待っていなければ `nil`。
-    private(set) var pending: Request?
+    package private(set) var pending: Request?
     private var waiting: CheckedContinuation<String?, Never>?
     private var issued = 0
     /// 実行が終わったか (``end()``)。終わった後の頼みは待たずに `nil` で返す。

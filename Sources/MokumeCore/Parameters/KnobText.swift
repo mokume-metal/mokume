@@ -4,7 +4,7 @@
 import Foundation
 
 /// つまみの脇と数字の欄に出す表記。
-enum KnobText {
+package enum KnobText {
     /// 測れていないことの表し方。**0 と書かない** ([ADR-0030] 決定 7) — 測れた 0 と
     /// 区別が付かなくなる。綴りをここ 1 つに持ち、ウィンドウの中で表明の形を揃える。
     ///
@@ -31,7 +31,7 @@ enum KnobText {
     /// ([#2601](https://github.com/mokume-metal/mokume/issues/2601))。フレームの時計では越えたフレームが
     /// そのまま処理落ちになるので、平均の速さに埋もれさせない。越えた数は数え上げなので常に測れて
     /// おり、番号は 1 枚も測っていなければ欠測である。
-    static func numbers(_ numbers: FrameNumbers?) -> [(label: String, value: String)] {
+    package static func numbers(_ numbers: FrameNumbers?) -> [(label: String, value: String)] {
         guard let numbers else {
             return ["fps", "ms", "frame", "t", "slow", "worst"].map { (label: $0, value: notMeasured) }
         }
@@ -50,13 +50,13 @@ enum KnobText {
     ///
     /// **単複で語を選ばず、数だけを差し込む** (ADR-0038 決定 3)。最後の 1 行は端末に出た文面のままで、
     /// 改行は畳み、長ければ末尾を省く。
-    static func warnings(_ summary: WarningSummary?) -> (count: String, last: String)? {
+    package static func warnings(_ summary: WarningSummary?) -> (count: String, last: String)? {
         guard let summary else { return nil }
         return (String(summary.count), WarningSummary.line(summary.last))
     }
 
     /// 値を 1 行で。**桁を揃える** — 引いている最中に幅が伸び縮みすると読みにくい。
-    static func value(of value: ParamValue) -> String {
+    package static func value(of value: ParamValue) -> String {
         switch value {
         case .float(let number): number.formatted(.number.precision(.fractionLength(2)))
         case .int(let number): String(number)

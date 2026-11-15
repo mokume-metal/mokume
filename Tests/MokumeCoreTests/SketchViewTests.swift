@@ -10,6 +10,7 @@ import SwiftUI
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 押している間だけ `x` が増えるスケッチ。作例 (`BricksAndBall` の `paddleX`) と同じ形で、`init()` が
 /// 何回呼ばれたかを数える。
@@ -421,6 +422,8 @@ struct SketchViewTests {
     /// **条件 2**: `SketchView` ではメニューバーの名乗りを出さない。
     @Test("埋め込みでは、猶予を越えて走っても名乗りを出さない")
     func noPresenceInsideTheHost() throws {
+        // 名乗りの係はウィンドウの外枠が差し込む (#3804)。差し込まないと、埋め込みかどうかに依らず名乗らず、空振りする
+        MacPlatform.install()
         let time = TimeBox()
         let runtime = try SketchRuntime(
             sketch: EmbeddedProbe(), gpu: RenderDevice(), clock: .wallClock,

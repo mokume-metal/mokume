@@ -8,6 +8,7 @@ import Testing
 import mokume
 
 @testable import MokumeCLI
+@testable import MokumeMac
 
 /// `mokume watch` の世代交代 (``WatchSession``) を、**生成した操作の列** で見る (#3218・#3207 の提案 3)。
 ///

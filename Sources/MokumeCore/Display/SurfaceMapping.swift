@@ -19,7 +19,7 @@
 ///   当てる ([#2731](https://github.com/mokume-metal/mokume/issues/2731))
 /// - **引きずったまま面の外へ出たときに止まる。** 丸めると ``InputState/dragX`` の
 ///   積み上がりが端で頭打ちになり、引きずって回す道具がウィンドウの外で固まる
-struct SurfaceMapping: Equatable {
+package struct SurfaceMapping: Equatable {
     /// 面の大きさ (点)。
     var viewWidth: Double
     var viewHeight: Double
@@ -29,6 +29,18 @@ struct SurfaceMapping: Equatable {
     /// 描く解像度。
     var canvasWidth: Double
     var canvasHeight: Double
+
+    package init(
+        viewWidth: Double, viewHeight: Double, drawableWidth: Double, drawableHeight: Double,
+        canvasWidth: Double, canvasHeight: Double
+    ) {
+        self.viewWidth = viewWidth
+        self.viewHeight = viewHeight
+        self.drawableWidth = drawableWidth
+        self.drawableHeight = drawableHeight
+        self.canvasWidth = canvasWidth
+        self.canvasHeight = canvasHeight
+    }
 
     /// ウィンドウの座標 (左下原点・点) を、キャンバスの座標 (左上原点・画素) へ写す。
     ///
@@ -45,7 +57,7 @@ struct SurfaceMapping: Equatable {
     ///
     /// - Returns: 写した座標。大きさのどれかが 0 なら `nil` — 0 で割った座標を合流点へ
     ///   流すくらいなら、その 1 件は届かないほうがよい。
-    func canvasPoint(x: Double, y: Double) -> (x: Float, y: Float)? {
+    package func canvasPoint(x: Double, y: Double) -> (x: Float, y: Float)? {
         guard let fit else { return nil }
 
         // 1. 縦軸を反転する (点のまま)
@@ -73,7 +85,7 @@ struct SurfaceMapping: Equatable {
     /// `deltaX` の単位が変わると、同じ名前で値の体系が割れる (ADR-0020 決定 1 の 2026-09-09 改訂)。
     ///
     /// - Returns: 写した量。大きさのどれかが 0 なら `nil` (``canvasPoint(x:y:)`` と同じ)。
-    func canvasDelta(dx: Double, dy: Double) -> (dx: Float, dy: Float)? {
+    package func canvasDelta(dx: Double, dy: Double) -> (dx: Float, dy: Float)? {
         guard let fit else { return nil }
         let pixelX = dx * (drawableWidth / viewWidth)
         let pixelY = dy * (drawableHeight / viewHeight)

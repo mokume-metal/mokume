@@ -10,7 +10,7 @@ import Foundation
 /// 片方だけ直して食い違うことが起きないよう、離して置かない。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-nonisolated enum TransferFunction {
+package nonisolated enum TransferFunction {
     /// 直線の区間と曲線の区間の境目 (線形側)。
     static let linearThreshold: Float = 0.003_130_8
     /// 直線の区間の傾き。
@@ -23,7 +23,7 @@ nonisolated enum TransferFunction {
     static let offset: Float = 0.055
 
     /// 線形 → ディスプレイのエンコード (出口の境界)。
-    static func encode(_ linear: Float) -> Float {
+    package static func encode(_ linear: Float) -> Float {
         if linear <= linearThreshold {
             return linearSlope * linear
         }
@@ -39,7 +39,7 @@ nonisolated enum TransferFunction {
     /// 止めた値は行列を通っても有限に残る。数でない値はそのまま通す (`min` は NaN を返す)。
     ///
     /// [#1691]: https://github.com/mokume-metal/mokume/issues/1691
-    static func decode(_ encoded: Float) -> Float {
+    package static func decode(_ encoded: Float) -> Float {
         if encoded <= linearSlope * linearThreshold {
             return encoded / linearSlope
         }

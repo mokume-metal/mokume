@@ -8,6 +8,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 見張りの子が道具へ渡す名乗りの中身を、面の属性に載せる ([#3919])。
 ///

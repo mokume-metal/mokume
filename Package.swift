@@ -118,20 +118,34 @@ let package = Package(
         .target(
             name: "MokumeVision", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),
+        // macOS の単独のウィンドウで走らせる外枠 (`Sketch.main()`・ウィンドウ・表示リンク・カーソル・つまみの UI)。
+        // MokumeCore は OS の UI 部品 (AppKit・SwiftUI) を知らない — その部品に触るのはここだけ (#3804)。
+        // 利用者が選んで import する product にはせず、アンブレラが macOS のときだけ再エクスポートする
+        .target(
+            name: "MokumeMac", dependencies: ["MokumeCore", "MokumeDiagnostics"],
+            swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(
             name: "mokume",
             dependencies: [
                 "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI",
-                "MokumeGame", "MokumeVision",
+                "MokumeGame", "MokumeVision", .target(name: "MokumeMac", condition: .when(platforms: [.macOS])),
             ],
             swiftSettings: .mokume),
         // 入口: SwiftUI に埋め込む人 (ADR-0048 決定 1・2)。アンブレラは再エクスポートしない — スケッチを
-        // 書くファイルに `SketchView` を、埋め込むファイルにスケッチ用の型を、互いに持ち込まない
-        .target(name: "MokumeUI", dependencies: ["MokumeCore"], swiftSettings: .mokume),
+        // 書くファイルに `SketchView` を、埋め込むファイルにスケッチ用の型を、互いに持ち込まない。
+        // macOS の `SketchView` が包む `NSView` (`SketchHostView`) は外枠と同じ部品で動くので MokumeMac にある
+        .target(
+            name: "MokumeUI",
+            dependencies: ["MokumeCore", .target(name: "MokumeMac", condition: .when(platforms: [.macOS]))],
+            swiftSettings: .mokume),
         // 入口: 道具・外のパッケージ (ADR-0048 決定 1・3)。ウィンドウを出さずにスケッチを走らせる口だけを持つ。
-        // アンブレラは再エクスポートしない — スケッチを書く人の補完に、実行の口を並べない
-        .target(name: "MokumeHost", dependencies: ["MokumeCore"], swiftSettings: .mokume),
+        // アンブレラは再エクスポートしない — スケッチを書く人の補完に、実行の口を並べない。
+        // MokumeMac に依存するのは、画面の一覧とメニューバーの名乗りを差し込むためだけで (#3804)、ウィンドウを開く口は持たない
+        .target(
+            name: "MokumeHost",
+            dependencies: ["MokumeCore", .target(name: "MokumeMac", condition: .when(platforms: [.macOS]))],
+            swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
         // 生成物はコミットしない (ADR-0001 原則 8)。OS の事情の文面は本体と同じ関数で引くので
         // MokumeDiagnostics を直に使う (アンブレラは再輸出しない・#2839)
@@ -170,6 +184,11 @@ let package = Package(
             ],
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokumeTests),
+        // macOS の単独のウィンドウの外枠 (MokumeMac) の検査 (#3804)。ウィンドウを開く検査の窓の透明化とアニメーションの
+        // 止めは、同じ検査のプロセスに載る MokumeCoreTests の読み込み時の初期化が掛ける
+        .testTarget(
+            name: "MokumeMacTests", dependencies: ["mokume", "MokumeMac", "MokumeTestSupport"],
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeCLITests", dependencies: ["MokumeCLI", "MokumeProbe", "MokumeTestSupport"],
             swiftSettings: .mokumeTests),

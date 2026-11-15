@@ -6,6 +6,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 保存を持たない組み方 (`SketchRuntime(sketch:gpu:clock:persistsParams: false)`) は、合わせたつまみの値を
 /// 読みも書きもしない ([#1832](https://github.com/mokume-metal/mokume/issues/1832))。

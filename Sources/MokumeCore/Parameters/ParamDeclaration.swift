@@ -79,7 +79,7 @@ extension Int {
     /// NaN は 0 を返す (落とさないための値で、意味は無い)。**この手前で NaN は拒まれない**
     /// — 整数の値は `hasOnlyFiniteNumbers` が常に有限と読むので、ウィンドウの整数のつまみが NaN を
     /// 出せば 0 になる。ウィンドウのスライダーは有限の値しか出さないので、実際には通らない。
-    init(roundingAndSaturating value: Double) {
+    package init(roundingAndSaturating value: Double) {
         let rounded = value.rounded()
         if let exact = Int(exactly: rounded) {
             self = exact

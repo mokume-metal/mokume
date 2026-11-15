@@ -7,6 +7,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// 道具が出す 2 種類のウィンドウ。
 ///

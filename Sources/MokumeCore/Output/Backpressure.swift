@@ -200,7 +200,7 @@ import Foundation
 /// main キューは入れ子では捌かれず、`await` の続きが永久に来ない ([#978] で実測)。
 ///
 /// [#978]: https://github.com/mokume-metal/mokume/issues/978
-nonisolated enum Patience: Sendable {
+package nonisolated enum Patience: Sendable {
     /// 終わるか諦めるまで塞いで待つ。`endRecord()` の経路 (利用者の `draw()` は同期)。
     case block
     /// 塞がずに見て、まだならその場で返る。終わりの経路 ([#978])。

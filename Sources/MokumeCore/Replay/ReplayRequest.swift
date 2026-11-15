@@ -101,7 +101,7 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     /// から消す** — 残れば、そこから起こす子 (孫) が継いで、頼んでいない実行が記録を始める。
     ///
     /// - Parameter records: この実行が記録を頼まれうるか。偽なら読まず、理由も言わない。
-    static func startup(
+    package static func startup(
         forRun records: Bool,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         unset: (String) -> Void = { unsetenv($0) },

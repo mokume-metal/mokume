@@ -8,6 +8,7 @@ import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// ウィンドウへ落としたファイルを、フレームに属する入力の出来事 `fileDropped` として受ける
 /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。

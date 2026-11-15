@@ -8,6 +8,7 @@ import Testing
 import simd
 
 @testable import MokumeCore
+@testable import MokumeMac
 
 /// トラックパッドのピンチと、押した回数 (ダブルクリック)
 /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
