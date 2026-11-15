@@ -23,7 +23,7 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     ///
     /// **理由の行と桁は、書いたシェーダの中で数える** ([#2457](https://github.com/mokume-metal/mokume/issues/2457))。
     /// 桁は UTF-8 のバイトで数える (`波` は 3 桁ぶん)。文字列から作ったシェーダは `name:` の名前
-    /// (`shader:2:12`)、ファイルから読んだシェーダはファイル名 (`waves.metal:2:12`) を出力する。本体が前に
+    /// (`shader:2:12`)、ファイルから読んだシェーダはファイル名 (`waves.metal:2:12`) で位置を示す。本体が前に
     /// 追加する宣言を指す通知 (シェーダが前置きの定義を定義し直したときの「前の定義」など) は、本体の名前
     /// (`mokume/Kinds.metal:29:15`) で出る。
     ///
@@ -50,7 +50,7 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     /// (`"createShader(_:name:values:surfaces:numbers:)"` など)。返すものを走っているキャンバスからしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
     ///
-    /// キャンバスを取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで生成した
+    /// 実行中のスケッチを取得できるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで生成した
     /// `Task` の中も) だけで、初期化子の中・後片付けの後・`Task` の中からは取れない。**名前に反して、
     /// スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで生成した `Task` から
     /// 同期の API を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)

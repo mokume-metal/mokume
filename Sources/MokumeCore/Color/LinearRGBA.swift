@@ -17,7 +17,7 @@
 /// (``Rect/fill``・``Circle/fill``) として、隔離の外で作られ・比べられ・符号化される。
 /// `Codable` の形は格納している 4 成分 (線形・アルファ乗算済み) のままである。原色の移し替えを
 /// 通る API (``display(red:green:blue:alpha:)``・``color(_:_:_:_:)`` など) も隔離の外から呼べる
-/// ([#2389])。持ち主の無い注意のログは `Mutex` で守り、並べて呼んでも注意は 1 度だけ出る
+/// ([#2389])。持ち主の無い、出した注意の記録は `Mutex` で守り、並べて呼んでも注意は 1 度だけ出る
 /// (`SharedWarningLog`)。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md

@@ -15,7 +15,7 @@ import Synchronization
 /// 1. **OS のコールバック層** — 任意のスレッドで ``send(_:hostTime:)``・``discardUnreadable(_:)``・
 ///    ``setState(_:)`` を呼ぶ
 /// 2. **入れ物** — この型。届いた順に溜める
-/// 3. **フレーム** — 入力の ``Inlet/supply()`` が ``take()`` で、前に取り出した後に届いた
+/// 3. **フレーム** — `Inlet` の ``Inlet/supply()`` が ``take()`` で、前に取り出した後に届いた
 ///    **全部**を取り出す。取り出したフレームが ``Arrival`` に記録される
 ///
 /// ```swift
@@ -28,11 +28,11 @@ import Synchronization
 /// }
 /// ```
 ///
-/// **``Inlet/close()`` で ``discardWaiting()`` を呼ぶ。** 取り外した入力は `attach(_:)` で追加し直されうる
+/// **``Inlet/close()`` で ``discardWaiting()`` を呼ぶ。** 取り外した `Inlet` は `attach(_:)` で追加し直されうる
 /// (``Inlet/open()``)。外す前に届いて読まれなかったものが残っていると、追加し直した最初のフレームの
 /// ``take()`` が古いものを出す。
 ///
-/// ## 上限で捨て、捨てたことを必ず報告する
+/// ## 上限で捨て、捨てたことを報告する
 ///
 /// **上限の無い列は、読まない利用者のところで無限に伸びる。** だから上限 (``capacity``) を持ち、
 /// 超えたら**古いものから**捨てる — 新しいものほど、いまの様子を表しているからである。捨てた数と、
@@ -41,11 +41,11 @@ import Synchronization
 /// 捨て続けても行が埋まらないよう、通知は 1 秒に 1 度までにまとめる。
 ///
 /// **差し替えはここで行う** ([ADR-0028] 決定 6)。実機・記録の再生・合成したイベントのどれも、
-/// 同じ ``send(_:hostTime:)`` へ入れる。入力から先は、出どころを知らない。
+/// 同じ ``send(_:hostTime:)`` へ入れる。`Inlet` から先は、出どころを知らない。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public nonisolated final class ExternalQueue<Value: Sendable>: Sendable {
-    /// 何の入力か。観測の応答と診断に出る名前。
+    /// 何の `Inlet` か。観測の応答と診断に出る名前。
     public let name: String
     /// 溜めておける数。超えたら古いものから捨てる。
     public let capacity: Int
@@ -141,7 +141,7 @@ public nonisolated final class ExternalQueue<Value: Sendable>: Sendable {
 
     /// まだ取り出されていないものを、読まずに捨てる (数えず、診断にも出さない)。
     ///
-    /// 入力が ``Inlet/close()`` で呼ぶ。取り外した入力は追加し直されうる (``Inlet/open()``) ので、外す前に届いて
+    /// `Inlet` が ``Inlet/close()`` で呼ぶ。取り外した `Inlet` は追加し直されうる (``Inlet/open()``) ので、外す前に届いて
     /// 読まれなかったものを残すと、追加し直した最初の ``take()`` が古いものを出す。上限で捨てた数・読めずに捨てた数と
     /// ``lastArrival`` は変えない。出どころ (OS のコールバックなど) が止まった後に呼ぶ — 先に捨てると、止まる間際に届いたものが残る。
     public func discardWaiting() {

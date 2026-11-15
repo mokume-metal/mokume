@@ -8,7 +8,7 @@ import simd
 public nonisolated enum ToneMapping: Sendable, Equatable, CaseIterable {
     /// 範囲の外だけを端にクランプする。**0…1 の内側は 1 ビットも変えない。**
     case clip
-    /// 明るいところを、範囲へ入るまでなめらかに近づける。
+    /// 明るいところを、範囲へ入るまでなめらかに圧縮する。
     ///
     ///
     /// 白飛びした面が一様な白い塊にならなくなる代わりに、`0.8` より明るいところが

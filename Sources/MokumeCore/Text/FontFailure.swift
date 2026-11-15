@@ -4,13 +4,13 @@
 /// 書体のファイルを読むときに起こりうる失敗。
 ///
 /// 起こりうる失敗が列挙できるので typed throws で運ぶ ([ADR-0010] 決定 7)。
-/// **読み込みは投げる** — 失敗したら別の方法を選ぶ判断が要るので、何も報告せず既定へ
+/// **読み込みは投げる** — 失敗したら別の方法を選ぶ判断が要るので、通知なしに既定へ
 /// フォールバックしてはいけない ([ADR-0020] 決定 5)。
 ///
 /// **case はこの 3 つで出し切る** ([#2249])。0.x の間も、公開の Failure 型に case を追加することは
 /// 破壊として扱う。画像の ``ImageFailure`` が持つ `unplaceable` (GPU へ置けない) と `notRunning`
-/// (走っているキャンバスが要る) は、書体の読み込みには起こらない — ``Font`` はキャンバスに属さない値で、
-/// `loadFont(_:)` は走っているキャンバスを使わないので、走っていない所でも読める。
+/// (実行中のスケッチが要る) は、書体の読み込みには起こらない — ``Font`` はキャンバスに属さない値で、
+/// `loadFont(_:)` は実行中のスケッチを使わないので、走っていない所でも読める。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md

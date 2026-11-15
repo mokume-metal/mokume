@@ -48,7 +48,7 @@ import Foundation
 package struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 撮れる枚数の上限。60fps で 2 秒ぶん。
     ///
-    /// 撮った絵は 1 枚ずつ `.mokume/` の作業ディレクトリへ書き出されるので、際限なく要求できるとディスクが埋まる。
+    /// 撮った絵は 1 枚ずつ観測用のディレクトリ (`.mokume/observe`) へ書き出されるので、際限なく要求できるとディスクが埋まる。
     /// 動きが正しいかを見るには十分な長さで切る。
     public static let maximumCount = 120
     /// 間隔の上限 (フレーム)。60fps で 1 秒に 1 枚。

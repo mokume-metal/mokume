@@ -247,7 +247,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// ([ADR-0041](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0041-standard-scope-map.md))。
     /// iOS と、セキュリティスコープ付きの URL は、まだ決めていない
     /// ([#2605](https://github.com/mokume-metal/mokume/issues/2605))。
-    /// 外から送る線の `{"type": "fileDropped", "paths": ["/tmp/a.png"], "x": 10, "y": 20}` も同じ呼び出しになる。
+    /// 外から送る入力チャネルの `{"type": "fileDropped", "paths": ["/tmp/a.png"], "x": 10, "y": 20}` も同じ呼び出しになる。
     ///
     /// **`mokume watch` のウィンドウでは、1 回のドロップが大きすぎると届かない。** ウィンドウが拾ったドロップは、子の標準入力へ
     /// 1 行にして渡る。その 1 行が 1 MiB (1,048,576 バイト・長いパスでおよそ 5000 本以上) を越えると、子へ

@@ -94,15 +94,15 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 既にある土台はそのまま使える (その待ちは、今までどおり `.timedOut` で打ち切られる)。
     ///
     /// **重い 1 フレームでも、ここへ来る。** 期限を越えた待ちからは、1 フレームが描きすぎたのか、GPU が
-    /// 答えなくなったのかを見分けられない。だから文面は両方の場合を報告する。1 行目には、最初に期限を
+    /// 答えなくなったのかを見分けられない。だから文面は両方の場合を述べる。1 行目には、最初に期限を
     /// 越えた待ちの種類・期限・時刻を添える。フラグが立った後の失敗はどれもこれになるので、どの失敗からも
     /// 原因の待ちを辿れるようにするためである。
     ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     case gpuNotResponding
 
-    /// 描画先の大きさが正しくない (幅・高さは 1 以上、サーフェスの一辺の上限以下でなければ
-    /// ならない)。上限そのものは ``description`` が表示する。
+    /// 描画先の大きさが正しくない (幅・高さは 1 以上、テクスチャの一辺の上限以下でなければ
+    /// ならない)。上限そのものは ``description`` が示す。
     ///
     /// **上限も同じ case で運ぶ。** 呼び出し側がすることは下限を割ったときと同じ
     /// (要求する大きさを直す) で、分けても選び分ける先が無い ([#885])。
@@ -110,7 +110,7 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// [#885]: https://github.com/mokume-metal/mokume/issues/885
     case invalidSize(width: Int, height: Int)
 
-    /// グラフィックスの大きさに書き出しの倍率 (`mokume render --scale`) を掛けると、サーフェスの一辺の上限を越える
+    /// グラフィックスの大きさに書き出しの倍率 (`mokume render --scale`) を掛けると、テクスチャの一辺の上限を越える
     /// ([#3453])。`width` と `height` は**要求した座標の大きさ** (掛ける前) で、`scale` は倍率。
     ///
     /// ``invalidSize(width:height:)`` と分ける。あちらは要求した大きさそのものが範囲の外で、直し先は要求する大きさ
@@ -121,7 +121,7 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
     case sizeBeyondOutputScale(width: Int, height: Int, scale: Int)
 
-    /// 描く解像度が正しくない (0 より大きく 1 以下でなければならない)。
+    /// 描くピクセル密度が正しくない (0 より大きく 1 以下でなければならない)。
     ///
     /// 1 を超える指定 — 出すより細かく描いて縮める — は引き受けない。拡大器が
     /// 縮小を扱わないうえ、要求も出ていないためである。
@@ -175,16 +175,16 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 同梱しているはずのシェーダの原文が見つからない。
     case shaderSourceMissing(name: String)
 
-    /// シェーダをビルドできない。
+    /// シェーダをコンパイルできない。
     ///
     /// 理由はコンパイラの言葉のままだが、**エントリポイントを書き違えたシェーダでは、期待するエントリポイントの形を
     /// `<シェーダの名前>: error: …` の 1 行で先頭に追加する** ([#2782](https://github.com/mokume-metal/mokume/issues/2782))。
     /// リンクの段階の `Undefined symbol(s)` は書いたシェーダのどこも指さないので、そのままでは説明の
     /// 「理由が指す所を、書いたシェーダの中で直せ」が成り立たない。計算のエントリポイントの関数が無いときも、この
-    /// case で言う (ビルドしたライブラリを見て拒否する。Metal に任せるとプロセスごと落ちる)。
+    /// case で言う (コンパイルしたライブラリを見て拒否する。Metal に任せるとプロセスごと落ちる)。
     ///
     /// **`values:`・`surfaces:` の名前の誤りもこの case で言う** ([#2783](https://github.com/mokume-metal/mokume/issues/2783))。
-    /// 書けない文字列はビルドの前に拒否し、Metal で使えない名前 (予約語・型・マクロ) はビルドの
+    /// 書けない文字列はコンパイルの前に拒否し、Metal で使えない名前 (予約語・型・マクロ) はコンパイルの
     /// 誤りに名指しの 1 行を追加する。直す先は Swift の引数なので、説明の最後の行はそちらも挙げる。
     case shaderCompilationFailed(name: String, reason: String)
 
@@ -200,11 +200,11 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// テクスチャの読み取り方を作れない。
     case samplerUnavailable
 
-    /// 実行中のキャンバスを取れない所で、この型を投げるリソースの API を呼んだ。`call` は呼んだ API の名前
-    /// (`"createGraphics(_:_:)"` など)。返すものを実行中のキャンバスからしか作れないので、`setup()` などから呼び直す
+    /// 実行中のスケッチを取得できない所で、この型を投げるリソースの API を呼んだ。`call` は呼んだ API の名前
+    /// (`"createGraphics(_:_:)"` など)。返すものを実行中のスケッチからしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
     ///
-    /// キャンバスを取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで生成した
+    /// 実行中のスケッチを取得できるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで生成した
     /// `Task` の中も) だけで、初期化子の中・後片付けの後・`Task` の中からは取れない。**名前に反して、
     /// スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで生成した `Task` から
     /// 同期 API を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)

@@ -4,11 +4,11 @@
 /// モデルを読むときに起こりうる失敗。
 ///
 /// 起こりうる失敗が列挙できるので typed throws で運ぶ ([ADR-0010] 決定 7)。
-/// **読み込みは投げる** — 失敗したら別の方法を選ぶ判断が要るので、何も報告せず既定へ
+/// **読み込みは投げる** — 失敗したら別の方法を選ぶ判断が要るので、通知なしに既定へ
 /// フォールバックしてはいけない ([ADR-0020] 決定 5)。
 ///
 /// **「読めなかった」と「読めたが面が無い」は別である。** 後者は失敗として投げず、
-/// 置いたときに通知する —投げてしまうと、利用者は読み込みの側を直そうとして、
+/// 置いたときに通知する — 投げてしまうと、利用者は読み込みの側を直そうとして、
 /// 実際には空のファイルを渡しているという事実に辿り着けない。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
@@ -24,7 +24,7 @@ public enum ModelFailure: Error, Equatable, Sendable {
     ///
     /// **親のフォルダに入れず、在るかを確かめられない場合も、この case で運ぶ** — `location` は確かめられ
     /// なかった場所で、`reason` は `cannot tell whether it exists (Permission denied)` の形になる。説明は
-    /// 「見つかった」と言わず、リソースの宣言の助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
+    /// 「見つかった」と言わず、アセットの宣言の助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
     case unopenable(path: String, location: String, reason: String)
     /// 開けたが、その形式として読めない。OBJ なら文字 (UTF-8) として読めない、STL なら
     /// 文字の STL としてもバイナリの STL としても読めない (壊れている・途中で切れた文字の STL・空)。
@@ -34,11 +34,11 @@ public enum ModelFailure: Error, Equatable, Sendable {
     case unreadable(path: String)
     /// 対応していない形式。説明に、読める形式の一覧が載る。
     case unsupported(path: String, extensionName: String)
-    /// 実行中のキャンバスを取れない所で、この型を投げるリソース API を呼んだ。`call` は呼んだ API の名前
-    /// (`"loadModel(_:normalize:)"` など)。返すものを実行中のキャンバスからしか作れないので、`setup()` などから呼び直す
+    /// 実行中のスケッチを取得できない所で、この型を投げるアセットを読む API を呼んだ。`call` は呼んだ API の名前
+    /// (`"loadModel(_:normalize:)"` など)。返すものを実行中のスケッチからしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
     ///
-    /// キャンバスを取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで生成した
+    /// 実行中のスケッチを取得できるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで生成した
     /// `Task` の中も) だけで、初期化子の中・後片付けの後・`Task` の中からは取れない。**名前に反して、
     /// スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで生成した `Task` から
     /// 同期 API を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)

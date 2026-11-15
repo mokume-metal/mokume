@@ -11,7 +11,7 @@ import simd
 
 /// 絵を描くキャンバス。
 ///
-/// ## 座標の仕様
+/// ## 座標の規約
 ///
 /// **原点は左上、単位は画素、縦軸は下向き。** 整数の座標は画素の**角**を指し、
 /// **塗りと線で乗る場所が違う** ([ADR-0039] 決定 2):
@@ -61,7 +61,7 @@ public final class Canvas {
     /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
     let outputScale: Int
 
-    /// 実際に刻む幅 (画素)。解像度が 1 で書き出しの倍率も掛けていなければ ``width`` と同じ。
+    /// 実際に刻む幅 (画素)。ピクセル密度が 1 で書き出しの倍率も掛けていなければ ``width`` と同じ。
     public var pixelWidth: Int { target.width }
     /// 実際に刻む高さ (画素)。
     public var pixelHeight: Int { target.height }
@@ -80,7 +80,7 @@ public final class Canvas {
 
     /// 出す先。**すべての出力先が受け取るのはこの 1 枚**である ([ADR-0023] 決定 2)。
     ///
-    /// 解像度が 1 なら `target` と同じものを指す — バッファも段も 1 つも増えない。
+    /// ピクセル密度が 1 なら `target` と同じものを指す — バッファも段も 1 つも増えない。
     ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     public let output: RenderTarget
@@ -2903,18 +2903,18 @@ public final class Canvas {
         }
     }
 
-    /// 描画先を指定して作る。描く解像度と出す解像度は同じになる。
+    /// 描画先を指定して作る。描くピクセル密度と出すピクセル密度は同じになる。
     public convenience init(target: RenderTarget, gpu: RenderDevice) throws(RenderFailure) {
         try self.init(output: target, gpu: gpu, pixelDensity: 1, upscale: .spatial)
     }
 
-    /// 出す先と、描く解像度を指定して作る。
+    /// 出す先と、描くピクセル密度を指定して作る。
     ///
     /// `pixelDensity` が 1 なら描く先と出す先は**同じ 1 枚**で、拡大の段は立たない。
     /// 1 より小さければ、その割合の描く先を自分で確保し、間を拡大の段で埋める
     /// ([ADR-0015] 決定 1・5)。
     ///
-    /// - Throws: 解像度が 0 以下か 1 を超えるとき・拡大の段を構築できないときに
+    /// - Throws: ピクセル密度が 0 以下か 1 を超えるとき・拡大の段を構築できないときに
     ///   ``RenderFailure``。**構築のときに投げる** (ADR-0020 決定 5)。
     ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
@@ -4030,7 +4030,7 @@ public final class Canvas {
 
     /// グラフィックスへフラッシュする。**投げない。**
     ///
-    /// 毎フレーム呼ばれるので、1 段の失敗でフレームごと終了させない ([ADR-0020]
+    /// 毎フレーム呼ばれるので、1 段の失敗でフレーム全体を失敗させない ([ADR-0020]
     /// 決定 5)。フラッシュできなかったときは前の絵がそのまま残り、理由が通知される。そのフレームは
     /// 描かずに捨てるので、置いた図形も書いた画素も次のフレームへ持ち込まない ([#1678])。要求した
     /// 計算も実行しないが、フラッシュより前に GPU へ流れた分 (``read(_:)`` の前・数の並びへの書き込みの

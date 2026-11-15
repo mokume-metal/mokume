@@ -200,7 +200,7 @@ extension SketchPart {
     /// キーとボタンが離された扱いになり (``Sketch/keyReleased()``・``Sketch/mouseReleased()``)、その呼び出しの中から
     /// 読んでも既に `false` である。
     ///
-    /// **退いても、外から注入した押下は離さない** — 入力の線・MCP の `input` で送った `keyDown`・`mouseDown` は、注入した
+    /// **退いても、外から注入した押下は離さない** — 入力チャネル・MCP の `input` で送った `keyDown`・`mouseDown` は、注入した
     /// 側が解放を送るまで押されたまま残る。だから `focused` が `false` の間も、``keyboard`` や ``isMousePressed`` が
     /// 押されていると答えることがある (自動操作の最中に人がウィンドウを切り替えても、結果が変わらない)。
     ///
@@ -208,7 +208,7 @@ extension SketchPart {
     ///
     /// - **直接実行したウィンドウ** (`mokume run`・バンドルした `.app`): そのウィンドウが key か
     /// - **`mokume watch` の下**: ウィンドウは `mokume watch` が持つので、`mokume watch` のウィンドウ (スケッチのウィンドウかプレビュー) が key か。
-    ///   `mokume watch` が入力と同じ線で子へ運ぶ。子を再起動した直後は、次に `mokume watch` のウィンドウが key の出入りをするまで `true`
+    ///   `mokume watch` が入力と同じチャネルで子へ運ぶ。子を再起動した直後は、次に `mokume watch` のウィンドウが key の出入りをするまで `true`
     /// - **``SketchView``**: ビューを載せたホストのウィンドウが key か。ウィンドウに載っていない間は `true`
     /// - **ウィンドウの無い実行** (`mokume render`・参照スケッチの `--render`): いつも `true`。`if !focused { noLoop() }`
     ///   は書き出しを止めない
@@ -218,7 +218,7 @@ extension SketchPart {
     ///
     /// ## 外から送る
     ///
-    /// 入力の線 (`.mokume/input`・MCP の `input`) で `{"type": "focusChanged", "focused": false}` を送ると、`focused` が
+    /// 入力チャネル (`.mokume/input`・MCP の `input`) で `{"type": "focusChanged", "focused": false}` を送ると、`focused` が
     /// `false` になる。機材も人の操作も無しに確かめられる。送った通知は押下を離さない (ウィンドウの押下を離すのは
     /// ウィンドウ自身で、注入した押下は注入した側の解放で離れる)。
     public var focused: Bool { liveInput.focused }

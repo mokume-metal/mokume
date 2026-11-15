@@ -20,7 +20,7 @@ public enum ImageFailure: Error, Equatable, Sendable {
     ///
     /// **親のフォルダに入れず、在るかを確かめられない場合も、この case で運ぶ** — `location` は確かめられ
     /// なかった場所で、`reason` は `cannot tell whether it exists (Permission denied)` の形になる。説明は
-    /// 「見つかった」と言わず、リソースの宣言の助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
+    /// 「見つかった」と言わず、アセットの宣言の助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
     case unopenable(path: String, location: String, reason: String)
     /// 開けたが、画像として読めない。
     case undecodable(path: String)
@@ -39,11 +39,11 @@ public enum ImageFailure: Error, Equatable, Sendable {
     /// この case でなく ``undecodable(path:)`` で投げる (``DataFailure/unreachable(url:reason:)`` と
     /// 同じ形・[#3715](https://github.com/mokume-metal/mokume/issues/3715))。
     case unreachable(url: String, reason: String)
-    /// 実行中のコンテキストを取れない所で、この型を投げるリソースの API を呼んだ。`call` は呼んだ API の名前
-    /// (`"loadImage(_:)"` など)。返すものを実行中のコンテキストからしか作れないので、`setup()` などから呼び直す
+    /// 実行中のスケッチを取得できない所で、この型を投げるアセットを読む API を呼んだ。`call` は呼んだ API の名前
+    /// (`"loadImage(_:)"` など)。返すものを実行中のスケッチからしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
     ///
-    /// コンテキストを取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで生成した
+    /// 実行中のスケッチを取得できるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで生成した
     /// `Task` の中も) だけで、初期化子の中・後片付けの後・`Task` の中からは取れない。**名前に反して、
     /// スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで生成した `Task` から
     /// 同期の API を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)

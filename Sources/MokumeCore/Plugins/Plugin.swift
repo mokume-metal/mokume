@@ -5,7 +5,7 @@
 ///
 /// **持つのは登録の 1 メソッドだけで、束自身はフレームのイベントを受け取らない**
 /// ([ADR-0024] 決定 3)。1 つのパッケージが複数の拡張点へ入る (映像を送る出力先と、
-/// 受け取る入力を同じパッケージが持つ) ため、まとめる単位は要る。
+/// 受け取る `Inlet` を同じパッケージが持つ) ため、まとめる単位は要る。
 ///
 /// <!-- example: 文脈 final class MySender: Outlet { func receive(_ frame: OutputFrame) {} } -->
 /// <!-- example: 文脈 final class MyReceiver: Inlet { func supply() {} } -->
@@ -33,14 +33,14 @@ public protocol Plugin {
 /// 束が拡張点へ登録する先。
 ///
 /// **仕分けは内部で行う** ([ADR-0024] 決定 4)。利用者から見た並びは 1 本で、
-/// 出力先だけを追加する束も入力だけを追加する束も同じ並びに置ける。
+/// 出力先だけを追加する束も `Inlet` だけを追加する束も同じ並びに置ける。
 ///
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
 public final class PluginRegistry {
     /// 登録された出力先。**追加した順に並ぶ。**
     public private(set) var outlets: [any Outlet] = []
 
-    /// 登録された入力。**追加した順に並ぶ。**
+    /// 登録された `Inlet`。**追加した順に並ぶ。**
     public private(set) var inlets: [any Inlet] = []
 
     /// 束の登録をテストするために、外から 1 つ作る。
@@ -66,6 +66,6 @@ public final class PluginRegistry {
     /// 出力先を追加する。**追加した順に呼ばれる。**
     public func add(outlet: any Outlet) { outlets.append(outlet) }
 
-    /// 入力を追加する。**追加した順に呼ばれる。**
+    /// `Inlet` を追加する。**追加した順に呼ばれる。**
     public func add(inlet: any Inlet) { inlets.append(inlet) }
 }

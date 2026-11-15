@@ -72,7 +72,7 @@ package struct ObservationReport: Encodable, Equatable, Sendable {
     public let load: RuntimeLoad?
     /// スケッチがこのフレームで差し出した値。測って残っている値 (``SketchPart/measure(_:_:)``) を含む。
     public let values: [String: ExposedValue]?
-    /// 外から届くものを受ける入力の状態 (``Inlet/report``)。報告する入力が無ければ `nil`。
+    /// 外から届くものを受ける `Inlet` の状態 (``Inlet/report``)。報告する `Inlet` が無ければ `nil`。
     ///
     /// 「なぜ値が来ないか」(許可を待っている・機材が無い・抜かれた) と、最後に値が届いた
     /// フレームを、絵を開かずに読めるようにする ([ADR-0028] 決定 4)。

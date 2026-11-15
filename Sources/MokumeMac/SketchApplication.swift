@@ -410,7 +410,7 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public var currentFrameRate: Double? { runtime.frameNumbers.frameRate }
 
-    /// サーフェスを取得できずに見送ったフレームの数。
+    /// ドローアブルを取得できずに見送ったフレームの数。
     public var missedFrames: Int { presenter.missedFrames }
 
     /// 画面へ出しながら回す扱いか (`SketchRuntime.isOnScreen`)。**検査が読む。**

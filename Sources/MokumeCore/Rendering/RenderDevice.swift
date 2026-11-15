@@ -133,7 +133,7 @@ import MokumeDiagnostics
     ///
     /// **別のプロセスの期限切れの記録 (`scripts/gpu-slot.py` の下・#2235) だけがあるときは、`true` を返す**
     /// (コマンドキューは作らない)。`false` にすると、`.enabled(if: RenderDevice.isAvailable, …)` の GPU の suite が
-    /// 「GPU が無い実行環境」として全部飛び、`swift test` が緑で終わる。報告して止まるのは、土台の初期化子が
+    /// 「GPU が無い実行環境」として全部飛び、`swift test` が緑で終わる。失敗として止まるのは、土台の初期化子が
     /// ``RenderFailure/gpuNotResponding`` で拒否して suite が赤になる形である。
     ///
     /// [ADR-0009]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0009-platform-floor-and-toolchain.md

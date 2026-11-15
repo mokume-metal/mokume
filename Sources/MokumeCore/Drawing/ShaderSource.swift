@@ -458,7 +458,7 @@ public enum ShaderValue: Equatable, Sendable {
     /// 色。シェーダからは `float4` として見える (線形・アルファ乗算済み)。
     ///
     /// シェーダの中で不透明度を変えるときは、`values.tint * 0.3` のように 4 成分に同じ数を掛ける。
-    /// `float4(values.tint.rgb, 0.3)` は乗算済みという不変条件を崩す。
+    /// `float4(values.tint.rgb, 0.3)` は乗算済みという規約を崩す。
     case color(LinearRGBA)
     /// 3 つ組。シェーダからは `float3` として見える。向き・位置・軸ごとの倍率のように、3 つの数で 1 つの
     /// 意味を持つものに使う。

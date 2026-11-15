@@ -96,7 +96,7 @@
 /// どこからでも呼べる。準拠しない型の中で ``fill(_:)-(LinearRGBA)`` を書くと、
 /// 「`fill` が見つからない」で止まる。
 ///
-/// 保持先の決定は [ADR-0020] 決定 7 にある。
+/// 語彙をどこに置くかは [ADR-0020] 決定 7 にある。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public protocol SketchPart {}

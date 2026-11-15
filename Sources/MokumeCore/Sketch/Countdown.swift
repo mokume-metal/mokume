@@ -79,7 +79,7 @@ import Synchronization
 /// }
 /// ```
 ///
-/// Processing に同じ型は無い。名前は Foundation の `Timer` との衝突を避けて採った ([ADR-0020] 決定 1)。
+/// Processing にも p5.js にも同じ型は無い。名前は Foundation の `Timer` との衝突を避けて採った ([ADR-0020] 決定 1)。
 ///
 /// [#2602]: https://github.com/mokume-metal/mokume/issues/2602
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md

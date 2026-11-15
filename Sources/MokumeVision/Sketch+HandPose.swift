@@ -82,7 +82,7 @@ extension Sketch {
     ///
     /// - Parameters:
     ///   - image: 手を探す画像。カメラ (`Capture/image`)・動画 (`Movie/image`)・読み込んだ画像など。
-    ///   - arrival: 画像が届いたことを知らせる到着の記録。カメラなら `{ camera.lastArrival }`。省けば 1 度だけ探す。
+    ///   - arrival: 画像が届いたことを示す到着の記録。カメラなら `{ camera.lastArrival }`。省けば 1 度だけ探す。
     // shot: 撮れない 手の写った映像と実物の推論 (Vision) を要する。作例の絵は参照スケッチ (air-draw) が記録した結果で撮る
     public func createHandPose(_ image: Image, arrival: (() -> Arrival?)? = nil) -> HandPose {
         createHandPose(image, arrival: arrival, estimator: VisionHandPoseEstimator(), calledAs: #function)

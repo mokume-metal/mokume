@@ -12,7 +12,7 @@
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 extension Canvas {
-    /// 画面とは別のオフスクリーンバッファを作る。
+    /// 画面とは別の描画先 (グラフィックス) を作る。
     ///
     /// **座標の大きさは `width` × `height` のまま、画素は書き出しの倍率 (`outputScale`) を掛けて刻む**
     /// ([#3453])。本体のキャンバスと同じ構築 (`init(output:gpu:pixelDensity:upscale:outputScale:)`) の 1 本を通るので、

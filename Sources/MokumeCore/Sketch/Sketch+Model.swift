@@ -217,7 +217,7 @@ extension SketchPart {
     ///
     /// **呼んだ `Task` を取り消しても、読み込みは止まらず、読み終えて返る。** スケッチが終わった
     /// 後に届いても落ちず、モデルはそのまま返る (``requestImage(_:)`` と同じ)。取消の扱いは
-    /// [#2760] と合わせて決めるので、いまの振る舞いであって契約ではない。
+    /// [#2760] と合わせて決めるので、いまの振る舞いであって仕様上の保証ではない。
     ///
     /// <!-- example: 文脈 var head: Model? -->
     /// ```swift
@@ -239,7 +239,7 @@ extension SketchPart {
     ///   理由と直し方は ``loadModel(_:normalize:)`` の 2 つ目の Note。
     ///
     /// - Throws: ``loadModel(_:normalize:)`` と同じ (``ModelFailure``)。
-    ///   走っている実行から生成していない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと
+    ///   実行中のスケッチから呼び出していない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと
     ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
