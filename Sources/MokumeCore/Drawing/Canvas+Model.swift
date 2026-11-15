@@ -37,6 +37,8 @@ extension Canvas {
     func requestModel(
         _ path: String, normalize: Bool, prepared: (@Sendable (Model) -> Void)?
     ) async throws(ModelFailure) -> Model {
+        // 届くフレームは記録に無い (#3575)。スケッチの口も面の口もここを通る
+        ReplayNotice.waitingLoad()
         if let cached = modelCache[ModelRequest(path: path, normalize: normalize)] {
             return cached
         }

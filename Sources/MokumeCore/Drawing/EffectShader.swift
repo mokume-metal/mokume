@@ -63,6 +63,9 @@ public final class EffectShader {
     /// いまの値を並べたもの。
     var packedValues: [Float] { box.packedValues }
 
+    /// 描くために使われた (``ShaderBox/noteUsed()``)。
+    func noteUsed() { box.noteUsed() }
+
     /// 渡す値を書き換える。
     ///
     /// **宣言していない名前は受け付けない** — 断片は組み立てるときに値の宣言ごと

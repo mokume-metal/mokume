@@ -32,7 +32,7 @@ import MokumeDiagnostics
 /// 許可を見ればよいかを 1 度だけ警告する。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
-public final class Capture: Inlet {
+public final class Capture: Inlet, FrameDeterminedSource {
     /// 受け取った画像。大きさは作ったときに決まり、変わらない。
     public let image: Image
     /// 選んだカメラ。既定の 1 台を使っているなら `nil`。
@@ -130,6 +130,10 @@ public final class Capture: Inlet {
     }
 
     public var report: SourceReport? { input.report }
+
+    /// 記録した列を流しているだけか (``Sketch/createCapture(frames:mirrored:)``)。列は 1 フレームに 1 枚ずつ進むので、
+    /// 記録と再生でカメラを名乗らない (#3575)。
+    package var isDeterminedByFrames: Bool { source is FramesSource }
 
     // MARK: - 知らせ
 

@@ -49,6 +49,8 @@ extension Canvas {
     func acceptedEffects(_ effects: [Effect], calledBy caller: String) -> [Effect] {
         func key(_ warning: Warning) -> Warning { caller == "effects" ? warning : .filterSide(warning) }
         return effects.compactMap { effect in
+            // 差し替えを名乗る先を、効果を掛けた実行に控えさせる (#3575)
+            if case .custom(let shader) = effect { shader.noteUsed() }
             guard let accepted = effect.accepted else {
                 warnOnce(
                     key(.badEffect),
