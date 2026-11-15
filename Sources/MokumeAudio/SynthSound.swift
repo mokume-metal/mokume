@@ -591,7 +591,7 @@ public class Oscillator: SynthSource {
     /// 周波数・音量・オフセットを指定して、再生を始める。定位は今のまま。
     ///
     /// **第 3 引数はオフセット** (Processing Sound の `play(freq, amp, add)` と同じ)。``set(_:_:_:)`` の第 3 引数は
-    /// 定位で、同じ 3 引数でも意味が違う (手本も同じ)。範囲の外・NaN は、それぞれ ``freq(_:)``・
+    /// 定位で、同じ 3 引数でも意味が違う (Processing Sound も同じ)。範囲の外・NaN は、それぞれ ``freq(_:)``・
     /// ``SynthSource/amp(_:)``・``SynthSource/add(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:at:)``。
     public func play(_ freq: Float, _ amp: Float, _ add: Float) {
         voice(freq, amp, add, nil, at: 0)
@@ -698,7 +698,7 @@ public class Oscillator: SynthSource {
     /// ```
     ///
     /// **第 3 引数は定位** (Processing Sound の `set(freq, amp, pos)` と同じ)。``play(_:_:_:)`` の第 3 引数は
-    /// オフセットで、同じ 3 引数でも意味が違う (手本も同じ)。オフセットも渡すなら ``set(_:_:_:_:)`` で、定位は
+    /// オフセットで、同じ 3 引数でも意味が違う (Processing Sound も同じ)。オフセットも渡すなら ``set(_:_:_:_:)`` で、定位は
     /// 4 つ目になる。範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/pan(_:)`` と
     /// 同じに扱う。
     public func set(_ freq: Float, _ amp: Float, _ pos: Float) {
@@ -926,7 +926,7 @@ public final class PinkNoise: Noise {
 /// ```
 ///
 /// 約 150 Hz より上は 1 オクターブごとに 6 dB 弱まり (ピンクノイズは 3 dB)、それより下は平らなので、音が片側へ
-/// 偏り続けることはない。標本は -1〜1 に収まる。
+/// 偏り続けることはない。サンプルは -1〜1 に収まる。
 ///
 /// Processing Sound の `BrownNoise` に当たる。作る関数は ``Sketch/createBrownNoise()``。使い方は ``Noise``。
 public final class BrownNoise: Noise {
@@ -964,7 +964,7 @@ public final class BrownNoise: Noise {
 /// 呼ぶまでそのままで、``SynthSource/play()`` で再生し直しても戻らない。
 ///
 /// かけられるのは、合成した音源 (``SynthSource``) と音声ファイル (``SoundFile``) — `play(_:_:_:_:_:)` の 2 つの形。
-/// **エフェクトの出口にはかけられない** (Processing Sound と同じ)。エフェクトを通した音に形を付けるなら、入力の音源に
+/// **エフェクトの出力にはかけられない** (Processing Sound と同じ)。エフェクトを通した音に形を付けるなら、入力の音源に
 /// かける: `env.play(osc, …)` → `filter.process(osc, 800)` (エフェクトの尾は残る)。
 public final class Env {
     init() {}
@@ -1035,12 +1035,12 @@ public final class Env {
     /// - **エンベロープが終わると音は 0 (無音) になるが、再生は止めない。** ``SoundFile/isPlaying`` は `true` のまま、
     ///   ``SoundFile/position`` も進み続け、1 度だけの再生なら末尾で終わる。次にこのメソッドを呼ぶまで無音で、
     ///   ``SoundFile/play()``・``SoundFile/loop()`` で再生し直しても戻らない (合成した音源と同じ)
-    /// - エンベロープは**再生した標本の数で進む**。``SoundFile/pause()`` の間は止まり、``SoundFile/jump(_:)``・
+    /// - エンベロープは**再生したサンプルの数で進む**。``SoundFile/pause()`` の間は止まり、``SoundFile/jump(_:)``・
     ///   ``SoundFile/play()`` で位置が変わっても、途切れずに続く
     /// - 解析の値 (``SoundFile/level`` ほか) はエンベロープを掛けた後の音で、書き出しの動画の音声トラックにも
     ///   エンベロープを掛けた音が入る。固定クロックの書き出しでは、``SoundFile/play()`` と同じく区間の先頭のサンプルから
     ///   効き、何度書き出しても同じ音になる。エフェクトに通したファイルも、エフェクトの入力に入る前に掛かる
-    /// - **エフェクトの出口には掛けられない** (Processing Sound と同じ — `env.play(filter, …)` は型が合わない)。
+    /// - **エフェクトの出力には掛けられない** (Processing Sound と同じ — `env.play(filter, …)` は型が合わない)。
     ///   入力の音源に掛ける: `env.play(osc, …)` → `filter.process(osc, 800)`。エフェクトの尾は残る
     /// - 先の時刻へ予約する形 (`at:`) は無い (``SoundFile`` の操作は、どれもフレームの区切りで効く)
     ///

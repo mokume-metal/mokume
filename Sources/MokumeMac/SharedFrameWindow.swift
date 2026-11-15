@@ -128,7 +128,7 @@ package final class SharedFrameWindow {
     /// `mokume watch` が新しい子プロセスを起動した ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
     /// その PID を、切り替えないと決めた世代と手放した世代の記録から外す。PID は使い回されるので、残すと同じ PID の
-    /// 新しい子プロセスのマニフェストを黙って破棄し、その子プロセスの要求を読まない。
+    /// 新しい子プロセスのマニフェストを通知なしに破棄し、その子プロセスの要求を読まない。
     ///
     /// - Parameter pids: 起動した子プロセスの PID。
     public func expectGeneration(pids: [Int32]) {
