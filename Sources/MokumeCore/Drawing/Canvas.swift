@@ -3855,9 +3855,12 @@ public final class Canvas {
         }
         // ここへ来るのは組み立ての外だけで (上の守り)、閉包の中の組み立ては閉包の中で閉じる。だから閉包の
         // 終わりで閉じるのを組み立ての出口まで待たせる場合 (#1855 の案 G) は、もう無い
-        beginFrame()
-        body()
-        try endFrame()
+        // 面を直に回すループ (道具・検査) は run loop の区切りを持たない。描き切りまでを自分の置き場で包む (#4081)
+        try drainingAutoreleased { () throws(RenderFailure) in
+            beginFrame()
+            body()
+            try endFrame()
+        }
     }
 
     /// 描き場所として 1 フレーム分を描き始める。
@@ -3925,6 +3928,16 @@ public final class Canvas {
     /// 空になっていた。フレームを開くのは組み立ての前か後にする。断るのは組み立てている面自身のフレーム
     /// だけで、別の面の組み立ての中で描き場所を開くのは今までどおりである。
     ///
+    /// ## スケッチの外で、自分のループから対を回すとき
+    ///
+    /// スケッチの中 (`draw()` の中・``Canvas/draw(_:)`` の中) では、フレームの終わりに autorelease の置き場が空になる。
+    /// **面を直に作って、run loop の外のループで `beginDraw()` / ``endDraw()`` を回すなら、1 回ごとに
+    /// `autoreleasepool { }` で包む** — 対は 2 回の呼び出しに分かれるので、ここでは包めない。包まないと、捨てた
+    /// グラフィックスの GPU のメモリがループを抜けるまで残る ([#4081])。``Canvas/draw(_:)`` は自分で包む。
+    /// スケッチの中でも、`draw()` の中で対を何百回も回すと、置き場が空になるのは 1 フレームの終わりなので、
+    /// フレームの中ではその回数ぶんが積み上がる (伸び続けはしないが、フレームの中の山は包まない限り下がらない)。
+    /// そのときも 1 回ごとに `autoreleasepool { }` で包む。
+    ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
@@ -3935,6 +3948,7 @@ public final class Canvas {
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
     /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
+    /// [#4081]: https://github.com/mokume-metal/mokume/issues/4081
     public func beginDraw() {
         // **組み立ての中では、組み立てている面のフレームを始めない** ([#2201])。捨てる道へ入る前に見る。
         // 始めなかった数を控え、対の ``endDraw()`` が何もしないようにする ([#2834])
@@ -7275,4 +7289,23 @@ extension Canvas: SettlementObserver {
         carriesPictureBeforeEffects = flush.hadCarry
         target.noteTextureReplaced()
     }
+}
+
+/// `work` を自分の autorelease の置き場の中で走らせ、投げた失敗は置き場を空にしてから投げ直す (#4081)。
+///
+/// **1 フレーム (書き出しなら 1 枚) の区切りを呼び手の run loop に頼らないための口。** ウィンドウ・書き出し・流す
+/// 経路は run loop の 1 回ごとに置き場が空になるが、検査や道具が面やランタイムを自分のループで回すと区切りが無い。
+/// フレームの中で Metal が autorelease で返したもの (列の置き場の `MTLBuffer`・描く encoder・面の記述) は、
+/// 描き場所と置き場の持ち主が死んだ後も置き場に残って確保を掴むので、区切りが無いと GPU のメモリがループを
+/// 抜けるまで伸び続ける。
+nonisolated func drainingAutoreleased<Failure: Error>(_ work: () throws(Failure) -> Void) throws(Failure) {
+    let failure: Failure? = autoreleasepool {
+        do throws(Failure) {
+            try work()
+            return nil
+        } catch {
+            return error
+        }
+    }
+    if let failure { throw failure }
 }

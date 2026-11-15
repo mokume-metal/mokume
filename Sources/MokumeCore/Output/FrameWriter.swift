@@ -292,7 +292,9 @@ nonisolated final class WriteLanes: Sendable {
         Task.detached(priority: .userInitiated) { [self] in
             var next: Job? = start
             while let job = next {
-                job.work()
+                // **仕事 1 つごとに autorelease の置き場を空にする** (#4081)。控えが続く間はこのループを抜けないので、
+                // 区切らないと、画像を書くたびに autorelease されたものがループを抜けるまで残る
+                autoreleasepool { job.work() }
                 next = lanes.withLock { lanes in
                     // 控えがあれば取り出して続けて書き、無ければ行き先ごと消す
                     guard let pending = lanes[destination] ?? nil else {

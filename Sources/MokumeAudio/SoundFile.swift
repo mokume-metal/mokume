@@ -155,7 +155,7 @@ import MokumeDiagnostics
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
-public final class SoundFile: Inlet, EffectInput, RealtimeSound {
+public final class SoundFile: Inlet, EffectInput {
     /// ファイルのサンプルレート (Hz)。帯域 `k` の中心は `k × sampleRate ÷ 1024` Hz。
     public let sampleRate: Float
 
@@ -190,7 +190,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// 速さが 1 を越えるときの低域通過の係数の置き場 (読む比ごと)。解析・``FileVoice``・``FileNode`` が同じ係数を読む。
     private var kernels: [UInt64: RateKernel] = [:]
     /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
-    private var deferred = DeferredLevels()
+    /// 読まれたら、ウィンドウで録る記録へ名乗る (#3575)。
+    private var deferred = DeferredLevels(replayKind: "SoundFile")
     private var levels: AudioLevels { deferred.levels() }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }

@@ -81,6 +81,7 @@ public class SynthSound: EffectInput {
     var isActive = false
 
     /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
+    /// 読まれたら、ウィンドウで録る記録へ名乗る (#3575)。鳴らすだけなら名乗らない。
     private var deferred = DeferredLevels()
     private var levels: AudioLevels { deferred.levels() }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
@@ -93,6 +94,7 @@ public class SynthSound: EffectInput {
         self.stage = stage
         self.node = node
         self.name = name
+        deferred = DeferredLevels(replayKind: name)
         // 鳴らし始める前の出口は無音 (ラックが 0 を書いている)。最初の区間の始まりが出口の標本 0 でなくても、
         // 最初の立ち上がりを拍にする
         deferred.beginsSilent = true
