@@ -42,7 +42,7 @@ extension SketchPart {
     /// ## `mokume watch` の下では
     ///
     /// `mokume watch` の下では、スケッチのウィンドウとプレビューのどちらのキャンバスの上でも隠れる。**ウィンドウは `mokume watch` が持つ**
-    /// ので、リクエストはフレームと一緒に `mokume watch` のウィンドウへ渡され、各ウィンドウは自分が映している世代のスケッチのリクエストに従う。
+    /// ので、リクエストはフレームと一緒に `mokume watch` のウィンドウへ渡され、各ウィンドウは自分が映しているプロセスのスケッチのリクエストに従う。
     /// 保存で作り直したスケッチが `noCursor()` を呼ばなければ、そこで矢印が戻る。
     public func noCursor() {
         liveRuntime()?.cursorHidingRequested = true

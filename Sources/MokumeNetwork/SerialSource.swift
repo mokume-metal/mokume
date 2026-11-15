@@ -295,7 +295,7 @@ nonisolated final class SerialReader: @unchecked Sendable {
     }
 }
 
-/// シリアルポートから行を受ける出どころ。届いた行を落とさない列へ入れる。
+/// シリアルポートから行を受ける出どころ。届いた行を取りこぼさないキューへ入れる。
 nonisolated final class SerialSource: MessageSource, @unchecked Sendable {
     // `@unchecked Sendable`: 可変の状態は ``reader`` だけで、main actor (start / stop) でだけ触る。
     // 読む層の手続きが触るのは列 (それ自身が錠を持つ) だけ。

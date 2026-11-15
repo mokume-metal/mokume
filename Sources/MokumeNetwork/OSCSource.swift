@@ -4,7 +4,7 @@
 import Foundation
 import MokumeCore
 
-/// UDP のポートで受ける OSC の出どころ。届いた datagram をその場で読み、メッセージにして列へ入れる。
+/// UDP のポートで受ける OSC の出どころ。届いた datagram をその場で読み、メッセージにしてキューへ入れる。
 ///
 /// 読めないところがあれば、その datagram の残りを捨てて列に数える (``OSCCodec``)。ポートが
 /// 使用中・拒まれた・失敗したときは状態に写し、それぞれ 1 度だけ知らせる (``ListenerStatus``)。

@@ -10,7 +10,7 @@ import MokumeDiagnostics
 ///
 /// 毎フレーム呼ぶ API は無い。`draw()` の前に、前のフレームの後に届いた文字列が**全部**、
 /// 届いた順に ``messages`` へ入っている ([ADR-0024] 決定 6)。最新の 1 つだけではないので、
-/// 1 フレームの間に何度届いても取りこぼさない ([ADR-0028] 決定 2 の落とさない列 (`ExternalQueue`))。
+/// 1 フレームの間に何度届いても取りこぼさない ([ADR-0028] 決定 2 の取りこぼさないキュー (`ExternalQueue`))。
 ///
 /// ```swift
 /// final class Remote: Sketch {

@@ -38,7 +38,7 @@ public nonisolated struct MIDIDevice: Sendable, Equatable {
 /// MIDI デバイス 1 台からの入力ソース。``Sketch/createMIDI(_:)`` が作り、実行中のスケッチへ追加する。
 ///
 /// 毎フレーム呼ぶ API は無い。`draw()` の前に、前のフレームの後に届いたメッセージが ``messages`` に
-/// **全部、届いた順に**入り ([ADR-0028] 決定 2 の落とさない列 (`ExternalQueue`))、コントロールチェンジの現在値が
+/// **全部、届いた順に**入り ([ADR-0028] 決定 2 の取りこぼさないキュー (`ExternalQueue`))、コントロールチェンジの現在値が
 /// ``controlChange(_:channel:)`` から読める。
 ///
 /// <!-- example: 文脈 var midi: MIDIPort? -->

@@ -472,7 +472,7 @@ struct SolidBackFaceOrderTests {
     func modelsOfEitherWindingShowTheirBack(inward: Bool) throws {
         let model = Model.make(
             name: "cube", parsed: ModelFile.parse(Self.cube(inward: inward)), fitting: nil)
-        // 片方は外向き、もう片方は内向き (どちらがどちらかは座標の約束で決まる)
+        // 片方は外向き、もう片方は内向き (どちらがどちらかは座標の規約で決まる)
         #expect(model.winding != .unknown)
         let pair = try orientationPair { canvas, turned in
             canvas.fill(255, 255, 255, 128)

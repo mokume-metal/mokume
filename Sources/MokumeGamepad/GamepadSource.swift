@@ -3,7 +3,7 @@
 
 import MokumeCore
 
-/// ボタンの押し離し 1 件。落とさない列 (``ExternalQueue``) に届いた順で入る。
+/// ボタンの押し離し 1 件。取りこぼさないキュー (``ExternalQueue``) に届いた順で入る。
 nonisolated enum GamepadChange: Sendable, Equatable {
     case pressed(GamepadButton)
     case released(GamepadButton)
@@ -19,7 +19,7 @@ nonisolated enum GamepadChange: Sendable, Equatable {
 /// - スティックの傾きは最新の 1 つ (``ExternalInput``)。1 台で毎秒数百件届き、要るのは
 ///   フレームの頭のいまの値だけである。列に溜めると、読まない間に上限で捨てた知らせが意味の
 ///   無いところで出る
-/// - ボタンの押し離しは落とさない列 (``ExternalQueue``)。1 フレームに押して離したものも、届いた順に
+/// - ボタンの押し離しは取りこぼさないキュー (``ExternalQueue``)。1 フレームに押して離したものも、届いた順に
 ///   全部当てる
 ///
 /// 状態は 2 つに同じものを置く。読むのは列の側である。
