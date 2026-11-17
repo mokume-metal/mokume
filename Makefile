@@ -87,22 +87,41 @@ CI_CHECK_HOST ?=
 
 # **手元で回す段は、触ったものから選ぶ。** AGENTS.md「PR」の「触った範囲のターゲット」は
 # ここを指す (#2133)。段の名前からは「触ったもの → 回す段」が引けず、取り違えた PR が queue で
-# 赤になった。**取り違えて実害が出た 3 つだけをここに置く** — 置いていないものは、下の並びの
+# 赤になった。**取り違えて実害が出た 5 つだけをここに置く** — 置いていないものは、下の並びの
 # 段名と、各段の定義の直前の注釈 (何を見るか) から選ぶ。全段を通すときは make ci-check。
 #
 #   1. public な宣言の doc コメント (`///`) → make reference
 #      `///` の中の記号リンクを解くのは、docc を --warnings-as-errors で通すこの段だけで、
 #      build・test・docs-links・api は見ない。内部の記号や面から外した型 (REFERENCE_OMIT) へ
 #      二重バッククォートでリンクすると、ここでだけ赤になる。この段を回さずに push した
-#      PR #1987 は、ci-check の reference で止まって 1 往復した
+#      PR #1987 は、ci-check の reference で止まって 1 往復した。
+#      例 (コードブロック) を足した・例を持つ API の綴りを変えたなら、make examples に加えて
+#      swift test --filter ExamplesTests も回す。名前で例を引く検査の曖昧さは make examples
+#      では出ず、PR #4056 は CI で赤になった
 #
 #   2. Sources/ → make test の全段。swift test --filter で周辺の suite に絞らない
 #      格納を数える網羅検査 (ShapeExitTests) は GPU を要るので PR の ci-check では飛び、
 #      周辺の suite にも入らない。絞った実行では落ちていることに気付けず、専用機の render
 #      (merge queue の合流後の木) で初めて赤になって queue から外れる (PR #2097)。
-#      GPU の枠 (scripts/gpu-slot.py) は make test が自分で取る
+#      GPU の枠 (scripts/gpu-slot.py) は make test が自分で取る。絞った実行が取り逃すものは
+#      ほかに 2 つある。(a) 全体の原文を読む門の検査 (名前が GateTests で終わる suite・
+#      NewNameTests・CanvasFrameStateTests など)。触ったモジュールの suite だけを回した
+#      PR #3658・#3661・#3740 は、import の一覧・@Suite の GPU の条件・台帳の載せ忘れで赤に
+#      なった。(b) Metal の検証層。make test は METAL_VALIDATION を付けるが、素の swift test
+#      には付かず、検証層の表明だけで落ちる誤りが手元を素通りする (PR #3692 は queue の
+#      render で落ちた)
 #
-#   3. テストの赤の読み方 → 記録の失敗を全件抜いて見る。端末の出力の先頭で切らない
+#   3. 本体の行を書き換えた → make hooks-test
+#      変異の束 (Tests/mutation-bundle.json) の find は、本体にちょうど 1 回当たらなければ
+#      ならない (scripts/tests/mutate_test.py)。当たっていた行を書き換えると、swift test は
+#      緑のままここだけが赤になる (PR #4007・#4017)。直すなら同じ意図の変異に書き換える
+#
+#   4. ファイルを新しく足した → CI_CHECK_HOST=ubuntu make ci-check (静的な段)
+#      帰属の宣言 (REUSE.toml は workflows を名指しで並べる)・実行ビットなどは、ファイルが
+#      増えたときにだけ赤になる。workflow を足した PR #4016 は REUSE.toml への列挙を追って
+#      足した
+#
+#   5. テストの赤の読み方 → 記録の失敗を全件抜いて見る。端末の出力の先頭で切らない
 #      記録は .build/test-results-swift-testing.xml (TEST_RECORD)。件数は
 #      python3 scripts/read-test-record.py --failures <記録>、名前と文面は同じく
 #      --failure-messages <記録> (80 件を超えたぶんは件数だけ) で出る。環境由来の赤

@@ -101,10 +101,11 @@ PR 本文が揃い `ci-gate`・`pr-gate` が成功したら、指示を待たず
 | 場面 | 規律と読む先 |
 | --- | --- |
 | バグを直す | 症状ではなく破られた仕様として、及ぶ範囲ごと直す。閉じる PR には反証役の指摘と対応を載せる (`.claude/skills/bug-refute/`) |
+| 振る舞いを変える | テストに加えてスケッチを動かし、`input` → `observe` の記録を PR に載せる (`.claude/skills/verify/`) |
 | 未トリアージの Issue を調べる | `.claude/skills/stock-triage/` |
 | テストが失敗した | 正本は `.build/test-results-swift-testing.xml` (端末出力は行を省く)。やり直す前に `.build/test-log.txt` を退避する |
 | 性能を測る | release で測る (`make test-release`)。debug の数字を根拠にしない |
-| 待ちを含むテストを書く | 待つ側が期限を持ち、越えたら殺す。`.timeLimit` は使わない (main actor 上でテスト全体の秒数を縛る) |
+| 待ちを含むテストを書く | 待つ側が期限を持ち、越えたら殺す。`.timeLimit` は使わない (main actor 上でテスト全体の秒数を縛る)。合否を時間の比や決め打ちのフレーム数で決めず、数えられる値 (仕事の回数・世代) で決める (負荷で揺れて関係の無い PR を queue から外す。#4030・#4071) |
 | queue から外された | 失敗した `render` の run を読む (`render-pr` は早期の情報で必須ではない)。専用機は画面とキーボードで操作する |
 | リリース | 日に 1 度自動で出て、下限 OS の release のテストが失敗なら出ない。出し直しだけ `release:now` (`.github/workflows/release.yml`) |
 | ブランチ保護を変える | `.github/rulesets/*.json` を PR で変え、merge 後にメンテナが `scripts/apply-rulesets.sh --apply` で適用する。必須チェックを消すときだけ適用が先 |
