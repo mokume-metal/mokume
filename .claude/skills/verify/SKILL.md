@@ -41,7 +41,11 @@ CLI="$(swift build --show-bin-path)/mokume-cli"
 "$CLI" new <名前> --path <scratchpad> --local <worktree の絶対パス>
 ```
 
-できた `Sources/` の本体に、確かめたい口だけを書く。止めたまま押したいなら `setup()` で `noLoop()` を呼ぶ。
+スケッチは `<scratchpad>/<名前>` にできる (以降の `<スケッチ>` はこの場所)。`Sources/` の本体に、確かめたい口だけを書く:
+
+- **確かめたい値は `draw()` で毎フレーム `expose("名前", 値)` する。** 値はそのフレームかぎりで、`observe` の内訳の `values.<名前>` に載る
+- 確かめる間は `noLoop()` で止めない。止めたスケッチの `observe` は最後に描いたフレームを返すので、入力を送っても値が動かない
+- `--local` で作ったスケッチでは、MCP の `reference` の `api` が「The public API list is not available here.」で断られる (依存の版が決まっていないため)。口の宣言は worktree の `Sources/` を読む
 
 **起動の前に区画を作る。** `.mokume/observe` と `.mokume/input` は、スケッチが起動した瞬間にディレクトリがあるときだけ働く (`FrameObserver.makeIfEnabled`・`InputInbox.makeIfEnabled`)。後から作っても、起動し直すまで届かない:
 
@@ -57,7 +61,7 @@ mkdir -p <スケッチ>/.mokume/observe <スケッチ>/.mokume/input
 "$CLI" watch <スケッチ> > <scratchpad>/watch.log 2>&1
 ```
 
-起動できたかは、次の段の `build_status` で `ok` と `launched` が真になったことで見る (ログの `Rebuilt:` の行でも分かる)。窓は 1 枚出る。
+最初の組み立ては 1〜2 分かかる (依存の取得と release の組み立て)。ログに `Rebuilt:` か `Build failed:` の行が出るまで、期限を持って待つ。起動できたかは、次の段の `build_status` で `ok` と `launched` が真になったことで確かめる。窓は 1 枚出る。起動した後にソースを保存すれば数秒で作り直されるので、先に起動してから書き換えてもよい。
 
 ## 5. 操作して読む
 
@@ -65,8 +69,10 @@ mkdir -p <スケッチ>/.mokume/observe <スケッチ>/.mokume/input
 
 1. `initialize` → 応答を待つ → 通知の `notifications/initialized`
 2. `tools/list` で道具と引数の形を読む。**入力の種類と欄は、ここの `input` の説明と [Schemas/input-request.schema.json](../../../Schemas/input-request.schema.json) が正本**で、このスキルには写さない
-3. `tools/call` で `input` (`{"events": [...]}`) を送り、続けて `observe` で読む。`observe` の応答は `Image: <パス>` の後ろに JSON の内訳が続くので、最初の `{` から読む
-4. 内訳 (フレーム番号・スケッチが渡した値・`warnings`・`stamp`) で、期待した変化が起きたかを確かめる
+3. 送る前に `observe` で一度読み、値の出発点を記録する
+4. `tools/call` で `input` (`{"events": [...]}`) を送る。応答の `accepted` が送った数と一致し、`ignored` と `dropped` が 0 であることを見る
+5. `observe` で読む。応答は `Image: <パス>` の後ろに JSON の内訳が続くので、最初の `{` から読む。入力がどのフレームで載るかは道具の説明で約束されていないので、1 枚で変化が見えなければ、すぐに失敗と読まずに `count` を数枚にして取り直す
+6. 内訳 (フレーム番号・`values`・`warnings`・`stamp`) で、期待した変化が起きたかを確かめる
 
 `build_status` は直前の組み立ての結果を返す。思った絵にならないときは、まずここで新しい版が起動しているかを見る。
 
@@ -74,10 +80,11 @@ mkdir -p <スケッチ>/.mokume/observe <スケッチ>/.mokume/input
 
 ## 6. 片付ける
 
-`pkill` で名前を指して止めない — 同じ機械で他のセッションが `watch` を走らせている。自分が起こした `watch` と、その子のスケッチの PID を確かめてから止める:
+`pkill` で名前を指して止めない — 同じ機械で他のセッションが `watch` を走らせている。自分が起こした `watch` と、その子のスケッチの PID を確かめてから止める。スケッチは `watch` の子として探す。**パスの全体で grep しない** — `watch` は `/private/tmp/…` を `/tmp/…` と名乗ることがあり、渡した綴りでは子が当たらない:
 
 ```bash
-ps -eo pid,ppid,pgid,command | grep -F '<スケッチ>'
+ps -eo pid,ppid,command | grep -F '<名前> '   # watch の PID を見つける (末尾の名前で探す)
+pgrep -P <watch の PID>                       # その子がスケッチ本体
 kill -INT <スケッチの PID> <watch の PID>
 ```
 
