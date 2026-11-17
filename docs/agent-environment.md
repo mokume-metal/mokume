@@ -11,7 +11,7 @@ SPDX-License-Identifier: MIT
 ## スキル
 
 Claude Code は従来どおり `.claude/skills/` を読む。Codex は `.agents/skills/` の相対リンク
-から同じ3本を読む。root・サブディレクトリ・worktree のいずれでもリポジトリ内で完結する。
+から同じ4本を読む。root・サブディレクトリ・worktree のいずれでもリポジトリ内で完結する。
 リンクを含めて checkout する。別のエージェントでは AGENTS.md の「場面別の入口」から本文を
 読む。スキルを個人ディレクトリへコピーしない。
 
