@@ -963,6 +963,7 @@ struct WatchSessionModelTests {
         /// その次の拍まで回す)。保存でも入る要求でもない拍で生きている世代が増えるので、「この操作で世代が変わらない」
         /// 約束は、この戻り値を引いて比べる
         /// (引いてよいのは ``deferredStamp`` の版が保留にあり得る回の、その版の子だけ・``pendingLaunches(_:of:)``)。
+        /// 保留の版が起こせない版なら、子は起きずに起動が断られ、``refusedPendingStamp`` に控える (#4119)。
         @discardableResult
         private func beat() async -> Set<Int> {
             let auditionsBefore = auditionGens
@@ -981,7 +982,8 @@ struct WatchSessionModelTests {
         }
 
         /// 試聴中に、成功する保存が着いた (保留した試聴の子が居るかもしれない)。**保留の有無は ``WatchSession`` の内部の
-        /// 事情なので、模型は「あり得る」だけを控える** — 試聴の子が起きるか、出る・入る要求を受ける・終えるまで立ったまま。
+        /// 事情なので、模型は「あり得る」だけを控える** — 試聴の子が起きるか (起こせない版なら起動が断られるか・#4119)、
+        /// 出る・入る要求を受ける・終えるまで立ったまま。
         /// 立っていない回の拍で試聴の子が起きたら、免除せずに破れとして見る。**控えるのは保留にあり得る版 (保存の世代)** で、
         /// 免除するのはその版の子だけ — 別の版の子が起きたら破れとして見る (#3794)。
         private var deferredStamp: String?
@@ -1547,10 +1549,10 @@ struct WatchSessionModelTests {
                     return Violation(number: 7, text: "起こし直す要求で作り直した")
                 }
                 // 記録は書かない (作り直しではない)。同じ拍の頭で保留していた試聴の子が起きた・起こせない版で断られた回は、
-                // その記録が書かれる (#4119)
-                if session.lastReport != reportBefore, pendingLaunches(started, of: deferredBefore).isEmpty,
-                    refusedPendingStamp == nil
-                {
+                // その版の試聴の記録が書かれる (#4119)。免除するのはその記録だけで、別の版・本番の記録への変化は破れ
+                let pendingSettled = !pendingLaunches(started, of: deferredBefore).isEmpty || refusedPendingStamp != nil
+                let pendingRecord = session.lastReport.map { $0.stamp == deferredBefore && $0.audition == true } ?? false
+                if session.lastReport != reportBefore, !(pendingSettled && pendingRecord) {
                     return Violation(number: 7, text: "起こし直す要求で、区画 build の記録が変わった")
                 }
                 switch expectation {
