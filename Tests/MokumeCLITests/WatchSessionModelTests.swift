@@ -558,6 +558,8 @@ struct WatchSessionModelTests {
             [.save, .promoteWaiting, .audition, .save, .restart, .exitAuditionFailing, .save, .leave],
             // 反証 7: 通らなかった作り直しの後の起こし直しは notBuilt
             [.save, .promoteWaiting, .saveBuildFail, .restart],
+            // 保留していた試聴の起こせない版は、起こし直す要求を読む拍の頭で断られ、その記録を書く (#4119)
+            [.saveThenAudition, .overlap([.rebuild, .audition]), .saveLaunchFail, .promoteWaiting, .restart],
             // 2 回目の反証 2・3: まとめた作り直しの記録は、最後に読んだものの回 (頼みの後の保存は保存の回・保存の後の頼みは
             // 頼まれた回)
             [.save, .promoteWaiting, .overlap([.rebuild, .save])],
@@ -632,6 +634,11 @@ struct WatchSessionModelTests {
         /// 起こせない版 (`save(launchFail)` の保存の世代)。**起こせないのは版の性質で、起こす拍の性質ではない** —
         /// 保留していた版を後の拍で起こすときも、その版を作った保存で決まる (#3789)。
         private var refusedStamps: Set<String> = []
+        /// 起こそうとして断った版 (``refusedStamps`` の版の起動)。拍ごとに、保留の版の起動が断られたかを見る。
+        private var refusedLaunches: [String] = []
+        /// 直前の拍の頭で、保留にあり得た版 (``deferredStamp``) の起動が断られたなら、その版。**断られた回も保留の版の
+        /// 結末** で、起きた回と同じく、その版の記録が書かれ保留は済む (#4119)。
+        private var refusedPendingStamp: String?
         private var stopped = false
         private var history: [String] = []
 
@@ -835,7 +842,10 @@ struct WatchSessionModelTests {
                     launchViolation = launchViolation ?? "起こし直しの子に時計の場所 \(selectedClock) を渡した (規則では新しい番号 \(clockCount))"
                 }
             }
-            if let stamp, refusedStamps.contains(stamp) { throw .cannotLaunch(tool: "sh", place: "", reason: "the model refuses to start a child") }
+            if let stamp, refusedStamps.contains(stamp) {
+                refusedLaunches.append(stamp)
+                throw .cannotLaunch(tool: "sh", place: "", reason: "the model refuses to start a child")
+            }
             let process = Process()
             process.executableURL = executable
             // 1 行読んだら終わる子。`fail` を読むと終了コード 3 で終わる (最初の絵の前の失敗)
@@ -956,15 +966,17 @@ struct WatchSessionModelTests {
         @discardableResult
         private func beat() async -> Set<Int> {
             let auditionsBefore = auditionGens
+            let refusedBefore = refusedLaunches.count
             await WatchCommand.step(session, stopped: { false }, preview: { [self] line, _ in
                 if let line { previewLog.append(line) }
             })
             unseen = []
             unseenAudition = []
             let started = auditionGens.subtracting(auditionsBefore)
-            // 試聴の子が起きれば、保留は済んだ。保存の操作は、この後で作り直しに取りかかった拍の結果から ``deferredStamp``
-            // を決め直す (その保存の版が保留に回ったか)
-            if !started.isEmpty { deferredStamp = nil }
+            refusedPendingStamp = deferredStamp.flatMap { refusedLaunches[refusedBefore...].contains($0) ? $0 : nil }
+            // 試聴の子が起きれば (起こせない版なら断られれば)、保留は済んだ。保存の操作は、この後で作り直しに取りかかった
+            // 拍の結果から ``deferredStamp`` を決め直す (その保存の版が保留に回ったか)
+            if !started.isEmpty || refusedPendingStamp != nil { deferredStamp = nil }
             return started
         }
 
@@ -1534,8 +1546,11 @@ struct WatchSessionModelTests {
                 if rebuilds != rebuildsBefore {
                     return Violation(number: 7, text: "起こし直す要求で作り直した")
                 }
-                // 記録は書かない (作り直しではない)。同じ拍の頭で保留していた試聴の子が起きた回は、その記録が書かれる
-                if session.lastReport != reportBefore, pendingLaunches(started, of: deferredBefore).isEmpty {
+                // 記録は書かない (作り直しではない)。同じ拍の頭で保留していた試聴の子が起きた・起こせない版で断られた回は、
+                // その記録が書かれる (#4119)
+                if session.lastReport != reportBefore, pendingLaunches(started, of: deferredBefore).isEmpty,
+                    refusedPendingStamp == nil
+                {
                     return Violation(number: 7, text: "起こし直す要求で、区画 build の記録が変わった")
                 }
                 switch expectation {
