@@ -8,7 +8,7 @@
 /// (非有限の数だけは、どちらの経路でも受け取らない)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-public struct ParamRange: Equatable, Sendable {
+public nonisolated struct ParamRange: Equatable, Sendable {
     /// 下端。
     public let lowerBound: Double
     /// 上端。
@@ -69,7 +69,7 @@ public struct ParamRange: Equatable, Sendable {
     }
 }
 
-extension Int {
+nonisolated extension Int {
     /// 最も近い整数。**`Int` に収まらなければ、近いほうの端へ収める。**
     ///
     /// `Int(_: Double)` は収まらない値で**プロセスごと落ちる**。ウィンドウのスライダーが返す実数
@@ -98,7 +98,7 @@ extension Int {
 /// ([ADR-0030] 決定 5)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-public struct ParamDeclaration: Equatable, Sendable {
+public nonisolated struct ParamDeclaration: Equatable, Sendable {
     /// 外部から指すときの名前。
     public let name: String
     /// いまの値。
@@ -150,7 +150,7 @@ public struct ParamDeclaration: Equatable, Sendable {
 /// スライダーのまま)、書いた人へ 1 度だけ名乗る — 黙って捨てると、書いたのに効かない刻みになる。
 ///
 /// [#2438]: https://github.com/mokume-metal/mokume/issues/2438
-enum ParamStep {
+nonisolated enum ParamStep {
     /// 検めた刻みと、置かなかったときの理由 (名乗る 1 行の後半)。
     struct Verdict: Equatable {
         /// 置いてよい刻み。置かないなら `nil`。

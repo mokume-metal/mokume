@@ -32,6 +32,15 @@ enum Command {
         return last.isEmpty ? "mokume" : last
     }
 
+    /// `run` と `watch` のヘルプに載せる `--remote` の説明 (#4126)。2 つの口で同じ約束なので 1 か所に置く。
+    static let remoteHelp = """
+        Pass --remote to move the sketch's @Param knobs from a phone on the same network: it prints a QR code
+        and a URL (with a one-time token) to open in the phone's browser, where each knob with a range, a
+        Bool, a color or a list of choices gets a control. The sketch opens no port and needs no change;
+        the phone's changes reach it the way the knob panel's do, and --record records them. For quick demos
+        and prototypes on the local network: a bundled app (bundle) has no tool to serve the page.
+        """
+
     /// どの口でも、値を取る選択肢の宣言の和集合。**宣言は各口が 1 つずつ持ち、ここは並べるだけ。**
     ///
     /// `doctor` が使う。値を取る選択肢を知らないと、`doctor --fps 60` の `60` が場所として診られる
@@ -93,7 +102,10 @@ enum Command {
                 )
             case .run:
                 (
-                    "run [<directory>] [-c <configuration>] [--scratch-path <directory>] [--record <path>]",
+                    """
+                    run [<directory>] [-c <configuration>] [--scratch-path <directory>] [--record <path>] \
+                    [--remote]
+                    """,
                     """
                     Build a sketch and run it. Defaults to the current directory.
                     -c takes debug or release (defaults to release; -c debug builds faster).
@@ -114,13 +126,14 @@ enum Command {
                     it runs, and in a window, reading a sound's analysis (level, spectrum, waveform,
                     isBeat; a sound that only plays is fine). Date() and Swift's own random numbers
                     cannot be noticed: use random() and time instead to replay what they give
+                    \(remoteHelp)
                     """
                 )
             case .watch:
                 (
                     """
                     watch [<directory>] [-c <configuration>] [--scratch-path <directory>] \
-                    [--keep-time] [--record <path>]
+                    [--keep-time] [--record <path>] [--remote]
                     """,
                     """
                     Rebuild the sketch and swap it in whenever you save.
@@ -151,6 +164,8 @@ enum Command {
                     and swaps in once without stopping watch. "restart" starts the running version again
                     from the beginning (time from 0, also with --keep-time) without building
                     (Schemas/watch-request.schema.json).
+                    \(remoteHelp) A rebuild pauses the knobs on the phone; the page comes back with the
+                    new version's knobs without reloading.
                     """
                 )
             case .render:

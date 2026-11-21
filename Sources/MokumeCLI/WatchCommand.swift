@@ -32,7 +32,7 @@ enum WatchCommand {
             Arguments.Option([keepTimeFlag], isSwitch: true) {
                 "\($0) takes no value"
             }
-        ] + RecordOption.options
+        ] + RecordOption.options + RemoteOption.options
     }
 
     /// 世代をまたいで作者の時計を渡すファイルの場所。見張り 1 本ごとに別 (プロセス番号で分ける)。
@@ -182,6 +182,8 @@ enum WatchCommand {
         // **端末が正で、プレビューはそれを映す。** 同じ 1 本の文言を両方へ渡すので、
         // 二か所で別のことを言う形にはならない (#705 の未決だったところ)
         var viewer: Viewer?
+        // スマホのつまみの受け口 (`--remote`・#4126)。区画とウィンドウを置いてから開く
+        var remote: RemoteSession?
         session.willRebuild = { initial in
             // 頼まれた作り直しは、頼まれて作り直していると言う (#3428)。保存による作り直しの行は変えない
             let line =
@@ -190,6 +192,8 @@ enum WatchCommand {
             // **作り直しが始まったら、前の子の 1 枚目を待たない。** 遅れて来た合図がこの行を畳む
             viewer?.firstFrame.settle()
             viewer?.preview.report(line, spinning: true)
+            // 作り直しの間はスマホのつまみを止める (次の版が起きたら、そちらの宣言で並べ直す)
+            remote?.server.setState(.rebuilding)
         }
         // **段数は窓にだけ添える** (#4121)。端末の行ではないので、端末へは出さない
         session.buildProgressed = { progress in
@@ -197,6 +201,8 @@ enum WatchCommand {
                 viewer?.preview.reportProgress(done: progress.done, total: progress.total)
             } else {
                 viewer?.preview.clearProgress()
+                // 組み立てが終わった。通らなければ前の版が走り続けるので、どちらでもつまみを戻す
+                remote?.server.setState(.running)
             }
         }
         // **長く待つ間を無言にしない。** 終えるときは撮っていた動画を閉じ終えるまで待つので
@@ -217,6 +223,9 @@ enum WatchCommand {
         //
         // [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
         viewer = openViewer(for: session)
+        if RemoteOption.requested(in: values) {
+            remote = openRemote(for: session, viewer: viewer)
+        }
 
         // 子を起こす前に受け口を置く。起こした後だと、その隙間に来た合図で
         // 既定の振る舞い (親だけが即座に終わる) に落ちて子が残る
@@ -235,14 +244,36 @@ enum WatchCommand {
                 session.noteStopRequested()
             },
             isFinished: { session.finishStage == .done },
-            teardown: { teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile) })
+            teardown: {
+                remote?.stop()
+                teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile)
+            })
         NSApplication.shared.delegate = delegate
 
         // **巡回に入る前に断る。** ウィンドウが覆われてから立てるのでは遅い — App Nap は
         // 起動から 30〜60 秒で入る (#1199)
         refuseThrottling()
         watching(session, viewer)
+        remote?.stop()
         teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile)
+    }
+
+    /// スマホのつまみの受け口を開き、端末と道具のウィンドウに QR を出す (#4126)。
+    ///
+    /// 区画 `.mokume/params` は ``prepareFacets(under:)`` が置く。人が消していた・置けなかったなら、開かずに理由を言う。
+    /// ウィンドウの QR は、最初のスマホがつながったら下げる (絵を覆い続けない)。
+    static func openRemote(for session: WatchSession, viewer: Viewer?) -> RemoteSession? {
+        let facet = paramsFacet(for: session)
+        guard WorkDirectory.directoryExists(at: facet) else {
+            say("Remote knobs are off: the knobs' exchange folder is missing (\(facet.path))")
+            return nil
+        }
+        guard let remote = RemoteSession.open(facet: facet, say: { say($0) }) else { return nil }
+        if let preview = viewer?.preview, let image = remote.qr?.image(scale: 1) {
+            preview.showRemote(image, line: "Scan for remote knobs")
+            remote.server.onFirstConnection = { Task { @MainActor in preview.hideRemote() } }
+        }
+        return remote
     }
 
     /// 置き場の断片を元から読ませる先を決められなかったときに名乗る 1 行 ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。

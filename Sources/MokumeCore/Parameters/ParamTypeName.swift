@@ -19,7 +19,7 @@
 /// **一致は `scripts/tests/wire_vocabulary_test.py` が見る** (`make hooks-test`)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-enum ParamTypeName: String, CaseIterable, Sendable {
+nonisolated enum ParamTypeName: String, CaseIterable, Sendable {
     case float
     case int
     case bool

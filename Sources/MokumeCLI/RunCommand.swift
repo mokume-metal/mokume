@@ -77,7 +77,8 @@ enum RunCommand {
         -> (invocation: Invocation, values: [String: String])
     {
         try Invocation.parse(
-            arguments, adding: RecordOption.options, defaultConfiguration: defaultConfiguration)
+            arguments, adding: RecordOption.options + RemoteOption.options,
+            defaultConfiguration: defaultConfiguration)
     }
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
@@ -116,6 +117,10 @@ enum RunCommand {
         //
         // [#1120]: https://github.com/mokume-metal/mokume/issues/1120
         if let recording { print("Recording to: \(recording)") }
+        // **スマホのつまみは、子を起こす前に開く** (#4126)。子は区画 `.mokume/params` を起動の時にしか
+        // 見ないので、`run` が置かない区画をここで置く。置いたものだけ終わりに畳む
+        let remote = try RemoteOption.requested(in: values) ? openRemote(for: invocation) : nil
+        defer { remote?.close() }
         let launchedAt = Date()
         try launch(
             executable, in: directory,
@@ -720,6 +725,36 @@ enum RunCommand {
         // 合図の番号を返すので、`fatalError` の SIGTRAP が「code 5」になり、`exit(5)` と見分けがつかない
         case .signalled(let signal): throw .sketchSignalled(signal: signal)
         }
+    }
+
+    /// `run --remote` の受け口と、そのために置いた区画。
+    struct RunRemote {
+        let session: RemoteSession?
+        /// こちらが置いた区画。元から在れば `nil` (人が置いたものは畳まない)。
+        let createdFacet: URL?
+
+        func close() {
+            session?.stop()
+            if let createdFacet { try? FileManager.default.removeItem(at: createdFacet) }
+        }
+    }
+
+    /// つまみの面の区画を置いて、スマホの受け口を開く。区画を置けなければ、受け口は開かずに理由を言う。
+    static func openRemote(for invocation: Invocation) throws(CommandFailure) -> RunRemote {
+        let facet = WorkDirectory.facet(StartupReads.params.key, under: try invocation.facetBase())
+        var created: URL?
+        if !WorkDirectory.directoryExists(at: facet) {
+            do {
+                try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+                created = facet
+            } catch {
+                print("Remote knobs are off: the knobs' exchange folder could not be made (\(facet.path)): \(error)")
+                return RunRemote(session: nil, createdFacet: nil)
+            }
+        }
+        let session = RemoteSession.open(facet: facet) { print($0) }
+        session?.server.setState(.running)
+        return RunRemote(session: session, createdFacet: created)
     }
 
     /// 終わりの合図を受けたら、走らせているスケッチへ SIGTERM を渡す受け口を置く。

@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import Synchronization
 
 /// 読み手が書きかけを掴まないように書く ([ADR-0018] 決定 3)。
 ///
@@ -86,8 +87,9 @@ package enum AtomicFile {
     /// 置かない (公開した鍵を返さないため)。
     private static var failures = WarningLog<URL>()
 
-    /// 一時ファイルの名前に足す連番。**共有しても競合しない** (``failures`` と同じ理由)。
-    private static var sequence = 0
+    /// 一時ファイルの名前に足す連番。**main の外の書き手とも分け合う** — 置く段 (``writeJSON(_:to:)``) は
+    /// main の外からも呼ばれる (`run --remote` の道具が要求を置く。子を待つ間 main を塞ぐので、#1937)。
+    nonisolated private static let sequence = Atomic<Int>(0)
 
     /// 落とされた書き手の一時ファイルを、既に片付けた置き場所。
     ///
@@ -118,7 +120,7 @@ package enum AtomicFile {
     }
 
     /// 中身を原子的に置く。途中のディレクトリは必要なら作る。
-    package static func write(_ data: Data, to url: URL) throws {
+    nonisolated package static func write(_ data: Data, to url: URL) throws {
         try write(to: url) { try data.write(to: $0) }
     }
 
@@ -126,7 +128,7 @@ package enum AtomicFile {
     ///
     /// URL にしか書けない道具 (画像の書き出しなど) を、同じ規約に乗せるための入口。
     /// ``write(_:to:)`` もここを通るので、一時ファイルの名前と後始末は 1 か所で決まる。
-    static func write(to url: URL, using body: (URL) throws -> Void) throws {
+    nonisolated static func write(to url: URL, using body: (URL) throws -> Void) throws {
         try reserve(url).place(using: body)
     }
 
@@ -207,7 +209,7 @@ package enum AtomicFile {
     ///
     /// **書く先がディレクトリなら置かない** (本体を走らせる前に断る)。`replaceItemAt` は行き先の種類を
     /// 見ず、ディレクトリを中身ごと消してファイルに置き換える (#2859)
-    static func reserve(_ url: URL) throws -> Placement {
+    nonisolated static func reserve(_ url: URL) throws -> Placement {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try refuseDirectory(url)
@@ -216,8 +218,8 @@ package enum AtomicFile {
         // 書き手と一致すると、選んだ名前にそのフォルダが在りうる。種類を問わず、何も無い名前まで連番を進める
         var temporary: URL
         repeat {
-            sequence += 1
-            temporary = temporaryURL(for: url, writer: getpid(), sequence: sequence)
+            let number = sequence.add(1, ordering: .relaxed).newValue
+            temporary = temporaryURL(for: url, writer: getpid(), sequence: number)
         } while exists(temporary)
         return Placement(url: url, temporary: temporary)
     }
@@ -259,7 +261,7 @@ package enum AtomicFile {
     }
 
     /// 一時ファイルの場所。**置き場所の隣に作る** (冒頭の `rename(2)` の理由)。
-    static func temporaryURL(for url: URL, writer: pid_t, sequence: Int) -> URL {
+    nonisolated static func temporaryURL(for url: URL, writer: pid_t, sequence: Int) -> URL {
         url.deletingLastPathComponent().appendingPathComponent(
             ".\(temporaryStem(of: url.lastPathComponent)).\(writer)-\(sequence).tmp", isDirectory: false)
     }
@@ -315,7 +317,7 @@ package enum AtomicFile {
     /// 名前が来たら、読まずに、その続きが探す名前に足す (``Continuations``)。枚ごとに名前が変わる呼び手
     /// (``FrameObserver``) でも、読みの回数と握る `DIR` が名前の数に比例しない。片付けるのは今までどおり
     /// 「頼まれた名前の一時ファイル」だけで、他の名前のものには触れない。
-    private static func sweepAbandonedTemporaries(of url: URL) {
+    nonisolated private static func sweepAbandonedTemporaries(of url: URL) {
         guard swept.insert(url) else { return }
         if continuations.adopt(url) { return }
         guard let rest = beginSweep(of: url, budget: syncSweepBudget) else { return }
@@ -329,7 +331,10 @@ package enum AtomicFile {
 
     /// 呼んだ糸で片付ける件数の上限。**小さなディレクトリ (今の区画はすべてここ) は、戻る前に片付け終わる**
     /// ので、書いた直後に残りを読む検査も、従来の振る舞いのままである。検査だけが下げる。
-    static var syncSweepBudget = 1024
+    ///
+    /// **main の外の書き手も読む** (``reserve(_:)``)。書き換えるのは検査だけで、書き換える検査は main の外の
+    /// 書き手を走らせない。
+    nonisolated(unsafe) static var syncSweepBudget = 1024
 
     /// 裏で続ける片付けを走らせる列。直列にするのは、大きなディレクトリを名前ごとに引き直す呼び手
     /// (``FrameObserver`` の枚ごとの名前) の読み出しが、並んで機械を占めないため。
@@ -607,7 +612,7 @@ package enum AtomicFile {
     ///
     /// **置き換えは `rename(2)` で、属性は引き継がない** (``Replacement/rename``・#2382)。区画の応答・目録を毎フレーム
     /// 書き直す経路が、`replaceItemAt` の費用を払わずに済む。保存 (`params.json`) は ``write(_:to:)`` で、属性を引き継ぐ。
-    package static func writeJSON(_ value: some Encodable, to url: URL) throws {
+    nonisolated package static func writeJSON(_ value: some Encodable, to url: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
         let data = try encoder.encode(value)

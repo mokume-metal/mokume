@@ -52,6 +52,8 @@ package final class SharedFramePreview {
     private let params: RemoteParams?
     /// いま重ねているつまみの面。宣言の顔ぶれが変われば作り直す。
     private var knobs: KnobOverlay?
+    /// `watch --remote` の QR コード。出していなければ `nil`。
+    private var remoteBadge: RemoteBadge?
 
     /// - Parameters:
     ///   - facet: 差し出し元の PID が置かれるディレクトリ (`.mokume/viewport`)。
@@ -287,4 +289,26 @@ package final class SharedFramePreview {
     package func clearProgress() {
         notice.clearSteps()
     }
+
+    /// `watch --remote` の QR コードを右下に重ねる (#4126)。もう出ていれば差し替える。
+    ///
+    /// - Parameters:
+    ///   - image: QR コードの絵。
+    ///   - line: 絵の下に添える 1 行。
+    package func showRemote(_ image: CGImage, line: String) {
+        guard let host = stage.host else { return }
+        remoteBadge?.removeFromSuperview()
+        let badge = RemoteBadge(image: image, line: line)
+        host.addSubview(badge)
+        remoteBadge = badge
+    }
+
+    /// 重ねた QR コードを下げる。最初のスマホがつながったら道具が呼ぶ。
+    package func hideRemote() {
+        remoteBadge?.removeFromSuperview()
+        remoteBadge = nil
+    }
+
+    /// QR コードが出ているか。**検査から見る。**
+    var showsRemote: Bool { remoteBadge != nil }
 }
