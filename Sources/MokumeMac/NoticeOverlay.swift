@@ -40,10 +40,13 @@ final class NoticeOverlay: NSView {
     private(set) var line: String?
     /// 回っている印を出しているか。
     var isSpinning: Bool { spinner.isHidden == false }
+    /// 行の横に添えている段数 (`42 / 44`)。`nil` は添えていない。
+    var steps: String? { stepsLabel.isHidden ? nil : stepsLabel.stringValue }
 
     private let backdrop = NSVisualEffectView()
     private let spinner = NSProgressIndicator()
     private let label = NSTextField(labelWithString: "")
+    private let stepsLabel = NSTextField(labelWithString: "")
 
     init() {
         super.init(frame: .zero)
@@ -71,6 +74,12 @@ final class NoticeOverlay: NSView {
         label.textColor = .labelColor
         addSubview(label)
 
+        // **桁の幅を揃える。** 数字が増えるたびに面の幅が揺れない
+        stepsLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        stepsLabel.textColor = .secondaryLabelColor
+        stepsLabel.isHidden = true
+        addSubview(stepsLabel)
+
         isHidden = true
     }
 
@@ -84,6 +93,8 @@ final class NoticeOverlay: NSView {
     ///   - spinning: 回っている印を出すか。
     func show(_ line: String?, spinning: Bool) {
         self.line = line
+        // 段数はその行の間だけのもので、次の行へ持ち越さない
+        stepsLabel.isHidden = true
         guard let line else {
             isHidden = true
             spinner.stopAnimation(nil)
@@ -95,6 +106,24 @@ final class NoticeOverlay: NSView {
         // 終わっていないと読める
         if spinning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         spinner.isHidden = !spinning
+        reposition()
+        drawNow()
+    }
+
+    /// 行の横に段数を添える。**回っている印を出している間だけ** — 終わった行・失敗の行に
+    /// 段数が残ると、まだ組み立てていると読める。
+    func showSteps(done: Int, total: Int) {
+        guard !isHidden, isSpinning else { return }
+        stepsLabel.stringValue = "\(done) / \(total)"
+        stepsLabel.isHidden = false
+        reposition()
+        drawNow()
+    }
+
+    /// 添えた段数を消す。
+    func clearSteps() {
+        guard !stepsLabel.isHidden else { return }
+        stepsLabel.isHidden = true
         reposition()
         drawNow()
     }
@@ -119,10 +148,14 @@ final class NoticeOverlay: NSView {
     ///   - textWidth: 文字の幅。
     ///   - textHeight: 文字の丈。
     ///   - spinning: 回っている印を出すか。出さないなら、その幅も間も取らない。
-    static func size(textWidth: CGFloat, textHeight: CGFloat, spinning: Bool) -> NSSize {
+    ///   - stepsWidth: 添える段数の幅。0 なら段数の幅も間も取らない。
+    static func size(
+        textWidth: CGFloat, textHeight: CGFloat, spinning: Bool, stepsWidth: CGFloat = 0
+    ) -> NSSize {
         let mark = spinning ? markSide + gap : 0
+        let steps = stepsWidth > 0 ? gap + stepsWidth : 0
         return NSSize(
-            width: (textWidth + mark + 2 * padding).rounded(),
+            width: (textWidth + mark + steps + 2 * padding).rounded(),
             height: (max(textHeight, markSide) + padding).rounded())
     }
 
@@ -135,17 +168,31 @@ final class NoticeOverlay: NSView {
     func reposition() {
         guard !isHidden else { return }
         let text = label.intrinsicContentSize
+        // **幅は切り上げ、1 pt 余らせる。** 求めた幅ちょうどでは、最後の桁の右端が欠けた (実測)
+        let stepsSize =
+            stepsLabel.isHidden
+            ? .zero
+            : NSSize(
+                width: stepsLabel.intrinsicContentSize.width.rounded(.up) + 1,
+                height: stepsLabel.intrinsicContentSize.height)
         let wanted = Self.size(
-            textWidth: text.width, textHeight: text.height, spinning: !spinner.isHidden)
+            textWidth: text.width, textHeight: text.height, spinning: !spinner.isHidden,
+            stepsWidth: stepsSize.width)
         frame = Self.frame(in: superview?.bounds ?? NSRect(origin: .zero, size: wanted), size: wanted)
         backdrop.frame = bounds
         let mark = spinner.isHidden ? 0 : Self.markSide + Self.gap
+        let steps = stepsLabel.isHidden ? 0 : Self.gap + stepsSize.width
         spinner.frame = NSRect(
             x: Self.padding, y: (bounds.height - Self.markSide) / 2,
             width: Self.markSide, height: Self.markSide)
+        // **窓が狭ければ行のほうを詰める。** 段数は短く、切れると読めない
+        let labelWidth = max(0, bounds.width - 2 * Self.padding - mark - steps)
         label.frame = NSRect(
             x: Self.padding + mark, y: (bounds.height - text.height) / 2,
-            width: max(0, bounds.width - 2 * Self.padding - mark), height: text.height)
+            width: labelWidth, height: text.height)
+        stepsLabel.frame = NSRect(
+            x: Self.padding + mark + labelWidth + Self.gap, y: (bounds.height - stepsSize.height) / 2,
+            width: stepsSize.width, height: stepsSize.height)
     }
 
     /// ウィンドウの大きさが変わったら置き直す。**自動整列だけでは足りない** — ウィンドウを縮めたときに

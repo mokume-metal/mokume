@@ -275,4 +275,16 @@ package final class SharedFramePreview {
     public func report(_ line: String?, spinning: Bool) {
         notice.show(line, spinning: spinning)
     }
+
+    /// 回っている行の横に、組み立ての段数 (`done / total`) を添える (#4121)。
+    ///
+    /// **回っている行が出ている間だけ出る。** 次の行 (``report(_:spinning:)``) で消える。
+    package func reportProgress(done: Int, total: Int) {
+        notice.showSteps(done: done, total: total)
+    }
+
+    /// 添えた段数を消す。行はそのまま残す。
+    package func clearProgress() {
+        notice.clearSteps()
+    }
 }

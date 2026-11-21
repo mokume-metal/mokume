@@ -141,11 +141,15 @@ enum WatchCommand {
         // `run()` から戻らず `teardown` だけを通る — 消す処理はそちらにも載せてある (2 度消しても害は無い)
         defer { if let keepTimeFile { Self.removeKeepTimeFiles(keepTimeFile) } }
 
+        // 作り直しの糸が読んだ段数を main actor へ運ぶ (#4121)。受け手は見張りができてから据える
+        let progress = BuildProgressMailbox()
         let session = WatchSession(
             directory: directory, context: context, facetBase: facetBase,
             reportsRate: true,
             hooks: .live(
-                resolver: resolver, running: running, keepTime: keepTimeFile?.path, recording: recording))
+                resolver: resolver, running: running, keepTime: keepTimeFile?.path, recording: recording,
+                progress: { progress.post($0) }))
+        progress.deliver = { [weak session] in session?.receiveBuildProgress($0) }
         say("Watching: \(directory.path)")
         if let recording {
             // 1 から振り直すので、前の見張りが残した同じ並び (take-1.json, take-2.json, …) は先に消す。
@@ -186,6 +190,14 @@ enum WatchCommand {
             // **作り直しが始まったら、前の子の 1 枚目を待たない。** 遅れて来た合図がこの行を畳む
             viewer?.firstFrame.settle()
             viewer?.preview.report(line, spinning: true)
+        }
+        // **段数は窓にだけ添える** (#4121)。端末の行ではないので、端末へは出さない
+        session.buildProgressed = { progress in
+            if let progress {
+                viewer?.preview.reportProgress(done: progress.done, total: progress.total)
+            } else {
+                viewer?.preview.clearProgress()
+            }
         }
         // **長く待つ間を無言にしない。** 終えるときは撮っていた動画を閉じ終えるまで待つので
         // (#1219)、黙っていると固まったと読まれる

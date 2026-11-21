@@ -77,3 +77,48 @@ struct NoticeOverlayVisibilityTests {
         #expect(two.frame.height > one.frame.height, "\(two.frame.height) vs \(one.frame.height)")
     }
 }
+
+/// 回っている行の横に添える段数 (#4121)。
+@Suite("重ねる 1 行 (段数)")
+@MainActor
+struct NoticeOverlayStepsTests {
+    @Test("回っている行の横に段数を添え、その分だけ広がる")
+    func addsStepsBesideASpinningLine() {
+        let notice = NoticeOverlay()
+        notice.show("Change spotted — rebuilding…", spinning: true)
+        let before = notice.frame.width
+        notice.showSteps(done: 42, total: 44)
+        #expect(notice.steps == "42 / 44")
+        #expect(notice.frame.width > before, "\(notice.frame.width) vs \(before)")
+        notice.clearSteps()
+        #expect(notice.steps == nil)
+        #expect(notice.frame.width == before)
+    }
+
+    /// **終わった行・失敗の行に段数を残さない。** 残ると、まだ組み立てていると読める。
+    @Test("回っていない行・畳んだ面には段数を添えない")
+    func addsNoStepsUnlessSpinning() {
+        let notice = NoticeOverlay()
+        notice.showSteps(done: 1, total: 2)
+        #expect(notice.steps == nil)
+        notice.show("The build failed", spinning: false)
+        notice.showSteps(done: 1, total: 2)
+        #expect(notice.steps == nil)
+    }
+
+    @Test("次の行を出すと、前の行の段数は消える")
+    func aNewLineDropsTheSteps() {
+        let notice = NoticeOverlay()
+        notice.show("Building…", spinning: true)
+        notice.showSteps(done: 3, total: 10)
+        notice.show("Change spotted — rebuilding…", spinning: true)
+        #expect(notice.steps == nil)
+    }
+
+    @Test("段数の幅は、行と回る印の後ろに間を空けて足す")
+    func stepsTakeTheirWidthAndAGap() {
+        let plain = NoticeOverlay.size(textWidth: 100, textHeight: 14, spinning: true)
+        let with = NoticeOverlay.size(textWidth: 100, textHeight: 14, spinning: true, stepsWidth: 40)
+        #expect(with.width - plain.width == 40 + NoticeOverlay.gap)
+    }
+}

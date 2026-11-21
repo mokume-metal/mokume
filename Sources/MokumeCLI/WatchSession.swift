@@ -115,10 +115,12 @@ final class WatchSession {
         /// - Parameter stamps: 世代の読み手。**1 つを持ち回る** — 属性の変わらないファイルを
         ///   巡回のたびに読み直さないための控えを持つ (資材の置き場の大きなファイル・#2312)。
         ///   渡すのは検査だけである (要約を塞いで、待っている間に main が進むかを見る)。
+        /// - Parameter progress: 作り直しの段数を読むたびに呼ぶ口 (#4121)。**作り直しの糸から呼ぶ** —
+        ///   main actor へ届けるのは受け手 (``BuildProgressMailbox``) の仕事である。省けば読まない。
         static func live(
             resolver: BuildResolver, running: RunningBuild,
             stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil,
-            recording: String? = nil
+            recording: String? = nil, progress: (@Sendable (BuildProgress) -> Void)? = nil
         ) -> Hooks {
             // 起こした子の数。**作り直しは記録の切れ目**で、世代ごとに別の行き先を渡す (#3570)
             let generations = recording.map { RecordGenerations(destination: $0) }
@@ -140,7 +142,7 @@ final class WatchSession {
                             let resolved = try resolver.current()
                             return try RunCommand.rebuild(
                                 in: directory, context: resolved.context, capturing: true,
-                                running: running, binPath: resolved.binPath)
+                                running: running, binPath: resolved.binPath, progress: progress)
                         }
                     }.value.get()
                 },
@@ -649,6 +651,17 @@ final class WatchSession {
     /// 動かない**。使う側からは「見張れていない」と「作り直している」の区別が付かず、
     /// 実際にそう読まれた ([#695](https://github.com/mokume-metal/mokume/issues/695))。
     var willRebuild: (_ initial: Bool) -> Void = { _ in }
+
+    /// 組み立ての段数が変わったとき (``receiveBuildProgress(_:)``) と、組み立てが終わったとき (`nil`) に
+    /// 呼ばれる (#4121)。**知らせるだけで、出力は口の側が決める** (``willRebuild`` と同じ)。
+    var buildProgressed: (BuildProgress?) -> Void = { _ in }
+
+    /// 作り直しの糸が読んだ段数を受け取る。**組み立ての最中でなければ捨てる** — 終わった回の
+    /// 段数が遅れて届いても、次の回や 1 枚目を待つ間の表示に持ち越さない。
+    func receiveBuildProgress(_ progress: BuildProgress) {
+        guard isBuilding else { return }
+        buildProgressed(progress)
+    }
 
     /// 見張りを終えるときに、子が ``stopTimeout`` を越えてもまだ終わっていないと呼ばれる。
     /// 引数はこの先さらに待つ上限 (秒)。**1 度だけ呼ぶ。**
@@ -1862,6 +1875,7 @@ final class WatchSession {
         }
         let buildMs = (hooks.now() - buildStarted) * 1000
         isBuilding = false
+        buildProgressed(nil)
         // 通ったなら、置き場の実行ファイルはこの版である — 捨てる試聴の版でも (起こし直す要求が見る・#3428)。通らなかった・
         // 途中で止めた回は不明のまま — 資材の束は組み立てと別に組まれるので、置き場は書き換わっているかもしれない
         if rebuilt.status == 0, rebuilt.executable != nil { buildCount += 1 }
