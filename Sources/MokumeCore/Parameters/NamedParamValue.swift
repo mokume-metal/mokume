@@ -3,9 +3,9 @@
 
 /// 名前の付いた 1 つの値 (`{"name", "type", "value"}`)。
 ///
-/// この形は 3 か所に出る — 外から置かれる要求 (``ParamRequest``)、道具が書く要求
-/// (``RemoteParams``)、続きを返す保存 (``ParamStore/Saved``)。**3 つとも同じ 1 つの
-/// 書き方と読み方を使う。**
+/// この形は 4 か所に出る — 外から置かれる要求 (``ParamRequest``)、道具が書く要求
+/// (``RemoteParams`` と、`--remote` のスマホの書き込みを置く道具の側)、続きを返す保存
+/// (``ParamStore/Saved``)。**4 つとも同じ 1 つの書き方と読み方を使う。**
 ///
 /// ## なぜ 1 つにするか
 ///
@@ -17,11 +17,11 @@
 /// [ADR-0008](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 6)。
 ///
 /// 型と値は ``ParamValue`` に任せる — 名乗り方を知っているのはあちらだけにする。
-struct NamedParamValue: Codable, Equatable {
-    let name: String
-    let value: ParamValue
+package nonisolated struct NamedParamValue: Codable, Equatable, Sendable {
+    package let name: String
+    package let value: ParamValue
 
-    init(name: String, value: ParamValue) {
+    package init(name: String, value: ParamValue) {
         self.name = name
         self.value = value
     }
@@ -31,7 +31,7 @@ struct NamedParamValue: Codable, Equatable {
     }
 
     /// 型と値は 1 つの組として読む (`{"type", "value"}`)。
-    init(from decoder: any Decoder) throws {
+    package init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
         value = try ParamValue(from: decoder)
@@ -39,7 +39,7 @@ struct NamedParamValue: Codable, Equatable {
 
     /// **`name` を先に書く。** 値の書き方に踏み込まないので、``ParamValue`` の
     /// ケースが増えてもここは動かない。
-    func encode(to encoder: any Encoder) throws {
+    package func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(name, forKey: .name)
         try value.encode(to: encoder)

@@ -8,7 +8,7 @@
 /// `Schemas/params-request.schema.json`。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-extension ParamValue: Codable {
+nonisolated extension ParamValue: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, value
     }
@@ -124,7 +124,7 @@ extension ParamValue: Codable {
     }
 }
 
-extension ParamDeclaration: Codable {
+nonisolated extension ParamDeclaration: Codable {
     private enum CodingKeys: String, CodingKey {
         case name, type, value, min, max, choices, step
     }

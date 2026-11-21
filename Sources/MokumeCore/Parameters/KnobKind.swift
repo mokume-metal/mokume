@@ -8,7 +8,7 @@
 /// 立ち上げずに検められる必要があり、ウィンドウの中に埋めるとそれができない。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-package enum KnobKind: Equatable {
+package nonisolated enum KnobKind: Equatable, Sendable {
     /// 実数のスライダー。`step` を書いていれば、その刻みで動く ([#2438](https://github.com/mokume-metal/mokume/issues/2438))。
     case slider(ParamRange, step: Double? = nil)
     /// 整数のスライダー。刻みは 1。
@@ -47,7 +47,7 @@ package enum KnobKind: Equatable {
     }
 }
 
-extension KnobKind {
+nonisolated extension KnobKind {
     /// 宣言からつまみを決める。
     ///
     /// **刻み (``ParamDeclaration/step``) は実数のスライダーと組の成分のスライダーにだけ渡す。**

@@ -8,7 +8,7 @@
 /// 2 つ持たない ([ADR-0030] 決定 4)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-public enum ParamValue: Equatable, Sendable {
+public nonisolated enum ParamValue: Equatable, Sendable {
     case float(Double)
     case int(Int)
     case bool(Bool)

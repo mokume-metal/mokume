@@ -56,14 +56,15 @@ package final class RemoteParams {
     }
 
     /// 宣言 1 件の読み。保存の復元が 1 件ずつ読むのと同じ向き (``ParamStore/SavedReading``・#2806)。
-    private enum Reading: Decodable {
+    /// `--remote` のスマホへ配る道具の側も、同じ読み方で応答を読む。
+    package nonisolated enum Reading: Decodable, Sendable {
         case declaration(ParamDeclaration)
         /// 読めなかった 1 件。`name` は名前だけでも読めたとき、`reason` は読めなかった理由。
         case unreadable(name: String?, reason: String)
 
         private enum NameKey: String, CodingKey { case name }
 
-        init(from decoder: any Decoder) throws {
+        package init(from decoder: any Decoder) throws {
             do {
                 self = .declaration(try ParamDeclaration(from: decoder))
             } catch {
