@@ -141,6 +141,42 @@ struct WatchSessionTests {
         #expect(events == ["初回を始める", "作り直す", "変更で始める", "作り直す"])
     }
 
+    /// **段数は組み立ての最中にだけ届く** (#4121)。終わった回の段数が遅れて届いても、1 枚目を待つ間や
+    /// 次の回の表示に持ち越さない。終わりには `nil` で消させる。
+    @Test("組み立ての段数は、組み立ての最中にだけ届き、終わりに消える")
+    func buildProgressReachesOnlyWhileBuilding() async throws {
+        let recorder = Recorder()
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        var seen: [BuildProgress?] = []
+        session.buildProgressed = { seen.append($0) }
+        recorder.onBuild = {
+            session.receiveBuildProgress(BuildProgress(done: 1, total: 3))
+            session.receiveBuildProgress(BuildProgress(done: 3, total: 5))
+        }
+
+        await session.start()
+        // 組み立てが終わった後に届いた段数
+        session.receiveBuildProgress(BuildProgress(done: 5, total: 5))
+
+        #expect(
+            seen == [BuildProgress(done: 1, total: 3), BuildProgress(done: 3, total: 5), nil])
+    }
+
+    /// 組み立てが通らなかった回も、段数を残さない。
+    @Test("組み立てが失敗しても、段数は消える")
+    func buildProgressClearsAfterAFailedBuild() async throws {
+        let recorder = Recorder()
+        recorder.buildStatus = 1
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        var seen: [BuildProgress?] = []
+        session.buildProgressed = { seen.append($0) }
+        recorder.onBuild = { session.receiveBuildProgress(BuildProgress(done: 2, total: 9)) }
+
+        await session.start()
+
+        #expect(seen == [BuildProgress(done: 2, total: 9), nil])
+    }
+
     /// **名乗らないのが既定。** MCP サーバはスケッチを起こさないが、口の側が何も渡さなければ
     /// 何も起きないことを、ここで固定しておく。
     @Test("名乗りを渡さなければ、何も起きない")

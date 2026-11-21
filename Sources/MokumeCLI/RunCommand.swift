@@ -355,9 +355,12 @@ enum RunCommand {
     ///   聞くのに `swift` を 1 本起こすので、作り直しのたびに払うと保存から絵が変わるまでに
     ///   丸ごと乗る (手元の実測で 315 ms・[#1067](https://github.com/mokume-metal/mokume/issues/1067))。
     ///   持ち回ってよいかを判断するのは呼び手で、見張りは ``BuildResolver`` がそれを担う。
+    /// - Parameter progress: 組み立ての段数が読めるたびに呼ぶ口 (#4121)。掴む形でだけ働き、
+    ///   **作り直しの糸から呼ぶ。** 返す出力は変えない。
     nonisolated static func rebuild(
         in directory: URL, context: BuildContext, capturing: Bool = false,
-        running: RunningBuild? = nil, binPath: URL? = nil
+        running: RunningBuild? = nil, binPath: URL? = nil,
+        progress: (@Sendable (BuildProgress) -> Void)? = nil
     )
         throws(CommandFailure) -> Rebuilt
     {
@@ -379,7 +382,7 @@ enum RunCommand {
         // 失敗の本文が載らない (#731)
         let result = try swift(
             ["build"] + context.arguments, in: directory, capturing: capturing,
-            errors: .merge, running: running)
+            errors: .merge, running: running, progress: progress)
 
         // **名前が分からなかったときは、建った後に読み直す。** 宣言が直っていることが
         // あるためで、この経路の置き場は必ずパッケージ直下なので取り違えは起きない
@@ -875,15 +878,18 @@ enum RunCommand {
     /// - Parameter errors: 子の愚痴の行き先。**混ぜてよいのは作り直しだけ** — 出力を
     ///   パスや JSON として解く呼び出しに混ぜると、警告 1 行で解けなくなる。
     ///   - running: 起こした子を外から止められるように掴む先 (``RunningBuild``)。
+    ///   - progress: 段数の行を読むたびに呼ぶ口 (``capture(_:capturing:errors:running:progress:)``)。
     nonisolated static func swift(
         _ arguments: [String], in directory: URL, capturing: Bool,
-        errors: ErrorStream = .inherit, running: RunningBuild? = nil
+        errors: ErrorStream = .inherit, running: RunningBuild? = nil,
+        progress: (@Sendable (BuildProgress) -> Void)? = nil
     ) throws(CommandFailure) -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = envURL
         process.arguments = ["swift"] + arguments
         process.currentDirectoryURL = directory
-        return try capture(process, capturing: capturing, errors: errors, running: running)
+        return try capture(
+            process, capturing: capturing, errors: errors, running: running, progress: progress)
     }
 
     /// 子を起こし、掴む形なら出力を読み切ってから待つ。
@@ -895,8 +901,11 @@ enum RunCommand {
     /// [#731]: https://github.com/mokume-metal/mokume/issues/731
     ///
     /// - Parameter running: 起こした子を掴ませる先。**止められた後は起こさずに投げる。**
+    /// - Parameter progress: 段数の行 (``BuildProgress``) を読むたびに呼ぶ口。掴む形でだけ働き、
+    ///   **渡すと出力を断片ごとに読む** (渡さなければ従来どおり終わりにまとめて読む)。返す出力は同じ。
     nonisolated static func capture(
-        _ process: Process, capturing: Bool, errors: ErrorStream, running: RunningBuild? = nil
+        _ process: Process, capturing: Bool, errors: ErrorStream, running: RunningBuild? = nil,
+        progress: (@Sendable (BuildProgress) -> Void)? = nil
     )
         throws(CommandFailure) -> (status: Int32, output: String)
     {
@@ -937,7 +946,9 @@ enum RunCommand {
         if capturing {
             // **読み切ってから待つ。** 逆順にすると、出力が管を埋めた時点で子が書けなく
             // なって止まる
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let data =
+                progress.map { readReportingProgress(pipe.fileHandleForReading, to: $0) }
+                ?? pipe.fileHandleForReading.readDataToEndOfFile()
             output = String(data: data, encoding: .utf8) ?? ""
         }
         exited.wait()
@@ -953,6 +964,23 @@ enum RunCommand {
         // **合図で落ちた子は `128 + 番号` で返す** (#2315)。呼び手は終了コードとして名乗り・記録する
         // (`buildFailed`・`build-status` の `status`)。合図の番号のままだと、5 で終わった回と区別がつかない
         return (ending.shellStatus, output)
+    }
+
+    /// 管を終わりまで読み、段数の行を読むたびに `progress` を呼ぶ。返すのは読んだすべてのバイト。
+    nonisolated static func readReportingProgress(
+        _ handle: FileHandle, to progress: (BuildProgress) -> Void
+    ) -> Data {
+        var data = Data()
+        var lines = LineSplitter()
+        func report(_ line: String) {
+            if let read = BuildProgress.parse(line) { progress(read) }
+        }
+        while case let chunk = handle.availableData, !chunk.isEmpty {
+            data.append(chunk)
+            lines.feed(chunk).forEach(report)
+        }
+        if let last = lines.finish() { report(last) }
+        return data
     }
 
     /// 子を起こせなかった理由を読む。**実行ファイルの不在と言うのは、それが無いときだけ** (#2314)。
