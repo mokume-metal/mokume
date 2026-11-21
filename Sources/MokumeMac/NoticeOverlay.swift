@@ -168,7 +168,13 @@ final class NoticeOverlay: NSView {
     func reposition() {
         guard !isHidden else { return }
         let text = label.intrinsicContentSize
-        let stepsSize = stepsLabel.isHidden ? .zero : stepsLabel.intrinsicContentSize
+        // **幅は切り上げ、1 pt 余らせる。** 求めた幅ちょうどでは、最後の桁の右端が欠けた (実測)
+        let stepsSize =
+            stepsLabel.isHidden
+            ? .zero
+            : NSSize(
+                width: stepsLabel.intrinsicContentSize.width.rounded(.up) + 1,
+                height: stepsLabel.intrinsicContentSize.height)
         let wanted = Self.size(
             textWidth: text.width, textHeight: text.height, spinning: !spinner.isHidden,
             stepsWidth: stepsSize.width)
