@@ -178,21 +178,25 @@ struct RemoteKnobsTests {
             return
         }
         #expect(linear.alpha == 0.5)
-        #expect(abs(linear.red - 0.5) < 1e-6)
-        #expect(linear.green == 0)
+        // sRGB の赤を作業空間へ移した色 (コードの `color(255, 0, 0, 128)` と同じ目盛り)
+        #expect(abs(red(linear) - 255) < 0.5)
+        #expect(abs(green(linear)) < 0.5)
         let number = try #require(RemoteWrite.parse(Data(#"{"name":"size","type":"float","value":0.25}"#.utf8), knobs: []))
         #expect(number == write("size", 0.25))
         #expect(RemoteWrite.parse(Data(#"{"name":"size","type":"float","value":"x"}"#.utf8), knobs: []) == nil)
         #expect(RemoteWrite.parse(Data(##"{"name":"tint","type":"color","value":"#zz0000"}"##.utf8), knobs: knobs) == nil)
     }
 
-    @Test("色の欄と作業空間の色は往復する (乗算を戻して符号化する)")
+    @Test("色の欄は窓のつまみと同じ sRGB の数字を見せ、作業空間の色と往復する")
     func colorsRoundTrip() throws {
         for hex in ["#000000", "#ffffff", "#f27333", "#123456"] {
             let color = try #require(RemoteColor.color(hex: hex, alpha: 0.25))
             #expect(RemoteColor.hex(of: color) == hex)
         }
-        #expect(RemoteColor.hex(of: LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0)) == "#000000")
+        // 窓の綴り (`KnobText`) と同じ数字。コードの `color(242, 115, 51)` は #f27333
+        let orange = LinearRGBA.display(red: 242 / 255, green: 115 / 255, blue: 51 / 255)
+        #expect(RemoteColor.hex(of: orange) == "#f27333")
+        #expect(KnobText.value(of: .color(orange)).lowercased() == RemoteColor.hex(of: orange))
     }
 
     // MARK: - QR とアドレス
