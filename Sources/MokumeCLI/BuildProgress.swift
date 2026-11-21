@@ -17,14 +17,17 @@ nonisolated struct BuildProgress: Equatable, Sendable {
     ///
     /// Swift Build の `[19 / 24]` と、旧ビルドシステムの `[12/345] Compiling …` の両方を読む。
     /// `[Planning deferred tasks]` のような数字でない括弧は読まない。
+    ///
+    /// **`/` の両側の空白は U+0020 とは限らない。** Swift Build は U+2009 (細い空白) を置くので、空白の文字なら
+    /// どれでも読み飛ばす。
     static func parse(_ line: some StringProtocol) -> BuildProgress? {
         var rest = Substring(line)
         guard rest.first == "[" else { return nil }
         rest = rest.dropFirst()
         guard let done = leadingNumber(&rest) else { return nil }
-        rest = rest.drop(while: { $0 == " " })
+        rest = rest.drop(while: \.isWhitespace)
         guard rest.first == "/" else { return nil }
-        rest = rest.dropFirst().drop(while: { $0 == " " })
+        rest = rest.dropFirst().drop(while: \.isWhitespace)
         guard let total = leadingNumber(&rest), rest.first == "]" else { return nil }
         guard total > 0, done <= total else { return nil }
         return BuildProgress(done: done, total: total)

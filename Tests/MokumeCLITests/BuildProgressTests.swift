@@ -13,6 +13,9 @@ struct BuildProgressParseTests {
     @Test(
         "Swift Build と旧ビルドシステムの段数の行を読む",
         arguments: [
+            // Swift Build が実際に出す形。`/` の両側は U+2009 (細い空白)
+            ("[2\u{2009}/\u{2009}5] progdemo-product", BuildProgress(done: 2, total: 5)),
+            ("[113\u{2009}/\u{2009}201]", BuildProgress(done: 113, total: 201)),
             ("[19 / 24]", BuildProgress(done: 19, total: 24)),
             ("[40 / 44] probe-product", BuildProgress(done: 40, total: 44)),
             ("[12/345] Compiling Sketch main.swift", BuildProgress(done: 12, total: 345)),
@@ -82,7 +85,8 @@ struct CaptureProgressTests {
     /// **段数を拾っても、返す出力は 1 バイトも変えない。** 記録 (`build-status`) と MCP はこの出力を読む。
     @Test("段数を順に拾い、出力の全文はそのまま返す")
     func reportsStepsAndKeepsTheOutput() throws {
-        let script = "printf 'Building for debugging...\\n[1 / 4]\\n'; sleep 0.1; "
+        // `\342\200\211` は U+2009 (細い空白) の UTF-8。Swift Build が実際に出す形
+        let script = "printf 'Building for debugging...\\n[1\\342\\200\\211/\\342\\200\\2114]\\n'; sleep 0.1; "
             + "printf '[3 / 6] app\\n' >&2; printf 'Build complete!\\n[6 / 6]'"
         let collected = Collected()
         let withProgress = try RunCommand.capture(
