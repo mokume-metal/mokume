@@ -519,6 +519,28 @@ struct SynthSoundTests {
         #expect(firstStage?.rack.rendered == before)
     }
 
+    /// スケッチの終わり (`closePlugins()` がステージを閉じる経路) の後の ``SynthSource/isPlaying`` (#4001)。
+    /// 終わる前から鳴らしていた音は、実際には無音でも `true` のままで、`stop()` で `false` になる。
+    @Test("スケッチが終わった後、終わる前から鳴らしていた音の isPlaying は true のまま (無音・stop() で false)")
+    func isPlayingAfterTheSketchEnded() throws {
+        var osc: SinOsc?
+        let runtime = try run(
+            frames: 6,
+            setup: { made in
+                let source = SinOsc(stage: SynthStage.stage(for: made))
+                source.play(1000, 0.5)
+                osc = source
+            })
+        #expect(osc?.isPlaying == true && osc?.level ?? 0 > 0)
+        runtime.closePlugins()
+        #expect(osc?.isPlaying == true, "終わった後も、閉じる前の値のまま")
+        #expect(osc?.level == 0 && osc?.rms == 0, "実際には無音")
+        osc?.play()
+        #expect(osc?.isPlaying == true && osc?.level == 0, "終わった後の play() は値も音も動かさない")
+        osc?.stop()
+        #expect(osc?.isPlaying == false)
+    }
+
     /// 閉じずに捨てたスケッチのステージが生きている間に、その番地を別のスケッチが引き継ぐと、ステージを
     /// 番地だけで探す形では前の回のラックを引き継ぐ。照らし合わせる持ち主 (``SynthStage`` の `owner`) が
     /// それを止める。
