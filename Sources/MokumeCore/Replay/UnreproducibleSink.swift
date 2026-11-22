@@ -12,6 +12,9 @@ protocol UnreproducibleSink: AnyObject, Sendable {
     /// ウィンドウで録った記録か (流す側では、流している記録がそうか)。ウィンドウでは音が実時間で鳴り、ウィンドウなしで
     /// 流すときはフレームの数で進むので、音の解析の値と音の時計に依る値が割れうる。ウィンドウなしで録った記録は流す側と同じ数え方である。
     var soundRunsInRealTime: Bool { get }
+    /// 資源 (画像・データ・SVG・モデル・フォント・音・`.metal` の断片) を読んだ (#4092)。`name` は利用者が渡した名前、
+    /// `sha256` は読んだ中身の SHA-256 (16 進)。記録は控え、流す側は記録の控えと比べる。
+    func noteResource(_ name: String, sha256: String)
 }
 
 /// 外のモジュール (音) が、記録している実行・流している実行へ名乗る口 (#3575)。
@@ -23,6 +26,54 @@ package enum ReplayNotice {
         LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.waitingLoad)
     }
 
+    /// 記録か再生をしている実行の中か。**資源のハッシュを取るかをここで決める** — 待つ読み込みは、裏の仕事
+    /// (タスクローカル値を継がない) へ渡す前にこれを読み、裏でハッシュを取って、戻った所で ``readResource(_:sha256:)`` に渡す。
+    package static var watchesResources: Bool { LaunchingSketch.replay != nil }
+
+    /// 資源 `name` を `url` から読んだ (#4092)。記録も再生もしていなければ判定 1 つで返る。していれば、ファイルを
+    /// もう 1 度読んで SHA-256 を取る。**控えに当たって読まなかったときは呼ばない** (1 度目が名乗っている)。
+    package static func readResource(_ name: String, at url: URL) {
+        guard let sink = LaunchingSketch.replay, let digest = ResourceDigest.sha256(of: url) else { return }
+        sink.noteResource(name, sha256: digest)
+    }
+
+    /// 資源 `name` を読み、中身が `data` だった。
+    package static func readResource(_ name: String, data: Data) {
+        guard let sink = LaunchingSketch.replay else { return }
+        sink.noteResource(name, sha256: ResourceDigest.sha256(of: data))
+    }
+
+    /// 裏の仕事で取ったハッシュを名乗る。`sha256` が `nil` (取らなかった・読めなかった) なら何もしない。
+    package static func readResource(_ name: String, sha256: String?) {
+        guard let sha256, let sink = LaunchingSketch.replay else { return }
+        sink.noteResource(name, sha256: sha256)
+    }
+}
+
+/// 資源の中身の SHA-256 (16 進・#4092)。どのスレッドからも呼べる。
+package enum ResourceDigest {
+    /// ファイルの中身の SHA-256。読めなければ `nil` (読めなかった資源は、読み手が自分の失敗として名乗る)。
+    /// 大きなファイル (音) を丸ごと持たないよう、塊ごとに読む。
+    package nonisolated static func sha256(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            guard let chunk = try? handle.read(upToCount: 1 << 20) else { return nil }
+            if chunk.isEmpty { break }
+            hasher.update(data: chunk)
+        }
+        return hex(hasher.finalize())
+    }
+
+    /// バイト列の SHA-256。
+    package nonisolated static func sha256(of data: Data) -> String {
+        hex(SHA256.hash(data: data))
+    }
+
+    private nonisolated static func hex(_ digest: SHA256.Digest) -> String {
+        digest.map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 /// 音 1 つの、解析の値 (`level`・`spectrum`・`waveform`・`isBeat` など) を読んだことの名乗り (#3575)。

@@ -85,6 +85,14 @@ package final class ReplayRecorder: UnreproducibleSink {
                 + "the position or isPlaying of a sound file; in a window sound plays in real time, and a replay "
                 + "counts frames: \(reader))"
         }
+        /// 記録の実行の途中で、同じ名前の資源の中身が変わった (2 度目に読んだハッシュが 1 度目と違う・#4092)。
+        static func resourceChanged(_ name: String) -> String {
+            "Replay is not guaranteed (a resource changed while the sketch ran: \(name))"
+        }
+        /// 流す側で読んだ資源のハッシュが、記録が控えたものと違う (#4092)。
+        static func resourceDiffers(_ name: String) -> String {
+            "Replay is not guaranteed (a resource is not the one the record read, its hash differs: \(name))"
+        }
         /// 待つ読み込み (`request…`) を使った。届くフレームは記録に無い (#3575)。
         static let waitingLoad =
             "Replay is not guaranteed (a request… load was used, and the frame its result arrives at depends on how "
