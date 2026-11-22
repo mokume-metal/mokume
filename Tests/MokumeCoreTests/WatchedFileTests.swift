@@ -170,10 +170,10 @@ struct WatchedFileTests {
         }
     }
 
-    /// 時刻を見た後に消えた (ぶら下がった symlink は `lstat` が通り、読むと無い) ファイルは、黙る。
-    /// 消えたことは次の改訂が知らせる。確定もさせない。
-    @Test("時刻を見た後に消えていたファイルは、知らせずに確定もさせない")
-    func staysQuietWhenTheFileVanishedAfterTheStamp() throws {
+    /// 切れたリンクは、まだ無いファイルと同じ — 時刻が読めない (#3994) ので、知らせず確定もさせない。
+    /// 置き直せば次の改訂として読む。
+    @Test("切れたリンクは、知らせずに確定もさせない")
+    func staysQuietOnADanglingLink() throws {
         try withFile { url in
             var told = 0
             let file = WatchedFile<Payload>(url: url) { _ in told += 1 }
@@ -185,6 +185,32 @@ struct WatchedFileTests {
             try FileManager.default.removeItem(at: url)
             try place(#"{"revision":3}"#, at: url, Date(timeIntervalSince1970: 3000))
             #expect(file.changed() == Payload(revision: 3))
+        }
+    }
+
+    /// 区画のファイルがリンクのとき、**先だけを書き換えても**次の改訂として読む (#3994)。
+    /// 中身はリンクを辿って読むので、時刻も同じ先から取る。
+    @Test("リンクの先を書き換えると、新しい中身を返す")
+    func readsTheNewRevisionBehindALink() throws {
+        try withFile { url in
+            let target = url.deletingLastPathComponent().appendingPathComponent("target.json")
+            try place(#"{"revision":1}"#, at: target, Date(timeIntervalSince1970: 1000))
+            try FileManager.default.createSymbolicLink(at: url, withDestinationURL: target)
+            var told = 0
+            let file = WatchedFile<Payload>(url: url) { _ in told += 1 }
+            #expect(file.changed() == Payload(revision: 1))
+            #expect(file.changed() == nil)
+
+            try place(#"{"revision":2}"#, at: target, Date(timeIntervalSince1970: 1001))
+            #expect(
+                file.changed() == Payload(revision: 2), "リンクの先を書き換えたのに、古い改訂のまま")
+
+            // 先が消えている間は黙り、戻せば読む
+            try FileManager.default.removeItem(at: target)
+            #expect(file.changed() == nil)
+            try place(#"{"revision":3}"#, at: target, Date(timeIntervalSince1970: 1002))
+            #expect(file.changed() == Payload(revision: 3))
+            #expect(told == 0)
         }
     }
 }
