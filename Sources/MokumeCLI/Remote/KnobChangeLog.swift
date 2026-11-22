@@ -45,6 +45,8 @@ nonisolated struct KnobChangeLog {
     private var moving: [(name: String, move: Move)] = []
     /// 名前の欄の幅。見たことのある名前の最大で、行どうしの桁を揃える (縮めない)。
     private(set) var nameWidth = 0
+    /// つまみごとの値の欄の幅。見たことのある綴りの最大で、同じつまみの行どうしの桁を揃える (縮めない)。
+    private(set) var valueWidths: [String: Int] = [:]
 
     /// 応答を 1 枚読んだ。
     ///
@@ -57,6 +59,9 @@ nonisolated struct KnobChangeLog {
             lastEcho = echo
         }
         nameWidth = max(nameWidth, values.keys.map(\.count).max() ?? 0)
+        for (name, value) in values {
+            valueWidths[name] = max(valueWidths[name] ?? 0, KnobText.value(of: value).count)
+        }
         guard let baseline, let echo, echo != lastEcho else { return }
         let writer = KnobWriter(echo: echo)?.rawValue ?? "other"
         for (name, value) in values.sorted(by: { $0.key < $1.key }) {
@@ -90,12 +95,18 @@ nonisolated struct KnobChangeLog {
 
     /// 1 行に綴る: `12:03:04.512  radius  0.40 → 0.55  (phone)`。
     ///
-    /// 値の綴りは窓のつまみと同じ (``KnobText``)。`colored` なら時刻と書き手を薄く、名前を太く
-    /// する — 端末でない出力先には制御文字を出さない。
-    static func line(_ change: Change, nameWidth: Int, colored: Bool, zone: TimeZone = .current) -> String {
+    /// 値の綴りは窓のつまみと同じ (``KnobText``) で、`valueWidth` へ右寄せする (同じつまみの行で
+    /// 桁が揃う)。`colored` なら時刻と書き手を薄く、名前を太くする — 端末でない出力先には制御文字を出さない。
+    static func line(
+        _ change: Change, nameWidth: Int, valueWidth: Int = 0, colored: Bool, zone: TimeZone = .current
+    ) -> String {
         let name = change.name.padding(toLength: max(nameWidth, change.name.count), withPad: " ", startingAt: 0)
         let time = clock(change.at, in: zone)
-        let values = "\(KnobText.value(of: change.from)) → \(KnobText.value(of: change.to))"
+        func aligned(_ value: ParamValue) -> String {
+            let text = KnobText.value(of: value)
+            return String(repeating: " ", count: max(0, valueWidth - text.count)) + text
+        }
+        let values = "\(aligned(change.from)) → \(aligned(change.to))"
         let writer = "(\(change.writer))"
         guard colored else { return "\(time)  \(name)  \(values)  \(writer)" }
         return "\(dim)\(time)\(reset)  \(bold)\(name)\(reset)  \(values)  \(dim)\(writer)\(reset)"
@@ -188,7 +199,10 @@ nonisolated final class KnobChangeWatcher: @unchecked Sendable {
 
     private func emit(_ changes: [KnobChangeLog.Change]) {
         for change in changes {
-            write(KnobChangeLog.line(change, nameWidth: log.nameWidth, colored: colored))
+            write(
+                KnobChangeLog.line(
+                    change, nameWidth: log.nameWidth, valueWidth: log.valueWidths[change.name] ?? 0,
+                    colored: colored))
         }
     }
 }

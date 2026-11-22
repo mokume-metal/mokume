@@ -89,10 +89,17 @@ struct KnobChangeLogTests {
         #expect(colored.replacingOccurrences(of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression) == plain)
     }
 
-    @Test("名前の欄は見たことのある最も長い名前に揃える")
-    func widensTheNameColumn() {
-        let log = Self.primed(["a": .int(0), "longerName": .int(0)])
+    @Test("名前の欄は最も長い名前に、値の欄はつまみごとに最も長い綴りに揃える")
+    func widensTheColumns() {
+        var log = Self.primed(["a": .int(0), "longerName": .float(40)])
+        log.observe(echo: "remote-a", values: ["a": .int(0), "longerName": .float(140)], at: Self.at(1))
         #expect(log.nameWidth == "longerName".count)
+        #expect(log.valueWidths["longerName"] == "140.00".count)
+        let change = log.flush(at: Self.at(2))[0]
+        let line = KnobChangeLog.line(
+            change, nameWidth: log.nameWidth, valueWidth: log.valueWidths["longerName"] ?? 0, colored: false,
+            zone: Self.utc)
+        #expect(line.hasSuffix("longerName   40.00 → 140.00  (phone)"))
     }
 
     @Test("見張りは面の応答を読んで行を書き、止めるときに残りを書く")
@@ -118,7 +125,7 @@ struct KnobChangeLogTests {
         #expect(lines.all.isEmpty, "still inside the settle window")
         watcher.tick(at: Self.at(2))
         #expect(lines.all.count == 1)
-        #expect(lines.all.first?.hasSuffix("size  10.00 → 20.00  (window)") == true)
+        #expect(lines.all.first?.hasSuffix("size  10.00 → 20.00  (window)") == true, "\(lines.all)")
         try place(id: "remote-b", size: 30, modified: 3)
         watcher.tick(at: Self.at(3))
         watcher.start()
