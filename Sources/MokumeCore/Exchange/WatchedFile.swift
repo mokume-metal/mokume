@@ -47,7 +47,8 @@ import MokumeDiagnostics
 /// ``onUnreadable`` の知らせで前の世代を畳むような使い方 (#2928) は、書きかけを理由に世代を畳んでしまう。
 ///
 /// **読めなかった理由で分ける。** 在るはずのファイルが消えていた (時刻を見た後に消えた) のは黙る
-/// (消えたことは次の改訂が知らせる)。ファイルとして読めない (権限・置き場がディレクトリ) のは理由だけを
+/// (消えたことは次の改訂が知らせる)。無いファイル・切れたリンクも読みに行かずに黙る。ファイルとして読めない
+/// (権限・置き場がディレクトリ・在るのに辿れないリンク) のは理由だけを
 /// 名乗り、版の案内は付けない。解けない (JSON として読めない・型に合わない) ときだけ、版のずれを
 /// 候補として挙げる (``UnreadableRevision``)。
 ///
@@ -83,8 +84,21 @@ package final class WatchedFile<Value: Decodable> {
     ///
     /// - Returns: 新しい中身。変わっていない・まだ読めないなら `nil`。
     package func changed() -> Value? {
-        let modified = FileStamp.of(url)
-        guard let modified, modified != readAt else { return nil }
+        switch FileStamp.lookUp(url) {
+        case .absent:
+            // 無い・切れたリンク。置かれれば時刻が付く
+            return nil
+        case .stamped(let modified):
+            guard modified != readAt else { return nil }
+            return read(revision: modified)
+        case .unreachable(let link):
+            // 在るのに辿れない。読みに行って理由を名乗る (改訂はリンク自身の時刻で見分ける)
+            return read(revision: link)
+        }
+    }
+
+    /// `revision` の改訂として読み、解く。読めなければ理由で分けて名乗り、確定させない。
+    func read(revision modified: FileStamp) -> Value? {
         let data: Data
         do {
             data = try Data(contentsOf: url)

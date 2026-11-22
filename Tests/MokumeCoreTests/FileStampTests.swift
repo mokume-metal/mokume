@@ -75,6 +75,35 @@ struct FileStampTests {
         try FileManager.default.createSymbolicLink(
             at: link, withDestinationURL: directory.appendingPathComponent("gone.png"))
         #expect(FileStamp.of(link) == nil)
+        #expect(FileStamp.lookUp(link) == .absent, "切れたリンクを、在るのに辿れないと数えている")
+    }
+
+    /// 循環するリンクは在るのに辿れない。時刻は `nil` で、見え方はリンク自身の時刻を持つ「辿れない」。
+    /// 中身を読む呼び手 (画像・書体) も、落ちずに失敗を返す。
+    @Test("循環するリンクは辿れないと見え、時刻・画像・書体の読みは失敗で返る")
+    func aLinkLoopIsUnreachable() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appendingPathComponent("a.png")
+        let second = directory.appendingPathComponent("b.png")
+        try FileManager.default.createSymbolicLink(atPath: first.path, withDestinationPath: second.path)
+        try FileManager.default.createSymbolicLink(atPath: second.path, withDestinationPath: first.path)
+
+        #expect(FileStamp.of(first) == nil)
+        guard case .unreachable = FileStamp.lookUp(first) else {
+            Issue.record("循環するリンクを辿れないと見ていない: \(FileStamp.lookUp(first))")
+            return
+        }
+        #expect(ImageFile.stamp(of: first) == nil)
+        #expect(throws: ImageFailure.self) { try ImageFile.decode(first.path) }
+        #expect(throws: FontFailure.self) { try Font.load(first.path) }
+    }
+
+    @Test("無いファイルは「無い」と見える")
+    func aMissingFileIsAbsent() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(FileStamp.lookUp(directory.appendingPathComponent("absent.json")) == .absent)
     }
 
     // MARK: - 要求のファイル (``RequestFile``) がリンクのとき

@@ -188,6 +188,91 @@ struct WatchedFileTests {
         }
     }
 
+    /// 時刻を見た後、読む前に消えていた改訂は黙る。消えたことは次の改訂 (置き直し) が知らせる。確定もさせない。
+    /// 時刻を見てから読むまでの隙間は検査から作れないので、改訂を与えて読む段を直に呼ぶ。
+    @Test("時刻を見た後に消えていたファイルは、知らせずに確定もさせない")
+    func staysQuietWhenTheFileVanishedAfterTheStamp() throws {
+        try withFile { url in
+            var told = 0
+            let file = WatchedFile<Payload>(url: url) { _ in told += 1 }
+            let seen = FileStamp(seconds: 3000, nanoseconds: 0)
+            #expect(file.read(revision: seen) == nil)
+            #expect(told == 0, "消えていたファイルを名乗っている")
+
+            try place(#"{"revision":3}"#, at: url, Date(timeIntervalSince1970: 3000))
+            #expect(file.changed() == Payload(revision: 3), "読めなかった改訂を確定させている")
+        }
+    }
+
+    /// 循環するリンクは、在るのに辿れない。切れたリンク (無い) とは違い、**理由を 1 度名乗る** (#3994)。
+    @Test("循環するリンクは読めない失敗として 1 度だけ知らせ、確定させない")
+    func reportsALinkLoopOnce() throws {
+        try withFile { url in
+            let other = url.deletingLastPathComponent().appendingPathComponent("other.json")
+            try FileManager.default.createSymbolicLink(atPath: url.path, withDestinationPath: other.path)
+            try FileManager.default.createSymbolicLink(atPath: other.path, withDestinationPath: url.path)
+            var failures: [UnreadableRevision.Failure] = []
+            let file = WatchedFile<Payload>(url: url) { failures.append($0) }
+            #expect(file.changed() == nil)
+            #expect(file.changed() == nil)
+            guard case .cannotRead? = failures.first, failures.count == 1 else {
+                Issue.record("循環するリンクを 1 度だけ読めない失敗として名乗っていない: \(failures)")
+                return
+            }
+
+            // 循環を解いて中身を置けば読む
+            try FileManager.default.removeItem(at: other)
+            try place(#"{"revision":4}"#, at: other, Date(timeIntervalSince1970: 4000))
+            #expect(file.changed() == Payload(revision: 4))
+            #expect(failures.count == 1)
+        }
+    }
+
+    /// 検索の権利の無いディレクトリの中を指すリンクも、在るのに辿れない。理由を 1 度名乗る (#3994)。
+    @Test("検索の権利の無い場所を指すリンクは、読めない失敗として 1 度だけ知らせる")
+    func reportsALinkIntoAClosedDirectoryOnce() throws {
+        try withFile { url in
+            let closed = url.deletingLastPathComponent().appendingPathComponent("closed", isDirectory: true)
+            try FileManager.default.createDirectory(at: closed, withIntermediateDirectories: true)
+            let inside = closed.appendingPathComponent("payload.json")
+            try place(#"{"revision":5}"#, at: inside, Date(timeIntervalSince1970: 5000))
+            try FileManager.default.createSymbolicLink(at: url, withDestinationURL: inside)
+            try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: closed.path)
+            defer {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: closed.path)
+            }
+            var failures: [UnreadableRevision.Failure] = []
+            let file = WatchedFile<Payload>(url: url) { failures.append($0) }
+            #expect(file.changed() == nil)
+            #expect(file.changed() == nil)
+            guard case .cannotRead? = failures.first, failures.count == 1 else {
+                Issue.record("辿れないリンクを 1 度だけ読めない失敗として名乗っていない: \(failures)")
+                return
+            }
+
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: closed.path)
+            #expect(file.changed() == Payload(revision: 5))
+        }
+    }
+
+    /// ディレクトリを指すリンクは、置き場がディレクトリのときと同じく読めない失敗として 1 度名乗る。
+    @Test("ディレクトリを指すリンクは、読めない失敗として 1 度だけ知らせる")
+    func reportsALinkToADirectoryOnce() throws {
+        try withFile { url in
+            let folder = url.deletingLastPathComponent().appendingPathComponent("folder", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: url, withDestinationURL: folder)
+            var failures: [UnreadableRevision.Failure] = []
+            let file = WatchedFile<Payload>(url: url) { failures.append($0) }
+            #expect(file.changed() == nil)
+            #expect(file.changed() == nil)
+            guard case .cannotRead? = failures.first, failures.count == 1 else {
+                Issue.record("ディレクトリを指すリンクを 1 度だけ読めない失敗として名乗っていない: \(failures)")
+                return
+            }
+        }
+    }
+
     /// 区画のファイルがリンクのとき、**先だけを書き換えても**次の改訂として読む (#3994)。
     /// 中身はリンクを辿って読むので、時刻も同じ先から取る。
     @Test("リンクの先を書き換えると、新しい中身を返す")

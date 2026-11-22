@@ -23,9 +23,37 @@ nonisolated struct FileStamp: Equatable, Sendable {
 
     /// `url` (リンクなら辿った先) の最終更新時刻。読めなければ `nil`。
     static func of(_ url: URL) -> FileStamp? {
+        guard case .stamped(let stamp) = lookUp(url) else { return nil }
+        return stamp
+    }
+
+    /// 読む先の時刻の見え方。**無いのか、在るのに辿れないのかを分ける。**
+    enum Lookup: Equatable, Sendable {
+        /// 読む先の時刻。
+        case stamped(FileStamp)
+        /// 無い。切れたリンクも、無いファイルと同じくここ。
+        case absent
+        /// リンク自身は在るが、辿れない (循環する・検索の権利の無い場所を通る)。値はリンク自身の時刻で、
+        /// 改訂を見分けるためだけに使う。読みに行けば理由の付いた失敗になる (`AssetLookup` と同じ線引き)。
+        case unreachable(link: FileStamp)
+    }
+
+    /// `url` を辿って時刻を取る。**取れなかったときだけ**、`ENOENT` 以外ならリンク自身を `lstat` で見る —
+    /// 無いファイル・切れたリンクは `stat` の 1 回で済む。
+    static func lookUp(_ url: URL) -> Lookup {
         var info = stat()
-        guard stat(url.path, &info) == 0 else { return nil }
-        return FileStamp(
+        if stat(url.path, &info) == 0 { return .stamped(FileStamp(info)) }
+        guard errno != ENOENT, lstat(url.path, &info) == 0 else { return .absent }
+        return .unreachable(link: FileStamp(info))
+    }
+
+    private init(_ info: stat) {
+        self.init(
             seconds: Int(info.st_mtimespec.tv_sec), nanoseconds: Int(info.st_mtimespec.tv_nsec))
+    }
+
+    init(seconds: Int, nanoseconds: Int) {
+        self.seconds = seconds
+        self.nanoseconds = nanoseconds
     }
 }
