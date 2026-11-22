@@ -6,6 +6,8 @@ import Foundation
 import Testing
 
 @testable import MokumeAudio
+@testable import MokumeCore
+import MokumeTestSupport
 
 /// 3 チャンネル以上の音のファイルが、2 チャンネルの出力でどう鳴るか (#4069 の再現)。
 ///
@@ -28,7 +30,7 @@ struct MultichannelFileLayoutTests {
     }
 
     /// `channels` チャンネル・48 kHz・16 bit の WAV を `url` へ書く。`active` のチャンネルだけが定数 0.5 で、ほかは 0。
-    private static func writeWAV(
+    static func writeWAV(
         to url: URL, channels: Int, active: Int, layout: Layout, frames: Int = 4800
     ) throws {
         func le16(_ value: Int) -> [UInt8] { [UInt8(value & 0xFF), UInt8((value >> 8) & 0xFF)] }
@@ -105,6 +107,79 @@ struct MultichannelFileLayoutTests {
                 print(
                     "MULTICH layout=\(layout.rawValue) channels=\(channels) source=\(active) "
                         + "tag=0x\(tag) left=\(heard.left) right=\(heard.right)")
+            }
+        }
+    }
+}
+
+/// `setup()` で検査が渡した手続きを走らせるだけのスケッチ (自分の静的な置き場を持ち、他の suite と共有しない)。
+final class MultichannelSketch: Sketch {
+    nonisolated(unsafe) static var onSetup: (MultichannelSketch) throws -> Void = { _ in }
+    init() {}
+    var settings: SketchSettings { SketchSettings(width: 8, height: 8) }
+    func setup() throws { try Self.onSetup(self) }
+    func draw() { background(0, 0, 0) }
+}
+
+/// ``MultichannelFileLayoutTests`` と同じ WAV を、`SoundFile` の `play()` を通して鳴らす。`pan(_:)` の層が値を変えるか
+/// (先頭の 2 チャンネルを拾うなど) を見る。走っているスケッチの中で回すので GPU を要する。
+@Suite(
+    "多チャンネルのファイルの鳴り方 (SoundFile を通す・記録)",
+    .serialized,
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct MultichannelSoundFileTests {
+    private static let perFrame = 800
+
+    /// `url` を `SoundFile` にして、`pan` を渡して `play()` し、4 フレームぶん描かせて出力の左右の最大を返す。
+    private func heard(_ url: URL, pan: Float?) throws -> (left: Float, right: Float) {
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        var sound: SoundFile?
+        MultichannelSketch.onSetup = { sketch in
+            let loaded = try AudioFile.load(url, path: url.lastPathComponent)
+            let made = SoundFile(name: url.lastPathComponent, buffer: loaded, owner: sketch, flow: flow)
+            sketch.attach(made)
+            if let pan { made.pan(pan) }
+            made.play()
+            sound = made
+        }
+        let runtime = try SketchRuntime(sketch: MultichannelSketch(), gpu: try RenderDevice(), clock: nil)
+        var left: [Float] = []
+        var right: [Float] = []
+        for _ in 0..<4 {
+            try runtime.advance()
+            let both = try renderBoth(flow, Self.perFrame)
+            left += both.left
+            right += both.right
+        }
+        runtime.closePlugins()
+        #expect(sound != nil)
+        func peak(_ samples: [Float]) -> Float { samples.map { abs($0) }.max() ?? 0 }
+        return (peak(left), peak(right))
+    }
+
+    @Test("SoundFile の play() を通して、3・6 チャンネルと左右中央の対照を、既定の定位と左へ振った定位で記録する")
+    func recordsHowEachSourceChannelIsHeardThroughSoundFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-multichannel-sf-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let cases: [(layout: MultichannelFileLayoutTests.Layout, channels: Int, pans: [Float?])] = [
+            (.plain, 3, [nil, -1]), (.plain, 6, [nil]), (.extensibleLRC, 3, [nil, -1]),
+        ]
+        for (layout, channels, pans) in cases {
+            for active in 0..<channels {
+                let url = directory.appendingPathComponent("\(layout.rawValue)-\(channels)-\(active).wav")
+                try MultichannelFileLayoutTests.writeWAV(to: url, channels: channels, active: active, layout: layout)
+                for pan in pans {
+                    let result = try heard(url, pan: pan)
+                    print(
+                        "MULTICH-SOUNDFILE layout=\(layout.rawValue) channels=\(channels) source=\(active) "
+                            + "pan=\(pan.map { String($0) } ?? "default") left=\(result.left) right=\(result.right)")
+                }
             }
         }
     }
