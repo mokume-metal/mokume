@@ -131,16 +131,18 @@ struct WatchCommandTests {
         }
     }
 
-    /// **見張りが資材として数えるのは `Sources/<名前>/assets` の下だけ** (#4006)。`path:` で `Sources/` の
-    /// 外へ動かした target の `assets` を書き換えても、世代は変わらない — 範囲の外であることを固定する。
-    @Test("Sources の外へ置いた target の assets を書き換えても、見張りの世代は変わらない")
-    func aPlaceOutsideSourcesIsNotWatched() throws {
-        let root = try ResourceDeclarationTests.makeSketchPlacedOutsideSources()
+    /// **見張りが資材として数えるのは `Sources/` の直下のディレクトリの `assets` の下だけ** (#4006)。
+    /// 資材を書き換えると、置き場が範囲の内なら世代が変わり、外なら変わらない — 範囲を固定する。
+    @Test(
+        "資材を書き換えると、置き場が範囲の内なら見張りの世代が変わり、外なら変わらない",
+        arguments: ResourceDeclarationTests.layouts)
+    func theScopeOfTheWatch(layout: ResourceDeclarationTests.Layout) throws {
+        let root = try ResourceDeclarationTests.makeSketch(layout)
         defer { try? FileManager.default.removeItem(at: root) }
         let before = try #require(SourceStamp.current(for: root), "Package.swift も数えていない")
         try Data("別の画像のつもり".utf8)
-            .write(to: root.appendingPathComponent("Sketch/assets/grain.png"))
-        #expect(SourceStamp.current(for: root) == before)
+            .write(to: root.appendingPathComponent("\(layout.assets)/grain.png"))
+        #expect((SourceStamp.current(for: root) != before) == layout.inScope)
     }
 
     /// **ウィンドウを出してから、最初の作り直しに入る。**

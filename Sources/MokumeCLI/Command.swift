@@ -157,13 +157,16 @@ enum Command {
                     What it watches: Package.swift, every .swift under Sources/, and the regular files
                     under Sources/<target>/assets/ (not hidden files or symbolic links). A .metal
                     fragment is not rebuilt: it swaps in while the sketch keeps running.
-                    Only Sources/<target>/assets/ counts as a place for assets: the assets/ of a target
-                    moved with path: or under src/ is neither checked for a missing resources declaration
-                    nor watched, so a missing declaration there shows only when the sketch cannot load
-                    the file, and saving a file there does not rebuild.
+                    Assets count only in Sources/<directory>/assets/. In the assets/ of a target moved out
+                    of Sources/ with path:, under another source directory such as src/, or nested deeper
+                    (Sources/<directory>/<sub>/assets/), a missing resources declaration is not caught
+                    before running (it shows only when the sketch cannot load the file) and saving a file
+                    does not rebuild; only a .metal fragment there swaps in, when the target declares
+                    that assets/ with .copy.
                     A change anywhere else does not rebuild — resources Package.swift declares outside
-                    assets/ (.process("Resources"), .copy("data.json"), a changed path:), Package.resolved,
-                    a dependency given by path (--local). After those, place a rebuild request in
+                    assets/ (.process("Resources"), .copy("data.json"), a target moved out of Sources/
+                    with path:), Package.resolved, a dependency given by path (--local). After those,
+                    place a rebuild request in
                     .mokume/watch/request.json ({"id": "<new each time>", "action": "rebuild"}): it builds
                     and swaps in once without stopping watch. "restart" starts the running version again
                     from the beginning (time from 0, also with --keep-time) without building
