@@ -143,7 +143,8 @@ nonisolated struct StrokeCarving {
     /// 点から扇に割る。片はどれも凸)。
     ///
     /// 型板で図形の線全体を 1 回だけ混ぜる線が使う ([ADR-0046]・[#1948])。重なった画素は、先に積んだ片
-    /// (と、その被覆) が残る — 引いて積んだときと同じ。
+    /// (と、その被覆) が残る — 引いて積んだときと同じ。被覆の違う片が混ざる図形は、区間を覚えるときに被覆 1 の片を
+    /// 先へ並べ替える (``Canvas/putFullCoverageFirst(in:)``・#4034)。
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#1948]: https://github.com/mokume-metal/mokume/issues/1948

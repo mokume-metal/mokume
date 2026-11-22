@@ -774,6 +774,103 @@ struct FlatStrokeStencilTests {
         #expect(lit > 0, "細い横の部分道が描かれていない")
     }
 
+    // MARK: - 被覆の違う片が混ざる図形 (#4034)
+
+    /// #4034 の道: 横 (20,40)→(140,40) と縦 (80,10)→(80,120) の部分道。`horizontalFirst` なら横を先に書く。
+    private static func crossingSubpaths(_ canvas: Canvas, horizontalFirst: Bool) -> Path {
+        let horizontal: [SIMD2<Float>] = [SIMD2(20, 40), SIMD2(140, 40)]
+        let vertical: [SIMD2<Float>] = [SIMD2(80, 10), SIMD2(80, 120)]
+        let subpaths = horizontalFirst ? [horizontal, vertical] : [vertical, horizontal]
+        return canvas.createPath {
+            for points in subpaths {
+                canvas.beginShape()
+                for point in points { canvas.vertex(point.x, point.y) }
+                canvas.endShape()
+            }
+        }
+    }
+
+    /// 透明地に `body` を描いて、出す画素の不透明度 (0〜255) を読む。
+    private func alphas(_ body: (Canvas) -> Void) throws -> DisplayImage {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        try canvas.draw {
+            canvas.noFill()
+            body(canvas)
+        }
+        return try canvas.output.encodeForDisplay()
+    }
+
+    /// 縦に 0.04 倍へ潰すと、横の部分道は描く画素で 0.8 画素の太さ (被覆 0.8 = alpha 204)、縦の部分道は太いまま
+    /// (被覆 1)。1 つの図形の型板は同じ画素に先に積んだ片を残すので、被覆 1 の片を先に積まないと、細い横の線が
+    /// 先に書かれた順で交わる所 (120, 2) が細い線の被覆になる。交わる所は、書いた順によらず太い縦の線が残る。
+    @Test(
+        "一部の部分道だけが細くなる道の線は、交わる所に太い線が残り、部分道を書いた順に依らない",
+        arguments: [(Float(255), true), (255, false), (128, true), (128, false)])
+    func mixedCoverageCrossingKeepsTheFullPiece(alpha: Float, horizontalFirst: Bool) throws {
+        let image = try alphas { canvas in
+            canvas.stroke(255, alpha)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.shape(Self.crossingSubpaths(canvas, horizontalFirst: horizontalFirst))
+        }
+        let full = Int(alpha.rounded())
+        let thin = Int((alpha * 0.8).rounded())
+        #expect(abs(Int(image[120, 2].alpha) - full) <= 1, "交わる所: \(image[120, 2])")
+        #expect(abs(Int(image[60, 2].alpha) - thin) <= 1, "横の線だけの所: \(image[60, 2])")
+        #expect(abs(Int(image[120, 4].alpha) - full) <= 1, "縦の線だけの所: \(image[120, 4])")
+    }
+
+    /// 細さは帯ごとに向きで測るので、折れ線 1 本の中でも被覆 1 の帯と被覆 < 1 の帯が混ざる。横の帯を先に書き、
+    /// 最後の縦の帯が (80, 40) で横の帯と交わる。
+    @Test("1 本の折れ線の中で一部の帯だけが細くなっても、交わる所に太い帯が残る")
+    func mixedCoverageInOneOutlineKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.beginShape()
+            canvas.vertex(20, 40)
+            canvas.vertex(140, 40)
+            canvas.vertex(140, 10)
+            canvas.vertex(80, 10)
+            canvas.vertex(80, 120)
+            canvas.endShape()
+        }
+        #expect(image[120, 2].alpha == 255, "交わる所: \(image[120, 2])")
+        #expect(abs(Int(image[60, 2].alpha) - 204) <= 1, "横の帯だけの所: \(image[60, 2])")
+    }
+
+    /// 保持した形を潰して置いても同じ (区間は置くときに入れる・``Canvas/place(_:of:at:carved:)``)。直前に細い線
+    /// だけの道を置くと、その被覆の区間が次の図形の細い片の区間と続いて 1 つにまとまる。並べ替えは区間の境目で
+    /// 割り、前の図形の細い線は動かさない。
+    @Test("潰して置いた保持した形でも、交わる所に太い線が残り、直前の細い線の図形は変わらない")
+    func retainedMixedCoverageCrossingKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            let shape = canvas.createShape {
+                canvas.noFill()
+                canvas.stroke(255)
+                canvas.strokeWeight(20)
+                canvas.shape(
+                    canvas.createPath {
+                        canvas.beginShape()
+                        canvas.vertex(20, 150)
+                        canvas.vertex(60, 150)
+                        canvas.endShape()
+                        canvas.beginShape()
+                        canvas.vertex(80, 150)
+                        canvas.vertex(100, 150)
+                        canvas.endShape()
+                    })
+                canvas.shape(Self.crossingSubpaths(canvas, horizontalFirst: true))
+            }
+            canvas.shape(shape, at: [Placement(scale: Vector3(1.5, 0.04, 1))])
+        }
+        #expect(image[120, 2].alpha == 255, "交わる所: \(image[120, 2])")
+        #expect(abs(Int(image[60, 2].alpha) - 204) <= 1, "横の線だけの所: \(image[60, 2])")
+        #expect(abs(Int(image[60, 6].alpha) - 204) <= 1, "前の図形の細い線: \(image[60, 6])")
+        #expect(abs(Int(image[135, 6].alpha) - 204) <= 1, "前の図形の細い線: \(image[135, 6])")
+    }
+
     /// 畳んだ雛形は引き算のまま (型板の外)。1 つの図形の中は 1 回、重なる 2 つの図形どうしは 2 回。
     @Test("畳んだ雛形の半透明の線は、1 つの中は 1 回、重なる 2 つは 2 回")
     func foldedTemplateMixesOncePerFigure() throws {
