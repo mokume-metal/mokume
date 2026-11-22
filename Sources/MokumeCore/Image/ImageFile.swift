@@ -293,7 +293,8 @@ nonisolated enum ImageFile {
     static func search(for path: String) -> AssetLookup.Search {
         search(
             for: path, workingDirectory: FileManager.default.currentDirectoryPath,
-            neighbourhood: Bundle.main.bundleURL, resources: Bundle.main.resourceURL)
+            neighbourhood: Bundle.main.bundleURL, resources: Bundle.main.resourceURL,
+            skipping: UndeclaredBundles.startup())
     }
 
     /// 探す場所を並べる (どこを起点にするかを渡せる形)。
@@ -310,8 +311,12 @@ nonisolated enum ImageFile {
     }
 
     /// ``candidates(for:workingDirectory:neighbourhood:resources:)`` と、数えられなかった置き場。
+    ///
+    /// - Parameter skipping: 並んでいても探さない包みの名前 (``UndeclaredBundles``)。いまの宣言に無い包みの
+    ///   同じ相対パスの資材を、名前の順で先に来るからといって読まない (#4038)。
     static func search(
-        for path: String, workingDirectory: String, neighbourhood: URL, resources: URL?
+        for path: String, workingDirectory: String, neighbourhood: URL, resources: URL?,
+        skipping: Set<String> = []
     ) -> AssetLookup.Search {
         if path.hasPrefix("/") { return AssetLookup.Search(places: [URL(fileURLWithPath: path)]) }
 
@@ -322,7 +327,7 @@ nonisolated enum ImageFile {
             urls.append(resources.appendingPathComponent(path))
         }
         for root in [neighbourhood, resources].compactMap({ $0 }) {
-            let listed = bundled(path, in: root)
+            let listed = bundled(path, in: root, skipping: skipping)
             urls.append(contentsOf: listed.urls)
             if let reason = listed.failure {
                 unlistable.append(AssetLookup.Unlistable(root: root, reason: reason))
@@ -349,7 +354,9 @@ nonisolated enum ImageFile {
     /// 包みが無いだけだが、それ以外 (読む権利が無いなど) は、包みが在るかを確かめられない。
     ///
     /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
-    private static func bundled(_ path: String, in root: URL) -> (urls: [URL], failure: String?) {
+    private static func bundled(_ path: String, in root: URL, skipping: Set<String>) -> (
+        urls: [URL], failure: String?
+    ) {
         let names: [String]
         do {
             names = try FileManager.default.contentsOfDirectory(atPath: root.path)
@@ -361,7 +368,7 @@ nonisolated enum ImageFile {
         let listing = names.map { root.appendingPathComponent($0) }
         var urls: [URL] = []
         for bundle in listing.sorted(by: { $0.path < $1.path })
-        where bundle.pathExtension == "bundle" {
+        where bundle.pathExtension == "bundle" && !skipping.contains(bundle.lastPathComponent) {
             urls.append(bundle.appendingPathComponent(path))
             urls.append(
                 bundle.appendingPathComponent("Contents/Resources").appendingPathComponent(path))

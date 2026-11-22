@@ -276,12 +276,36 @@ struct SwiftPMTests {
                 "Demo_Old_Name.bundle",  // 名前に `_` を含む、消した target
                 "Demo_Extras_Foo.bundle",  // 依存 `Demo_Extras` の `Foo` (自分の名前を頭に持つ依存)
                 "mokume_MokumeCore.bundle",  // 依存 `mokume`
-                "Demonic_Foo.bundle",  // 頭が `Demo_` でない
+                "Demonic_Foo.bundle",  // 頭が `Demo_` でなく、どの依存の名前でも始まらない (#4038)
             ],
             dependencyPackages: ["mokume", "Demo_Extras"])
         #expect(scope.required == ["Demo_Lib.bundle"])
-        #expect(scope.excluded == ["Demo_DemoTests.bundle", "Demo_Old_Name.bundle"])
-        #expect(scope.leftovers == ["Demo_DemoTests.bundle", "Demo_Old_Name.bundle"])
+        let stale: Set = ["Demo_DemoTests.bundle", "Demo_Old_Name.bundle", "Demonic_Foo.bundle"]
+        #expect(scope.excluded == stale)
+        #expect(scope.leftovers == stale)
+    }
+
+    /// **残すのは、いまの宣言から求めた一覧だけ** (#4038)。いまのパッケージ名で始まらない包み — 改名する前の
+    /// パッケージ名 (`Old_`)・`Package.swift` から外した依存 (`Removed_`)・共有の置き場に並ぶ別のスケッチ
+    /// (`other_`) — も、いまの依存の名前で説明できなければ除く。いまの依存の包みは、推移の依存も含めて残す (対照)。
+    @Test("改名前のパッケージ名・外した依存・別のスケッチの包みは除き、いまの依存の包みは残す")
+    func bundlesOutsideTheDeclaredListStayOut() throws {
+        let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump))
+        let scope = package.resourceScope(
+            forProduct: "Demo",
+            beside: [
+                "Demo_Lib.bundle",
+                "Old_Lib.bundle",  // `Package(name: "Old")` の頃の包み
+                "Removed_Y.bundle",  // 外した依存 `Removed` の包み
+                "other_other.bundle",  // 別のスケッチの包み
+                "mokume_MokumeCore.bundle",  // いまの依存 `mokume`
+                "Extras_Foo.bundle",  // いまの推移の依存 `Extras`
+            ],
+            dependencyPackages: ["mokume", "Extras", "extras"])
+        #expect(scope.required == ["Demo_Lib.bundle"])
+        #expect(scope.excluded == ["Old_Lib.bundle", "Removed_Y.bundle", "other_other.bundle"])
+        #expect(scope.leftovers == scope.excluded)
+        #expect(scope.kept.isEmpty)
     }
 
     /// **依存の名前が包みの名前と食い違うと、依存の包みも古い包みと読む** (#4005 の反証)。名前の出どころが
@@ -301,8 +325,8 @@ struct SwiftPMTests {
     /// **残す側の比べ方は大文字と小文字を区別しない** (#4005 の反証)。区別しないボリュームでは、target を
     /// `Lib` → `LIB` と改名しても、置き場の包みは古い綴り `Demo_Lib.bundle` のまま中身だけ作り直される。
     /// 区別して比べると古い包みと読んで除き、配る前の検査が `Demo_LIB.bundle` が無いと言って止まる
-    /// (差分の前は通っていた)。依存の名前も同じ。除く側の頭 (`Demo_`) は区別する — `demo_Gone.bundle`
-    /// (改名前のパッケージ名かもしれない) は除かない。
+    /// (差分の前は通っていた)。依存の名前も同じ。どの target のものでも依存のものでもない包みは、頭の綴りに
+    /// よらず除く — `demo_Gone.bundle` (改名前のパッケージ名かもしれない) も除く (#4038)。
     @Test("いまの宣言の target と依存の名前は、大文字と小文字を区別せずに照らす")
     func protectingComparisonsIgnoreCase() throws {
         let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump(named: "Demo", library: "LIB")))
@@ -311,18 +335,18 @@ struct SwiftPMTests {
             beside: ["Demo_Lib.bundle", "Demo_Extras_Foo.bundle", "demo_Gone.bundle", "Demo_Gone.bundle"],
             dependencyPackages: ["demo_extras"])
         #expect(scope.required == ["Demo_LIB.bundle"])
-        #expect(scope.excluded == ["Demo_Gone.bundle"])
+        #expect(scope.excluded == ["Demo_Gone.bundle", "demo_Gone.bundle"])
     }
 
     /// **名前の形だけでは決めない。** 自分のパッケージ名が依存のパッケージ名を頭に持つ (`Demo_Extras` と
     /// `Demo`) と、`Demo_Extras_Gone.bundle` は消した target `Gone` とも、依存 `Demo` の target
     /// `Extras_Gone` とも読める。どちらとも決められないものは除かない (入れすぎる側へ倒す)。パッケージ名に
-    /// `_` があっても、依存で説明できない包みは除く。
+    /// `_` があっても、依存で説明できない包みは除く (`Demo_Foo.bundle` も、依存 `Demo` が無ければ除く・#4038)。
     @Test(
         "パッケージ名に `_` があっても、依存のパッケージの名前で説明できる包みは除かない",
         arguments: [
             (["Demo"], Set<String>()),
-            (["mokume"], Set(["Demo_Extras_Gone.bundle"])),
+            (["mokume"], Set(["Demo_Extras_Gone.bundle", "Demo_Foo.bundle"])),
         ])
     func ambiguousLeftoversStayIn(dependencies: [String], excluded: Set<String>) throws {
         let package = try #require(SwiftPM.package(inDumpOf: Self.staleDump(named: "Demo_Extras")))

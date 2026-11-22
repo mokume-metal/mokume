@@ -108,6 +108,8 @@ enum RunCommand {
         if let notice = context.place.notice { print(notice) }
 
         let executable = try buildAndResolve(in: directory, context: context)
+        // **いまの宣言に無い包みは、子に探させない** (#4038)。置き場は共有なので、隣に古い包みや別のスケッチの包みが並ぶ
+        let undeclared = AssetScope.announced(context: context, executable: executable, package: directory)
         // 走らせるのは人なので、速さを名乗らせる。MCP サーバはここを通らない。
         // **名乗る名前は、いま走らせる構成と同じ値から出す**
         //
@@ -127,7 +129,7 @@ enum RunCommand {
             environment: childEnvironment(
                 reportingRate: context.configurationName,
                 confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)",
-                recording: recording))
+                recording: recording, undeclaredBundles: undeclared))
         // **記録を頼んだのに、この実行が書いていなければ、黙らない** (子が理由を言っている — 実時間の時計・
         // 行き先を開けない・別の実行が書いている)。在るかでは判らない: 前の回の完成品が残っているかもしれない
         if let recording, !recordWasWritten(at: recording, since: launchedAt) {
@@ -194,7 +196,7 @@ enum RunCommand {
         if let given = try invocation.scratchDirectory {
             return BuildContext(
                 configuration: invocation.configuration,
-                place: .outside(given, given: true), product: product, assets: assets)
+                place: .outside(given, given: true), product: product, assets: assets, declared: declared)
         }
 
         // **宣言が読めないことを、断る理由にしない。** 壊した状態から直していく途中は
@@ -239,7 +241,8 @@ enum RunCommand {
             }
         }
         return BuildContext(
-            configuration: invocation.configuration, place: place, product: product, assets: assets)
+            configuration: invocation.configuration, place: place, product: product, assets: assets,
+            declared: declared)
     }
 
     /// 依存を解決させて `Package.resolved` を書かせる。**失敗しても投げない** —
@@ -841,6 +844,8 @@ enum RunCommand {
     /// - Parameter replaying: 流す記録の絶対パス (`replay` だけが渡す)。子はウィンドウも区画も開かずに記録を流して照らし、
     ///   結果を書いて終わる (``StartupReads/replay``・#3571)。
     ///   **渡さなければ、親の環境に在っても落とす。**
+    /// - Parameter undeclaredBundles: 子に探させない実行ファイルの隣の包み (``AssetScope``・``StartupReads/undeclaredBundles``・
+    ///   #4038)。**空なら、親の環境に在っても落とす** (子は隣の包みを全部探す)。
     ///
     /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**
     /// 相対の値は読む側の作業ディレクトリから解かれる (`WorkDirectory.given`) が、子は作業
@@ -854,7 +859,8 @@ enum RunCommand {
         stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil,
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil,
         assetOrigin: String? = nil, keepTime: String? = nil, keepTimeReadOnly: Bool = false,
-        keepTimeFollows: Int32? = nil, recording: String? = nil, replaying: String? = nil
+        keepTimeFollows: Int32? = nil, recording: String? = nil, replaying: String? = nil,
+        undeclaredBundles: Set<String> = []
     ) -> [String: String] {
         var environment = base
         if let workDirectory = WorkDirectory.given(environment: base) {
@@ -885,6 +891,9 @@ enum RunCommand {
         // **これも渡さなければ落とす。** 流す頼みは `replay` だけのもので、ほかの実行へ継がせると、ウィンドウを開かずに
         // 記録を流し始める (#3571)
         environment[StartupReads.replay.key] = replaying
+        // **これも渡さなければ落とす。** 探さない包みは起こす道具が自分の置き場の並びから決める値で、継がせると
+        // 別の置き場で走る子が、そこに在る包みを外してしまう (#4038)
+        environment[StartupReads.undeclaredBundles.key] = UndeclaredBundles.value(of: undeclaredBundles)
         return environment
     }
 

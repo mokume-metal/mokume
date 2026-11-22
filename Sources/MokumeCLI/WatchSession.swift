@@ -117,15 +117,20 @@ final class WatchSession {
         ///   渡すのは検査だけである (要約を塞いで、待っている間に main が進むかを見る)。
         /// - Parameter progress: 作り直しの段数を読むたびに呼ぶ口 (#4121)。**作り直しの糸から呼ぶ** —
         ///   main actor へ届けるのは受け手 (``BuildProgressMailbox``) の仕事である。省けば読まない。
+        /// - Parameter asking: 子に探させない包みを決めるときの、依存の木の問い (``AssetScope/Carried``・#4038)。
+        ///   渡すのは検査だけである。
         static func live(
             resolver: BuildResolver, running: RunningBuild,
             stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil,
-            recording: String? = nil, progress: (@Sendable (BuildProgress) -> Void)? = nil
+            recording: String? = nil, progress: (@Sendable (BuildProgress) -> Void)? = nil,
+            asking: @escaping AssetScope.Asking = BundleCommand.askSwiftPM
         ) -> Hooks {
             // 起こした子の数。**作り直しは記録の切れ目**で、世代ごとに別の行き先を渡す (#3570)
             let generations = recording.map { RecordGenerations(destination: $0) }
             // 時計を渡す場所。起こす子ごとに見張りが選ぶ (``selectClock``・#3428)
             let clock = ClockPlace(keepTime)
+            // 子に探させない包み (#4038)。建つたびに作り直しの糸で隣を読み直し、子を起こす口が読む
+            let undeclared = AssetScope.Carried(asking: asking)
             return Hooks(
                 rebuild: { directory throws(CommandFailure) in
                     // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
@@ -140,9 +145,17 @@ final class WatchSession {
                     try await Task.detached(priority: .userInitiated) {
                         Result { () throws(CommandFailure) in
                             let resolved = try resolver.current()
-                            return try RunCommand.rebuild(
+                            let rebuilt = try RunCommand.rebuild(
                                 in: directory, context: resolved.context, capturing: true,
                                 running: running, binPath: resolved.binPath, progress: progress)
+                            // **いまの宣言に無い包みは、子に探させない** (#4038)。外す包みが変わった回だけ 1 行名乗る
+                            if rebuilt.status == 0, let executable = rebuilt.executable,
+                                let notice = undeclared.refresh(
+                                    context: resolved.context, executable: executable, package: directory)
+                            {
+                                WatchCommand.say(notice)
+                            }
+                            return rebuilt
                         }
                     }.value.get()
                 },
@@ -177,7 +190,7 @@ final class WatchSession {
                         // 走らせたまま差し替わらない
                         assetOrigin: resolved?.context.assets.url?.path,
                         keepTime: clock.path, keepTimeReadOnly: clock.readsOnly, keepTimeFollows: clock.follows,
-                        recording: generations?.next())
+                        recording: generations?.next(), undeclaredBundles: undeclared.current)
                     do {
                         try process.run()
                     } catch {

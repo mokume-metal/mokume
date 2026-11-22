@@ -192,6 +192,21 @@ nonisolated package enum StartupReads {
             + "passes it only for watch, and the sketch takes it out of its own environment once read",
         readSite: "Sources/MokumeCore/Drawing/ShaderOrigin.swift")
 
+    /// 資材を探すときに見ない、実行ファイルの隣の包み (#4038)。
+    ///
+    /// ビルドの置き場は共有なので、隣にはいまの宣言に無い包み (改名する前のパッケージ名・消した target・外した依存・
+    /// テストの target・別のスケッチ) も並ぶ。**どれがいまの宣言のものかは道具にしか分からない**ので、道具がその名前を
+    /// `/` で区切って子へ渡す。渡すのは `run`・`watch`・`render`・`replay` で、宣言と依存の木を読めた回だけ
+    /// (渡さなければ親の環境に在っても落とし、子は隣の包みを全部探す)。**受け取った子は読んだ時点で自分の環境から消す。**
+    public static let undeclaredBundles = Entry(
+        name: "Undeclared bundles", origin: .environment, key: "MOKUME_UNDECLARED_BUNDLES", decidedBy: .tool,
+        note: "Resource bundles beside the executable that the sketch does not look in for assets, because no "
+            + "target of its Package.swift or dependency of it builds them now (left in the build folder, or "
+            + "another sketch's). The value is their names separated by /, and the tool passes it for run, "
+            + "watch, render and replay when it could read the package and its dependencies. Without it, "
+            + "every bundle there is looked in. The sketch takes it out of its own environment once read",
+        readSite: "Sources/MokumeCore/Image/UndeclaredBundles.swift")
+
     /// 作り直しをまたいで、作者の時計を渡すファイル — `mokume watch --keep-time` ([#2414])。
     ///
     /// 見張りは旗 `--keep-time` のときだけ、世代をまたいで 1 つの場所を子へ渡す。受けた子は、最初の枚の前に
@@ -323,7 +338,7 @@ nonisolated package enum StartupReads {
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        assetOrigin, keepTime, keepTimeReadOnly, keepTimeFollows, record, replay, observe, input, params,
+        assetOrigin, undeclaredBundles, keepTime, keepTimeReadOnly, keepTimeFollows, record, replay, observe, input, params,
         viewport,
     ]
 }

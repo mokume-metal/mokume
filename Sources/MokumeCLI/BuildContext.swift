@@ -45,6 +45,9 @@ nonisolated struct BuildContext: Equatable {
     /// ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。**宣言から決める** — 既定は
     /// 「写されない」で、宣言が読めない回は ``SwiftPM/AssetsOrigin/undecided``。
     var assets: SwiftPM.AssetsOrigin = .notCopied
+    /// 導いたときに読んだ宣言。**読めなければ `nil`。** 子に探させない包み (``AssetScope``) を、宣言を読み直さずに
+    /// 求めるために持ち回る (#4038)。
+    var declared: SwiftPM.Package? = nil
 
     /// 道具立てへ渡す引数。
     ///

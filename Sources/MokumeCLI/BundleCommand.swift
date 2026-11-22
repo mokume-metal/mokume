@@ -121,8 +121,8 @@ enum BundleCommand {
             configuration: configuration, place: place, product: product)
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
 
-        // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)。宣言から消えた
-        // target の古い包みも除く — 置き場は利用者の `swift build` / `swift test` と共有なので残る (#4005)
+        // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)。いまの宣言にも
+        // 依存にも無い古い包みも除く — 置き場は利用者の `swift build` / `swift test` と共有なので残る (#4005・#4038)
         let scope = declared.map {
             Self.resourceScope(of: $0, product: product, executable: executable, package: directory)
         }
@@ -143,7 +143,7 @@ enum BundleCommand {
 
     /// 束ねるときのビルドの置き場。**ビルドと、依存の木を引く ``resourceScope(of:product:executable:package:asking:)``
     /// が同じ置き場を見る** (依存の解決の結果は置き場ごとに在る)。
-    static let place: BuildDirectory.Place = .inPackage(.packaging)
+    nonisolated static let place: BuildDirectory.Place = .inPackage(.packaging)
 
     /// 組み立て → 仕上げ (資材の検め・紙・署名) → 公開。**公開するまで `--out` の `<name>.app` と紙に
     /// 触れない** ([#3981](https://github.com/mokume-metal/mokume/issues/3981))。
@@ -868,7 +868,7 @@ enum BundleCommand {
     /// 宣言を辿っても出てこないが、無ければそもそも絵が出ない。除くのは、このパッケージの target のうち
     /// 実行 product が使わないもの (テストの target の fixture など — #3982) で、名前の形ではなく
     /// 依存の閉包で決めたものを受け取る。
-    static func resourceBundles(besides executable: URL, excluding: Set<String>) -> [URL] {
+    nonisolated static func resourceBundles(besides executable: URL, excluding: Set<String>) -> [URL] {
         let listing =
             (try? FileManager.default.contentsOfDirectory(
                 at: executable.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? []
@@ -877,9 +877,10 @@ enum BundleCommand {
     }
 
     /// 配る範囲。宣言の閉包 (#3982) に、実行ファイルの隣の並びと依存の木 (`show-dependencies`) の
-    /// 宣言の名前から決めた、宣言から消えた target の古い包みの除外を足す (#4005)。依存の木が読めなければ
+    /// 宣言の名前から決めた、いまの宣言に無い包みの除外を足す (#4005・#4038)。依存の木が読めなければ
     /// (道具立てが 0 以外で終わった・JSON が読めない・宣言の名前の無い依存がある)、古い包みは除かない
-    /// (``SwiftPM/Package/resourceScope(forProduct:beside:dependencyPackages:)``)。
+    /// (``SwiftPM/Package/resourceScope(forProduct:beside:dependencyPackages:)``)。`run`・`watch` が
+    /// 子に探させない包みも、同じ 1 つの規則でここから求める (``AssetScope``)。
     ///
     /// **依存の名前は `.build/workspace-state.json` から読まない** — 下限の道具立てはそこへ宣言の名前でなく
     /// URL の末尾を書く (``SwiftPM/DependencyTree``)。
@@ -890,14 +891,14 @@ enum BundleCommand {
     /// 名乗る (``ResourceScope/kept``)。
     ///
     /// - Parameters:
-    ///   - package: パッケージの場所。依存の木は束ねる置き場 (``place``) で引く。
+    ///   - package: パッケージの場所。
+    ///   - place: 依存の木を引く置き場 (依存の解決の結果は置き場ごとに在る)。既定は束ねる置き場 (``place``)。
     ///   - asking: 道具立てへの問い (引数と場所を受けて終了コードと標準出力を返す)。**検査が偽の答えを渡し、
     ///     渡された引数と場所・問うたかどうかを見るために外から渡せる形にしてある。**
-    static func resourceScope(
+    nonisolated static func resourceScope(
         of declared: SwiftPM.Package, product: String, executable: URL, package: URL,
-        asking: (_ arguments: [String], _ directory: URL) -> (status: Int32, output: String) = {
-            (try? RunCommand.swift($0, in: $1, capturing: true, errors: .discard)) ?? (status: -1, output: "")
-        }
+        place: BuildDirectory.Place = place,
+        asking: (_ arguments: [String], _ directory: URL) -> (status: Int32, output: String) = askSwiftPM
     ) -> SwiftPM.Package.ResourceScope {
         let built = resourceBundles(besides: executable, excluding: []).map(\.lastPathComponent)
         var dependencies: [String]? = []
@@ -910,6 +911,11 @@ enum BundleCommand {
             dependencies = tree?.dependencyNames
         }
         return declared.resourceScope(forProduct: product, beside: built, dependencyPackages: dependencies)
+    }
+
+    /// 本物の問い。標準出力を掴み、標準エラーを捨てる。起こせなければ 0 以外の答えにする。
+    nonisolated static func askSwiftPM(_ arguments: [String], in directory: URL) -> (status: Int32, output: String) {
+        (try? RunCommand.swift(arguments, in: directory, capturing: true, errors: .discard)) ?? (status: -1, output: "")
     }
 
     /// 古い包みの名乗り (#4005)。**黙って除かない・黙って入れない** ([ADR-0029] 決定 4)。名前の形から推した

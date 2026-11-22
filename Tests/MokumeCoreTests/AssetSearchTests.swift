@@ -122,6 +122,45 @@ struct AssetSearchTests {
             ])
     }
 
+    /// **道具が外した包みは探さない** (#4038)。共有の置き場では、改名する前のパッケージ名の包み (`Aaa_demo`) が
+    /// いまの包み (`demo_demo`) より名前の順で先に並び、同じ相対パスの資材を持つ。外さなければ古い包みの資材に解ける
+    /// (直す前の `mokume run` で実測した形)。外したら、いまの包みの資材に解ける。
+    @Test("外した包みは探さず、名前の順で後ろのいまの包みの資材に解ける", arguments: [false, true])
+    func skippedBundlesAreNotSearched(skipping: Bool) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stale = try makeBundle(named: "Aaa_demo.bundle", asset: "assets/logo.txt", in: root)
+        let current = try makeBundle(named: "demo_demo.bundle", asset: "assets/logo.txt", in: root)
+
+        let search = ImageFile.search(
+            for: "assets/logo.txt", workingDirectory: root.appendingPathComponent("sketch").path,
+            neighbourhood: root, resources: nil, skipping: skipping ? ["Aaa_demo.bundle"] : [])
+        let found = try AssetLookup.locate(search, path: "assets/logo.txt")
+        #expect(found.standardizedFileURL == (skipping ? current : stale).standardizedFileURL)
+        #expect(search.places.contains { $0.path.contains("Aaa_demo.bundle") } == !skipping)
+    }
+
+    /// 道具が渡す値を読み、環境から消す。`.bundle` で終わらない名前は捨てる。渡されなければ何も外さない。
+    @Test("探さない包みの合図を読み、環境から消す")
+    func undeclaredBundlesAreTakenFromTheEnvironment() {
+        let key = StartupReads.undeclaredBundles.key
+        var unset: [String] = []
+        let names = UndeclaredBundles.take(
+            from: [key: "Aaa_demo.bundle/other_other.bundle//not-a-bundle"], unset: { unset.append($0) })
+        #expect(names == ["Aaa_demo.bundle", "other_other.bundle"])
+        #expect(unset == [key])
+
+        unset = []
+        #expect(UndeclaredBundles.take(from: [:], unset: { unset.append($0) }).isEmpty)
+        #expect(unset.isEmpty)
+
+        // 道具の側が組む値は、読む側で同じ集合に戻る。空なら渡さない
+        let value = UndeclaredBundles.value(of: ["b.bundle", "a.bundle", "bad/name.bundle"])
+        #expect(value == "a.bundle/b.bundle")
+        #expect(UndeclaredBundles.names(from: [key: value ?? ""]) == ["a.bundle", "b.bundle"])
+        #expect(UndeclaredBundles.value(of: []) == nil)
+    }
+
     @Test("全部の道を指す名前は、そのまま 1 つだけ返る")
     func anAbsolutePathIsUsedAsIs() {
         let searched = ImageFile.candidates(
