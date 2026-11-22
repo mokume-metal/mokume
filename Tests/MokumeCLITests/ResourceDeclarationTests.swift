@@ -224,34 +224,88 @@ struct ResourceDeclarationTests {
         }
     }
 
-    /// `path: "Sketch"` で `Sources/` の外に置いた target `demo` と、宣言の無い資材
-    /// `Sketch/assets/grain.png` を持つスケッチ。資材の置き場の範囲 (`Sources/<名前>/assets` だけ) の
-    /// 外にある形で、見張りの検査 (`WatchCommandTests`) も使う。
-    static func makeSketchPlacedOutsideSources() throws -> URL {
-        let root = TestScratch.path("mokume-resources-outside-sources", isDirectory: true)
-        let place = root.appendingPathComponent("Sketch", isDirectory: true)
-        let assets = place.appendingPathComponent("assets", isDirectory: true)
+    /// 資材の置き場の範囲 (#4006) を確かめる構成。target `demo` を 1 つ持ち、`assets` に
+    /// `grain.png` を置く。
+    nonisolated struct Layout: Sendable, CustomTestStringConvertible {
+        let name: String
+        /// `demo` の `path:`。`nil` なら書かない (道具立ての既定の候補で決まる)。
+        let path: String?
+        /// `demo` の置き場 (根からの相対)。
+        let source: String
+        /// 資材の置き場 (根からの相対)。
+        let assets: String
+        /// 宣言の抜けの検査と見張りの範囲の内か。
+        let inScope: Bool
+        var testDescription: String { name }
+    }
+
+    /// 範囲は「`Sources/` の直下のディレクトリの `assets`」だけ。`path:` を変えても `Sources/` の
+    /// 直下なら内、`Sources/` の外・別の名前の置き場 (`src/`)・入れ子は外。
+    nonisolated static let layouts: [Layout] = [
+        Layout(name: "path: で Sources の外へ動かした target", path: "Sketch", source: "Sketch",
+               assets: "Sketch/assets", inScope: false),
+        Layout(name: "src の下の target", path: nil, source: "src/demo",
+               assets: "src/demo/assets", inScope: false),
+        Layout(name: "Sources の直下の下の入れ子", path: nil, source: "Sources/demo",
+               assets: "Sources/demo/Sub/assets", inScope: false),
+        Layout(name: "path: で Sources の直下へ動かした target", path: "Sources/Other",
+               source: "Sources/Other", assets: "Sources/Other/assets", inScope: true),
+    ]
+
+    /// `layout` の構成のスケッチ。見張りの検査 (`WatchCommandTests`) も使う。
+    static func makeSketch(
+        _ layout: Layout, resources: String? = nil, product: Bool = false
+    ) throws -> URL {
+        let root = TestScratch.path("mokume-resources-scope", isDirectory: true)
+        let source = root.appendingPathComponent(layout.source, isDirectory: true)
+        let assets = root.appendingPathComponent(layout.assets, isDirectory: true)
         try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
         try "print(1)".write(
-            to: place.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+            to: source.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
         try "x".write(
             to: assets.appendingPathComponent("grain.png"), atomically: true, encoding: .utf8)
-        try manifest(path: "Sketch").write(
+        try manifest(resources: resources, path: layout.path, product: product).write(
             to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
         return root
     }
 
-    /// **資材の置き場として見るのは `Sources/<名前>/assets` だけ** (#4006)。`path:` で `Sources/` の外へ
-    /// 動かした target の `assets` は、宣言が無くても止めない — 範囲の外であることを固定する。
-    /// 範囲を広げるなら、見張りの範囲と合わせて別に決める。
-    @Test("Sources の外へ置いた target の assets は、宣言が無くても止めない")
-    func aPlaceOutsideSourcesIsNotJudged() throws {
-        let root = try Self.makeSketchPlacedOutsideSources()
+    /// **資材の置き場として見るのは `Sources/` の直下のディレクトリの `assets` だけ** (#4006)。
+    /// 宣言が無ければ、範囲の内なら止め、外なら止めない — 範囲を固定する。範囲を広げるなら、
+    /// 見張りの範囲と合わせて別に決める。
+    @Test("宣言の無い資材は、置き場が範囲の内なら止め、外なら止めない", arguments: layouts)
+    func theScopeOfTheCheck(layout: Layout) throws {
+        let root = try Self.makeSketch(layout)
         defer { try? FileManager.default.removeItem(at: root) }
-        // 道具立てが宣言を読み、その target が `Sketch` に在ると解くこと (読めない回は検査が素通りする)
+        // 道具立てが宣言を読み、置き場を含む target を `demo` と解くこと (読めない回・持ち主の
+        // 見つからない回は、範囲によらず素通りする)
         let declared = try #require(try RunCommand.dumpPackage(in: root))
-        #expect(declared.targets.map(\.path) == ["Sketch"])
-        #expect(throws: Never.self) { try check(root) }
+        let owner = declared.target(containing: root.appendingPathComponent(layout.assets), in: root)
+        #expect(owner?.target.name == "demo")
+        if layout.inScope {
+            #expect(throws: CommandFailure.resourcesNotDeclared(directory: layout.assets)) {
+                try check(root)
+            }
+        } else {
+            #expect(throws: Never.self) { try check(root) }
+        }
+    }
+
+    /// **範囲の外の置き場でも、宣言された target の置き場の直下の `assets` は、見張りが子へ元として
+    /// 渡す** (``SwiftPM/Package/assetsOrigin(forProduct:in:directoryName:)``)。その下の断片 (`.metal`)
+    /// は `mokume watch` の下で走らせたまま差し替わる — help と README がそう書く根拠を固定する。
+    @Test(
+        "Sources の外の target でも、置き場の直下の assets を .copy で宣言すれば、見張りは元として渡す",
+        arguments: layouts.filter { !$0.inScope && $0.assets == "\($0.source)/assets" })
+    func aDeclaredPlaceOutsideSourcesIsTheOrigin(layout: Layout) throws {
+        let root = try Self.makeSketch(layout, resources: #".copy("assets")"#, product: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let declared = try #require(try RunCommand.dumpPackage(in: root))
+        let origin = declared.assetsOrigin(forProduct: "demo", in: root, directoryName: "assets")
+        guard case .source(let url) = origin else {
+            Issue.record("見張りが置き場の元を渡さない: \(origin)")
+            return
+        }
+        #expect(SwiftPM.Package.sameItem(url, root.appendingPathComponent(layout.assets)))
     }
 
     /// **既定の置き場は target の種類で決める** (#3984 の反証)。テストの target は `Tests` が在れば
