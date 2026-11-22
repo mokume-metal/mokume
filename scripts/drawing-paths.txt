@@ -34,11 +34,19 @@
 # evidence」に割れば 4 本は消えるが、LedgerDetectionTests.swift のような境界のファイルが
 # あり、**どのテストが絵に影響するかを人が判定して書き続ける**ことになる — いまの「テストは
 # 全部対象」が持つ、判定の要らなさを失う。
+#
+# 4 本は MokumeUI・MokumeHost (と、その検査) を足す前の数で、足した後は数え直していない。
+# 2 つのモジュールだけに触れる PR (説明文の直しなど) にも証跡か no-visual-change が要るので、
+# この数は増えうる (#4099)。
 
 Sources/MokumeCore/
 # macOS の外枠 (#3804)。層の色空間・提示 (SketchSurface)・共有面の舞台・表示リンク・つまみの面は、
 # MokumeCore から切り出したもので、Core に居たときと同じく絵が動きうる
 Sources/MokumeMac/
+# ホストのアプリへ絵を載せる層 (MokumeUI・#3872) と、道具・外のパッケージが読む絵を作る層
+# (MokumeHost・#3870)。載せ方・大きさの追従・displayImage・writePNG で、映る絵が動きうる
+Sources/MokumeUI/
+Sources/MokumeHost/
 Sources/mokume/
 Sources/MokumeCamera/
 Sources/MokumeAudio/
@@ -53,3 +61,7 @@ Sketches/
 Tests/MokumeCoreTests/
 # MokumeCoreTests から移した外枠の検査 (#3804)
 Tests/MokumeMacTests/
+# HeadlessRunTests が displayImage・writePNG の絵を、EmbeddingAppTests が埋め込んだ絵を検査する。
+# 検査の変更が絵の検査の保証を動かしうるので、MokumeCoreTests と同じく載せる (#4099)
+Tests/MokumeUITests/
+Tests/MokumeHostTests/
