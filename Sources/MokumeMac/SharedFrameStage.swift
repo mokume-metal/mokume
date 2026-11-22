@@ -211,6 +211,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     private(set) var window: NSWindow?
     private var view: SketchSurface?
+    /// つまみの列 (#4137)。``open(overlay:knobColumn:)`` で列を頼んだウィンドウにだけ在る。
+    private var column: KnobColumnLayout?
 
     /// 重ねる面を足す先。**ウィンドウが出ている間だけ在る。**
     ///
@@ -446,7 +448,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// - Parameter overlay: 絵に重ねる面。**無ければ何も足さない** — 作品のウィンドウに道具の
     ///   都合が 1 画素も出ないのは、ここに何も渡さないことで成り立っている
     ///   ([ADR-0032] 決定 1)。
-    func open(overlay: NSView? = nil) {
+    ///   - knobColumn: つまみを**絵の横の列**に置くか (#4137)。置くなら、つまみは
+    ///   ``placeKnobs(_:)`` で列へ渡す。絵の面は列の右の残りに収まる。
+    func open(overlay: NSView? = nil, knobColumn: Bool = false) {
         // 大きさは差し出し元が来るまで分からない。**来てから合わせる**ので、ここは
         // 覚えている枠が無いときの初期値でしかない
         let window = WindowPlacement.makeWindow(
@@ -469,7 +473,15 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         view.autoresizingMask = [.width, .height]
         // **ウィンドウより先に繋ぐ。** 出してから繋ぐと、その隙間に触ったぶんが落ちる
         view.relay = { [weak self] line in self?.onInput?(line) }
-        window.contentView = view
+        if knobColumn {
+            let column = KnobColumnLayout(
+                frame: NSRect(origin: .zero, size: window.contentLayoutRect.size), surface: view)
+            column.autoresizingMask = [.width, .height]
+            window.contentView = column
+            self.column = column
+        } else {
+            window.contentView = view
+        }
         // **絵の面へ足す。** 別のウィンドウにしないのは、重ねるものが絵と一緒に動く必要が
         // あるからで、経路そのものは絵と別のまま (AppKit の層) である
         if let overlay { view.addSubview(overlay) }
@@ -489,6 +501,17 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         self.view = view
 
         screenLink.attach(to: window.screen ?? NSScreen.main, following: window)
+    }
+
+    /// つまみの面を置く。前の面は外す。
+    ///
+    /// 列を頼んで開いたウィンドウなら列へ置き、絵の面と重ねない (#4137)。そうでなければ絵の面に重ねる。
+    func placeKnobs(_ overlay: KnobOverlay?) {
+        if let column {
+            column.place(overlay)
+        } else if let overlay, let view {
+            overlay.attach(to: view)
+        }
     }
 
     /// × を押されたら、確かめてから知らせる。**確かめている間は閉じない。**
@@ -514,6 +537,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         window?.close()
         window = nil
         view = nil
+        column = nil
         // **閉じ手を手放す。** 畳んだ後に呼ばれる余地を残さない (この台は #738 で
         // 環を切ったばかりなので、持ち続ける参照はここで切る)
         onCloseConfirmed = nil

@@ -36,11 +36,28 @@ final class KnobOverlay: NSView {
     /// 警告の欄に出す値 (#3087)。数字を出す面 (道具のウィンドウ) だけが使う。
     private let warningFeed = WarningFeed()
 
-    init(boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil) {
+    /// 畳んでいるか (#4137)。作る側が渡せば、面を作り直しても畳んだままになる。
+    let state: KnobPanelState
+
+    /// 枠の大きさが変わったとき (畳む・開く・警告の欄の出入り)。**置き直しのたびには呼ばない** —
+    /// 列の容れ物 (``KnobColumnLayout``) は自分の並べ直しの中から ``reposition()`` を呼ぶので、
+    /// そこで呼ぶと並べ直しが自分を呼び返す。
+    var onResize: (() -> Void)?
+
+    init(
+        boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil,
+        state: KnobPanelState = KnobPanelState()
+    ) {
         knobCount = boxes.count
+        self.state = state
+        // 押されたときの行き先は、自分ができてから据える (`self` を捕まえるため)
         hosting = NSHostingView(
-            rootView: KnobPanel(boxes: boxes, numbers: numbers, warnings: warningFeed))
+            rootView: KnobPanel(boxes: boxes, numbers: numbers, warnings: warningFeed, state: state))
         super.init(frame: NSRect(origin: .zero, size: hosting.fittingSize))
+        hosting.rootView.toggle = { [weak self] in
+            guard let self else { return }
+            self.setCollapsed(!self.state.isCollapsed)
+        }
         hosting.frame = bounds
         hosting.autoresizingMask = [.width, .height]
         // **印を空にしない。** 空のままだと AppKit はウィンドウの大きさが変わったことを
@@ -85,9 +102,22 @@ final class KnobOverlay: NSView {
     func show(warnings: WarningSummary?) {
         guard warningFeed.summary != warnings else { return }
         warningFeed.summary = warnings
+        remeasure()
+    }
+
+    /// 面を畳む・開く (#4137)。畳むと開くボタンだけの小さな面になり、左上の留め方は変わらない。
+    func setCollapsed(_ collapsed: Bool) {
+        guard state.isCollapsed != collapsed else { return }
+        state.isCollapsed = collapsed
+        remeasure()
+    }
+
+    /// 中身が変わった直後に大きさを測り直して置き直し、変わったことを知らせる。
+    private func remeasure() {
         // 値を替えた直後の組み直しを済ませてから測る
         hosting.layoutSubtreeIfNeeded()
         reposition()
+        onResize?()
     }
 
     /// ウィンドウの左上へ留め、収まらない丈は詰める。
@@ -98,10 +128,12 @@ final class KnobOverlay: NSView {
     func reposition() {
         guard let host = superview else { return }
         let available = max(Self.minimumHeight, host.bounds.height - 2 * Self.inset)
-        let height = min(hosting.fittingSize.height, available)
+        let fitting = hosting.fittingSize
+        let height = min(fitting.height, available)
+        // 幅は測った幅 — 畳んだ面は開いた面より狭い
         frame = NSRect(
             x: Self.inset, y: host.bounds.height - height - Self.inset,
-            width: KnobPanel.width, height: height)
+            width: fitting.width, height: height)
     }
 
     /// これより低くは詰めない。ウィンドウが極端に小さいときに面が消えるより、はみ出すほうがよい。
