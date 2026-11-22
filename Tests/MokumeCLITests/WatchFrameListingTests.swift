@@ -30,19 +30,6 @@ struct WatchFrameListingTests {
         }
     }
 
-    /// bootstrap の名前が引けなくなるまで待つ。**期限で諦める** (#4101)。launchd が名前を外すのは受信の権利の死を
-    /// 知った後なので、手放した直後にはまだ引けることがある (`FrameListingTests` の `checkInThenLookUpThenRelease` と
-    /// 同じ待ち)。
-    private func nameIsGone(_ name: String, within seconds: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(seconds)
-        while Date() < deadline {
-            guard let port = Bootstrap.lookUp(name) else { return true }
-            Bootstrap.releaseSend(port)
-            usleep(10_000)
-        }
-        return Bootstrap.lookUp(name).map { Bootstrap.releaseSend($0) } == nil
-    }
-
     @Test("映す世代が断っていなければ名乗り、保存で子が 3 回入れ替わっても項目は 1 件で名前も変わらない")
     func generationsKeepOneEntry() throws {
         let directory = try TestScratch.directory("mokume-frames")
@@ -81,7 +68,16 @@ struct WatchFrameListingTests {
 
         listing.follow(nil)
         #expect(FrameListing.entries(in: directory).isEmpty, "断った世代なのに目録に残っている")
-        #expect(nameIsGone(name, within: 10), "名前を手放していない")
+        // launchd が名前を外すのは受信の権利の死を知った後なので、期限つきで待つ (#4101。`FrameListingTests` の
+        // `checkInThenLookUpThenRelease` と同じ待ち)
+        let deadline = Date().addingTimeInterval(5)
+        var stillThere = true
+        while Date() < deadline {
+            guard let port = Bootstrap.lookUp(name) else { stillThere = false; break }
+            Bootstrap.releaseSend(port)
+            usleep(10_000)
+        }
+        #expect(!stillThere, "名前を手放していない")
 
         listing.follow(share)
         #expect(FrameListing.entries(in: directory).count == 1)
