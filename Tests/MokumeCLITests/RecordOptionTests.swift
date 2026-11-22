@@ -100,6 +100,17 @@ struct RecordOptionTests {
         #expect(ReplayRequest(destination: carried ?? "")?.destination.path == "/tmp/take.json")
     }
 
+    @Test("世代の印は watch の世代の行き先と一緒にだけ載り、立てなければ親の環境に在っても落とす (#3999)")
+    func theGenerationMarkTravelsOnlyWithAGeneration() {
+        let mark = StartupReads.recordGeneration.key
+        #expect(RunCommand.childEnvironment([:], recording: "/tmp/take.json")[mark] == nil, "run --record に載せた")
+        #expect(RunCommand.childEnvironment([mark: "1"], recording: "/tmp/take.json")[mark] == nil, "親の印を継いだ")
+        #expect(RunCommand.childEnvironment([mark: "1"])[mark] == nil, "記録しない子へ継いだ")
+        #expect(
+            RunCommand.childEnvironment([:], recording: "/tmp/take-1.json", recordingGeneration: true)[mark] == "1")
+        #expect(RunCommand.childEnvironment([:], recordingGeneration: true)[mark] == nil, "行き先なしで載せた")
+    }
+
     @Test("watch は子を起こすたびに別の世代の行き先を渡す")
     func watchGivesEachGenerationItsOwnFile() {
         let generations = RecordGenerations(destination: "/tmp/out/take.json")
