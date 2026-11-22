@@ -843,6 +843,9 @@ enum RunCommand {
     /// - Parameter recording: 実行を頭から終わりまで記録する行き先の絶対パス (`run --record`・`watch --record` だけが
     ///   渡す)。子は最初の枚の前から記録し、終わりで書き切って閉じる (``StartupReads/record``・
     ///   [#3570](https://github.com/mokume-metal/mokume/issues/3570))。**渡さなければ、親の環境に在っても落とす。**
+    /// - Parameter recordingGeneration: `recording` が道具の作った `watch` の世代の名前か (`watch --record` だけが立てる)。
+    ///   子は行き先に在る記録でないものを消さず、上書きもしない (``StartupReads/recordGeneration``・#3999)。`recording` と
+    ///   一緒にだけ載せ、**立てなければ、親の環境に在っても落とす。**
     /// - Parameter replaying: 流す記録の絶対パス (`replay` だけが渡す)。子はウィンドウも区画も開かずに記録を流して照らし、
     ///   結果を書いて終わる (``StartupReads/replay``・#3571)。
     ///   **渡さなければ、親の環境に在っても落とす。**
@@ -859,7 +862,8 @@ enum RunCommand {
         stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil,
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil,
         assetOrigin: String? = nil, keepTime: String? = nil, keepTimeReadOnly: Bool = false,
-        keepTimeFollows: Int32? = nil, recording: String? = nil, replaying: String? = nil
+        keepTimeFollows: Int32? = nil, recording: String? = nil, recordingGeneration: Bool = false,
+        replaying: String? = nil
     ) -> [String: String] {
         var environment = base
         if let workDirectory = WorkDirectory.given(environment: base) {
@@ -887,6 +891,8 @@ enum RunCommand {
         // **これも渡さなければ落とす。** 記録を頼む旗は `run --record` と `watch --record` だけのもので、`render` の子や
         // 旗の無い実行へ継がせると、頼んでいない実行が記録を始める (#3570)
         environment[StartupReads.record.key] = recording
+        // 世代の印は行き先と一緒にだけ。継がせると、`run --record` の子が頼まれた行き先を置き換えなくなる (#3999)
+        environment[StartupReads.recordGeneration.key] = recording != nil && recordingGeneration ? "1" : nil
         // **これも渡さなければ落とす。** 流す頼みは `replay` だけのもので、ほかの実行へ継がせると、ウィンドウを開かずに
         // 記録を流し始める (#3571)
         environment[StartupReads.replay.key] = replaying

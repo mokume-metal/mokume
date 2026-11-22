@@ -26,13 +26,16 @@ import Foundation
 nonisolated final class ReplayClaim {
     /// 記録の行き先。
     let destination: URL
+    /// 行き先が `watch` の世代の名前か。真なら、行き先に在る記録でないものを消さず、上書きもしない (#3999)。
+    let isGeneration: Bool
     private let lockPath: String
     private var descriptor: Int32
     /// 錠のファイルを今回作ったか。作ったときだけ手放すときに消す (#3970)。
     private let created: Bool
 
-    private init(destination: URL, lockPath: String, descriptor: Int32, created: Bool) {
+    private init(destination: URL, isGeneration: Bool, lockPath: String, descriptor: Int32, created: Bool) {
         self.destination = destination
+        self.isGeneration = isGeneration
         self.lockPath = lockPath
         self.descriptor = descriptor
         self.created = created
@@ -41,7 +44,10 @@ nonisolated final class ReplayClaim {
     deinit { release() }
 
     /// 錠を取る。**行き先の親が無ければ作る。** 取れなければ `nil` と理由。
-    static func take(destination: URL) -> (claim: ReplayClaim?, failure: String?) {
+    ///
+    /// - Parameter generation: 行き先が道具の作った `watch` の世代の名前か (``ReplayRequest/isGeneration``)。
+    ///   真なら ``discardPrevious()`` と記録の終わりが、行き先に在る記録でないものを残す。
+    static func take(destination: URL, generation: Bool = false) -> (claim: ReplayClaim?, failure: String?) {
         let manager = FileManager.default
         var isDirectory: ObjCBool = false
         if manager.fileExists(atPath: destination.path, isDirectory: &isDirectory), isDirectory.boolValue {
@@ -93,7 +99,8 @@ nonisolated final class ReplayClaim {
             if lstat(lockPath, &named) == 0, held.st_ino == named.st_ino, held.st_dev == named.st_dev {
                 return (
                     ReplayClaim(
-                        destination: destination, lockPath: lockPath, descriptor: descriptor, created: created),
+                        destination: destination, isGeneration: generation, lockPath: lockPath,
+                        descriptor: descriptor, created: created),
                     nil
                 )
             }
@@ -119,8 +126,19 @@ nonisolated final class ReplayClaim {
     ///
     /// [#3943]: https://github.com/mokume-metal/mokume/issues/3943
     ///
+    /// **`watch` の世代の行き先 (``isGeneration``) では、記録の頭で始まる通常ファイル (``ReplayRequest/isRecordFile(_:)``)
+    /// だけを消す** (#3999)。世代の名前は道具が作ったもので、親が名前を選んでから子がここに着くまでに利用者が置いた
+    /// ものは、記録でなければ消さずに理由を返す (呼ぶ側はその回を記録しない)。記録かを見てから消すまでの間 (数回の
+    /// システムコール) に差し替わったものは消えうる — 名前を「記録なら消す」で 1 回に消す口は無い。
+    /// 世代でない行き先 (`run --record`) は、利用者が名指した行き先なので中身を見ずに置き換える。
+    ///
     /// - Returns: 消せなかったときの理由。
     func discardPrevious() -> String? {
+        var status = stat()
+        if isGeneration, lstat(destination.path, &status) == 0, !ReplayRequest.isRecordFile(destination.path) {
+            return "\(destination.path) holds something that is not a record, which is left as it is "
+                + "(it was placed there after mokume watch chose the name)"
+        }
         // 錠を取る前に ``take(destination:)`` が見てから、ここまでの間にフォルダへ替わっていても消さない (#3943)
         if let code = AtomicFile.unlinkFile(destination) {
             if code == EISDIR || (code == EPERM && AtomicFile.isDirectory(destination, following: false)) {

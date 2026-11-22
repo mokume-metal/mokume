@@ -101,6 +101,8 @@ package final class ReplayRecorder: UnreproducibleSink {
     let destination: URL
     /// 書き途中のファイル (`<行き先>.<プロセス番号>.partial`)。
     let partial: URL
+    /// 終わりで、行き先に在るものを置き換えないか (`watch` の世代の行き先・``ReplayClaim/isGeneration``・#3999)。
+    private let keepsWhatIsThere: Bool
 
     /// 行き先の錠。閉じる (終わり・書けなくなった・手放す) まで握る。
     private var claim: ReplayClaim?
@@ -150,8 +152,8 @@ package final class ReplayRecorder: UnreproducibleSink {
     }
 
     /// 錠を取り、前の回の残りを消して、開く。**開けなければ `nil`** で、理由を `failure` に載せる。
-    static func open(destination: URL) -> (recorder: ReplayRecorder?, failure: String?) {
-        let taken = ReplayClaim.take(destination: destination)
+    static func open(destination: URL, generation: Bool = false) -> (recorder: ReplayRecorder?, failure: String?) {
+        let taken = ReplayClaim.take(destination: destination, generation: generation)
         guard let claim = taken.claim else { return (nil, taken.failure) }
         if let failure = claim.discardPrevious() { return (nil, failure) }
         return open(claim: claim)
@@ -179,6 +181,7 @@ package final class ReplayRecorder: UnreproducibleSink {
     private init(claim: ReplayClaim, partial: URL, handle: FileHandle) {
         self.id = UUID().uuidString.lowercased()
         self.destination = claim.destination
+        self.keepsWhatIsThere = claim.isGeneration
         self.partial = partial
         self.claim = claim
         self.handle = handle
@@ -324,6 +327,12 @@ package final class ReplayRecorder: UnreproducibleSink {
     ///
     /// 閉じる前に同期する (`fsync`)。改名の後に電源が落ちても、行き先が空のまま残らない。
     ///
+    /// **`watch` の世代の行き先では、行き先に在るものを置き換えない** (#3999)。開いたときに行き先を空けてあるので、
+    /// 在ればこの記録のものではない (記録している間に利用者が置いた)。`renamex_np(2)` の `RENAME_EXCL` で
+    /// 「無ければ置く」を 1 回で行い、在れば書き終えた記録を `.partial` のまま残して理由を言う。`RENAME_EXCL` を
+    /// 受けないファイルシステムでは在るかを見てから改名するので、見てから改名するまでの間に置かれたものは上書きされうる。
+    /// 世代でない行き先 (`run --record`) は、利用者が名指した行き先なので置き換える。
+    ///
     /// - Parameter last: 最後に描いたフレームの番号と画素のハッシュ。1 枚も描いていなければ `nil`。
     ///   描いたのに読み戻せなかった枚は ``noteUnreproducible(_:)`` で名乗ってから呼ぶ。
     func finish(last: (frame: Int, hash: String)?) {
@@ -352,15 +361,45 @@ package final class ReplayRecorder: UnreproducibleSink {
             try handle.synchronize()
             try handle.close()
             self.handle = nil
-            guard rename(partial.path, destination.path) == 0 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            let code =
+                keepsWhatIsThere
+                ? Self.placeWithoutReplacing(partial, at: destination) : Self.place(partial, at: destination)
+            if keepsWhatIsThere, code == EEXIST {
+                failed = true
+                claim?.release()
+                claim = nil
+                Diagnostics.warn(
+                    "Recording stopped: \(destination.path) was not replaced, because something that is not "
+                        + "this record was placed there while it was recorded. The record is left at \(partial.path)")
+                return
             }
+            if let code { throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO) }
         } catch {
             fail("Could not finish \(destination.path): \(Diagnostics.reason(error))")
             return
         }
         claim?.release()
         claim = nil
+    }
+
+    /// 書き終えた `.partial` を行き先へ改名し、在るものを置き換える。
+    ///
+    /// - Returns: 改名できなかった理由の `errno`。改名できたら `nil`。
+    private static func place(_ partial: URL, at destination: URL) -> Int32? {
+        rename(partial.path, destination.path) == 0 ? nil : errno
+    }
+
+    /// 書き終えた `.partial` を、行き先に何も無いときだけ改名する (#3999)。
+    ///
+    /// - Returns: 改名できなかった理由の `errno`。行き先に何か在れば `EEXIST`。改名できたら `nil`。
+    private static func placeWithoutReplacing(_ partial: URL, at destination: URL) -> Int32? {
+        if renamex_np(partial.path, destination.path, UInt32(RENAME_EXCL)) == 0 { return nil }
+        let code = errno
+        guard code == ENOTSUP else { return code }
+        // `RENAME_EXCL` を受けないファイルシステム。見てから改名するまでの隙間は残る
+        var status = stat()
+        if lstat(destination.path, &status) == 0 { return EEXIST }
+        return place(partial, at: destination)
     }
 
     /// 完成と呼べない終わり方をした。**行き先は作らず、`.partial` を残す** — `setup()` が投げて終わった

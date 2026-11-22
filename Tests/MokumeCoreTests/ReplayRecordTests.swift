@@ -65,6 +65,27 @@ struct ReplayRecordFormatTests {
         #expect(said.count == 1 && said[0].contains(StartupReads.record.key), "理由を 1 度言う: \(said)")
 
         #expect(ReplayRequest.startup(environment: [:], unset: { _ in }, say: { _ in }) == nil, "合図が無ければ何もしない")
+        #expect(request?.isGeneration == false, "印が無ければ世代ではない")
+    }
+
+    @Test("世代の印は行き先と一緒に読み、値が 1 のときだけ立ち、行き先が無くても環境から消す (#3999)")
+    func startupReadsTheGenerationMark() {
+        let record = StartupReads.record.key
+        let mark = StartupReads.recordGeneration.key
+        var unset: [String] = []
+        let marked = ReplayRequest.startup(
+            environment: [record: "/tmp/take-3.json", mark: "1"], unset: { unset.append($0) }, say: { _ in })
+        #expect(marked?.isGeneration == true)
+        #expect(Set(unset) == [record, mark], "子がさらに起こす子へ継がせない")
+
+        let odd = ReplayRequest.startup(
+            environment: [record: "/tmp/take-3.json", mark: "yes"], unset: { _ in }, say: { _ in })
+        #expect(odd?.isGeneration == false, "1 でない値は印にしない")
+
+        unset = []
+        let alone = ReplayRequest.startup(environment: [mark: "1"], unset: { unset.append($0) }, say: { _ in })
+        #expect(alone == nil)
+        #expect(unset == [mark], "行き先の無い印も残さない")
     }
 
     @Test("一覧が鍵を名乗り、読み場所は実在する")
@@ -72,6 +93,9 @@ struct ReplayRecordFormatTests {
         #expect(StartupReads.record.key == "MOKUME_RECORD")
         #expect(StartupReads.all.contains(StartupReads.record))
         #expect(StartupReads.record.decidedBy == .tool)
+        #expect(StartupReads.recordGeneration.key == "MOKUME_RECORD_GENERATION")
+        #expect(StartupReads.all.contains(StartupReads.recordGeneration))
+        #expect(StartupReads.recordGeneration.decidedBy == .tool)
     }
 
     // MARK: - 記録器 (GPU なし)
@@ -327,6 +351,111 @@ struct ReplayRecordFormatTests {
         let failure = claim.discardPrevious()
         #expect(failure == "\(destination.path) is a directory, not a file")
         #expect((try? Data(contentsOf: kept)) == Data("mine".utf8))
+    }
+
+    // MARK: - watch の世代の行き先 (#3999)
+
+    @Test("世代の行き先では、名前を選んだ後に置かれた記録でないファイルを消さずに理由を返し、記録の頭のファイルだけを消す")
+    func aGenerationKeepsWhatIsNotARecord() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take-3.json")
+        // 親が空きと判定した後、子が着く前に利用者が置く
+        try Data("{\"keep\":true}".utf8).write(to: destination)
+        let claim = try #require(ReplayClaim.take(destination: destination, generation: true).claim)
+        defer { claim.release() }
+        let failure = try #require(claim.discardPrevious(), "記録でないファイルを消した")
+        #expect(failure.contains(destination.path) && failure.contains("not a record"), "理由: \(failure)")
+        #expect((try? Data(contentsOf: destination)) == Data("{\"keep\":true}".utf8))
+
+        // 前の回の完成品 (記録の頭で始まる通常ファイル) は消す
+        try writeRecordHead(destination)
+        #expect(claim.discardPrevious() == nil)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        // 何も無ければ消すものも無い
+        #expect(claim.discardPrevious() == nil)
+    }
+
+    @Test("世代の行き先では、記録の頭を指すリンクも、フォルダも、空のファイルも記録として消さない")
+    func aGenerationKeepsLinksFoldersAndEmptyFiles() throws {
+        let directory = try scratch()
+        let record = directory.appendingPathComponent("elsewhere.json")
+        try writeRecordHead(record)
+        let manager = FileManager.default
+
+        let link = directory.appendingPathComponent("take-1.json")
+        try manager.createSymbolicLink(at: link, withDestinationURL: record)
+        let linked = try #require(ReplayClaim.take(destination: link, generation: true).claim)
+        #expect(linked.discardPrevious() != nil)
+        linked.release()
+        #expect((try? manager.destinationOfSymbolicLink(atPath: link.path)) == record.path, "リンクを外した")
+
+        let folder = directory.appendingPathComponent("take-2.json")
+        let claim = try #require(ReplayClaim.take(destination: folder, generation: true).claim)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: false)
+        #expect(claim.discardPrevious() != nil)
+        claim.release()
+        #expect(AtomicFile.isDirectory(folder, following: false))
+
+        let empty = directory.appendingPathComponent("take-4.json")
+        try Data().write(to: empty)
+        let emptied = try #require(ReplayClaim.take(destination: empty, generation: true).claim)
+        #expect(emptied.discardPrevious() != nil, "空のファイルは記録の頭で始まらない")
+        emptied.release()
+        #expect(manager.fileExists(atPath: empty.path))
+    }
+
+    @Test("世代でない行き先 (run --record) は、記録でないファイルも頼まれたとおり置き換える")
+    func aRequestedDestinationIsStillReplaced() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        try Data("{\"keep\":true}".utf8).write(to: destination)
+        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        #expect(!claim.isGeneration)
+        #expect(claim.discardPrevious() == nil)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        claim.release()
+
+        // 書いている間に置かれたものも、終わりで置き換える
+        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        try Data("{\"keep\":true}".utf8).write(to: destination)
+        recorder.finish(last: nil)
+        #expect(try object(at: destination)["complete"] as? Bool == true)
+    }
+
+    @Test("世代の行き先では、記録している間に置かれたファイルを終わりで上書きせず、書き終えた記録を .partial に残す")
+    func aGenerationDoesNotOverwriteWhatWasPlacedWhileRecording() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take-3.json")
+        let opened = ReplayRecorder.open(destination: destination, generation: true)
+        let recorder = try #require(opened.recorder, "開けなかった: \(opened.failure ?? "")")
+        recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
+        recorder.beginStep()
+        recorder.endStep(frame: 1, drew: true) { nil }
+        // 記録している間に利用者が置く
+        try Data("{\"keep\":true}".utf8).write(to: destination)
+        recorder.finish(last: nil)
+
+        #expect((try? Data(contentsOf: destination)) == Data("{\"keep\":true}".utf8), "置かれたファイルを上書きした")
+        let left = try object(at: recorder.partial)
+        #expect(left["complete"] as? Bool == true, "書き終えた記録を .partial に残す")
+        #expect(recorder.isFinished)
+        // 錠は手放している
+        #expect(!FileManager.default.fileExists(atPath: destination.path + ReplayClaim.lockSuffix))
+        let next = ReplayClaim.take(destination: destination)
+        #expect(next.claim != nil, "錠を握ったまま: \(next.failure ?? "")")
+        next.claim?.release()
+    }
+
+    @Test("世代の行き先でも、何も置かれなければ終わりで行き先へ改名する")
+    func aGenerationStillFinishesWhenNothingWasPlaced() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take-3.json")
+        try writeRecordHead(destination)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: true).recorder)
+        recorder.finish(last: nil)
+        let record = try object(at: destination)
+        #expect(record["id"] as? String == recorder.id, "前の回の記録を今回の記録へ置き換える")
+        #expect(!FileManager.default.fileExists(atPath: recorder.partial.path))
     }
 
     @Test("ReplayClaim.isPartial は <名前>.<プロセス番号>.partial の形だけを指す")
@@ -687,7 +816,7 @@ struct ReplayRecordFormatTests {
             forRun: false, environment: [StartupReads.record.key: "/tmp/take.json"],
             unset: { unset.append($0) }, say: { _ in })
         #expect(skipped == nil)
-        #expect(unset == [StartupReads.record.key], "読まなくても消す")
+        #expect(unset == [StartupReads.record.key, StartupReads.recordGeneration.key], "読まなくても消す")
 
         unset = []
         let used = ReplayRequest.startup(
@@ -1466,6 +1595,23 @@ struct ReplayRecordingRuntimeTests {
         first.closePlugins()
         let record = try read(destination)
         #expect(record["complete"] as? Bool == true && (record["steps"] as? [[String: Any]])?.count == 3)
+    }
+
+    @Test("watch の世代の行き先に記録でないファイルが在れば、記録を始めずに走り続け、ファイルを残す (#3999)")
+    func aGenerationRunKeepsAForeignFileAndRunsOn() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take-3.json")
+        try Data("{\"keep\":true}".utf8).write(to: destination)
+        let runtime = try SketchRuntime(
+            sketch: Playground(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
+        let request = try #require(ReplayRequest(destination: destination.path, generation: true))
+        #expect(!runtime.startRecording(request))
+        #expect(runtime.replay == nil)
+        for _ in 0..<2 { try runtime.advance() }
+        runtime.closePlugins()
+        #expect((try? Data(contentsOf: destination)) == Data("{\"keep\":true}".utf8))
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(names == ["take-3.json"], "書き途中も錠も残さない: \(names)")
     }
 
     @Test("非有限の @Param の既定値でも、完成品はスキーマの形で書ける (関所が零へ畳んだ値が開始の値になる)")
