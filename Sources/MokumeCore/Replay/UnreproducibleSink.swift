@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import CryptoKit
+import Foundation
+
 /// 再現を保証しないものが使われたと聞く係 (#3575)。記録する係 (``ReplayRecorder``) と流す係 (``ReplayPlayer``) の
 /// 両方が受け、**同じ口から記録と再生の両方で名乗る**。
 ///
@@ -43,6 +46,12 @@ package enum ReplayNotice {
         sink.noteResource(name, sha256: ResourceDigest.sha256(of: data))
     }
 
+    /// 資源 `name` を文字として読み、中身が `text` だった (`.metal` の断片)。ハッシュは UTF-8 のバイト列から取る。
+    package static func readResource(_ name: String, text: String) {
+        guard let sink = LaunchingSketch.replay else { return }
+        sink.noteResource(name, sha256: ResourceDigest.sha256(of: Data(text.utf8)))
+    }
+
     /// 裏の仕事で取ったハッシュを名乗る。`sha256` が `nil` (取らなかった・読めなかった) なら何もしない。
     package static func readResource(_ name: String, sha256: String?) {
         guard let sha256, let sink = LaunchingSketch.replay else { return }
@@ -58,10 +67,13 @@ package enum ResourceDigest {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         var hasher = SHA256()
-        while true {
-            guard let chunk = try? handle.read(upToCount: 1 << 20) else { return nil }
-            if chunk.isEmpty { break }
-            hasher.update(data: chunk)
+        do {
+            // 終わりでは `nil` か空が返る
+            while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+                hasher.update(data: chunk)
+            }
+        } catch {
+            return nil
         }
         return hex(hasher.finalize())
     }

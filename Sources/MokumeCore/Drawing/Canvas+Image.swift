@@ -44,6 +44,8 @@ extension Canvas {
         let url = try ImageFile.locate(path)
         let stamp = ImageFile.stamp(of: url)
         let decoded = try ImageFile.decode(at: url, name: path, kind: kind)
+        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+        ReplayNotice.readResource(path, at: url)
         remember(decoded, path: path, origin: .file(url: url, stamp: stamp))
         return try makeImage(decoded)
     }
@@ -78,7 +80,13 @@ extension Canvas {
             remember(decoded, path: path, origin: .web)
             return try makeImage(decoded)
         }
-        let read = try await Self.away { () throws(ImageFailure) in try ImageFile.read(path, kind: kind) }
+        // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
+        let hashing = ReplayNotice.watchesResources
+        let (read, digest) = try await Self.away { () throws(ImageFailure) in
+            let read = try ImageFile.read(path, kind: kind)
+            return (read, hashing ? ResourceDigest.sha256(of: read.url) : nil)
+        }
+        ReplayNotice.readResource(path, sha256: digest)
         remember(read.decoded, path: path, origin: .file(url: read.url, stamp: read.stamp))
         return try makeImage(read.decoded)
     }

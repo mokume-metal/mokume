@@ -307,6 +307,30 @@ struct ReplaySoundAnalysisTests {
         #expect(taken.window && taken.unreproducible.isEmpty, "\(taken.unreproducible)")
     }
 
+    // MARK: - 資源のハッシュ (#4092)
+
+    @Test("loadSound(_:) で読んだ音声ファイルを記録の後に書き換えて流すと、資源のハッシュが違うと名乗り、書き換えなければ名乗らない")
+    func aChangedSoundFileIsNamedWhenReplayed() throws {
+        let directory = try TestScratch.directory("mokume-replay-sound")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let url = directory.appendingPathComponent("sound-resource.json")
+        let taken = try recordClock(nil, onScreen: false, to: url, file: file)
+        #expect(taken.unreproducible.isEmpty && taken.resources.keys.sorted() == [file.path], "\(taken.resources)")
+
+        let same = try replayClock(nil, url, file: file)
+        #expect(same.unreproducible.isEmpty && same.matched, "\(same.unreproducible)")
+
+        // 同じ場所を別の音で書き換える (音は鳴らすだけで描かないので、matched は真のまま)
+        let other = try writeWAV(chord.map { $0 * 0.5 }, sampleRate: 48_000)
+        _ = try FileManager.default.replaceItemAt(file, withItemAt: other)
+        let changed = try replayClock(nil, url, file: file)
+        #expect(
+            changed.unreproducible == [ReplayRecorder.Reason.resourceDiffers(file.path)],
+            "\(changed.unreproducible)")
+        #expect(changed.matched)
+    }
+
     @Test("音を鳴らし続けるだけで時計を読まない作品は、ウィンドウで録っても名乗らない")
     func playingWithoutAClockReadIsNotNamed() throws {
         let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("clock-quiet.json")
@@ -373,6 +397,7 @@ struct SoundAnalysisNoticeTests {
         private(set) var windowQueries = 0
         init(window: Bool) { self.window = window }
         func noteUnreproducible(_ reason: String) { reasons.append(reason) }
+        func noteResource(_ name: String, sha256: String) {}
         var soundRunsInRealTime: Bool {
             windowQueries += 1
             return window

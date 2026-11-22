@@ -213,6 +213,14 @@ package final class ReplayPlayer: UnreproducibleSink {
         Diagnostics.warn("Replaying: \(reason)")
     }
 
+    /// 流している間に資源を読んだ (#4092)。**記録が同じ名前を控えていて、中身が違えば名乗る。** 記録に無い名前 (欄を
+    /// 持たない記録・記録の実行が読まなかった名前) は照らさない。照合の一致 (`matched`) は変えない — 資源が違って絵が
+    /// 割れれば、絵の照合が食い違いを名乗る。
+    func noteResource(_ name: String, sha256: String) {
+        guard let recorded = record?.resources[name], recorded != sha256 else { return }
+        noteUnreproducible(ReplayRecorder.Reason.resourceDiffers(name))
+    }
+
     // MARK: - 当てる
 
     /// 開始のつまみの値を当てる。**保存を戻した後 (流す側は保存を持たない)・`setup()` の前。**

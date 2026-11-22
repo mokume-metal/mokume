@@ -125,7 +125,10 @@ enum Command {
                     a request… load (the frame its result arrives at), a .metal fragment swapped in while
                     it runs, and in a window, reading a sound's analysis (level, spectrum, waveform,
                     isBeat) or a value that follows the sound's clock (soundTime, a sound file's
-                    position or isPlaying; a sound that only plays is fine). Date() and Swift's own
+                    position or isPlaying; a sound that only plays is fine). The record also keeps a
+                    hash of each local file the sketch loads (images, data, SVG, models, fonts, sounds,
+                    .metal fragments), names a file that changed while it ran, and mokume replay names
+                    one whose contents differ from what the record read. Date() and Swift's own
                     random numbers cannot be noticed: use random() and time instead to replay what
                     they give
                     \(remoteHelp)

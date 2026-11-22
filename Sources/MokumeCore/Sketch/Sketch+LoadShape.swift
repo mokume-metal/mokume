@@ -331,7 +331,10 @@ extension SketchPart {
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
         noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")
         let url = try dataURL(path)
-        let drawing = try SVGFile.parse(try TextFile.read(url, path: path), path: path)
+        let data = try TextFile.readData(url, path: path)
+        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+        ReplayNotice.readResource(path, data: data)
+        let drawing = try SVGFile.parse(try TextFile.text(of: data, path: path), path: path)
         return try resourceCanvas(DataFailure.self).shape(of: drawing, readFrom: path)
     }
 
@@ -375,9 +378,16 @@ extension SketchPart {
         // 届くフレームは記録に無い (#3575)
         ReplayNotice.waitingLoad()
         let url = try dataURL(path)
-        let drawing = try await Self.readAway { () throws(DataFailure) in
-            try SVGFile.parse(try TextFile.read(url, path: path), path: path)
+        // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
+        let hashing = ReplayNotice.watchesResources
+        let (drawing, digest) = try await Self.readAway { () throws(DataFailure) in
+            let data = try TextFile.readData(url, path: path)
+            return (
+                try SVGFile.parse(try TextFile.text(of: data, path: path), path: path),
+                hashing ? ResourceDigest.sha256(of: data) : nil
+            )
         }
+        ReplayNotice.readResource(path, sha256: digest)
         return surface.shape(of: drawing, readFrom: path)
     }
 }

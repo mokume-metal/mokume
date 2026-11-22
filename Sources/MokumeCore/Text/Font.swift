@@ -74,6 +74,8 @@ public struct Font: Hashable, Sendable, CustomStringConvertible {
                 as? [CTFontDescriptor],
             let first = descriptors.first
         else { throw .unreadable(path: path) }
+        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+        ReplayNotice.readResource(path, at: url)
 
         let stamp = FileStamp.of(url)
         let identity =

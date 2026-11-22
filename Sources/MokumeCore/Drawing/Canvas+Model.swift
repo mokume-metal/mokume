@@ -11,8 +11,10 @@ extension Canvas {
         if let cached = modelCache[ModelRequest(path: path, normalize: normalize)] {
             return cached
         }
-        let model = Model.make(
-            name: path, parsed: try ModelFile.load(path), fitting: fitting(normalize: normalize))
+        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+        let read = try ModelFile.load(path, hashing: ReplayNotice.watchesResources)
+        ReplayNotice.readResource(path, sha256: read.sha256)
+        let model = Model.make(name: path, parsed: read.parsed, fitting: fitting(normalize: normalize))
         return remember(model, path: path, normalize: normalize)
     }
 
@@ -43,14 +45,18 @@ extension Canvas {
             return cached
         }
         let fitting = fitting(normalize: normalize)
+        // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
+        let hashing = ReplayNotice.watchesResources
         let model: Model
         do {
-            model = try await Task.detached(priority: .utility) {
-                let model = Model.make(
-                    name: path, parsed: try ModelFile.load(path), fitting: fitting)
+            let made = try await Task.detached(priority: .utility) {
+                let read = try ModelFile.load(path, hashing: hashing)
+                let model = Model.make(name: path, parsed: read.parsed, fitting: fitting)
                 prepared?(model)
-                return model
+                return (model, read.sha256)
             }.value
+            model = made.0
+            ReplayNotice.readResource(path, sha256: made.1)
         } catch let failure as ModelFailure {
             throw failure
         } catch {

@@ -277,6 +277,8 @@ extension Canvas {
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
         let (url, body, name) = try ShaderSource.read(at: path)
+        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+        ReplayNotice.readResource(path, text: body)
         return try makeEffect(name: name, url: url, body: body, values: values)
     }
 

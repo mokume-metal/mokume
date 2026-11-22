@@ -131,6 +131,10 @@ package final class ReplayRecorder: UnreproducibleSink {
     private var notedReasons: Set<String> = []
     private var openStep: Open?
     private var nextOrdinal = 0
+    /// 読んだ資源 (読んだ順・#4092)。名前ごとに最初に読んだ中身のハッシュを持つ。
+    private var resources: [Resource] = []
+    /// ``resources`` の名前からハッシュ。2 度目の読みを並びを走査せずに照らす。
+    private var resourceHashes: [String: String] = [:]
 
     /// 開始の状態。
     private struct Start {
@@ -149,6 +153,12 @@ package final class ReplayRecorder: UnreproducibleSink {
         var inputs: [String]
         var params: [NamedParamValue]
         var observeTime: Float?
+    }
+
+    /// 読んだ資源 1 件 (記録の `resources` の 1 項目)。
+    struct Resource: Codable, Equatable {
+        var name: String
+        var sha256: String
     }
 
     /// 再現を保証しない理由 1 件。
@@ -262,6 +272,17 @@ package final class ReplayRecorder: UnreproducibleSink {
         Diagnostics.warn("Recording: \(reason). The record says so")
     }
 
+    /// 資源を読んだ (#4092)。**最初に読んだ中身を控え**、同じ名前で中身が違えば、実行中に変わったと名乗る。
+    func noteResource(_ name: String, sha256: String) {
+        guard !isFinished, !failed else { return }
+        guard let first = resourceHashes[name] else {
+            resourceHashes[name] = sha256
+            resources.append(Resource(name: name, sha256: sha256))
+            return
+        }
+        if first != sha256 { noteUnreproducible(Self.Reason.resourceChanged(name)) }
+    }
+
     // MARK: - 回
 
     /// 入力の束を配る回が始まった。**溜めたものをこの回へ持ち込む。** 1 回の `advance()` で 1 度だけ。
@@ -348,6 +369,10 @@ package final class ReplayRecorder: UnreproducibleSink {
                 items.append("{\"step\":\(note.step),\"reason\":\(reason)}")
             }
             buffer += ",\"unreproducible\":[" + items.joined(separator: ",") + "]"
+        }
+        if !resources.isEmpty {
+            guard let json = encode(resources) else { return }
+            buffer += ",\"resources\":" + json
         }
         if let last {
             guard let hash = encode(last.hash) else { return }

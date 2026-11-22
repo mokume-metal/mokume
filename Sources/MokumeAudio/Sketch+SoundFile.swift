@@ -133,13 +133,18 @@ extension Sketch {
             AudioFailure.self, calledAs: "requestSound(_:)"
         ) { () async throws(AudioFailure) -> SoundFile in
             let url = try audioURL(file)
+            // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
+            let hashing = ReplayNotice.watchesResources
             // 読み・標本を解くのは裏で行う。main actor に戻って作るのは、`SoundFile` だけ
             let read: ReadSound
             do {
                 read = try await Task.detached(priority: .utility) {
                     let buffer = try AudioFile.load(url, path: file)
-                    return ReadSound(buffer: buffer, samples: AudioFile.mono(buffer))
+                    return ReadSound(
+                        buffer: buffer, samples: AudioFile.mono(buffer),
+                        sha256: hashing ? ResourceDigest.sha256(of: url) : nil)
                 }.value
+                ReplayNotice.readResource(file, sha256: read.sha256)
             } catch let failure as AudioFailure {
                 throw failure
             } catch {
@@ -156,6 +161,8 @@ extension Sketch {
         return try attached(AudioFailure.self, calledAs: "loadSound(_:)") { () throws(AudioFailure) -> SoundFile in
             let url = try audioURL(file)
             let buffer = try AudioFile.load(url, path: file)
+            // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+            ReplayNotice.readResource(file, at: url)
             return SoundFile(name: file, buffer: buffer, owner: self, flow: flow, source: url)
         }
     }
@@ -166,4 +173,6 @@ extension Sketch {
 private nonisolated struct ReadSound: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
     let samples: [Float]
+    /// 中身の SHA-256 (記録・再生しているときだけ・#4092)。
+    let sha256: String?
 }

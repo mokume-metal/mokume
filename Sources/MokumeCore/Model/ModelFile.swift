@@ -123,6 +123,11 @@ nonisolated enum ModelFile {
     ///
     /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     static func load(_ path: String) throws(ModelFailure) -> Parsed {
+        try load(path, hashing: false).parsed
+    }
+
+    /// ``load(_:)`` と同じに読み、`hashing` なら解けたファイルの中身の SHA-256 も返す (記録・再生の資源の控え・#4092)。
+    static func load(_ path: String, hashing: Bool) throws(ModelFailure) -> (parsed: Parsed, sha256: String?) {
         let url: URL
         do {
             url = try AssetLookup.locate(ImageFile.search(for: path), path: path)
@@ -140,15 +145,17 @@ nonisolated enum ModelFile {
         if let refusal = AssetOpening.refusal(at: url) {
             throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
         }
+        let parsed: Parsed
         switch format {
         case .obj:
             guard let text = try? String(contentsOf: url, encoding: .utf8) else {
                 throw .unreadable(path: path)
             }
-            return parse(text)
+            parsed = parse(text)
         case .stl:
-            return try loadSTL(url, path: path)
+            parsed = try loadSTL(url, path: path)
         }
+        return (parsed, hashing ? ResourceDigest.sha256(of: url) : nil)
     }
 
     /// OBJ の文字列を三角形の並びへ落とす。

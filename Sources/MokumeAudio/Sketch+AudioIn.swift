@@ -82,7 +82,10 @@ extension Sketch {
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createAudioIn(file: String) throws(AudioFailure) -> AudioIn {
         return try attached(AudioFailure.self, calledAs: #function) { () throws(AudioFailure) -> AudioIn in
-            let decoded = try AudioFile.read(audioURL(file), path: file)
+            let url = try audioURL(file)
+            let decoded = try AudioFile.read(url, path: file)
+            // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+            ReplayNotice.readResource(file, at: url)
             return recordedAudioIn(
                 samples: decoded.samples, sampleRate: decoded.sampleRate, name: "audio file: \(file)")
         }
