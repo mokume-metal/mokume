@@ -17,6 +17,10 @@ import IOSurface
 /// 受け手が読まずに待ち行列が埋まっていれば `MACH_SEND_TIMED_OUT` で戻る。受け手が消えたことは、送り手が受け手の
 /// port に頼んだ dead-name の知らせ (id 72) で知る。
 ///
+/// 受け手から送り手への送りも待ち時間 0 である。送り手の名前の port の待ち行列は ``sketchQueueLimit`` 通
+/// (受け手の上限 × (面の枚数の上限 + 2)) で、越える連投は落ちる。落ちた connect は受け手が送り直し、落ちた
+/// release の面は送り手に戻らない (送り手はその面へ書かなくなる)。
+///
 /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
 /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
 package nonisolated enum FrameLink {
@@ -69,6 +73,10 @@ package nonisolated enum FrameLink {
     package static let receiverLimit = 4
     /// 受け手 1 つが渡せる面の枚数。下限 2 は、1 枚を受け手が読んでいる間に次を書くため。
     package static let surfaceCountRange = 2...8
+    /// 送り手の名前の port (受け手から送り手への頼みが入る) の待ち行列の上限 (#4060)。受け手が上限まで繋ぎ、面を全部返し、
+    /// connect と disconnect を 1 通ずつ重ねても、送り手が読む前に落ちない数。2 つの上限から式で求める (数を写さない)。
+    /// 越える連投は `MACH_SEND_TIMED_OUT` で落ちる (送り手は待たない)。
+    package static let sketchQueueLimit = receiverLimit * (surfaceCountRange.upperBound + 2)
     /// 受け手の名前の長さの上限 (UTF-8 のバイト数)。越えた名前・名乗らない受け手は ``unnamedReceiver`` と呼ぶ。
     package static let nameLimit = 128
     /// 名乗らない受け手の呼び名。

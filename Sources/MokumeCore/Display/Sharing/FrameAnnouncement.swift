@@ -63,6 +63,15 @@ package final class FrameAnnouncement {
                     + "(\(failure)) — it keeps running, and no other app can pick it")
             return nil
         }
+        // **受け手の頼みが送り手の読む前に落ちない数まで、待ち行列を広げる** (#4060)。OS の既定は受け手 1 人の
+        // release も収まらない。広げられなければ既定のまま名乗る (落ちた connect は受け手が送り直す)
+        let raised = Bootstrap.setQueueLimit(port, to: FrameLink.sketchQueueLimit)
+        if raised != KERN_SUCCESS {
+            warn(
+                "This sketch cannot make room for \(FrameLink.sketchQueueLimit) messages from receivers "
+                    + "(\(String(cString: mach_error_string(raised)))) — it keeps running, and a receiver that "
+                    + "sends many at once may lose some")
+        }
         let entry = FrameListing.Entry(
             sketch: sketch, identity: identity, title: title, pid: pid,
             startedAt: ProcessRecord.startTime(of: pid) ?? 0, serviceName: serviceName,
