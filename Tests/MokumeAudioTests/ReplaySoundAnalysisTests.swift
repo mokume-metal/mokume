@@ -215,8 +215,15 @@ struct ReplaySoundAnalysisTests {
             loaded.loop()
             sound = loaded
         }
+        /// 2 枚目で `jump(.nan)` を呼ぶ (断られて警告だけが出る)。
+        var jumpsToNaN = false
+        private(set) var jumped = false
         func draw() {
             background(0, 0, 0)
+            if jumpsToNaN, frameCount == 2 {
+                sound?.jump(.nan)
+                jumped = true
+            }
             switch read {
             case .soundTime: _ = soundTime
             case .position: _ = sound?.position
@@ -270,6 +277,34 @@ struct ReplaySoundAnalysisTests {
         #expect(taken.window && taken.unreproducible == [reason], "\(read): \(taken.unreproducible)")
         let report = try replayClock(read, url, file: file)
         #expect(report.unreproducible == [reason], "\(read): \(report.unreproducible)")
+
+        // 記録の理由を消しても、ウィンドウで録った記録を流す側が、読んだときに自分で名乗る
+        var document = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        document["unreproducible"] = nil
+        let copy = directory.appendingPathComponent("clock-\(read)-stripped.json")
+        try JSONSerialization.data(withJSONObject: document).write(to: copy)
+        let found = try replayClock(read, copy, file: file)
+        #expect(found.unreproducible == [reason], "流す側が自分で見つける: \(read): \(found.unreproducible)")
+    }
+
+    @Test("jump(_:) に数でない値を渡した警告は位置を文面に載せるが、時計の読みとして名乗らない")
+    func aJumpWarningIsNotAClockRead() throws {
+        let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("clock-jump.json")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        let sketch = ClockReader(read: nil, flow: flow, file: file)
+        sketch.jumpsToNaN = true
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: true,
+            persistsParams: false)
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+        for _ in 0..<3 { try runtime.advance() }
+        runtime.closePlugins()
+        let taken = try ReplayRecord.read(from: url)
+        #expect(sketch.jumped, "jump(.nan) を呼んだ")
+        #expect(taken.window && taken.unreproducible.isEmpty, "\(taken.unreproducible)")
     }
 
     @Test("音を鳴らし続けるだけで時計を読まない作品は、ウィンドウで録っても名乗らない")
