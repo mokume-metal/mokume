@@ -39,6 +39,8 @@ enum Command {
         Bool, a color or a list of choices gets a control. The sketch opens no port and needs no change;
         the phone's changes reach it the way the knob panel's do, and --record records them. For quick demos
         and prototypes on the local network: a bundled app (bundle) has no tool to serve the page.
+        Each change the sketch takes is printed as one timestamped line once the knob settles
+        (12:03:04.512  radius  0.40 → 0.55  (phone)).
         """
 
     /// どの口でも、値を取る選択肢の宣言の和集合。**宣言は各口が 1 つずつ持ち、ここは並べるだけ。**
