@@ -323,7 +323,7 @@ extension Sketch {
 }
 
 /// スケッチの設定。
-public struct SketchSettings: Equatable, Sendable {
+public nonisolated struct SketchSettings: Equatable, Sendable {
     /// 出す幅 (画素)。**スケッチが書く座標もこの幅の中にある。**
     public var width: Int
     /// 出す高さ (画素)。

@@ -17,7 +17,7 @@ import simd
 /// }
 /// shape(leaf, at: places)
 /// ```
-public struct Placement: Equatable, Sendable {
+public nonisolated struct Placement: Equatable, Sendable {
     /// 置く位置。
     public var x: Float
     public var y: Float
@@ -91,7 +91,7 @@ public struct Placement: Equatable, Sendable {
     }
 
     /// 計算が書いた数の並びを、インスタンスとしてどう読むか (``SketchPart/shape(_:at:layout:)``)。
-    public enum Layout: Sendable, Hashable {
+    public nonisolated enum Layout: Sendable, Hashable {
         /// 3 つで 1 か所: 位置の x・y・z。**3×N 個の並びが N か所になる。**
         ///
         /// 倍率・回転・塗りは付けられない (大きさ 1・回さず・形に焼いた色のまま)。数でない値・無限を含む 1 か所は

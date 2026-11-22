@@ -42,6 +42,25 @@ func readAroundSpace(_ sketch: some Sketch, gpu: RenderDevice? = nil) throws -> 
     }
 }
 
+/// 読み出した画素を main の外で読んだ値。
+nonisolated struct OffMainPixelReading: Equatable {
+    let width: Int
+    let height: Int
+    let componentCount: Int
+    let equalsItself: Bool
+}
+
+/// 読み出した画素 (`PixelBuffer`) を **main の外 (`Task.detached`) で読む** (#4098)。解析の道具が
+/// 画素を別の仕事へ渡して読む書き方そのもので、`PixelBuffer` のメンバが main actor に隔離されていると
+/// このファイルが組めなくなる。
+func readOffMain(_ pixels: PixelBuffer) async -> OffMainPixelReading {
+    await Task.detached {
+        OffMainPixelReading(
+            width: pixels.width, height: pixels.height, componentCount: pixels.components.count,
+            equalsItself: pixels == pixels)
+    }.value
+}
+
 /// `with` を通さずに組み、持ち続ける形 (スケッチのプロパティに実行を持つビューア)。
 final class HostViewer {
     var run: HeadlessRun?

@@ -43,7 +43,7 @@
 ///   弱まるので、`strength`·R = V² に合わせると **R の外のどの半径でもおおよそ釣り合い**、
 ///   撒いた広がりが残る。合っていなければ、ずれの割合に比例した速さで内か外へ流れる。
 ///   R の内側は距離に依らない引きなので、内側のパーティクルは R の縁へ寄る
-public enum Force: Equatable, Sendable {
+public nonisolated enum Force: Equatable, Sendable {
     /// どこにいても同じ向きへ引く。**(x, y, z) がそのまま加速度**になる。
     case gravity(_ x: Float, _ y: Float, _ z: Float = 0)
     /// 1 点へ向かって引く。**強さを負にすると遠ざける**

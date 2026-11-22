@@ -11,10 +11,10 @@ import simd
 /// 初期化のときに作っておいて毎フレーム当てる、という書き方が成り立つ。
 ///
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-public struct Camera: Equatable, Sendable {
+public nonisolated struct Camera: Equatable, Sendable {
 
     /// どう写すか。
-    public enum Projection: Equatable, Sendable {
+    public nonisolated enum Projection: Equatable, Sendable {
         /// 遠くのものほど小さく写す。
         ///
         /// - Parameters:
