@@ -104,6 +104,20 @@ struct DeviceUseTests {
                 == ["Sources/mirror/Mirror.swift", "Sources/mirror/Nested/Other.swift"])
     }
 
+    /// **SwiftPM が組むものを読む** (#3993)。`Sources/<target>/` の下に置いたディレクトリへの
+    /// リンクの中の `.swift` も SwiftPM は組むので、そこでカメラを開けば文言が要る。
+    @Test("ディレクトリへのリンクの中で開いても、使っているファイルとして名指しする")
+    func aLinkedDirectoryIsRead() throws {
+        let root = try makeSketch(files: ["Sources/mirror/Plain.swift": "func draw() {}"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = try makeSketch(files: ["Mirror.swift": "camera = try? createCapture()"])
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("Sources/mirror/Lib"), withDestinationURL: outside)
+
+        #expect(DeviceUse.cameraUsers(in: root) == ["Sources/mirror/Lib/Mirror.swift"])
+    }
+
     @Test("置き場が無ければ、使っていないものとして扱う")
     func noSourcesMeansNoUse() throws {
         let root = try makeSketch(files: ["Package.swift": ""])

@@ -51,15 +51,17 @@ nonisolated enum DeviceUse {
         users(in: root, matching: opensMicrophone)
     }
 
+    /// **SwiftPM が組むソースを読む** — ディレクトリへのシンボリックリンクの中も読む (#3993。歩き方は
+    /// ``SourceTree/files(under:extensions:descendingIntoPackages:)``)。隠れたファイル・ディレクトリの下
+    /// (エディタの退避など) は見ない。
     private static func users(in root: URL, matching opens: (String) -> Bool) -> [String] {
         let sources = root.appendingPathComponent("Sources", isDirectory: true)
-        guard let walker = FileManager.default.enumerator(atPath: sources.path) else { return [] }
-
         var found: [String] = []
-        for case let relative as String in walker {
-            guard relative.hasSuffix(".swift"), !isHidden(relative) else { continue }
-            let url = sources.appendingPathComponent(relative)
+        for url in SourceTree.files(
+            under: sources, extensions: ["swift"], descendingIntoPackages: true)
+        {
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let relative = url.path.dropFirst(sources.path.count + 1)
             if opens(text) { found.append("Sources/\(relative)") }
         }
         return found.sorted()
@@ -91,10 +93,5 @@ nonisolated enum DeviceUse {
     private static func withoutComments(_ source: String) -> String {
         source.replacingOccurrences(
             of: #"/\*[\s\S]*?\*/|//[^\n]*"#, with: " ", options: .regularExpression)
-    }
-
-    /// 隠れたファイル・ディレクトリの下 (エディタの退避など) は見ない。
-    private static func isHidden(_ relative: String) -> Bool {
-        relative.split(separator: "/").contains { $0.hasPrefix(".") }
     }
 }

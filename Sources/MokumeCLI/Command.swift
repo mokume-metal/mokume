@@ -154,9 +154,10 @@ enum Command {
                     build continues from that version's clock. After a send, the clock goes on from
                     the sent version once the one it replaced has stopped. run and render always
                     start at 0.
-                    What it watches: Package.swift, every .swift under Sources/, and the regular files
-                    under Sources/<target>/assets/ (not hidden files or symbolic links). A .metal
-                    fragment is not rebuilt: it swaps in while the sketch keeps running.
+                    What it watches: Package.swift, every .swift under Sources/ (also inside a symbolic
+                    link to a directory), and the regular files under Sources/<directory>/assets/ (not
+                    hidden files, and no symbolic links inside assets/). A .metal fragment is not
+                    rebuilt: it swaps in while the sketch keeps running.
                     Assets count only in Sources/<directory>/assets/. In the assets/ of a target moved out
                     of Sources/ with path:, under another source directory such as src/, or nested deeper
                     (Sources/<directory>/<sub>/assets/), a missing resources declaration is not caught
