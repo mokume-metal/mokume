@@ -86,6 +86,22 @@ class DrawingPathsTest(unittest.TestCase):
         self.assertEqual(self.files(*f), f)
         self.assertTrue(self.touches(*f))
 
+    # --- 本物の一覧 --------------------------------------------------------
+
+    def test_本物の一覧にMokumeUIとMokumeHostとその検査が載る(self):
+        """一時の一覧でなく scripts/drawing-paths.txt を読み、MokumeUI・MokumeHost と
+        その検査のターゲットに触れた変更が残ることを固定する (#4099)。ここが載っていないと、
+        ホストの絵・書き出した絵が動きうる変更が、証跡を求められずに main へ入る。"""
+        self.paths = REPO / "scripts" / "drawing-paths.txt"
+        f = [
+            "Sources/MokumeUI/SketchView.swift",
+            "Sources/MokumeHost/HeadlessRun.swift",
+            "Tests/MokumeUITests/EmbeddingAppTests.swift",
+            "Tests/MokumeHostTests/HeadlessRunTests.swift",
+        ]
+        self.assertEqual(self.files(*f), f)
+        self.assertTrue(self.touches(*f))
+
 
 if __name__ == "__main__":
     unittest.main()
