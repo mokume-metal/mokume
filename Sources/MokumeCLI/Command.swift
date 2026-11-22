@@ -160,7 +160,7 @@ enum Command {
                     Only Sources/<target>/assets/ counts as a place for assets: the assets/ of a target
                     moved with path: or under src/ is neither checked for a missing resources declaration
                     nor watched, so a missing declaration there shows only when the sketch cannot load
-                    the file, and saving there picks nothing up.
+                    the file, and saving a file there does not rebuild.
                     A change anywhere else does not rebuild — resources Package.swift declares outside
                     assets/ (.process("Resources"), .copy("data.json"), a changed path:), Package.resolved,
                     a dependency given by path (--local). After those, place a rebuild request in

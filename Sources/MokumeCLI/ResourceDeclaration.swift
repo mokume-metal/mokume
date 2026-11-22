@@ -28,7 +28,9 @@ import Synchronization
 ///
 /// 資材の置き場として見るのは `Sources/<名前>/assets` だけ。`path:` で動かした target の置き場や
 /// `src/` の下の `assets` は、宣言の抜けの検査も `mokume watch` の見張りも対象にしない (#4006)。
-/// その置き方では、宣言の抜けは実行時 (絵が読めない) まで分からない。
+/// その置き方では、宣言の抜けは実行時 (絵が読めない) まで分からず、そこで保存しても作り直さない。
+/// 見張りが子へ渡す置き場の元 (``SwiftPM/Package/assetsOrigin(forProduct:in:directoryName:)``) は別の
+/// 判断で、宣言された target の置き場の直下も見る。
 nonisolated enum ResourceDeclaration {
     /// 資材の置き場としてこの名前を見る。
     static let directoryName = "assets"
