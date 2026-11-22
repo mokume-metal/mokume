@@ -176,6 +176,123 @@ struct ReplaySoundAnalysisTests {
         #expect(report.unreproducible.isEmpty && report.matched, "\(report.unreproducible)")
     }
 
+    // MARK: - 音の時計 (#4096)
+
+    /// 公開の、音の時計に依る読み。**1 つずつ確かめる**。
+    enum ClockRead: String, CaseIterable, Sendable {
+        case soundTime, position, isPlaying
+
+        /// 理由に載る読み手の名前。
+        var reader: String {
+            switch self {
+            case .soundTime: "soundTime"
+            case .position: "SoundFile.position"
+            case .isPlaying: "SoundFile.isPlaying"
+            }
+        }
+    }
+
+    /// 合成音と音声ファイルを 1 つずつ鳴らし続け (ファイルは `loop()`)、`read` が立っていれば毎フレームそれを読むスケッチ。
+    final class ClockReader: Sketch {
+        var read: ClockRead?
+        var flow: SoundFlow?
+        var file: URL?
+        var tone: TriOsc?
+        var sound: SoundFile?
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8, frameRate: 60) }
+        init() {}
+        convenience init(read: ClockRead?, flow: SoundFlow?, file: URL) {
+            self.init()
+            self.read = read
+            self.flow = flow
+            self.file = file
+        }
+        func setup() throws {
+            let made = TriOsc(stage: SynthStage.stage(for: self, flow: flow))
+            made.play(440, 0.3)
+            tone = made
+            let loaded = try loadSound(try #require(file).path, flow: flow)
+            loaded.loop()
+            sound = loaded
+        }
+        func draw() {
+            background(0, 0, 0)
+            switch read {
+            case .soundTime: _ = soundTime
+            case .position: _ = sound?.position
+            case .isPlaying: _ = sound?.isPlaying
+            case nil: break
+            }
+        }
+    }
+
+    /// 時計を読むスケッチを録る。`onScreen` ならウィンドウの経路で、音は差し込んだ流れで鳴る。
+    private func recordClock(_ read: ClockRead?, onScreen: Bool, to url: URL, file: URL) throws -> ReplayRecord {
+        let flow = onScreen ? try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096) : nil
+        let runtime = try SketchRuntime(
+            sketch: ClockReader(read: read, flow: flow, file: file), gpu: RenderDevice(),
+            clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: onScreen, persistsParams: false)
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+        for _ in 0..<3 { try runtime.advance() }
+        runtime.closePlugins()
+        return try ReplayRecord.read(from: url)
+    }
+
+    /// 時計を読むスケッチの記録を、ウィンドウなしで流す。
+    private func replayClock(_ read: ClockRead?, _ url: URL, file: URL) throws -> ReplayPlayer.Report {
+        let player = ReplayPlayer(record: try ReplayRecord.read(from: url), source: url.path, reportURL: nil)
+        let runtime = try SketchRuntime(
+            sketch: ClockReader(read: read, flow: nil, file: file), gpu: RenderDevice(),
+            clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: false, persistsParams: false, opensFacets: false,
+            handover: nil)
+        runtime.startReplaying(player)
+        var advances = 0
+        while !player.isFinished, advances < 20 {
+            player.beginAdvance(at: Double(advances))
+            try runtime.advance()
+            advances += 1
+        }
+        let report = try #require(runtime.finishReplaying())
+        runtime.closePlugins()
+        return report
+    }
+
+    @Test(
+        "音の時計に依る値を毎フレーム読むと、ウィンドウで録った記録に理由がちょうど 1 つ載り、流す側も同じ理由を名乗る",
+        arguments: ClockRead.allCases)
+    func aClockReadIsNamedOnce(read: ClockRead) throws {
+        let directory = try TestScratch.directory("mokume-replay-sound")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let url = directory.appendingPathComponent("clock-\(read).json")
+        let reason = ReplayRecorder.Reason.soundClock(read.reader)
+        let taken = try recordClock(read, onScreen: true, to: url, file: file)
+        #expect(taken.window && taken.unreproducible == [reason], "\(read): \(taken.unreproducible)")
+        let report = try replayClock(read, url, file: file)
+        #expect(report.unreproducible == [reason], "\(read): \(report.unreproducible)")
+    }
+
+    @Test("音を鳴らし続けるだけで時計を読まない作品は、ウィンドウで録っても名乗らない")
+    func playingWithoutAClockReadIsNotNamed() throws {
+        let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("clock-quiet.json")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let taken = try recordClock(nil, onScreen: true, to: url, file: file)
+        #expect(taken.window && taken.unreproducible.isEmpty, "\(taken.unreproducible)")
+    }
+
+    @Test("ウィンドウなしで録った記録は、音の時計に依る値を読んでも名乗らない", arguments: ClockRead.allCases)
+    func aHeadlessClockReadIsNotNamed(read: ClockRead) throws {
+        let directory = try TestScratch.directory("mokume-replay-sound")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let url = directory.appendingPathComponent("clock-headless-\(read).json")
+        let taken = try recordClock(read, onScreen: false, to: url, file: file)
+        #expect(!taken.window && taken.unreproducible.isEmpty, "\(read): \(taken.unreproducible)")
+        let report = try replayClock(read, url, file: file)
+        #expect(report.unreproducible.isEmpty && report.matched, "\(read): \(report.unreproducible)")
+    }
+
     // MARK: - 待つ読み込み
 
     /// `setup()` で起こした `Task` から、在らない音声ファイルを `requestSound(_:)` で頼むスケッチ。
@@ -269,6 +386,22 @@ struct SoundAnalysisNoticeTests {
         let window = CountingSink(window: true)
         read(&levels, by: window)
         #expect(window.reasons == [reason], "\(window.reasons)")
+    }
+
+    @Test("音の時計の名乗りは、受け手ごとに 1 度だけ理由を渡し、ウィンドウでない受け手には 1 度だけ訊いて名乗らない")
+    func aClockNoticeIsNamedOncePerSink() {
+        var notice = SoundClockNotice(reader: "SoundFile.position")
+        let headless = CountingSink(window: false)
+        LaunchingSketch.$replay.withValue(headless) {
+            for _ in 0..<100 { notice.noteRead() }
+        }
+        #expect(headless.reasons.isEmpty && headless.windowQueries == 1, "\(headless.reasons)")
+        let window = CountingSink(window: true)
+        LaunchingSketch.$replay.withValue(window) {
+            for _ in 0..<300 { notice.noteRead() }
+        }
+        #expect(window.reasons == [ReplayRecorder.Reason.soundClock("SoundFile.position")], "\(window.reasons)")
+        #expect(window.windowQueries == 1)
     }
 
     @Test("名乗る種類を持たない置き場は、受け手が居ても名乗らない")

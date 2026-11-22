@@ -124,8 +124,10 @@ enum Command {
                     give createCapture(frames:)), a dropped or chosen file, a file fetched from a URL,
                     a request… load (the frame its result arrives at), a .metal fragment swapped in while
                     it runs, and in a window, reading a sound's analysis (level, spectrum, waveform,
-                    isBeat; a sound that only plays is fine). Date() and Swift's own random numbers
-                    cannot be noticed: use random() and time instead to replay what they give
+                    isBeat) or a value that follows the sound's clock (soundTime, a sound file's
+                    position or isPlaying; a sound that only plays is fine). Date() and Swift's own
+                    random numbers cannot be noticed: use random() and time instead to replay what
+                    they give
                     \(remoteHelp)
                     """
                 )

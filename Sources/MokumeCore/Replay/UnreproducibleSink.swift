@@ -10,7 +10,7 @@ protocol UnreproducibleSink: AnyObject, Sendable {
     /// 再現を保証しないものが使われた。**同じ理由は 1 度だけ名乗る。**
     func noteUnreproducible(_ reason: String)
     /// ウィンドウで録った記録か (流す側では、流している記録がそうか)。ウィンドウでは音が実時間で鳴り、ウィンドウなしで
-    /// 流すときはフレームの数で進むので、音の解析の値が割れうる。ウィンドウなしで録った記録は流す側と同じ数え方である。
+    /// 流すときはフレームの数で進むので、音の解析の値と音の時計に依る値が割れうる。ウィンドウなしで録った記録は流す側と同じ数え方である。
     var soundRunsInRealTime: Bool { get }
 }
 
@@ -48,6 +48,30 @@ package struct SoundAnalysisNotice {
         settled = sink
         guard sink.soundRunsInRealTime else { return }
         sink.noteUnreproducible(ReplayRecorder.Reason.soundAnalysis(kind))
+    }
+}
+
+/// 音の時計に依る値 (`soundTime`・`SoundFile.position`・`SoundFile.isPlaying`) を読んだことの名乗り (#4096)。
+///
+/// 音の時計は、ウィンドウでは音が実際に作った標本の数で進み、ウィンドウなしで流すときはフレームの数で進む。
+/// 名乗るのは ``SoundAnalysisNotice`` と同じく、ウィンドウで録った記録 (流す側では、それを流しているとき) だけで、
+/// 同じ受け手へは 1 度しか理由を組まない。読み手 1 つにつき 1 つ持つ (理由に読み手の名前が載る)。
+package struct SoundClockNotice {
+    /// 読んだ口の名前 (理由に載る)。
+    private let reader: String
+    /// 既に名乗った (または名乗らないと決めた) 受け手。受け手の寿命は実行が決めるので弱く持つ。
+    private weak var settled: (any UnreproducibleSink)?
+
+    package init(reader: String) {
+        self.reader = reader
+    }
+
+    /// 音の時計に依る値を読んだ。
+    package mutating func noteRead() {
+        guard let sink = LaunchingSketch.replay, sink !== settled else { return }
+        settled = sink
+        guard sink.soundRunsInRealTime else { return }
+        sink.noteUnreproducible(ReplayRecorder.Reason.soundClock(reader))
     }
 }
 
