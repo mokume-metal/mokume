@@ -23,6 +23,12 @@ import Synchronization
 /// パスを読む。**宣言はコマンドが読んだものを受け取る** — 各コマンドは宣言を読んだ直後・ビルドの
 /// 前にここを呼ぶ (`run`・`render`・`watch` は ``RunCommand/context(in:invocation:environment:home:announce:resolver:afterReading:)``
 /// の `afterReading`、`bundle` は宣言を読む段の直後)。検査のために `dump-package` を重ねない。
+///
+/// ## 見る範囲
+///
+/// 資材の置き場として見るのは `Sources/<名前>/assets` だけ。`path:` で動かした target の置き場や
+/// `src/` の下の `assets` は、宣言の抜けの検査も `mokume watch` の見張りも対象にしない (#4006)。
+/// その置き方では、宣言の抜けは実行時 (絵が読めない) まで分からない。
 nonisolated enum ResourceDeclaration {
     /// 資材の置き場としてこの名前を見る。
     static let directoryName = "assets"

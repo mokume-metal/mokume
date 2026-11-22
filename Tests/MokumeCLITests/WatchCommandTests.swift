@@ -131,6 +131,18 @@ struct WatchCommandTests {
         }
     }
 
+    /// **見張りが資材として数えるのは `Sources/<名前>/assets` の下だけ** (#4006)。`path:` で `Sources/` の
+    /// 外へ動かした target の `assets` を書き換えても、世代は変わらない — 範囲の外であることを固定する。
+    @Test("Sources の外へ置いた target の assets を書き換えても、見張りの世代は変わらない")
+    func aPlaceOutsideSourcesIsNotWatched() throws {
+        let root = try ResourceDeclarationTests.makeSketchPlacedOutsideSources()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let before = try #require(SourceStamp.current(for: root), "Package.swift も数えていない")
+        try Data("別の画像のつもり".utf8)
+            .write(to: root.appendingPathComponent("Sketch/assets/grain.png"))
+        #expect(SourceStamp.current(for: root) == before)
+    }
+
     /// **ウィンドウを出してから、最初の作り直しに入る。**
     ///
     /// 直に呼ぶと、ウィンドウが画面に出るのは初回の作り直しが終わってからになる — いちばん長く

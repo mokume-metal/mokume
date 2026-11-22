@@ -224,6 +224,36 @@ struct ResourceDeclarationTests {
         }
     }
 
+    /// `path: "Sketch"` で `Sources/` の外に置いた target `demo` と、宣言の無い資材
+    /// `Sketch/assets/grain.png` を持つスケッチ。資材の置き場の範囲 (`Sources/<名前>/assets` だけ) の
+    /// 外にある形で、見張りの検査 (`WatchCommandTests`) も使う。
+    static func makeSketchPlacedOutsideSources() throws -> URL {
+        let root = TestScratch.path("mokume-resources-outside-sources", isDirectory: true)
+        let place = root.appendingPathComponent("Sketch", isDirectory: true)
+        let assets = place.appendingPathComponent("assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        try "print(1)".write(
+            to: place.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        try "x".write(
+            to: assets.appendingPathComponent("grain.png"), atomically: true, encoding: .utf8)
+        try manifest(path: "Sketch").write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        return root
+    }
+
+    /// **資材の置き場として見るのは `Sources/<名前>/assets` だけ** (#4006)。`path:` で `Sources/` の外へ
+    /// 動かした target の `assets` は、宣言が無くても止めない — 範囲の外であることを固定する。
+    /// 範囲を広げるなら、見張りの範囲と合わせて別に決める。
+    @Test("Sources の外へ置いた target の assets は、宣言が無くても止めない")
+    func aPlaceOutsideSourcesIsNotJudged() throws {
+        let root = try Self.makeSketchPlacedOutsideSources()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // 道具立てが宣言を読み、その target が `Sketch` に在ると解くこと (読めない回は検査が素通りする)
+        let declared = try #require(try RunCommand.dumpPackage(in: root))
+        #expect(declared.targets.map(\.path) == ["Sketch"])
+        #expect(throws: Never.self) { try check(root) }
+    }
+
     /// **既定の置き場は target の種類で決める** (#3984 の反証)。テストの target は `Tests` が在れば
     /// その下に置かれ、`Sources/<名前>` ではない。種類を見ずに `Sources/<名前>` を当てると、
     /// テストの target の宣言で `Sources` の置き場を見ることになる。
