@@ -69,8 +69,9 @@ package final class FrameAnnouncement {
         if raised != KERN_SUCCESS {
             warn(
                 "This sketch cannot make room for \(FrameLink.sketchQueueLimit) messages from receivers "
-                    + "(\(String(cString: mach_error_string(raised)))) — it keeps running, and a receiver that "
-                    + "sends many at once may lose some")
+                    + "(\(String(cString: mach_error_string(raised)))) — it keeps running with the system's "
+                    + "default of a few messages, so while it is busy, surfaces a receiver returns can be lost "
+                    + "and never written to again")
         }
         let entry = FrameListing.Entry(
             sketch: sketch, identity: identity, title: title, pid: pid,

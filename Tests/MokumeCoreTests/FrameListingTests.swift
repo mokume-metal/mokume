@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import IOSurface
 import MokumeTestSupport
 import Testing
 
@@ -260,6 +261,46 @@ struct FrameListingTests {
         #expect(result == MACH_SEND_TIMED_OUT, "上限を越えた 1 通の戻り値: \(result)")
     }
 
+    /// **待ち行列の上限は送り手の port に入る通数の上限で、受け入れた受け手の数とは別である** (#4060 の反証)。受け入れて
+    /// いない受け手の connect (5 人目・送り直し・作り直した port に残った古い connect) も同じ枠に入り、その分だけ
+    /// release が先に落ちる。約束の文はこの範囲で言い切る (`Schemas/frame-link.md`)。
+    @Test("受け入れていない受け手の connect も送り手の待ち行列の枠を使い、その数だけ release の入る数が減る")
+    func unacceptedConnectsShareTheQueue() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "S", identity: "/s", title: "S", in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        defer { announcement.withdraw() }
+        let service = try #require(Bootstrap.lookUp(announcement.entry.serviceName))
+        defer { Bootstrap.releaseSend(service) }
+        // 送り手が読まない間に、受け入れられていない受け手が 3 通の connect を送る (port を作り直すたびの 1 通など)
+        var reply: mach_port_t = 0
+        mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &reply)
+        defer { mach_port_mod_refs(mach_task_self_, reply, MACH_PORT_RIGHT_RECEIVE, -1) }
+        let connects = 3
+        for _ in 0..<connects {
+            let surfaces = (0..<FrameLink.surfaceCountRange.lowerBound).compactMap { _ in
+                IOSurfaceCreate(
+                    [
+                        kIOSurfaceWidth: 16, kIOSurfaceHeight: 8, kIOSurfacePixelFormat: FrameLink.surfaceFormat,
+                        kIOSurfaceBytesPerElement: 8,
+                    ] as [CFString: Any] as CFDictionary)
+            }
+            try #require(FrameLink.connect(to: service, reply: reply, surfaces: surfaces) == KERN_SUCCESS)
+        }
+        var payload = FrameLink.Payload()
+        payload.append(UInt32(1))
+        payload.append(UInt32(0))
+        var released = 0
+        while released <= FrameLink.sketchQueueLimit,
+            FrameLink.send(.release, to: service, payload: payload) == KERN_SUCCESS
+        {
+            released += 1
+        }
+        #expect(released == FrameLink.sketchQueueLimit - connects, "connect の後に入った release: \(released)")
+    }
+
     /// **上限を上げられない port でも名乗りは続け、診断に 1 行だけ言う** (#4060 の崩れたときの移り先・ADR-0020 決定 5)。
     /// 受信の権利を持たない名前 (死んだ名前) を登録の結果に差し替えて、設定を断らせる。
     @Test("待ち行列の上限を上げられなければ、既定のまま名乗って目録に載せ、診断に 1 行だけ出す")
@@ -286,6 +327,8 @@ struct FrameListingTests {
         }
         #expect(said.count == 1, "\(said)")
         #expect(said.first?.contains("keeps running") == true, "走り続けることを言わない: \(said)")
+        #expect(
+            said.first?.contains("never written to again") == true, "返された面が戻らなくなりうることを言わない: \(said)")
         #expect(FrameListing.entries(in: directory).map(\.serviceName) == [announcement.entry.serviceName])
     }
 
