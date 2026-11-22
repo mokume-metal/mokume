@@ -3703,6 +3703,146 @@ struct SourceStampTests {
         #expect(SourceStamp.current(for: sketch) == first, "置き場のリンクの先を数えた")
     }
 
+    // MARK: - ディレクトリへのリンク (#3993)
+
+    /// 外のディレクトリを作り、`files` を書いて、中身も自身も更新時刻を 1 時間前へ戻す。
+    private func outsideDirectory(_ files: [String: String]) throws -> URL {
+        let directory = try TestScratch.directory("mokume-stamp-outside-dir")
+        let old = Date(timeIntervalSinceNow: -3600)
+        for (name, text) in files {
+            let url = directory.appendingPathComponent(name)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: url.path)
+        }
+        return directory
+    }
+
+    /// **SwiftPM が組むものは見張る** (#3993)。`Sources/<target>/` の下に置いたディレクトリへの
+    /// リンクの中の `.swift` を、SwiftPM は組む。数えないと、保存しても作り直さない。
+    @Test("ディレクトリへのリンクの中の .swift を書き換えれば、持ち回る読み手も世代を変え、変わらなければ読み直さない")
+    func followsALinkedSourceDirectory() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let outside = try outsideDirectory(["Greeting.swift": #"let greeting = "from linked dir""#])
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try settle(["Package.swift", "Sources/app/main.swift"], in: sketch)
+        try link(sketch.appendingPathComponent("Sources/app/Lib"), to: outside)
+
+        let log = ReadLog()
+        let reader = SourceStamp.Reader(summarize: { url in
+            log.names.withLock { $0.append(url.lastPathComponent) }
+            return SourceStamp.Reader.digest(of: url)
+        })
+        var reads: [String] { log.names.withLock { $0 } }
+
+        let first = reader.current(for: sketch)
+        #expect(reads.contains("Greeting.swift"), "リンクしたディレクトリの中を読んでいない: \(reads)")
+        #expect(first == SourceStamp.current(for: sketch))
+
+        log.names.withLock { $0.removeAll() }
+        #expect(reader.current(for: sketch) == first)
+        #expect(reads.isEmpty, "属性の変わらないファイルを読み直した: \(reads)")
+
+        // 同じ大きさで、中身だけを書き換える
+        try #"let greeting = "from linked DIR""#.write(
+            to: outside.appendingPathComponent("Greeting.swift"), atomically: true, encoding: .utf8)
+        let second = reader.current(for: sketch)
+        #expect(second != first, "リンクしたディレクトリの中の書き換えを取りこぼした")
+        #expect(second == SourceStamp.current(for: sketch), "持ち回る読み手と新しい読み手の世代が食い違う")
+    }
+
+    /// **ディレクトリへのリンクの付け替えも拾う** (#3994 の反証と同じ穴)。同じ名前・同じ大きさ・
+    /// 古い同じ時刻のファイルを持つ別のディレクトリへ向け直す。数える名前 (`Sources/app/Lib/…`) は
+    /// 変わらないので、属性を読む先から取らないと取りこぼす。
+    @Test("ディレクトリへのリンクを、同じ名前・大きさ・時刻のファイルを持つ別のディレクトリへ向け直しても世代が変わる")
+    func followsARetargetedDirectoryLink() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try settle(["Package.swift", "Sources/app/main.swift"], in: sketch)
+        let one = try outsideDirectory(["Greeting.swift": "let greeting = 1"])
+        let two = try outsideDirectory(["Greeting.swift": "let greeting = 2"])
+        defer { for url in [one, two] { try? FileManager.default.removeItem(at: url) } }
+        let time = Date(timeIntervalSinceNow: -7200)
+        for directory in [one, two] {
+            try FileManager.default.setAttributes(
+                [.modificationDate: time],
+                ofItemAtPath: directory.appendingPathComponent("Greeting.swift").path)
+        }
+        let lib = sketch.appendingPathComponent("Sources/app/Lib")
+        try link(lib, to: one)
+
+        let reader = SourceStamp.Reader()
+        let before = reader.current(for: sketch)
+        #expect(reader.current(for: sketch) == before, "変わらない巡回で世代が動いた")
+
+        try FileManager.default.removeItem(at: lib)
+        try link(lib, to: two)
+        let after = reader.current(for: sketch)
+        #expect(after != before, "ディレクトリへのリンクの付け替えを取りこぼした")
+        #expect(after == SourceStamp.current(for: sketch))
+    }
+
+    /// 列挙を別のスレッドで走らせ、**待つ側が期限を持つ**。期限を越えたら `nil` (走っている列挙は
+    /// 止められないので置いていく)。合否は挙がったファイルで決め、期限は止まらない形を赤にするためだけに使う。
+    private func sourcesWithin(_ seconds: Double, in sketch: URL) -> [URL]? {
+        let result = Mutex<[URL]?>(nil)
+        let done = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            let found = SourceStamp.sources(in: sketch)
+            result.withLock { $0 = found }
+            done.signal()
+        }
+        guard done.wait(timeout: .now() + seconds) == .success else { return nil }
+        return result.withLock { $0 }
+    }
+
+    /// **循環するリンクでも列挙は止まり、同じファイルを 2 度数えない** (#3993)。自分の祖先を指す
+    /// リンクと、互いを指す 2 本のリンクを置く。ディレクトリは実体ごとに 1 度だけ歩くので、挙がる
+    /// `.swift` は実体の数と同じで、実体の側の名前で挙がる。
+    @Test("祖先や互いを指すリンクがあっても列挙は返り、同じファイルを 2 度数えない")
+    func cyclicLinksEndAndCountEachFileOnce() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("let b = 1", to: "Sources/app/B/b.swift", in: sketch)
+        try write("let c = 1", to: "Sources/app/C/c.swift", in: sketch)
+        let app = sketch.appendingPathComponent("Sources/app")
+        // 祖先を指すリンク
+        try link(app.appendingPathComponent("B/up"), to: app)
+        try link(app.appendingPathComponent("B/root"), to: sketch.appendingPathComponent("Sources"))
+        // 互いを指すリンク
+        try link(app.appendingPathComponent("B/toC"), to: app.appendingPathComponent("C"))
+        try link(app.appendingPathComponent("C/toB"), to: app.appendingPathComponent("B"))
+        // 外の同じディレクトリを 2 本のリンクが指す
+        let outside = try outsideDirectory(["Shared.swift": "let shared = 1"])
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try link(app.appendingPathComponent("Lib1"), to: outside)
+        try link(app.appendingPathComponent("Lib2"), to: outside)
+
+        let found = try #require(sourcesWithin(60, in: sketch), "列挙が期限までに返らない")
+        let names = found.map { String($0.path.dropFirst(sketch.path.count + 1)) }
+        #expect(
+            names == [
+                "Package.swift", "Sources/app/B/b.swift", "Sources/app/C/c.swift",
+                "Sources/app/Lib1/Shared.swift", "Sources/app/main.swift",
+            ], "\(names)")
+    }
+
+    /// 境目。**置き場 (`Sources/<target>/assets`) の中のディレクトリへのリンクは辿らない** — #2519 の
+    /// 「置き場の中のシンボリックリンクは範囲の外」を、`.swift` の列挙でも保つ。
+    @Test("置き場の中のディレクトリへのリンクは、.swift を持っていても数えない")
+    func directoryLinksInTheAssetsDirectoryStayUncounted() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("one", to: "Sources/app/assets/v.txt", in: sketch)
+        let outside = try outsideDirectory(["Greeting.swift": "let greeting = 1", "v.txt": "x"])
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let first = SourceStamp.current(for: sketch)
+        try link(sketch.appendingPathComponent("Sources/app/assets/linked"), to: outside)
+        #expect(SourceStamp.current(for: sketch) == first, "置き場の中のディレクトリへのリンクを数えた")
+    }
+
     /// 要約を取った名前の帳面。
     private nonisolated final class ReadLog: Sendable {
         let names = Mutex<[String]>([])
