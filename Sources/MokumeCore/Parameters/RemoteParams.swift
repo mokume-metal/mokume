@@ -241,7 +241,7 @@ package final class RemoteParams {
     /// **区画の書き方は外から書くときと同じ** ([ADR-0030] 決定 2)。道具だからといって
     /// 近道を作らない — 作れば、面から書いたときにだけ起きる不具合が生まれる。
     private func send(name: String, value: ParamValue) {
-        let id = UUID().uuidString
+        let id = KnobWriter.window.prefix + UUID().uuidString
         let request = Request(id: id, values: [Request.Entry(name: name, value: value)])
         // **置くたびに**、置く前の識別子を控える (``echoedNow()``)。待っている間に続けて置いた
         // 要求は、前の自分の要求としても控える
@@ -264,6 +264,30 @@ package final class RemoteParams {
 
         /// 1 件ぶん。**読む側 (``ParamRequest``) と同じ形** (``NamedParamValue``)。
         typealias Entry = NamedParamValue
+    }
+}
+
+/// つまみの要求を置いた書き手。**要求の識別子の頭に名乗る** — 子の応答はその識別子を echo するので、
+/// 応答だけを読む側 (道具が端末へ書く変化の行、#4130) が、誰が動かしたかを言い分けられる。
+/// echo の照合は識別子の一致だけなので、頭に何を付けても決着の読み方は変わらない。
+package nonisolated enum KnobWriter: String, CaseIterable, Sendable {
+    /// 道具 (`watch`) のウィンドウのつまみ。
+    case window
+    /// `--remote` の受け口 (スマホのブラウザ)。
+    case phone
+
+    /// 識別子の頭。
+    package var prefix: String {
+        switch self {
+        case .window: "window-"
+        case .phone: "remote-"
+        }
+    }
+
+    /// 識別子から書き手を読む。名乗っていなければ `nil` (MCP・手で置いた要求)。
+    package init?(echo: String?) {
+        guard let echo, let writer = Self.allCases.first(where: { echo.hasPrefix($0.prefix) }) else { return nil }
+        self = writer
     }
 }
 
