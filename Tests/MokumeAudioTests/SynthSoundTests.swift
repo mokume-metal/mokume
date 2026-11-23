@@ -541,6 +541,32 @@ struct SynthSoundTests {
         #expect(osc?.isPlaying == false)
     }
 
+    /// スケッチの終わりの後に作った音 (#4140)。走っている実行へ足せないので、鳴らない。鳴らす 8 経路の
+    /// どれでも ``SynthSource/isPlaying`` を変えず (説明の「スケッチが終わった後の `play()` も…この値を変えない」)、
+    /// 解析も始めない。警告は作る口の名前で 1 度だけ。
+    @Test("スケッチが終わった後に作った音は、どの鳴らす API の後も isPlaying が false で無音、警告は口ごとに 1 度 (#4140)")
+    func aSoundMadeAfterTheSketchEndedDoesNotClaimToPlay() throws {
+        var sketch: SynthSketch?
+        let runtime = try run(frames: 3, setup: { made in sketch = made })
+        runtime.closePlugins()
+        let ended = try #require(sketch)
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            for call in SynthNodelessPlayTests.plays {
+                let late: SynthSource =
+                    call.label.hasPrefix("Noise") ? ended.createWhiteNoise() : ended.createSinOsc()
+                call.play(late)
+                #expect(!late.isPlaying && !late.isActive, "\(call.label)")
+                #expect(late.level == 0 && late.rms == 0, "\(call.label)")
+                late.stop()
+                #expect(!late.isPlaying, "\(call.label)")
+            }
+        }
+        #expect(log.messages.count == 2, "\(log.messages)")
+        #expect(log.message(for: "createSinOsc()")?.contains("a sound that is never heard") == true)
+        #expect(log.message(for: "createWhiteNoise()") != nil)
+    }
+
     /// 閉じずに捨てたスケッチのステージが生きている間に、その番地を別のスケッチが引き継ぐと、ステージを
     /// 番地だけで探す形では前の回のラックを引き継ぐ。照らし合わせる持ち主 (``SynthStage`` の `owner`) が
     /// それを止める。

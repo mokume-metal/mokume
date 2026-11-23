@@ -186,6 +186,23 @@ struct AudioOutsideRunTests {
         }
     }
 
+    /// 外で作った合成音は鳴らないので、鳴らす 8 経路のどれでも ``SynthSource/isPlaying`` を変えない (#4140)。
+    @Test("外で作った合成音は、どの鳴らす API の後も isPlaying が false で、解析も始めない (#4140)")
+    func soundsMadeOutsideDoNotClaimToPlay() {
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            let sketch = Bare()
+            for call in SynthNodelessPlayTests.plays {
+                let source: SynthSource =
+                    call.label.hasPrefix("Noise") ? sketch.createWhiteNoise() : sketch.createSinOsc()
+                call.play(source)
+                #expect(!source.isPlaying && !source.isActive, "\(call.label)")
+                #expect(source.level == 0, "\(call.label)")
+            }
+            #expect(log.messages.count == 2, "口ごとに 1 行: \(log.messages)")
+        }
+    }
+
     @Test("外で AudioIn の stop() を呼ぶと、呼んでいない detach() ではなく stop() を名乗り、1 度だけ警告する (#2793)")
     func stopNamesItselfOutsideTheRun() {
         let log = OutsideRun()
