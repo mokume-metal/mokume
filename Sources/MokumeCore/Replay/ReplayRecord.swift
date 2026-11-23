@@ -57,6 +57,9 @@ package struct ReplayRecord {
     let steps: [Step]
     /// 記録が名乗った、再現を保証しない理由 (記録の順)。
     package let unreproducible: [String]
+    /// 記録の実行が読んだ資源の名前と、最初に読んだ中身の SHA-256 (#4092)。**任意の欄** — 持たない記録 (欄を足す前の
+    /// 記録) は空で、流す側は資源を照らさない。照合 (`matched`) には使わない。
+    let resources: [String: String]
     /// 最後に描いた枚の番号とハッシュ。
     let last: (frame: Int, pixelHash: String)?
 
@@ -136,6 +139,8 @@ package struct ReplayRecord {
             window: file.window, startSeconds: file.start.seconds, startPaused: file.start.paused,
             startParams: file.start.params, steps: steps,
             unreproducible: (file.unreproducible ?? []).map(\.reason),
+            // 同じ名前が重なっていれば、最初のもの (記録する係は名前ごとに 1 つしか書かない)
+            resources: Dictionary((file.resources ?? []).map { ($0.name, $0.sha256) }, uniquingKeysWith: { first, _ in first }),
             last: file.last.map { ($0.frame, $0.pixelHash) })
     }
 
@@ -193,6 +198,7 @@ package struct ReplayRecord {
         let start: Start
         let steps: [Entry]
         let unreproducible: [Note]?
+        let resources: [ReplayRecorder.Resource]?
         let last: Last?
     }
 }

@@ -67,6 +67,9 @@
       "reason": "Replay is not guaranteed (input from outside the sketch, which the record does not hold: MIDI)"
     }
   ],
+  "resources": [
+    { "name": "dot.png", "sha256": "5f0c2d1a9be47e3c8a6d21f04b7e9c3a1d8f6e2b0c4a7d9e3f1b5c8a2e6d0f47" }
+  ],
   "last": {
     "frame": 60,
     "pixelHash": "3b6c5e7e2d8f0a1c94d4b7a05e1f2c83d9a64b0f7e215c8a3d90b1e4f6a72c58"

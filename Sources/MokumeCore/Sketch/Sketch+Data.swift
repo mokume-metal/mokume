@@ -181,7 +181,14 @@ extension SketchPart {
             return [UInt8](try await WebFile.fetch(url, path: path))
         }
         let url = try dataURL(path)
-        return try await Self.readAway { () throws(DataFailure) in [UInt8](try TextFile.readData(url, path: path)) }
+        // 写しもハッシュも裏で済ませ、受け手の引けるここでは名乗るだけ (#4092)。記録・再生していなければ取らない
+        let hasher = ReplayNotice.resourceHasher
+        let (bytes, digest) = try await Self.readAway { () throws(DataFailure) in
+            let data = try TextFile.readData(url, path: path)
+            return ([UInt8](data), hasher?.sha256(of: data, name: path))
+        }
+        ReplayNotice.readResource(path, sha256: digest)
+        return bytes
     }
 
     /// バイト列を、そのままファイルにする。書き終わるまで返らない。
@@ -789,7 +796,10 @@ extension SketchPart {
             LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
             return try WebFile.fetchWaiting(url, path: path)
         }
-        return try TextFile.readData(try dataURL(path), path: path)
+        let data = try TextFile.readData(try dataURL(path), path: path)
+        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+        ReplayNotice.readResource(path, data: data)
+        return data
     }
 
     /// 名前の中身を読んで解く。**読んでいる間、他の仕事を止めない。**
@@ -810,9 +820,14 @@ extension SketchPart {
             }
         }
         let url = try dataURL(path)
-        return try await Self.readAway { () throws(DataFailure) in
-            try parse(try TextFile.read(url, path: path))
+        // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
+        let hasher = ReplayNotice.resourceHasher
+        let (value, digest) = try await Self.readAway { () throws(DataFailure) in
+            let data = try TextFile.readData(url, path: path)
+            return (try parse(try TextFile.text(of: data, path: path)), hasher?.sha256(of: data, name: path))
         }
+        ReplayNotice.readResource(path, sha256: digest)
+        return value
     }
 
     /// 名前を、在るファイルの場所へ解く。探し方は ``assetURL(_:)`` そのもの。SVG を読む口

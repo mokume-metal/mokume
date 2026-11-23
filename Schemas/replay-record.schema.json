@@ -141,7 +141,7 @@
     },
     "unreproducible": {
       "type": "array",
-      "description": "What was used that a replay cannot be promised to match, each with a reason, once per reason. A record with this key is not promised to replay frame for frame; a replay names it too. Omitted when there is nothing. The reasons: input that is not finite; too many inputs between two frames; a dropped or chosen file (the record holds its path, not its contents) and a file fetched from a URL; **a source from outside the sketch whose values the record does not hold** (a gamepad, MIDI, OSC / TCP / UDP / WebSocket, serial, microphone, camera, movie), named by kind, but not frames the sketch gives `createCapture(frames:)`, which arrive one per frame; a `request…` load, whose result arrives at a frame the record does not hold; a shader fragment swapped in while the sketch ran, named by file; **the analysis of a sound read in a window** and **a value that follows the clock of a sound read in a window** (`soundTime`, or a sound file's `position` or `isPlaying`), named by the kind of sound or by the value read (`window` is true; a sound that only plays is not named); a picture that could not be read back to hash; a frame that failed to draw.",
+      "description": "What was used that a replay cannot be promised to match, each with a reason, once per reason. A record with this key is not promised to replay frame for frame; a replay names it too. Omitted when there is nothing. The reasons: input that is not finite; too many inputs between two frames; a dropped or chosen file (the record holds its path, not its contents) and a file fetched from a URL; **a source from outside the sketch whose values the record does not hold** (a gamepad, MIDI, OSC / TCP / UDP / WebSocket, serial, microphone, camera, movie), named by kind, but not frames the sketch gives `createCapture(frames:)`, which arrive one per frame; a `request…` load, whose result arrives at a frame the record does not hold; a shader fragment swapped in while the sketch ran, named by file; a local file (`resources`) whose contents changed while the sketch ran, or, in a replay, differ from what the record read, named by file, and one that was read but could not be read again to hash it; **the analysis of a sound read in a window** and **a value that follows the clock of a sound read in a window** (`soundTime`, or a sound file's `position` or `isPlaying`), named by the kind of sound or by the value read (`window` is true; a sound that only plays is not named); a picture that could not be read back to hash; a frame that failed to draw.",
       "items": {
         "type": "object",
         "required": ["step", "reason"],
@@ -155,6 +155,26 @@
           "reason": {
             "type": "string",
             "description": "Why, in a form to show a person. `Replay is not guaranteed (non-finite input)` is an input event that came with a number that is not finite (NaN, infinity) by InputState.enqueue(_:), which the record cannot keep: the form of an event is a line of JSON, which writes such a number as 0, so a replay would apply a different event."
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "array",
+      "description": "The local files the run read, in the order it first read them: images, text and data, SVG, models, fonts, sounds and `.metal` fragments. Each name is the one the sketch passed, with a SHA-256 of what was read the first time. Text, data, tables, JSON, XML, SVG, OBJ models and `.metal` fragments are hashed from the very bytes the loader used. Images, STL models, fonts and sounds are decoded by the system from the file's location, so they are hashed by reading the file once more right after: if the file is rewritten between the two reads, the hash can differ from what was used. A file that was loaded but could not be read again to hash (it was removed or can no longer be opened) is not listed, and is named under `unreproducible` instead. A replay reads the same names, and names under `unreproducible` any whose contents now differ; `matched` still comes from the pictures alone. A record that read a name twice and found different contents says so under `unreproducible`. Only files read through mokume's loading APIs are listed: a file the sketch reads itself from a location `assetURL` only returns is not, and a shader fragment swapped in while the sketch ran is named by its own reason instead. Files fetched from a URL, cameras and movies are not listed. A replay checks only the names listed here: a name the record does not hold, or one the replay does not read, is not checked. Omitted when the run read no file; a record without it replays the same way, only without this check.",
+      "items": {
+        "type": "object",
+        "required": ["name", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name the sketch passed to the loading API, as it was passed (`dot.png`). A sketch that loads by an absolute path records the absolute path, and the same file loaded by a relative and an absolute name is two entries."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 of the contents, in lowercase hexadecimal."
           }
         }
       }

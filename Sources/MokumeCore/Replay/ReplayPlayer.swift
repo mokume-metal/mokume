@@ -112,6 +112,10 @@ package final class ReplayPlayer: UnreproducibleSink {
     private(set) var noticed: [String] = []
     /// 記録が名乗った理由と ``noticed`` の和。同じ理由を重ねないかを、並びを連結・走査せずに見る。
     private var named: Set<String> = []
+    /// 流している間に名乗りを受けた資源の読みの数 (照らした数。検査が「名乗り終えた」を待つ)。
+    private(set) var resourcesRead = 0
+    /// ファイルを読み直して取ったハッシュの控え (流している間だけ)。
+    let resourceDigests = ResourceDigests()
     /// 書いた結果。**1 度だけ書く。**
     package private(set) var report: Report?
 
@@ -211,6 +215,15 @@ package final class ReplayPlayer: UnreproducibleSink {
         guard report == nil, named.insert(reason).inserted else { return }
         noticed.append(reason)
         Diagnostics.warn("Replaying: \(reason)")
+    }
+
+    /// 流している間に資源を読んだ (#4092)。**記録が同じ名前を控えていて、中身が違えば名乗る。** 記録に無い名前 (欄を
+    /// 持たない記録・記録の実行が読まなかった名前) は照らさない。照合の一致 (`matched`) は変えない — 資源が違って絵が
+    /// 割れれば、絵の照合が食い違いを名乗る。
+    func noteResource(_ name: String, sha256: String) {
+        resourcesRead += 1
+        guard let recorded = record?.resources[name], recorded != sha256 else { return }
+        noteUnreproducible(ReplayRecorder.Reason.resourceDiffers(name))
     }
 
     // MARK: - 当てる

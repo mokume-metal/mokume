@@ -1288,6 +1288,9 @@ public final class SoundFile: Inlet, EffectInput {
         } catch {
             return .failure(.load(error))
         }
+        // 記録・再生しているときは、読み直した中身もハッシュの口を通す (#4092)。変わっていれば、記録は「実行中に
+        // 変わった」、流す側は「記録と違う」を名乗る
+        ReplayNotice.readResource(name, at: source)
         guard reloaded.frameLength == frameLength, reloaded.format == format else {
             return .failure(.changed)
         }

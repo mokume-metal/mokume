@@ -63,7 +63,9 @@ extension Canvas {
     public func loadComputation(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        let (url, body, name) = try ShaderSource.read(at: path)
+        let (url, body, name, bytes) = try ShaderSource.read(at: path)
+        // 記録・再生しているときだけ、読んだバイト列のハッシュを取る (#4092)
+        ReplayNotice.readResource(path, data: bytes)
         return try makeComputation(name: name, url: url, body: body, values: values)
     }
 
