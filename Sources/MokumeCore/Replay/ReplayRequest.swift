@@ -29,7 +29,7 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     ///
     /// **前後の空白や改行は削らない。** 道具が「Recording to:」と言った綴りと、子が書く場所が食い違う (空白の
     /// 付いた名前のファイルは作れる)。空・`/` だけ・絶対パスでない値だけを断る。
-    package init?(destination path: String, generation: Bool = false) {
+    package init?(destination path: String, generation: Bool) {
         guard path.hasPrefix("/"), path.count > 1 else { return nil }
         self.destination = URL(fileURLWithPath: path)
         self.isGeneration = generation
@@ -172,7 +172,7 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
         var removed: [String] = []
         for name in names.sorted() {
             let target = directory.appendingPathComponent(name)
-            guard let claim = ReplayClaim.take(destination: target).claim else { continue }
+            guard let claim = ReplayClaim.take(destination: target, generation: true).claim else { continue }
             defer { claim.release() }
             // 見てから消すまでの間にフォルダへ替わっても消さない (``AtomicFile/remove(_:)``・#3943)
             // リンク・フォルダ・FIFO は記録でないものとして残す (番号を選ぶ側と同じ判定・#3970)
