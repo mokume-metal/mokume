@@ -39,6 +39,10 @@ final class KnobOverlay: NSView {
     /// 畳んでいるか (#4137)。作る側が渡せば、面を作り直しても畳んだままになる。
     let state: KnobPanelState
 
+    /// 手の操作の履歴 (#4124)。⌘Z を受ける面 (``SketchSurface/knobHistory``) へも同じものを渡す。
+    /// 作る側が渡せば、面を作り直しても履歴が残る。
+    let history: KnobHistory
+
     /// 枠の大きさが変わったとき (畳む・開く・警告の欄の出入り)。**置き直しのたびには呼ばない** —
     /// 列の容れ物 (``KnobColumnLayout``) は自分の並べ直しの中から ``reposition()`` を呼ぶので、
     /// そこで呼ぶと並べ直しが自分を呼び返す。
@@ -46,13 +50,17 @@ final class KnobOverlay: NSView {
 
     init(
         boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil,
-        state: KnobPanelState = KnobPanelState()
+        state: KnobPanelState = KnobPanelState(), history: KnobHistory? = nil
     ) {
         knobCount = boxes.count
         self.state = state
+        let history = history ?? KnobHistory(boxes: { boxes })
+        self.history = history
         // 押されたときの行き先は、自分ができてから据える (`self` を捕まえるため)
         hosting = NSHostingView(
-            rootView: KnobPanel(boxes: boxes, numbers: numbers, warnings: warningFeed, state: state))
+            rootView: KnobPanel(
+                boxes: boxes, numbers: numbers, warnings: warningFeed, state: state,
+                history: history))
         super.init(frame: NSRect(origin: .zero, size: hosting.fittingSize))
         hosting.rootView.toggle = { [weak self] in
             guard let self else { return }
@@ -88,9 +96,10 @@ final class KnobOverlay: NSView {
     /// 面へ重ねる。
     ///
     /// 絵の面の**部分ビューとして**足す。ウィンドウを分けないので、上映中にウィンドウを並べ替える
-    /// 必要が無い。
+    /// 必要が無い。絵の面なら、⌘Z を受けられるよう履歴も渡す (#4124)。
     func attach(to host: NSView) {
         host.addSubview(self)
+        (host as? SketchSurface)?.knobHistory = history
         reposition()
     }
 

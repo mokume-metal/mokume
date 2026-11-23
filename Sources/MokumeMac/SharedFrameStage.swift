@@ -506,7 +506,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// つまみの面を置く。前の面は外す。
     ///
     /// 列を頼んで開いたウィンドウなら列へ置き、絵の面と重ねない (#4137)。そうでなければ絵の面に重ねる。
+    ///
+    /// 列に置いた面は絵の面の部分ビューにならないので、⌘Z を受ける履歴はここで絵の面へ渡す (#4124)。
     func placeKnobs(_ overlay: KnobOverlay?) {
+        if let overlay { view?.knobHistory = overlay.history }
         if let column {
             column.place(overlay)
         } else if let overlay, let view {
