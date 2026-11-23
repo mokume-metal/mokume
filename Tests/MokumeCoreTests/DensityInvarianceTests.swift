@@ -1647,6 +1647,131 @@ struct DensityInvarianceTests {
         return lines
     }
 
+    /// 小さい閉じた輪郭の約束の下限 (描く画素での短い辺・``SmallClosedPose/side``)。これ未満の形は約束の外
+    /// (#4105・ADR-0039 決定 6)。三角形だけ 3.5 で、ほかの 4 形は矩形 (``smallRectFloor``) と同じ 3。
+    ///
+    /// 値は ``smallClosedTable()`` の表から読む。三角形の短い辺は囲む矩形 (回す前) の短い辺で、尖った三角形の実際の
+    /// 幅はそれより細い。定期の検査がこの値以上の形で ±25% を越えたら、値を上げずに Bug として起票する。
+    static func smallClosedFloor(_ shape: SmallClosedShape) -> Float {
+        shape == .triangle ? 3.5 : smallRectFloor
+    }
+
+    /// 小さい閉じた輪郭の生成の座標 (#4105)。太さ・細かさ・ずらし・角度は ``axes(for:)`` と同じ範囲。
+    ///
+    /// - 短い辺: `side` の [0, 1) から、形の下限のすぐ上から 10 までを作る (``smallClosedSide(_:floor:)``)
+    /// - 縦横比 `[1, 2)`・三角形の頂点と平行四辺形のずれ `[-0.5, 0.5)`・角丸の半径 (短い辺の半分の `[0.1, 1)`)・
+    ///   角の形 (0 が `miter`・1 が `bevel`・2 が `round`)。表 (``smallClosedRows``) と同じ範囲
+    static let smallClosedAxes: [ProbeAxis] = [
+        ProbeAxis("weight", 0.07..<1.0001, simplest: 1),
+        ProbeAxis("density", 0.25..<1.0001, simplest: 1, step: 1.0 / 128),
+        ProbeAxis("dx", 0..<2, simplest: 0),
+        ProbeAxis("dy", 0..<2, simplest: 0),
+        ProbeAxis("angle", 0..<(Double.pi / 2), simplest: 0),
+        ProbeAxis("side", 0..<1, simplest: 0),
+        ProbeAxis("aspect", 1..<2, simplest: 1.5),
+        ProbeAxis("skew", -0.5..<0.5, simplest: 0),
+        ProbeAxis("round", 0.1..<1, simplest: 0.5),
+        ProbeAxis("join", 0..<3, simplest: 0, step: 1),
+    ]
+
+    /// `side` の座標 `unit` ([0, 1)) から作る、描く画素での短い辺。半分を下限のすぐ上から 4 まで、残りを 4 から 10 まで
+    /// (``smallRectSide(_:)`` と同じ分け方)。下端は下限の 0.01 内側から始める。
+    static func smallClosedSide(_ unit: Float, floor: Float) -> Float {
+        let low = floor + 0.01
+        let knee = max(low, 4)
+        return unit < 0.5 ? low + unit * 2 * (knee - low) : knee + (unit - 0.5) * 2 * (10 - knee)
+    }
+
+    /// 生成した座標から、小さい閉じた輪郭の置き方を作る (``smallClosedAxes``)。
+    static func smallClosedPose(_ shape: SmallClosedShape, _ input: ProbeInput) -> SmallClosedPose {
+        var base = Pose(
+            weight: input.float("weight"), density: input.float("density"),
+            offset: SIMD2(input.float("dx"), input.float("dy")), angle: input.float("angle"), squash: 1)
+        base.join = [StrokeJoin.miter, .bevel, .round][Int(input["join"])]
+        return SmallClosedPose(
+            shape: shape, base: base, side: smallClosedSide(input.float("side"), floor: smallClosedFloor(shape)),
+            aspect: input.float("aspect"), skew: input.float("skew"), round: input.float("round"))
+    }
+
+    /// 小さい閉じた輪郭を置き方 `pose` で描いて測った光の量と、約束の量 (``SmallClosedPose/expected``)。`nil` なら置き方が
+    /// 約束の外で、見ない: 描く画素での太さが 0.07 未満 (``axes(for:)`` の注釈) か、短い辺が形の下限 (``smallClosedFloor(_:)``)
+    /// 未満 (`ignoringFloor` なら測る)。
+    @MainActor
+    static func smallClosedMeasurement(
+        _ pose: SmallClosedPose, shaded: Bool, ignoringFloor: Bool = false
+    ) throws -> (measured: Double, expected: Double)? {
+        if pose.base.weight * pose.base.density < 0.07 { return nil }
+        if !ignoringFloor, pose.side < smallClosedFloor(pose.shape) { return nil }
+        let canvas = try makeCanvas(density: pose.base.density)
+        try draw(on: canvas) {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.stroke(255)
+            try pose.draw(on: canvas, shaded: shaded)
+        }
+        return (totalSum(try canvas.target.readPixels()), pose.expected)
+    }
+
+    /// 小さい閉じた輪郭を置き方 `pose` で描いて、約束 (±25%) と比べる。
+    @MainActor
+    static func measureSmallClosed(_ pose: SmallClosedPose, shaded: Bool) throws -> Probe.Outcome {
+        guard let (measured, expected) = try smallClosedMeasurement(pose, shaded: shaded) else { return .skip }
+        if abs(measured - expected) > 0.25 * expected {
+            return .fail("光の量 \(measured) (期待 \(expected)・許容 ±0.25)")
+        }
+        return .pass
+    }
+
+    /// 矩形のほかの小さい閉じた輪郭 (``SmallClosedShape``) の細い輪郭も、形の下限 (``smallClosedFloor(_:)``) 以上の大きさでは、
+    /// 細かさ・置く位置・角度・角の形によらず周 × 太さぶんの光の量 (±25%) で出る (#4105・ADR-0039 決定 6)。
+    /// 赤の読み方と再現は ``amountKeepsItsWeight(_:)`` と同じ。
+    @Test(
+        "小さい閉じた輪郭の細い輪郭は、形の下限 (三角形 3.5・ほか 3) 以上の短い辺で、周 × 太さぶんの濃さで出る",
+        arguments: SmallClosedShape.allCases, [true, false])
+    func smallClosedKeepsItsWeight(_ shape: SmallClosedShape, shaded: Bool) throws {
+        let report = try Probe.run(
+            "density", suite: "DensityInvarianceTests", key: "smallClosed/\(shape)/\(shaded ? "shaded" : "plain")",
+            axes: Self.smallClosedAxes, cases: Self.generatedCases
+        ) { input in
+            try Self.measureSmallClosed(Self.smallClosedPose(shape, input), shaded: shaded)
+        }
+        #expect(report.failure == nil, "\(shape)・shader() \(shaded): \(report.failure ?? "")")
+        #expect(report.ran * 2 >= report.ran + report.skipped, "\(shape): 見たのは \(report.ran) 件・約束の外 \(report.skipped) 件")
+    }
+
+    /// #4105 の再現: `smallClosedTable` (seed 0x4078) で光の量がいちばん少なかった三角形 (囲む矩形の短い辺 3.27)。
+    nonisolated static let smallTriangleOf4105: SmallClosedPose = {
+        var base = Pose(weight: 0.2617, density: 0.3125, offset: SIMD2(0.835, 0.996), angle: 0.7037, squash: 1)
+        base.join = .miter
+        return SmallClosedPose(shape: .triangle, base: base, side: 3.2747, aspect: 1.114, skew: -0.183, round: 0.5)
+    }()
+
+    /// 三角形の下限を 3 に下げると、この例が約束の内で判定されて赤になる。
+    @Test("固定の例: #4105 の再現 (囲む矩形の短い辺 3.27 の三角形の細い輪郭) は約束の外で、光の量は ×0.721 のまま")
+    func smallTriangleOf4105IsOutsideThePromise() throws {
+        let pose = Self.smallTriangleOf4105
+        #expect(try Self.measureSmallClosed(pose, shaded: true) == .skip, "\(pose) が約束の内で判定された")
+        // 描画を変えていないこと。直して光の量が揃ったら、この期待と ``smallClosedFloor(_:)`` の見直しを同じ PR で行う
+        let (measured, expected) = try #require(try Self.smallClosedMeasurement(pose, shaded: true, ignoringFloor: true))
+        #expect(abs(measured / expected - 0.721) < 0.005, "光の量は期待の ×\(measured / expected) (記録は ×0.721)")
+        #expect(measured / expected < 0.75, "再現が ±25% の内へ入った: ×\(measured / expected)")
+    }
+
+    /// 約束の下限の値そのもの: ``smallClosedFloor(_:)`` から導かず、名乗りの文 (ADR-0039 決定 6・`strokeWeight(_:)` の説明・
+    /// changelog) の数をリテラルで書く。細かさ 1 で置くので、描く画素の短い辺が渡した値のままになる。
+    @Test(
+        "小さい閉じた輪郭の約束の下限は、三角形が短い辺 3.5、ほかの 4 形が 3 (すぐ下は約束の外、ちょうどは約束の内で判定する)",
+        arguments: SmallClosedShape.allCases)
+    func smallClosedFloorIsPerShape(_ shape: SmallClosedShape) throws {
+        let floor: Float = shape == .triangle ? 3.5 : 3
+        var base = Pose(weight: 0.5, density: 1, offset: SIMD2(0.3, 0.7), angle: 0.4, squash: 1)
+        base.join = .miter
+        var pose = SmallClosedPose(shape: shape, base: base, side: floor - 0.01, aspect: 1.5, skew: 0, round: 0.5)
+        #expect(try Self.measureSmallClosed(pose, shaded: true) == .skip, "\(shape): 短い辺 \(pose.side) を判定した")
+        pose.side = floor
+        #expect(try Self.measureSmallClosed(pose, shaded: true) == .pass, "\(shape): 短い辺 \(pose.side) が約束の内で通らない")
+    }
+
     /// 潰れた・有限でない 2x2 の回転に依らない鍵 (#3932)。対角の和が 0 以下・有限でない 2x2 は 0 の鍵、潰れた 2x2
     /// (行列式 0) は数でない値を持たず、比が決まらないのでビット列で比べる。
     @Test("潰れた・有限でない 2x2 の畳みの鍵は 0 か有限の値で、潰れた鍵はビット列で比べる (#3932)")
