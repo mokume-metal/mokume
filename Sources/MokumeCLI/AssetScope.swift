@@ -46,9 +46,10 @@ nonisolated enum AssetScope {
 
     /// 1 度だけ子を起こす口 (`run`・`render`・`replay`) の段取り: 探させない包みを決め、在れば 1 行名乗る。
     static func announced(
-        context: BuildContext, executable: URL, package: URL, say: (String) -> Void = { print($0) }
+        context: BuildContext, executable: URL, package: URL, say: (String) -> Void = { print($0) },
+        asking: Asking = BundleCommand.askSwiftPM
     ) -> Set<String> {
-        let names = undeclaredBundles(context: context, executable: executable, package: package)
+        let names = undeclaredBundles(context: context, executable: executable, package: package, asking: asking)
         if let notice = notice(names) { say(notice) }
         return names
     }
@@ -61,13 +62,17 @@ nonisolated enum AssetScope {
 
     /// 探させない包みの名乗り (1 行)。無ければ `nil`。**黙って外さない** — 名前の形から推した除外なので、
     /// 依存の包みを取り違えて外したときに、絵が出ない理由を辿れるようにする。
+    ///
+    /// **言うのは、外したという事実だけ** — 古いとも要らないとも言わない。共有の置き場では、別のスケッチの現役の
+    /// 包みも毎回ここに入るので、それを古い包みのように見せない。
     static func notice(_ names: Set<String>) -> String? {
         guard !names.isEmpty else { return nil }
         let sorted = names.sorted()
         var listed = sorted.prefix(listedLimit).joined(separator: ", ")
         if sorted.count > listedLimit { listed += " and \(sorted.count - listedLimit) more" }
-        return "Not looking for assets in \(listed) — in the build folder, but no target of this product"
-            + " and no dependency in Package.swift builds \(sorted.count == 1 ? "it" : "them") now"
+        let counted = sorted.count == 1 ? "1 bundle" : "\(sorted.count) bundles"
+        return "Not looking for assets in \(counted) in the build folder that are not from this product"
+            + " or its dependencies: \(listed)"
     }
 
     /// 見張りの世代をまたいで、探させない包みを持ち回る。
@@ -116,6 +121,15 @@ nonisolated enum AssetScope {
                 announced = names
                 return AssetScope.notice(names)
             }
+        }
+
+        /// 作り直しの後の段取り: **建った回だけ**隣を読み直す (``refresh(context:executable:package:)``)。建たなかった
+        /// 回は前の値を持ち回る (子は前の実行ファイルのまま走る)。
+        ///
+        /// - Returns: 名乗り (外す包みが変わった回だけ)。
+        func afterRebuild(_ rebuilt: RunCommand.Rebuilt, context: BuildContext, package: URL) -> String? {
+            guard rebuilt.status == 0, let executable = rebuilt.executable else { return nil }
+            return refresh(context: context, executable: executable, package: package)
         }
 
         /// 次に起こす子に探させない包み。

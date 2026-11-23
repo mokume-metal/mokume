@@ -81,6 +81,24 @@ enum RunCommand {
             defaultConfiguration: defaultConfiguration)
     }
 
+    /// `run` が建てた実行ファイルを起こす環境。**いまの宣言に無い包みは、子に探させない** (#4038) — 置き場は共有
+    /// なので、隣に古い包みや別のスケッチの包みが並ぶ。外す包みは在れば 1 行名乗る。
+    ///
+    /// - Parameters:
+    ///   - say: 名乗りの行き先。**検査が受け取るために渡せる形にしてある。**
+    ///   - asking: 依存の木の問い (``AssetScope/Asking``)。**検査が偽の答えを渡すために渡せる形にしてある。**
+    static func runEnvironment(
+        for executable: URL, context: BuildContext, in directory: URL, recording: String?,
+        say: (String) -> Void = { print($0) }, asking: AssetScope.Asking = BundleCommand.askSwiftPM
+    ) -> [String: String] {
+        let undeclared = AssetScope.announced(
+            context: context, executable: executable, package: directory, say: say, asking: asking)
+        return childEnvironment(
+            reportingRate: context.configurationName,
+            confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)",
+            recording: recording, undeclaredBundles: undeclared)
+    }
+
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let (invocation, values) = try parseArguments(arguments)
         // **ビルドの前に解く。** 行き先の誤りを、数分のビルドの後で知らせない (#3570)
@@ -108,8 +126,6 @@ enum RunCommand {
         if let notice = context.place.notice { print(notice) }
 
         let executable = try buildAndResolve(in: directory, context: context)
-        // **いまの宣言に無い包みは、子に探させない** (#4038)。置き場は共有なので、隣に古い包みや別のスケッチの包みが並ぶ
-        let undeclared = AssetScope.announced(context: context, executable: executable, package: directory)
         // 走らせるのは人なので、速さを名乗らせる。MCP サーバはここを通らない。
         // **名乗る名前は、いま走らせる構成と同じ値から出す**
         //
@@ -126,10 +142,8 @@ enum RunCommand {
         let launchedAt = Date()
         try launch(
             executable, in: directory,
-            environment: childEnvironment(
-                reportingRate: context.configurationName,
-                confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)",
-                recording: recording, undeclaredBundles: undeclared))
+            environment: runEnvironment(
+                for: executable, context: context, in: directory, recording: recording))
         // **記録を頼んだのに、この実行が書いていなければ、黙らない** (子が理由を言っている — 実時間の時計・
         // 行き先を開けない・別の実行が書いている)。在るかでは判らない: 前の回の完成品が残っているかもしれない
         if let recording, !recordWasWritten(at: recording, since: launchedAt) {

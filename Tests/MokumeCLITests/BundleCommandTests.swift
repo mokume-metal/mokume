@@ -1024,7 +1024,8 @@ struct BundleCommandTests {
             case .declaredNames, .mismatchedNames: []
             // 依存の名前が読めなければ、どの target のものでもない包みは依存のものも含めて全部入れ、名乗る (#4038)
             case .unanswered:
-                ["Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle", "mokume_MokumeCore.bundle", "demo_demo.bundle"]
+                // 直接の依存 `mokume` の包みは identity で説明できるので並べない (#4038 の反証・指摘 5)
+                ["Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle", "demo_demo.bundle"]
             }
         }
     }
@@ -1059,7 +1060,8 @@ struct BundleCommandTests {
              "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
              "targets":[
                {"name":"Demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
-                "dependencies":[{"product":["Foo","extras",null,null]}]}]}
+                "dependencies":[{"product":["Foo","extras",null,null]}]}],
+             "dependencies":[{"sourceControl":[{"identity":"mokume","productFilter":null}]}]}
             """
         let package = try #require(SwiftPM.package(inDumpOf: dump))
         var asked: [(arguments: [String], directory: URL)] = []
@@ -1102,8 +1104,8 @@ struct BundleCommandTests {
     }
 
     /// **古い包みの候補が無ければ、道具立てに問わない** (#4005 の 2 回目の反証)。隣に並ぶのがいまの宣言の
-    /// target の包みだけなら、`show-dependencies` を起こさない (依存の包みが並べば、残すかを依存の名前で
-    /// 決めるので問う・#4038)。
+    /// target の包みと、直接の依存の identity で説明できる包み (実物と同じく `mokume_MokumeCore.bundle`) だけなら、
+    /// `show-dependencies` を起こさない (#4038 の反証・指摘 3)。
     @Test("古い包みの候補が無ければ、依存の木を問わない")
     func noCandidatesAskNothing() throws {
         let root = try makeWorkspace()
@@ -1111,7 +1113,7 @@ struct BundleCommandTests {
         let executable = try makeBuildOutput(in: root)
         let bin = executable.deletingLastPathComponent()
         try FileManager.default.removeItem(at: bin.appendingPathComponent("demo_demo.bundle"))
-        for name in ["Sketch_Demo.bundle"] {
+        for name in ["Sketch_Demo.bundle", "mokume_MokumeCore.bundle"] {
             try FileManager.default.createDirectory(
                 at: bin.appendingPathComponent(name, isDirectory: true), withIntermediateDirectories: true)
         }
@@ -1120,7 +1122,8 @@ struct BundleCommandTests {
                 inDumpOf: """
                     {"name":"Sketch",
                      "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
-                     "targets":[{"name":"Demo","type":"executable"}]}
+                     "targets":[{"name":"Demo","type":"executable"}],
+                     "dependencies":[{"sourceControl":[{"identity":"mokume","productFilter":null}]}]}
                     """))
         var asked = 0
         let scope = BundleCommand.resourceScope(
