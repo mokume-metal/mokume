@@ -119,7 +119,9 @@ date -u '+%Y-%m-%dT%H:%M:%SZ'
 既に起動したゲートのジョブは取り込んだ値で動き続けるので、新しく起動するゲートのジョブから確認する。
 queue に複数の PR があるとき、同時刻に 2 本の `render` が別々の runner で走り、
 両方が事前チェックとテストを通ることを run の時刻と runner 名で確かめる。
-`render-pr` はこれまでどおり、merge group が残っていれば見送る。
+`render-pr` は、merge group があっても専用機の枠 (group の `render`・`render-pr`・定期の job) が
+2 本未満なら走る。merge group のゲートのジョブは `render-pr` が取る枠も数えて待つ
+(`scripts/render-turn.sh`「専用機の枠を数える」・#4018)。
 
 切り替え後 7 日の評価は #2252 の完了条件 4 に従う。開始待ち p50 が 5 分以下、
 並走した回の所要が単独の +25% 以内、GPU の打ち切り・ウィンドウのテストの失敗が増えないことを見る。
@@ -133,7 +135,9 @@ gh variable set RENDER_TURN_SLOTS --body 1 --repo mokume-metal/mokume
 gh variable get RENDER_TURN_SLOTS --repo mokume-metal/mokume
 ```
 
-新しく起動するゲートのジョブから、merge group を 1 本ずつ通す。実行中・待機中の job は
+新しく起動するゲートのジョブから、merge group を 1 本ずつ通す。runner が 2 本 online のままでも、
+先頭の merge group は走っている `render-pr` が終わるまでゲートの中で待ち (最大 30 分)、
+`render-pr` は merge group が 1 本でも残っていれば見送られる (#4018)。実行中・待機中の job は
 この変更だけでは止まらない。2 本目の runner 自体を止める場合は、変数を先に戻し、
 既に 2 を取り込んだゲートのジョブと専用機のキューに入った job が終わってから、専用機で実行する。
 

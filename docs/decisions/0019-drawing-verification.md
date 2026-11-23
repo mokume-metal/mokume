@@ -255,7 +255,7 @@ CPUだけで判定する図形の全探索のうち、#3338で列挙した座標
 - `render-pr` は、merge_group の run が残っていて専用機の枠が埋まっていれば見送る (枠の数え方は下の「改訂 (2026-11-24)」)。必須ではないので merge の可否は変わらない (代償: queue が混んでいる間は、PR の時点で早く気付く情報が出ない。**例の絵の前後の比較 (#1986) を持つのは `render-pr` だけ**なので、実装だけが変わって絵が古くなったことの名指しもその間は出ない。見送りは run の要約に名乗る)
 - 定期の検査 (D) は、merge_group の run が残っている間は待つ
 
-**門番が判断するのは、専用機へ積む前の 1 回だけである。** merge queue が空いている間に門番を通って専用機の queue に入った job は、後から group ができても引き下がらない。2026-10-04 には 08:38 と 08:50 に積まれた `render-pr` 2 本が、08:53 に積まれた先頭の `render` より先に拾われた。先頭は 37 分待ち、queue の期限の 22 分前に人の手の cancel で解けた ([#2064](https://github.com/mokume-metal/mokume/issues/2064))。そこで、group ができる瞬間と PR が外れる瞬間に走る `queue-sweep` (GitHub ホスト・`actions: write` を既に持つ) が、**専用機でまだ拾われていない `render-pr` の run を cancel する** (判断は `scripts/queue-sweep.sh`)。既に走っている `render-pr` は止めない。cancel するのは `render.yml` の今の group の run が残っているときだけで (門番が見送りに使うのと同じ範囲)、待たせる相手が居なければ触らない。`queue-sweep` の `actions: write` が cancel する相手は、捨てられた group の run から、生きている PR の `render-pr` の run へ広がった。失う情報は、上の「見送る」で既に受け入れたものと同じである。ただし見送りと違い、cancel された PR の run には理由が残らない (`cancelled` とだけ出る)。理由は、その時刻の `queue-sweep` の run の出力に出る。
+**門番が判断するのは、専用機へ積む前の 1 回だけである。** merge queue が空いている間に門番を通って専用機の queue に入った job は、後から group ができても引き下がらない。2026-10-04 には 08:38 と 08:50 に積まれた `render-pr` 2 本が、08:53 に積まれた先頭の `render` より先に拾われた。先頭は 37 分待ち、queue の期限の 22 分前に人の手の cancel で解けた ([#2064](https://github.com/mokume-metal/mokume/issues/2064))。そこで、group ができる瞬間と PR が外れる瞬間に走る `queue-sweep` (GitHub ホスト・`actions: write` を既に持つ) が、**専用機でまだ拾われていない `render-pr` の run を cancel する** (判断は `scripts/queue-sweep.sh`)。既に走っている `render-pr` は止めない。cancel するのは `render.yml` の今の group の run が残っているときだけで (門番が見送りに使うのと同じ範囲)、待たせる相手が居なければ触らない (cancel するのは runner の枠を越える分だけ・下の「改訂 (2026-11-24)」)。`queue-sweep` の `actions: write` が cancel する相手は、捨てられた group の run から、生きている PR の `render-pr` の run へ広がった。失う情報は、上の「見送る」で既に受け入れたものと同じである。ただし見送りと違い、cancel された PR の run には理由が残らない (`cancelled` とだけ出る)。理由は、その時刻の `queue-sweep` の run の出力に出る。
 
 **見直すのは、group ができた瞬間と外れた瞬間だけである。** その後に門番を通らずに専用機へ積まれた `render-pr` は、次の契機まで残る。門番が API を読めずに通した回や、人が job 単位で rerun した回である。「先頭の `render` が待つ間、専用機の queue に他の job を置かない」を常に守るには、拾われる直前に専用機の job の中で判定し直すしかない。だがそれには専用機の job に token を渡すか、token なしで外の API を引く必要がある (#2064 の案 A)。token を渡すのは、上の「専用機のジョブは権限も秘密も持たない」にぶつかる。token なしでも公開リポジトリの run は読めるが、API の回数の制限 (送り元の IP ごとに 1 時間 60 回) を専用機の job すべてで分け合うことになり、使い切った回は判定できない。外向きの通信は開けてあるので、ネットワークの側は妨げない (上の前提・下の「「ネットワークで隔離」は LAN の側だけ」)。そこで、取り合いの大半を占める「queue が空いている間に積まれた分」を、GitHub ホストの側で group ができる瞬間に退かせるところで止めた。
 
@@ -273,17 +273,31 @@ runner は同じユーザー・同じ画面のセッションで 2 本にする 
 
 **代償**: 専用機の GPU と画面のセッションを 2 本の job が分け合う。1 プロセスの中の並列の幅は 1 のまま (`scripts/gpu-slot.py`「並列の幅」) で、増えるのはプロセスの数 (最大 2) だけだが、専用機で GPU の検査を 2 プロセス同時に走らせた実績は無い。ウィンドウを開く検査が同じ画面で重なる。門番の 1 周の API の呼び出しは N=2 で 2 倍 (1 時間 240 件) になる。退けた案: 門番を外して runner の数だけに任せる — group と render-pr が N 本を越えて積まれると、#2062 の取り合いが runner の数だけ緩んで残る。
 
-#### 改訂 (2026-11-24) — 門番は走っている `render-pr` も枠に数え、空いた枠で `render-pr` を走らせる ([#4018](https://github.com/mokume-metal/mokume/issues/4018))
+#### 改訂 (2026-11-24) — 門番は `render-pr` が取る枠も数え、空いた枠で `render-pr` を走らせる ([#4018](https://github.com/mokume-metal/mokume/issues/4018))
 
-**決定**: `yield` は、merge_group の run が無ければ今までどおり通す。あれば、その数と走っている (queued + in_progress) `render-pr` の job の合計が N 本未満のときだけ通す。`merge_group` の門番も、前の group に加えて走っている `render-pr` を枠に数え、合計が N 本未満になるまで待つ (先頭の group も `render-pr` は数える)。これで上の不変条件 (専用機に積まれた job が runner の数を越えない) を、`render-pr` が枠を取る場合にも保つ。N=1 の `yield` の結論は変わらない。`wait` と古い head の判定 (#3551) は変えない。判断は `scripts/render-turn.sh` が持つ。
+**決定**: 門番は、専用機の枠を job の名前ではなく render.yml の run ごとに数える。終わっていない run のうち、専用機の job (ラベル `mokume-render`) が終わっていなければその数だけ、終わっていない job が 1 本も無いのに run が終わっていなければ (門番が通してから専用機の job が一覧に出るまでの数秒) 1 本、枠を取っていると数える。ホストの job だけが走っている run (門番の中・起票) は取っていない。判断は `scripts/render-turn.sh` が持つ。
 
-**理由**: runner を 2 本にした後も `yield` は N を見ず、merge_group の run が 1 本でも残っていれば見送っていた。2026-11-01〜11 の PR の `render` の run 60 本のうち 48 本で `render-pr` が見送られ、枠が空いていても走らなかった。見送られると PR の時点で専用機の検査の結果が分からず、赤は queue に入って初めて分かり、group の組み直しが起きる。2026-11-01〜24 の merge_group の `render` の赤のうち、その PR の `render-pr` が見送られていたものは 9 件 (PR 6 本) で、うち 2 件は赤の後に PR 側を直してから merge された (#4018 の本文に run の URL つき)。merge_group の門番だけを数えずに `yield` だけを N に合わせると、`render-pr` が 1 本走る間に group が N 本来たとき、専用機に積まれる job が N+1 本になる。
+- `yield` は、merge_group の run が無ければ今までどおり通す。あれば、その数と、`render-pr` と定期の job が取っている枠の合計が N 本未満のときだけ通す。必須でない `render-pr` のために、group の `render` と定期の job の上へ N+1 本目を積まない。枠を読めなければ、引き直さずに見送る (以前の結論と同じ。「判定できないときは通す」の理由は必須でない `render-pr` には当たらない)。N=1 の `yield` の結論は変わらない
+- `merge_group` の門番は、前の group に加えて `render-pr` が取っている枠を数え、合計が N 本未満になるまで待つ (先頭の group も数える)。定期の job は今までどおり数えない (下の「queue の期限を 60 分から約 95 分へ延ばす」で、割り込みうる 1 本として受け入れてある)。読めなければ今までどおり引き直してから通す
+- `queue-sweep` は、まだ拾われていない `render-pr` のうち、runner の枠を越える分だけを cancel する。今の group の run の数と走っている `render-pr` の数を N から引き、残った枠の数だけ古い run から残す。N=1 なら今のグループがある限り全部 cancel する (上の #2064 と同じ)
+- `wait` と古い head の判定 (#3551) は変えない
 
-**merge_group の run が無い間は `render-pr` を数えない。** 待たせる相手が居ないからで、その間に積まれた `render-pr` は、拾われる前に group ができれば `queue-sweep` が cancel し (上の #2064)、走っていれば merge_group の門番が数えて待つ。
+これで上の不変条件 (専用機に積まれた job が runner の数を越えない) を、`render-pr` が枠を取る場合にも保つ。
 
-**代償**: `render-pr` が枠を取っている間に来た group の `render` は、`render-pr` の 1 本分 (最大 30 分) 門番で待ちうる。入れてから 7 日、`render-pr` の見送り率と merge_group の `render` の待ち (run の作成から専用機で走り出すまで) の p50・p90 を測り、p90 が 10 分を越えたら戻す。merge_group の門番の 1 周の API の呼び出しは、前の group が N 本未満のときに `render-pr` を数える分 (2 + 終わっていない pull_request の run の数) 増える。2 本の PR の門番が同時に空き枠を見ると、どちらも通りうる (積まれた後は merge_group の門番が数えるので、group の `render` が専用機の queue で抜かれる形にはならない)。
+**理由**: runner を 2 本にした後も `yield` は N を見ず、merge_group の run が 1 本でも残っていれば見送っていた。2026-11-01〜11 の PR の `render` の run 60 本のうち 48 本で `render-pr` が見送られ、枠が空いていても走らなかった。見送られると PR の時点で専用機の検査の結果が分からず、赤は queue に入って初めて分かり、group の組み直しが起きる。2026-11-01〜24 の merge_group の `render` の赤のうち、その PR の `render-pr` が見送られていたものは 9 件 (PR 6 本) で、うち 2 件は赤の後に PR 側を直してから merge された (#4018 の本文に run の URL つき)。`yield` だけを N に合わせると、`render-pr` が 1 本走る間に group が N 本来たとき、専用機に積まれる job が N+1 本になる。run ごとに数えるのは、job の名前で数えると定期の job と、門番が通してから job が現れるまでの隙間を見落とすためである (上の「待つ相手は run で見る」と同じ理由)。
 
-**退けた案**: group が来たら走っている `render-pr` を取り消して枠を譲る — 仕組みが増え、塞ぐ実害を示せていない。
+**merge_group の run が無い間の `yield` は数えない。** 待たせる相手が居ないからで、その間に積まれた `render-pr` は、拾われる前に group ができて枠を越えれば `queue-sweep` が cancel し、走っていれば merge_group の門番が数えて待つ。
+
+**代償と残る重なり**:
+
+- `render-pr` が枠を取っている間に来た group の `render` は、`render-pr` の 1 本分 (最大 30 分) 門番で待ちうる。N=1 では、先頭の group も走っている `render-pr` を待つ (以前は待たずに積まれ、専用機の queue で同じだけ待った。runner が 2 本 online のまま変数を 1 に戻すと、空いた runner があっても待つ)
+- 入れてから 7 日、`render-pr` の見送り率と merge_group の `render` の待ち (run の作成から専用機で走り出すまで) の p50・p90 を測り、p90 が 10 分を越えたら戻す
+- 2 本の PR の `yield` が同時に読むと、互いの run を門番の中と読むので、同じ空き枠に 2 本とも通りうる。積まれた後は merge_group の門番が両方を数えて待つので、group の `render` が専用機の queue で抜かれる形にはならない
+- merge_group の門番は定期の job を数えないので、group の `render` と定期の job が重なる形は今までどおり残る (`render-pr` がそこへ足されることは `yield` が塞ぐ)
+- 門番が隙間の run を数えるので、go=false で見送った run も `render-pr` が skipped で現れるまでの数秒は枠を取っていると数える (数え過ぎで、次の周で解ける)
+- 1 周の API の呼び出しは、枠を数える回に 2 + (数える種類の終わっていない run の数) 件増える
+
+**退けた案**: group が来たら走っている `render-pr` を取り消して枠を譲る — 仕組みが増え、塞ぐ実害を示せていない。`queue-sweep` の cancel は、まだ拾われていない `render-pr` のうち枠を越える分に限るので、この案とは違う。
 
 #### queue の期限を 60 分から約 95 分へ延ばす ([#3502](https://github.com/mokume-metal/mokume/issues/3502))
 

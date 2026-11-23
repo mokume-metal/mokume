@@ -57,9 +57,11 @@
 #      キューに入った render-pr や後ろの group の render に抜かれ続け、95 分のタイムアウトで外される。
 #      render.yml のゲートのジョブ (render-turn) がキューに入る順番を絞るので、普段は起きない。起きたら
 #      ゲートのジョブが効いていない (render-turn が失敗) か、ゲートのジョブより前にキューに入った job が残っている。
-#      render-pr は空いた runner でだけ走り、merge_group のゲートは走っている render-pr も runner の数に
-#      数えて待つ (#4018) ので、render-pr が runner を埋めている間の render はゲートの中で待ち、専用機の
-#      queued には並ばない。下の runner-offline の判定は、render-pr も専用機の job として数える。
+#      render-pr は group があっても空いた runner で走り、merge_group のゲートは render-pr が取る枠も
+#      数えて待つ (#4018)。それでも先頭の render が専用機の queued に並びうるのは、ゲートが数えない定期の
+#      scheduled-* が runner を取っているとき、2 本の PR のゲートが同時に同じ空き枠を見て両方の render-pr が
+#      積まれたとき、ゲートが上限か API の読めない回で通したときである。下の runner-offline の判定は、
+#      render-pr も専用機の job として数える。
 #      ゲートのジョブより前にキューに入った render-pr のうち、まだ拾われていないものは、group ができた
 #      瞬間に queue-sweep が cancel する (#2064)。残りうるのは、走っている render-pr と
 #      定期の scheduled-* (1 本まで・キャンセルできない) と、queue-sweep が失敗で掃除できなかった回
