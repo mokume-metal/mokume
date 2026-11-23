@@ -26,6 +26,8 @@ protocol UnreproducibleSink: AnyObject, Sendable {
 /// 外のモジュール (音) が、記録している実行・流している実行へ名乗る口 (#3575)。
 ///
 /// 受け手は ``LaunchingSketch/replay`` で、`setup()`・`draw()`・入力のコールバックと、そこで起動した `Task` から届く。
+/// その外 (`Task.detached`・GCD のブロック) でスケッチの実体から呼んだ読みには、スケッチの側の入口が実体に結ばれた実行の
+/// 受け手を差す (``SketchPart/withReplayReceiver(_:)``)。部品や面の API を直に外から呼んだ読みには届かない (#4144)。
 ///
 /// ## 資源のハッシュ (#4092)
 ///
