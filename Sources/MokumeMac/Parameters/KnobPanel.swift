@@ -60,6 +60,8 @@ struct KnobPanel: View {
     var warnings: WarningFeed?
     /// 畳んでいるか (#4137)。`nil` なら畳めない面として描く。
     var state: KnobPanelState?
+    /// 手の操作を積む履歴 (#4124)。`nil` なら積まない。
+    var history: KnobHistory?
     /// 畳む・開くボタンが押されたとき。**値を替えるのは受け取った側** — 替えた後に枠の大きさを測り直す
     /// 必要があり、それは面を重ねる側 (``KnobOverlay``) にしかできない。
     var toggle: (() -> Void)?
@@ -104,7 +106,7 @@ struct KnobPanel: View {
                     if !boxes.isEmpty { Divider() }
                 }
                 ForEach(Array(boxes.enumerated()), id: \.offset) { _, box in
-                    KnobRow(box: box)
+                    KnobRow(box: box, history: history)
                 }
             }
             .padding(12)
@@ -183,6 +185,7 @@ private struct NumbersReadout: View {
 /// 宣言 1 つぶんの行。
 private struct KnobRow: View {
     let box: any DeclaredParam
+    let history: KnobHistory?
 
     var body: some View {
         // **ここで正典を読む。** 読むこと自体が購読なので、値が変われば行だけが引き直る
@@ -203,12 +206,18 @@ private struct KnobRow: View {
 
     /// 実数のスライダー。**刻みを書いていれば刻みで動き、書いていなければ連続で動く** — 値は
     /// 刻みへ丸めない (外からの書き込み・保存の復元・コードからの代入は、ウィンドウの外の入口である)。
+    ///
+    /// **掴んでから離すまでを履歴の 1 段にする** (#4124) — 途中の値は積まない。
     @ViewBuilder
     private func slider(value: Binding<Double>, in range: ParamRange, step: Double?) -> some View {
+        let editing = KnobBinding.editing(box, history: history)
         if let step {
-            Slider(value: value, in: range.lowerBound...range.upperBound, step: step)
+            Slider(
+                value: value, in: range.lowerBound...range.upperBound, step: step,
+                onEditingChanged: editing)
         } else {
-            Slider(value: value, in: range.lowerBound...range.upperBound)
+            Slider(
+                value: value, in: range.lowerBound...range.upperBound, onEditingChanged: editing)
         }
     }
 
@@ -216,25 +225,29 @@ private struct KnobRow: View {
     private func control(for declaration: ParamDeclaration) -> some View {
         switch KnobKind.forDeclaration(declaration) {
         case .slider(let range, let step):
-            slider(value: KnobBinding.number(box, declaration.value), in: range, step: step)
+            slider(
+                value: KnobBinding.number(box, declaration.value, history: history), in: range,
+                step: step)
         case .steppedSlider(let range):
-            Slider(
-                value: KnobBinding.number(box, declaration.value),
-                in: range.lowerBound...range.upperBound, step: 1)
+            slider(
+                value: KnobBinding.number(box, declaration.value, history: history), in: range,
+                step: 1)
         case .toggle:
-            Toggle("", isOn: KnobBinding.flag(box))
+            Toggle("", isOn: KnobBinding.flag(box, history: history))
                 .labelsHidden()
         case .color:
-            ColorPicker("", selection: KnobBinding.color(box))
+            ColorPicker("", selection: KnobBinding.color(box, history: history))
                 .labelsHidden()
         case .components(let count, let range, let step):
             VStack(spacing: 2) {
                 ForEach(0..<count, id: \.self) { index in
-                    slider(value: KnobBinding.component(box, at: index), in: range, step: step)
+                    slider(
+                        value: KnobBinding.component(box, at: index, history: history),
+                        in: range, step: step)
                 }
             }
         case .choice(let choices):
-            Picker("", selection: KnobBinding.text(box)) {
+            Picker("", selection: KnobBinding.text(box, history: history)) {
                 ForEach(choices, id: \.self) { Text($0).tag($0) }
             }
             .labelsHidden()

@@ -21,28 +21,37 @@ import SwiftUI
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 enum KnobBinding {
     /// 数。整数の宣言には整数として書き戻す。
-    static func number(_ box: any DeclaredParam, _ current: ParamValue) -> Binding<Double> {
+    ///
+    /// `history` を渡せば、掴んでいない間の書き込み (クリックで飛ばす・キー操作) を 1 段として積む。
+    /// 掴んでいる間は積まず、離したときに ``editing(_:history:)`` が 1 段にする (#4124)。
+    static func number(
+        _ box: any DeclaredParam, _ current: ParamValue, history: KnobHistory? = nil
+    ) -> Binding<Double> {
         let isInteger = current.isInteger
         return Binding(
             get: { box.declaration.value.asDouble ?? 0 },
-            set: { _ = box.write(isInteger ? .int(Int(roundingAndSaturating: $0)) : .float($0)) })
+            set: {
+                write(box, isInteger ? .int(Int(roundingAndSaturating: $0)) : .float($0), history)
+            })
     }
 
-    static func flag(_ box: any DeclaredParam) -> Binding<Bool> {
+    static func flag(_ box: any DeclaredParam, history: KnobHistory? = nil) -> Binding<Bool> {
         Binding(
             get: { if case .bool(let value) = box.declaration.value { value } else { false } },
-            set: { _ = box.write(.bool($0)) })
+            set: { write(box, .bool($0), history) })
     }
 
-    static func text(_ box: any DeclaredParam) -> Binding<String> {
+    static func text(_ box: any DeclaredParam, history: KnobHistory? = nil) -> Binding<String> {
         Binding(
             get: { if case .string(let value) = box.declaration.value { value } else { "" } },
-            set: { _ = box.write(.string($0)) })
+            set: { write(box, .string($0), history) })
     }
 
     /// 組の 1 成分。**他の成分は読み直した値をそのまま置く** — ウィンドウが組を丸ごと持つと、
     /// 外から 1 成分だけ書き換えられたときに古い成分で上書きしてしまう。
-    static func component(_ box: any DeclaredParam, at index: Int) -> Binding<Double> {
+    static func component(
+        _ box: any DeclaredParam, at index: Int, history: KnobHistory? = nil
+    ) -> Binding<Double> {
         Binding(
             get: { Double(box.declaration.value.component(at: index) ?? 0) },
             set: { moved in
@@ -50,20 +59,53 @@ enum KnobBinding {
                 else { return }
                 components[index] = Float(moved)
                 guard let value = ParamValue(components: components) else { return }
-                _ = box.write(value)
+                write(box, value, history)
             })
     }
 
     /// 色。**作業空間の値と画面の色の変換は境界の 1 箇所** ([ADR-0011] 決定 3・4) を通す。
     ///
+    /// 色のパネルは値を流し続けるだけで操作の終わりを知らせないので、書き込みが途切れるまでを 1 段にする
+    /// (``KnobHistory/recordContinuous(name:before:after:)``)。
+    ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-    static func color(_ box: any DeclaredParam) -> Binding<Color> {
+    static func color(_ box: any DeclaredParam, history: KnobHistory? = nil) -> Binding<Color> {
         Binding(
             get: {
                 guard case .color(let value) = box.declaration.value else { return .clear }
                 return KnobColor.display(of: value)
             },
-            set: { _ = box.write(.color(KnobColor.working(of: $0))) })
+            set: { write(box, .color(KnobColor.working(of: $0)), history, continuous: true) })
+    }
+
+    /// スライダーを掴んだ・離した (`Slider` の `onEditingChanged`)。掴んでから離すまでを 1 段として積む。
+    static func editing(_ box: any DeclaredParam, history: KnobHistory?) -> (Bool) -> Void {
+        { began in
+            guard let history else { return }
+            let declaration = box.declaration
+            if began {
+                history.beginGesture(name: declaration.name, value: declaration.value)
+            } else {
+                history.endGesture(name: declaration.name, value: declaration.value)
+            }
+        }
+    }
+
+    /// 書いて、書く前と後の値を履歴に積む。**後の値は書いた後に読み直す** — 収めた値 (範囲の端) を
+    /// 積まないと、やり直したときに収める前の値を書くことになる。
+    private static func write(
+        _ box: any DeclaredParam, _ value: ParamValue, _ history: KnobHistory?,
+        continuous: Bool = false
+    ) {
+        let before = box.declaration.value
+        _ = box.write(value)
+        guard let history else { return }
+        let after = box.declaration
+        if continuous {
+            history.recordContinuous(name: after.name, before: before, after: after.value)
+        } else {
+            history.record(name: after.name, before: before, after: after.value)
+        }
     }
 }
 

@@ -102,6 +102,15 @@ final class SketchSurface: NSView {
     /// (``followWindowFocus()``)。
     fileprivate var announcedFocus = true
 
+    /// 重ねたつまみの手の操作の履歴 (#4124)。**⌘Z / ⇧⌘Z は、戻せる (やり直せる) 段があるときだけここで
+    /// 消費し、スケッチへ配らない** — 常に配ると、作品が `z` に割り当てた動作と同時に起きる。段が無いとき・
+    /// つまみが無いときは、いままでどおりスケッチへ配る。つまみの面を重ねる側が渡す。
+    var knobHistory: KnobHistory?
+
+    /// ⌘Z / ⇧⌘Z として消費したキー。**対になる解放も配らない** — 押下を配っていないキーの解放だけが
+    /// スケッチへ届く。
+    fileprivate var consumedKeys: Set<Key> = []
+
     /// - Parameter acceptsFileDrops: ファイルのドロップを受けるか。**自前のウィンドウと道具のウィンドウは受ける** (既定)。
     ///   **ホストのアプリへ埋め込む面 (``SketchView``) は受けない** — ウィンドウはホストのもので、ホスト側のドロップと
     ///   取り合わない。受けるのは macOS の自前のウィンドウだけである。
@@ -506,6 +515,13 @@ extension SketchSurface {
 
     override func keyDown(with event: NSEvent) {
         let code = Key(rawValue: Int(event.keyCode))
+        if consumesKnobUndo(event) {
+            consumedKeys.insert(code)
+            return
+        }
+        // 配る押下なら、前に消費した印を外す — 退いている間に離して解放が届かなかった印が残ると、この押下の
+        // 解放まで配らなくなる
+        consumedKeys.remove(code)
         // **Escape は捕まえを外してから、普通のキーとして配る** (#1144)。外すのはウィンドウの側なので、
         // 子が居なくても・スケッチが止まっていても (`noLoop()`) 効く
         if code == .escape { pointerLock.releaseByUser() }
@@ -513,7 +529,44 @@ extension SketchSurface {
     }
 
     override func keyUp(with event: NSEvent) {
-        deliver(.keyUp(code: Key(rawValue: Int(event.keyCode))))
+        let code = Key(rawValue: Int(event.keyCode))
+        if consumedKeys.remove(code) != nil { return }
+        deliver(.keyUp(code: code))
+    }
+
+    /// つまみの履歴への ⌘Z / ⇧⌘Z。
+    enum KnobUndoCommand: Equatable {
+        case undo
+        case redo
+    }
+
+    /// 押されたキーが ⌘Z (戻す) か ⇧⌘Z (やり直す) か。どちらでもなければ `nil`。
+    ///
+    /// **文字で決める** (`charactersIgnoringModifiers`)。キーの番号で決めると、配列が違うキーボードで
+    /// Z ではないキーが戻すことになる。⌃・⌥ を伴えば別のキーとして扱う。
+    static func knobUndoCommand(
+        charactersIgnoringModifiers characters: String?, flags: NSEvent.ModifierFlags
+    ) -> KnobUndoCommand? {
+        guard characters?.lowercased() == "z" else { return nil }
+        let held = flags.intersection([.command, .shift, .control, .option])
+        switch held {
+        case [.command]: return .undo
+        case [.command, .shift]: return .redo
+        default: return nil
+        }
+    }
+
+    /// ⌘Z / ⇧⌘Z をつまみの履歴で消費したか。戻せる段が無ければ消費しない。
+    private func consumesKnobUndo(_ event: NSEvent) -> Bool {
+        guard let knobHistory,
+            let command = Self.knobUndoCommand(
+                charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+                flags: event.modifierFlags)
+        else { return false }
+        switch command {
+        case .undo: return knobHistory.undo()
+        case .redo: return knobHistory.redo()
+        }
     }
 
     /// 修飾キー (Shift・Control・Option・Command) の押下と解放。**AppKit は `keyDown` ではなく
