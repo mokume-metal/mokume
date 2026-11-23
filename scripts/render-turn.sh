@@ -7,6 +7,7 @@
 #   render-turn.sh merge_group <base sha> [<base ref>]
 #   render-turn.sh yield
 #   render-turn.sh wait
+#   render-turn.sh slots <event>[|<event>...]
 #
 # 専用機は 1 台 (runner は RENDER_TURN_SLOTS 本・下の「並走の数」) で、必須の render (merge_group)・情報の render-pr (pull_request)・定期の
 # scheduled-* (schedule) が取り合う。**runner は queued の job を先着順に拾わない。**
@@ -35,6 +36,9 @@
 #                の今の先端と違えば、同じく go=false で見送る (下の「古い head」)
 #   wait         merge_group の run が 1 本でも終わっていなければ、終わるまで待つ
 #                (scheduled-* は見送らずに後ろへ回す)
+#   slots        門番ではない。下の「専用機の枠を数える」の数え方で、指定した event の run が取って
+#                いる枠を 1 本 1 行で出して終わる。queue-sweep.sh が、門番と同じ数え方で render-pr を
+#                残すか退かせるかを決めるために呼ぶ
 #
 # 待つ相手は render job ではなく **run** で見る。group の run は門番で待っている間も
 # in_progress なので、「専用機に積まれる予定の render」まで数えられる。job で見ると、
@@ -61,23 +65,33 @@
 # 走っている間に group が N 本来たとき、専用機に積まれる job が N+1 本になり、上の不変条件が
 # 破れる。
 #
-# 枠は job の名前ではなく、render.yml の run ごとに数える (runner_slots)。終わっていない run の
-# うち:
-#   - 専用機の job (ラベル mokume-render) が終わっていなければ、その数だけ取っている
-#   - 終わっていない job が 1 本も無いのに run が終わっていなければ、1 本取っていると数える。
-#     門番が通してから専用機の job が一覧に現れるまでの数秒 (と、job の間の隙間) で、ここを数えないと
-#     yield が通した直後の render-pr を後ろの group の門番が見落とし、両方が積まれる。go=false の
-#     run も render-pr が skipped で現れるまでの数秒は数えられるが、数え過ぎは次の周で解ける
-#   - GitHub ホストの job (門番・起票) だけが走っている run は取っていない
-# 自分の run (GITHUB_RUN_ID) は数えない。自分の門番は走っているので普通は数えられないが、
-# 門番の後ろの専用機の job を GitHub が先に一覧へ出す場合にも、自分を数えないためである。
+# 枠は job の名前ではなく、render.yml の run ごとに数える (runner_slots)。**数え方はここ 1 か所に
+# 置き、queue-sweep.sh も slots の mode で同じ実装を呼ぶ** (門番と掃除が別々に数えて食い違った)。
+# job が「走っている」のは status が queued か in_progress のときだけ (stall-watch.sh と同じ語。
+# needs や concurrency で待つ waiting・pending の job は runner を取っていない)。終わっていない
+# run (queued・in_progress) のうち:
+#   - 専用機の job (ラベル mokume-render) が走っていれば、その数だけ取っている
+#   - 走っている job が 1 本も無いのに run が終わっていなければ、1 本取っていると数える (門番の後。
+#     まだ走っていない専用機の job があればその名前で出す)。門番が通してから専用機の job が queued に
+#     なるまでの数秒 (と、job の間の隙間) で、ここを数えないと yield が通した直後の render-pr を後ろの
+#     group の門番が見落とし、両方が積まれる。go=false の run も render-pr が skipped で現れるまでの
+#     数秒は数えられるが、数え過ぎは次の周で解ける。待つ job が何本並んでいても run 1 本で 1 枠
+#   - pull_request の run で、門番 (ホストの job) が走っていて専用機の job がまだ走っていなければ、
+#     1 本取っていると数える (門番の中)。yield はその場で結論を出すので、通るかもしれない 1 本を
+#     数えておかないと、yield が読んでから通すまでの間に読んだ merge_group の門番が見落とす。
+#     見送られれば次の周で数えなくなる
+#   - それ以外 (定期の門番 wait だけが走っている・専用機の job が終わり後続のホストの job だけが
+#     走っている) は取っていない。定期の門番は最大 60 分待つので、数えると group を長く止める
+# 自分の run (GITHUB_RUN_ID) は数えない。自分の門番は走っているので、除かないと yield が自分を
+# 門番の中と数える。
 #
 # 数える run の種類は mode で違う:
 #   - merge_group は pull_request の run (render-pr) だけを数える。定期の scheduled-* は数えない
 #     — 割り込みうる 1 本として queue の期限で受け入れてある (下の「上限」・ADR-0019 決定 7 の
 #     「queue の期限を 60 分から約 95 分へ延ばす」)
 #   - yield は pull_request と schedule の run を数える。必須でない render-pr のために、定期の job と
-#     group の render の上へ N+1 本目を積まない
+#     group の render の上へ N+1 本目を積まない。queue-sweep.sh も同じ 2 種類で数え、yield なら
+#     見送る render-pr を残さない
 #
 # **merge_group の run が無い間の yield は、数えずに通す** (N=1 では今までと同じ結論)。
 # 待たせる相手が居ないからで、その間に積まれた render-pr は、拾われる前に group ができて
@@ -87,10 +101,20 @@
 # (以前は待たずに積まれ、専用機の queue で待った)。入れてから 7 日、merge_group の render の
 # 待ちの p90 を測り、10 分を越えたら戻す (#4018)。
 #
-# 残る競合は、2 本の PR の yield が同時に読む場合だけである。どちらも相手の run を門番の中
-# (ホストの job が走っている) と読むので、同じ空き枠に 2 本とも通りうる。積まれた後は
-# merge_group の門番が両方を数えて待つので、group の render が専用機の queue で抜かれる形には
-# ならない。
+# yield は merge_group の run を run の状態で数える (merge_group の門番が前の group を数えるのと
+# 同じ)。group の render が終わった後もホストの後続 (render-notice-report は concurrency で前の
+# run を待ちうる) が走る間は枠を取っていると数え、空いた runner があっても render-pr を見送る
+# (見送りの側に倒れる・短い間)。
+#
+# 残る重なり:
+#   - merge_group の門番は定期の job を数えないので、定期の job が走っている間は group の render と
+#     合わせて N+1 本になりうる (上のとおり受け入れた割り込み)。queue-sweep は group ができた時点で
+#     定期の job も数え、枠を越える queued の render-pr を退かせるので、render-pr がそこへ重なる形は
+#     その時点で解く
+#   - 2 本の PR の yield と merge_group の門番は、互いの run が一覧に現れる前に読めば相手を数えない
+#     (run の作成から一覧に出るまでの数秒)。現れた後は、門番の中・門番の後・走っている job の
+#     どれかで数える
+#   - API の上限で門番が待たずに通した回・読めずに通した回 (下の「判定できないときは通す」)
 #
 # ## 古い head (yield・#3551)
 #
@@ -177,7 +201,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
 
 usage() {
-  sed -n '7,9p' "${BASH_SOURCE[0]}" | sed 's/^# *//' >&2
+  sed -n '7,10p' "${BASH_SOURCE[0]}" | sed 's/^# *//' >&2
 }
 
 case "${1:-}" in
@@ -205,6 +229,14 @@ case "${1:-}" in
       exit 2
     }
     mode=wait limit_default=60
+    ;;
+  slots)
+    # 数える run の event を | で区切った並び (例: pull_request|schedule)。正規表現に入るので語を絞る
+    [ $# -eq 2 ] && [ -n "$2" ] && [[ "$2" != *[!a-z_\|]* ]] || {
+      usage
+      exit 2
+    }
+    mode=slots events=$2 limit_default=0
     ;;
   *)
     usage
@@ -282,30 +314,58 @@ unreadable() { # $1=何を読めなかったか
 }
 
 # 専用機の枠を取っている render.yml の run を、取っている枠 1 本につき 1 行
-# 「<id> <head_branch> (<専用機の job の名前、または「門番の後」>)」で出す (上の「専用機の枠を数える」)。
-# $1 は数える run の event を | で区切った並び。読めなければ非 0
+# 「<id> <event> <head_branch> <何が取っているか> [<job の status>]」で出す (上の「専用機の枠を数える」)。
+# 何が取っているかは、専用機の job の名前 (status つき)・「門番の中」・「門番の後」・「読めなかった」。
+# $1 は数える run の event を | で区切った並び。**queue-sweep.sh も slots の mode でこれを呼ぶ** —
+# 門番と掃除が別々に数えると、片方が通した render-pr を片方が枠の外と読む。
+# run の一覧を読めなければ何も出さずに非 0、jobs を読めない run があれば「読めなかった」の行を出して
+# 残りを数え、非 0 で返す
 runner_slots() {
-  local events=$1 active got runs="" id branch slots slot
+  local events=$1 active got runs="" id event branch slots slot failed=0
   for active in $ACTIVE_STATUSES; do
     got=$(gh api "$RUNS?status=$active&per_page=100" \
-      --jq ".workflow_runs[] | select(.event | test(\"^($events)\$\")) | \"\(.id) \(.head_branch)\"") ||
+      --jq ".workflow_runs[] | select(.event | test(\"^($events)\$\")) | \"\(.id) \(.event) \(.head_branch)\"") ||
       return 1
     runs+="$got"$'\n'
   done
-  while read -r id branch; do
+  while read -r id event branch; do
     [ -n "$id" ] && [ "$id" != "${GITHUB_RUN_ID:-}" ] || continue
-    slots=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
-      --jq '[.jobs[] | select(.status != "completed")] as $open
-        | [$open[] | select((.labels // []) | index("mokume-render"))] as $runner
-        | if ($runner | length) > 0 then $runner[] | .name
-          elif ($open | length) == 0 then "門番の後"
-          else empty end') || return 1
-    [ -n "$slots" ] || continue
+    # job の status は queued と in_progress だけを「走っている」と読む (stall-watch.sh の runner_jobs と
+    # 同じ語)。needs や concurrency で待つ job (waiting・pending) は runner を取っていない
+    if ! slots=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+      --jq '[.jobs[] | select(.status == "queued" or .status == "in_progress")] as $active
+        | [.jobs[] | select((.labels // []) | index("mokume-render"))] as $runner
+        | [$active[] | select((.labels // []) | index("mokume-render"))] as $busy
+        | if ($busy | length) > 0 then $busy[] | "\(.name) \(.status)"
+          elif ($active | length) == 0 then
+            ([$runner[] | select(.status != "completed")] | first
+              | if . then "\(.name) \(.status)" else "門番の後" end)
+          elif ([$runner[] | select(.status == "completed")] | length) == 0 then "門番の中"
+          else empty end'); then
+      echo "$id $event $branch 読めなかった"
+      failed=1
+      continue
+    fi
     while IFS= read -r slot; do
-      echo "$id $branch ($slot)"
+      [ -n "$slot" ] || continue
+      # 門番の中は pull_request の run だけを数える。yield はすぐ結論を出すので、通るかもしれない 1 本と
+      # 数えても次の周で解ける。定期の門番 (wait) は長く待つので数えない
+      [ "$slot" != 門番の中 ] || [ "$event" = pull_request ] || continue
+      echo "$id $event $branch $slot"
     done <<<"$slots"
   done < <(printf '%s' "$runs" | sort -u)
+  return "$failed"
 }
+
+# runner_slots の行を、待つ相手の表示「<id> <head_branch> (<何が取っているか>)」にする
+slot_lines() {
+  awk 'NF { print $1, $3, "(" $4 ")" }'
+}
+
+if [ "$mode" = slots ]; then
+  runner_slots "$events" || exit 1
+  exit 0
+fi
 
 # 待つ相手を 1 行ずつ「<id> <head_branch>」で出す。読めなければ非 0
 blocking_runs() {
@@ -340,7 +400,7 @@ blocking_runs() {
       # 終わっていない group と render-pr が取っている枠が合わせて N 本未満なら、自分の分の runner が
       # 空いている。group だけで N 本なら枠は引かない。定期の job は数えない (上の「専用機の枠を数える」)
       if [ "$busy" -lt "$SLOTS" ]; then
-        prs=$(runner_slots pull_request) || return 1
+        prs=$(runner_slots pull_request | slot_lines) || return 1
         [ -z "$prs" ] || out+="$prs"$'\n'
         busy=$((busy + $(count_lines "$prs")))
         [ "$busy" -ge "$SLOTS" ] || return 0
@@ -359,7 +419,7 @@ blocking_runs() {
       if [ "$mode" = yield ] && [ -n "$out" ]; then
         busy=$(count_lines "$out")
         if [ "$busy" -lt "$SLOTS" ]; then
-          if ! prs=$(runner_slots 'pull_request|schedule'); then
+          if ! prs=$(runner_slots 'pull_request|schedule' | slot_lines); then
             prs="- (専用機の枠を読めなかったので見送る側に倒した)"
             busy=$SLOTS
           fi

@@ -101,7 +101,8 @@ name: Render
 #   - scheduled-* — merge_group の run が残っている間は待つ
 # 門番の判断は積む前の 1 回だけで、queue が空いている間に積まれた job は後から group が
 # できても引き下がらない。そのうち**まだ拾われていない render-pr は、group ができた瞬間に
-# queue-sweep.yml が runner の枠を越える分だけ cancel する** (#2064・#4018)。scheduled-* は needs の鎖で 1 本ずつしか積まれ
+# queue-sweep.yml が runner の枠を越える分だけ cancel する** (#2064・#4018。枠は門番と同じ実装
+# `render-turn.sh slots` で数える)。scheduled-* は needs の鎖で 1 本ずつしか積まれ
 # ないので退かせない (ADR-0019 決定 7)
 # 門番は GitHub ホストにだけ置き、actions: read だけを持つ。専用機の job は引き続き権限も
 # 秘密も持たない。**門番が赤でも専用機の job は走らせる (`!cancelled()`)。** needs が
