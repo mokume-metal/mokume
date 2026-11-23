@@ -139,6 +139,14 @@ jq -r 'select(((.category // "") | ascii_downcase | test("^(color|lights_camera|
   | input_filename' "$ref"/processing/*.json | wc -l   # 69
 ```
 
+データ: 文字列・配列・リスト・辞書・変換の 162 件は、category が `data`・`string`・`intlist`・`floatlist`・`stringlist`・`intdict`・`floatdict`・`stringdict` (大文字小文字は揃っていないので小文字にして比べる) の項目 167 件から、上のデータ: JSON・Table・XML の式が拾うもの (所属が 5 つのクラスのクラスのページ 5 件。`load`・`parse`・`save` の 11 件は category が `input`・`output` なので、この式にはもともと入らない) を除いたものである。基本の型 (`Data` の `Primitive`) 8・複合の型 5・型の変換 10 (`Data` の `Conversion` 6 と `data` の `conversion` 4)・配列の関数 9・文字列の関数 10・`String` のメソッド 7・リストと辞書 113 (クラスのページ 6 とメソッド 107) に分かれる。`FloatDict.maxIndex()`・`minIndex()` は category が `floatlist` だが所属は `FloatDict` である:
+
+```bash
+jq -r 'select(((.category // "") | ascii_downcase | test("^(data|string|(int|float|string)(list|dict))$")))
+  | select(((.classanchor // "") | test("^(JSONArray|JSONObject|Table|TableRow|XML)$")) | not)
+  | input_filename' "$ref"/processing/*.json | wc -l   # 162
+```
+
 書き出しのライブラリ (`processing.pdf`・`processing.svg`・`processing.dxf`) のページは、項目に数えない ([#3688 の決定](https://github.com/mokume-metal/mokume/issues/3688#issuecomment-6586703173)・2026-11-03)。リファレンスのクローンに項目が無く、そのページが挙げる API のうち本体のリファレンスに載るもの (`beginRecord()`・`endRecord()`・`beginRaw()`・`endRaw()`・`size()` ほか) は、本体の領域の行が扱う。種類 (PDF・SVG・DXF) との関係は、その行の理由に書く。`createGraphics(w, h, PDF)` の描画先の指定は、色・変換・光とカメラ・描画の表 ([color-transform-rendering.md](color-transform-rendering.md)) の `createGraphics()` の行に書いた。
 
 ## 領域の一覧
@@ -156,7 +164,7 @@ jq -r 'select(((.category // "") | ascii_downcase | test("^(color|lights_camera|
 | 3 | 数学・PVector・定数 | 64 | `math.md` | [#4176] |
 | 3 | 色・変換・光とカメラ・描画 (`PImage.blendColor()` は画像の表が数える) | 69 | `color-transform-rendering.md` | [#4177] |
 | 3 | 文字 | 13 | `typography.md` | 順 2 の後 |
-| 3 | データ: 文字列・配列・リスト・辞書・変換 | 167 | `data-strings-collections.md` | 順 2 の後 |
+| 3 | データ: 文字列・配列・リスト・辞書・変換 (JSON・Table・XML のクラスのページ 5 件は上のデータの表が数える) | 162 | `data-strings-collections.md` | [#4179] |
 | 3 | 構造・制御 | 76 | `structure.md` | 順 2 の後 |
 | 3 | 連携 (net・serial・OSC) と io | 39 + io 36 + oscP5 (未計数) | `network-serial-io.md` | 順 2 の後 |
 
@@ -184,4 +192,5 @@ jq -r 'select(((.category // "") | ascii_downcase | test("^(color|lights_camera|
 [#3688]: https://github.com/mokume-metal/mokume/issues/3688
 [#4176]: https://github.com/mokume-metal/mokume/issues/4176
 [#4177]: https://github.com/mokume-metal/mokume/issues/4177
+[#4179]: https://github.com/mokume-metal/mokume/issues/4179
 [#4180]: https://github.com/mokume-metal/mokume/issues/4180
