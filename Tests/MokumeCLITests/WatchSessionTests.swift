@@ -3784,24 +3784,39 @@ struct SourceStampTests {
         #expect(after == SourceStamp.current(for: sketch))
     }
 
-    /// 列挙を別のスレッドで走らせ、**待つ側が期限を持つ**。期限を越えたら `nil` (走っている列挙は
-    /// 止められないので置いていく)。合否は挙がったファイルで決め、期限は止まらない形を赤にするためだけに使う。
-    private func sourcesWithin(_ seconds: Double, in sketch: URL) -> [URL]? {
+    /// `Sources` の下の `.swift` を別のスレッドで列挙し、**待つ側が期限を持つ**。期限を越えたら
+    /// 列挙に止まれと伝え、止まるのを同じ長さだけ待ってから `nil` を返す (止まらなければ記録する)。
+    /// 合否は挙がったファイルで決め、期限は止まらない形を赤にするためだけに使う。
+    private func swiftSourcesWithin(_ seconds: Double, in sketch: URL) -> [URL]? {
         let result = Mutex<[URL]?>(nil)
+        let stop = Mutex(false)
         let done = DispatchSemaphore(value: 0)
+        let sources = sketch.appendingPathComponent("Sources")
         Thread.detachNewThread {
-            let found = SourceStamp.sources(in: sketch)
+            let found = SourceTree.files(
+                under: sources, extensions: ["swift"], descendingIntoPackages: false,
+                shouldContinue: { !stop.withLock { $0 } })
             result.withLock { $0 = found }
             done.signal()
         }
-        guard done.wait(timeout: .now() + seconds) == .success else { return nil }
-        return result.withLock { $0 }
+        if done.wait(timeout: .now() + seconds) == .success { return result.withLock { $0 } }
+        stop.withLock { $0 = true }
+        if done.wait(timeout: .now() + seconds) != .success {
+            Issue.record("止まれと伝えても列挙が止まらない")
+        }
+        return nil
+    }
+
+    /// `urls` の、`root` からの相対パス。
+    private func relative(_ urls: [URL], to root: URL) -> [String] {
+        urls.map { String($0.path.dropFirst(root.path.count + 1)) }
     }
 
     /// **循環するリンクでも列挙は止まり、同じファイルを 2 度数えない** (#3993)。自分の祖先を指す
     /// リンクと、互いを指す 2 本のリンクを置く。ディレクトリは実体ごとに 1 度だけ歩くので、挙がる
-    /// `.swift` は実体の数と同じで、実体の側の名前で挙がる。
-    @Test("祖先や互いを指すリンクがあっても列挙は返り、同じファイルを 2 度数えない")
+    /// `.swift` は実体の数と同じで、実体の側の名前で挙がる。**同じ外のディレクトリを指す 2 本の
+    /// リンクは、名前の順で先のリンク (`Lib1`) の名前で挙がる。**
+    @Test("祖先や互いを指すリンクがあっても列挙は返り、同じファイルを 2 度数えず、同じ先への 2 本のリンクは名前の順で先のリンクの名前で挙がる")
     func cyclicLinksEndAndCountEachFileOnce() throws {
         let sketch = try makeSketch()
         defer { try? FileManager.default.removeItem(at: sketch) }
@@ -3820,13 +3835,119 @@ struct SourceStampTests {
         try link(app.appendingPathComponent("Lib1"), to: outside)
         try link(app.appendingPathComponent("Lib2"), to: outside)
 
-        let found = try #require(sourcesWithin(60, in: sketch), "列挙が期限までに返らない")
-        let names = found.map { String($0.path.dropFirst(sketch.path.count + 1)) }
+        let found = try #require(swiftSourcesWithin(10, in: sketch), "列挙が期限までに返らない")
+        let names = relative(found, to: sketch).sorted()
         #expect(
             names == [
-                "Package.swift", "Sources/app/B/b.swift", "Sources/app/C/c.swift",
+                "Sources/app/B/b.swift", "Sources/app/C/c.swift",
                 "Sources/app/Lib1/Shared.swift", "Sources/app/main.swift",
             ], "\(names)")
+    }
+
+    /// 歩き方の形 (#3993)。`SourceTree` を直に叩き、挙がる `.swift` を見る。SwiftPM が組むかは
+    /// 形ごとに `swift build` で確かめた (`main.swift` から印の定数を参照して組めるか)。
+    enum Shape: String, CaseIterable, Sendable {
+        /// `Sources` そのものがリンク。SwiftPM は組む
+        case linkedSources
+        /// `Sources/<target>` がリンク。SwiftPM は組む
+        case linkedTarget
+        /// 切れたディレクトリへのリンク。SwiftPM は無視して組む
+        case brokenLink
+        /// 包み (`Foo.bundle`) へのリンク。SwiftPM は中の `.swift` も組む。見張りは包みの中を
+        /// 数えない (#2519) ので、包みへ降りる側だけが挙げる
+        case linkedPackage
+        /// 隠しの名前 (`.hidden`) のリンク。SwiftPM は組まない
+        case hiddenLink
+    }
+
+    @Test("リンクの形ごとに、SwiftPM が組むものを挙げる", arguments: Shape.allCases)
+    func shapesOfLinks(shape: Shape) throws {
+        let root = try TestScratch.directory("mokume-tree")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sources = root.appendingPathComponent("Sources")
+        let app = sources.appendingPathComponent("app")
+        let outside: URL
+        switch shape {
+        case .linkedSources:
+            outside = try outsideDirectory(["app/main.swift": "print(1)"])
+            try link(sources, to: outside)
+        case .linkedTarget:
+            outside = try outsideDirectory(["main.swift": "print(1)"])
+            try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+            try link(app, to: outside)
+        case .brokenLink:
+            outside = try outsideDirectory([:])
+            try write("print(1)", to: "Sources/app/main.swift", in: root)
+            try link(app.appendingPathComponent("Lib"), to: outside.appendingPathComponent("missing"))
+        case .linkedPackage:
+            outside = try outsideDirectory(["Foo.bundle/P.swift": "let p = 1"])
+            try write("print(1)", to: "Sources/app/main.swift", in: root)
+            try link(app.appendingPathComponent("Lib"), to: outside.appendingPathComponent("Foo.bundle"))
+        case .hiddenLink:
+            outside = try outsideDirectory(["M.swift": "let m = 1"])
+            try write("print(1)", to: "Sources/app/main.swift", in: root)
+            try link(app.appendingPathComponent(".hidden"), to: outside)
+        }
+        defer { try? FileManager.default.removeItem(at: outside) }
+
+        for packages in [false, true] {
+            let names = relative(
+                SourceTree.files(under: sources, extensions: ["swift"], descendingIntoPackages: packages),
+                to: root
+            ).sorted()
+            let expected =
+                shape == .linkedPackage && packages
+                ? ["Sources/app/Lib/P.swift", "Sources/app/main.swift"] : ["Sources/app/main.swift"]
+            #expect(names == expected, "包みへ降りる: \(packages)")
+        }
+    }
+
+    /// **見張りは包みの中を数えない** (#2519 の範囲。SwiftPM は組むが、範囲の外と書いてある)。
+    @Test("包みの中の .swift は、見張りの世代に入らない")
+    func packagesAreNotWatched() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let first = SourceStamp.current(for: sketch)
+        try write("let p = 1", to: "Sources/app/Foo.bundle/P.swift", in: sketch)
+        #expect(SourceStamp.current(for: sketch) == first)
+    }
+
+    /// **置き場の中の `.swift` は 1 度だけ数え、置き場の中の `.swift` へのファイルのリンクは数えない**
+    /// (#2519 の「置き場の中のシンボリックリンクは範囲の外」)。置き場の中は資材の数え方だけが数える。
+    @Test("置き場の中の .swift は 1 度だけ数え、置き場の中の .swift へのリンクは数えない")
+    func swiftInTheAssetsDirectoryCountsOnceAndLinksDoNot() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("let a = 1", to: "Sources/app/assets/Inside.swift", in: sketch)
+        let listed = SourceStamp.sources(in: sketch).map(\.lastPathComponent)
+        #expect(listed.filter { $0 == "Inside.swift" }.count == 1, "\(listed)")
+
+        let outside = try outsideFile("let linked = 1")
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let first = SourceStamp.current(for: sketch)
+        try link(sketch.appendingPathComponent("Sources/app/assets/Linked.swift"), to: outside)
+        #expect(SourceStamp.current(for: sketch) == first, "置き場の中の .swift へのリンクを数えた")
+        try "let linked = 2".write(to: outside, atomically: true, encoding: .utf8)
+        #expect(SourceStamp.current(for: sketch) == first, "置き場の中の .swift へのリンクの先を数えた")
+    }
+
+    /// **置き場は綴りでなくファイルとして見る** — 資材の数え方 (`Sources/<名前>/assets` で引く) と
+    /// 揃える。大文字と小文字を区別しないボリュームでは `Assets` が置き場で、中のディレクトリへの
+    /// リンクは辿らない。区別するボリュームでは `Assets` はただのディレクトリで、リンクを辿る。
+    @Test("Assets と綴った置き場も、資材の数え方と同じく置き場として扱う")
+    func aCapitalisedAssetsDirectoryFollowsTheVolume() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("let a = 1", to: "Sources/app/Assets/Inside.swift", in: sketch)
+        let outside = try outsideDirectory(["Greeting.swift": "let greeting = 1"])
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try link(sketch.appendingPathComponent("Sources/app/Assets/linked"), to: outside)
+        let isPlace = FileManager.default.fileExists(
+            atPath: sketch.appendingPathComponent("Sources/app/assets").path)
+
+        let listed = SourceStamp.sources(in: sketch).map(\.lastPathComponent)
+        #expect(listed.filter { $0 == "Inside.swift" }.count == 1, "\(listed)")
+        #expect(listed.contains("Greeting.swift") == !isPlace, "置き場か: \(isPlace) → \(listed)")
     }
 
     /// 境目。**置き場 (`Sources/<target>/assets`) の中のディレクトリへのリンクは辿らない** — #2519 の

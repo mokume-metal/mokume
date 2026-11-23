@@ -118,6 +118,18 @@ struct DeviceUseTests {
         #expect(DeviceUse.cameraUsers(in: root) == ["Sources/mirror/Lib/Mirror.swift"])
     }
 
+    /// **包みの中も読む** — SwiftPM は包みの形をしたディレクトリ (`Foo.bundle`) の中の `.swift` も組む
+    /// (`swift build` で確かめた)。見張りは包みの中を数えないが、こちらは束ねる前の検査なので読む。
+    @Test("包みの中で開いても、使っているファイルとして名指しする")
+    func aPackageDirectoryIsRead() throws {
+        let root = try makeSketch(files: [
+            "Sources/mirror/Plain.swift": "func draw() {}",
+            "Sources/mirror/Foo.bundle/Mirror.swift": "camera = try? createCapture()",
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(DeviceUse.cameraUsers(in: root) == ["Sources/mirror/Foo.bundle/Mirror.swift"])
+    }
+
     @Test("置き場が無ければ、使っていないものとして扱う")
     func noSourcesMeansNoUse() throws {
         let root = try makeSketch(files: ["Package.swift": ""])

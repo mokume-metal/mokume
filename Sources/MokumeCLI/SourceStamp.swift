@@ -54,8 +54,10 @@ nonisolated enum SourceStamp {
     /// を使う。隠しファイルと断片 (``unwatchedAssetExtensions``) は数えない。
     ///
     /// **`Sources` の下の `.swift` は、ディレクトリへのシンボリックリンクの中も数える** (#3993。
-    /// 歩き方は ``SourceTree/files(under:extensions:descendingIntoPackages:)``)。SwiftPM が組むものは
-    /// 見張る。置き場の中のリンクは、`.swift` でも資材でも数えない (#2519)。
+    /// 歩き方は ``SourceTree/files(under:extensions:descendingIntoPackages:shouldContinue:)``)。
+    /// SwiftPM が組むものは見張る。ただし包みの中は数えない (#2519)。置き場の中は資材として 1 度だけ
+    /// 数え (`.swift` も)、置き場の中のシンボリックリンクは、ファイルへのものもディレクトリへのものも
+    /// 数えない (#2519)。
     static func sources(in directory: URL) -> [URL] {
         var found: [URL] = []
         let manifest = directory.appendingPathComponent("Package.swift")
@@ -65,9 +67,7 @@ nonisolated enum SourceStamp {
         found += SourceTree.files(
             under: sources, extensions: watchedExtensions, descendingIntoPackages: false)
         found += assets(under: sources)
-        // 置き場の中の `.swift` は両方の数え方に当たるので、1 度に畳む
-        var seen = Set<String>()
-        return found.filter { seen.insert($0.path).inserted }.sorted { $0.path < $1.path }
+        return found.sorted { $0.path < $1.path }
     }
 
     /// 資材の置き場の下の、数えるファイル。

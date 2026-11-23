@@ -21,7 +21,10 @@ import Foundation
 ///
 /// ## 見ないもの
 ///
-/// - スケッチ自身の `Sources/` の外 (依存パッケージの中で機材を使うもの)
+/// - スケッチ自身の `Sources/` の外 (依存パッケージの中で機材を使うもの)。ただし `Sources/` の下に
+///   置いたディレクトリへのリンクの先は、外にあっても SwiftPM が組むので読み、リンクを通った
+///   `Sources/…` の名前で名指しする
+/// - 資材の置き場 (`Sources/<名前>/assets`) の中 (束へ写されるだけで組まれない)
 /// - 別名や変数を介した呼び出し
 ///
 /// 見落としたときは今までと同じで、使うなら文言を書く (文書に書いてある)。
@@ -52,8 +55,8 @@ nonisolated enum DeviceUse {
     }
 
     /// **SwiftPM が組むソースを読む** — ディレクトリへのシンボリックリンクの中も読む (#3993。歩き方は
-    /// ``SourceTree/files(under:extensions:descendingIntoPackages:)``)。隠れたファイル・ディレクトリの下
-    /// (エディタの退避など) は見ない。
+    /// ``SourceTree/files(under:extensions:descendingIntoPackages:shouldContinue:)``)。包みの中も
+    /// SwiftPM は組むので読む。隠れたファイル・ディレクトリの下 (エディタの退避など) は見ない。
     private static func users(in root: URL, matching opens: (String) -> Bool) -> [String] {
         let sources = root.appendingPathComponent("Sources", isDirectory: true)
         var found: [String] = []
