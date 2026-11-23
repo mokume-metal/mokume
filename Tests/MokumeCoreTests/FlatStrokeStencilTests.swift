@@ -884,7 +884,8 @@ struct FlatStrokeStencilTests {
         case "quad":
             canvas.quad(20, 40, 80, 40, 80, 120, 20, 120)
         case "pie":
-            // 中心 (80, 40) から下へ縦の半径、(20, 40) から中心へ横の半径
+            // 中心 (80, 40) から下へ縦の半径、(20, 40) から中心へ横の半径。太い縦の半径が最初の帯なので、並べ替える
+            // 前から 255 (兄弟の口として見る。細い片が先に来る扇は ``thinFirstPieKeepsTheFullPiece``)
             canvas.arc(80, 40, 120, 160, Float.pi / 2, Float.pi, .pie)
         default:
             canvas.beginShape()
@@ -917,6 +918,21 @@ struct FlatStrokeStencilTests {
             Self.cornerOutline(canvas, kind)
         }
         expectFullPieceKept(image)
+    }
+
+    /// 上の扇は太い縦の半径が最初の帯で、並べ替える前から太い辺が残る。π から 3π/2 の扇 (中心 (80, 120)) は、細い横の
+    /// 半径が最初の帯で、弧の終わり (80, 40) の細い帯が最後の太い縦の半径と (110, 2) で重なる。並べ替える前は 205。
+    @Test("細い片が先に来る扇も、細い弧と重なる所に太い半径が残る")
+    func thinFirstPieKeepsTheFullPiece() throws {
+        let image = try alphas(shaded: true) { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.arc(80, 120, 120, 160, Float.pi, 3 * Float.pi / 2, .pie)
+        }
+        #expect(image[110, 2].alpha == 255, "重なる所: \(image[110, 2])")
+        #expect(image[110, 3].alpha == 255, "太い半径だけの所: \(image[110, 3])")
+        #expect(image[100, 2].alpha < 255, "細い弧だけの所: \(image[100, 2])")
     }
 
     /// `quad` は断片を効かせなくても輪郭の周を描く。
