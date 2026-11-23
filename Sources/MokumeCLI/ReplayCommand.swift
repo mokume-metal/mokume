@@ -48,11 +48,11 @@ enum ReplayCommand {
             in: directory, invocation: options.invocation,
             afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
-        let executable = try RunCommand.buildAndResolve(in: directory, context: context)
-        // いまの宣言に無い包みは、子に探させない (`run` と同じ・#4038)
-        let undeclared = AssetScope.announced(context: context, executable: executable, package: directory)
+        // いまの宣言に無い包みは、子に探させない (`run` と同じ口・#4038)
+        let prepared = try RunCommand.prepare(in: directory, context: context)
         try replay(
-            executable, in: directory, record: options.record, report: report, undeclaredBundles: undeclared)
+            prepared.executable, in: directory, record: options.record, report: report,
+            assetBundles: prepared.assetBundles)
     }
 
     /// 結果のファイルの場所 (区画 `replay` の `report.json`)。子が書く先 (`ReplayPlayer.defaultReport`) と同じ計算。
@@ -80,9 +80,9 @@ enum ReplayCommand {
     ///   同じ失敗をそのまま返す
     /// - 0 で終わって結果が無い: 合図を読まずにウィンドウを開いて 0 で終わる古い版の子で、何も照らしていない
     ///
-    /// `undeclaredBundles` は子に探させない包み (``AssetScope``)。
+    /// `assetBundles` は子に探させてよい包み (``AssetScope``)。`nil` なら渡さない。
     static func replay(
-        _ executable: URL, in directory: URL, record: String, report: URL, undeclaredBundles: Set<String> = [],
+        _ executable: URL, in directory: URL, record: String, report: URL, assetBundles: AssetBundles.Allowance? = nil,
         launch: (URL, URL, [String: String]) throws(CommandFailure) -> Void = { executable, directory, environment
             throws(CommandFailure) in
             try RunCommand.launch(executable, in: directory, environment: environment)
@@ -93,7 +93,7 @@ enum ReplayCommand {
         do {
             try launch(
                 executable, directory,
-                RunCommand.childEnvironment(replaying: record, undeclaredBundles: undeclaredBundles))
+                RunCommand.childEnvironment(replaying: record, assetBundles: assetBundles))
         } catch {
             guard written() else { throw error }
             switch error {

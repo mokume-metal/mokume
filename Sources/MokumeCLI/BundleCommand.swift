@@ -881,7 +881,8 @@ enum BundleCommand {
     /// 宣言の名前から決めた、いまの宣言に無い包みの除外を足す (#4005・#4038)。依存の木が読めなければ
     /// (道具立てが 0 以外で終わった・JSON が読めない・宣言の名前の無い依存がある)、古い包みは除かない
     /// (``SwiftPM/Package/resourceScope(forProduct:beside:dependencyPackages:)``)。`run`・`watch` が
-    /// 子に探させない包みも、同じ 1 つの規則でここから求める (``AssetScope``)。
+    /// 子に渡す探してよい包み (``AssetScope``) も、同じ閉包・同じ依存の名前・同じ問い (``dependencyTree(of:place:asking:)``)
+    /// から求める。**控え (``AssetScope/Record``) は使わない** — 配る中身は毎回いまの答えで決める。
     ///
     /// **依存の名前は `.build/workspace-state.json` から読まない** — 下限の道具立てはそこへ宣言の名前でなく
     /// URL の末尾を書く (``SwiftPM/DependencyTree``)。
@@ -904,14 +905,24 @@ enum BundleCommand {
         let built = resourceBundles(besides: executable, excluding: []).map(\.lastPathComponent)
         var dependencies: [String]? = []
         if !declared.leftoverCandidates(forProduct: product, beside: built).isEmpty {
-            let answer = asking(
-                ["package"] + place.arguments + ["show-dependencies", "--format", "json"], package)
-            let tree =
-                answer.status == 0
-                ? SwiftPM.read(SwiftPM.DependencyTree.self, from: Data(answer.output.utf8)) : nil
-            dependencies = tree?.dependencyNames
+            dependencies = dependencyTree(of: package, place: place, asking: asking)?.dependencyNames
         }
         return declared.resourceScope(forProduct: product, beside: built, dependencyPackages: dependencies)
+    }
+
+    /// 依存の木を問う。**読めなければ `nil`** (道具立てが 0 以外で終わった・期限を越えた・JSON が読めない)。
+    ///
+    /// - Parameters:
+    ///   - package: パッケージの場所。
+    ///   - place: 依存の木を引く置き場 (依存の解決の結果は置き場ごとに在る)。
+    ///   - asking: 道具立てへの問い。
+    nonisolated static func dependencyTree(
+        of package: URL, place: BuildDirectory.Place,
+        asking: (_ arguments: [String], _ directory: URL) -> (status: Int32, output: String)
+    ) -> SwiftPM.DependencyTree? {
+        let answer = asking(["package"] + place.arguments + ["show-dependencies", "--format", "json"], package)
+        guard answer.status == 0 else { return nil }
+        return SwiftPM.read(SwiftPM.DependencyTree.self, from: Data(answer.output.utf8))
     }
 
     /// 本物の問い。標準出力を掴み、標準エラーを捨てる。起こせなければ 0 以外の答えにする。期限を持つ
@@ -922,7 +933,8 @@ enum BundleCommand {
 
     /// 依存の木の問いを待つ上限 (秒)。建った直後の置き場では解決が済んでいるので、ふつうは 1 秒に満たない。
     /// 越えるのは、共有の置き場の鍵をほかのビルドが握っているときなどで、そのときは待たずに「求められない」側
-    /// (何も外さない・`bundle` は `Kept:` と名乗って入れる) へ倒す。
+    /// (`run` などは全部探して 1 行名乗る・`bundle` は `Kept:` と名乗って入れる) へ倒す。子の終わりと管の読み切りを
+    /// 合わせた全体の期限である。
     nonisolated static let askTimeout: TimeInterval = 30
 
     /// 本物の問い。**待つ側が期限を持つ** — 越えたら子を殺し、0 以外の答えにする。
@@ -945,6 +957,7 @@ enum BundleCommand {
         _ process: Process, timeout: TimeInterval, running: RunningBuild? = nil
     ) -> (status: Int32, output: String) {
         let unanswered: (status: Int32, output: String) = (-1, "")
+        let deadline = DispatchTime.now() + timeout
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
@@ -967,16 +980,16 @@ enum BundleCommand {
             let data = reader.readDataToEndOfFile()
             output.withLock { $0 = data }
         }
-        guard exited.wait(until: .now() + timeout) else {
-            process.terminate()
-            if !exited.wait(until: .now() + 2) {
-                kill(process.processIdentifier, SIGKILL)
-                exited.wait()
-            }
+        // **期限は全体で 1 つ。** 子の終わりと管の読み切りを、同じ期限までしか待たない
+        guard exited.wait(until: deadline) else {
+            // 越えたら直接の子を落とす (見張りが作り直しの子を止めるのと同じく、`SIGKILL` を撃ち、消えるのを短く待つ)
+            let pid = process.processIdentifier
+            if pid > 0, process.isRunning { kill(pid, SIGKILL) }
+            _ = exited.wait(until: .now() + 2)
             return unanswered
         }
-        // 子は終わった。管の書き口を継いだ孫が残っていても、期限より長くは待たない
-        guard read.wait(timeout: .now() + timeout) == .success else { return unanswered }
+        // 子は終わった。管の書き口を継いだ孫が残っていても、同じ期限より長くは待たない
+        guard read.wait(timeout: deadline) == .success else { return unanswered }
         return (ChildEnding(of: process).shellStatus, String(decoding: output.withLock { $0 }, as: UTF8.self))
     }
 

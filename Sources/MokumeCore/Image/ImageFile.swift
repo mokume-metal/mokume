@@ -291,14 +291,16 @@ nonisolated enum ImageFile {
     ///
     /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
     ///
-    /// **探さない包みは、道具が渡した合図から取る** (``UndeclaredBundles/startup(onMain:)``・#4038)。起点は本番では
-    /// 実行ファイルの束で、検査だけが起点を差し替えて、合図がここまで届くことを確かめる。
+    /// **探してよい包みは、道具が渡した合図から取る** (``AssetBundles/Signal/startup(onMain:)``・#4038)。起点と合図は
+    /// 本番では実行ファイルの束とプロセスの環境で、検査だけが差し替えて、合図がここまで届くことを確かめる
+    /// (プロセスの環境に触らずに)。
     static func search(
-        for path: String, neighbourhood: URL = Bundle.main.bundleURL, resources: URL? = Bundle.main.resourceURL
+        for path: String, neighbourhood: URL = Bundle.main.bundleURL, resources: URL? = Bundle.main.resourceURL,
+        signal: AssetBundles.Signal = .process
     ) -> AssetLookup.Search {
         search(
             for: path, workingDirectory: FileManager.default.currentDirectoryPath,
-            neighbourhood: neighbourhood, resources: resources, skipping: UndeclaredBundles.startup())
+            neighbourhood: neighbourhood, resources: resources, allowance: signal.startup())
     }
 
     /// 探す場所を並べる (どこを起点にするかを渡せる形)。
@@ -316,11 +318,12 @@ nonisolated enum ImageFile {
 
     /// ``candidates(for:workingDirectory:neighbourhood:resources:)`` と、数えられなかった置き場。
     ///
-    /// - Parameter skipping: 並んでいても探さない包みの名前 (``UndeclaredBundles``)。いまの宣言に無い包みの
-    ///   同じ相対パスの資材を、名前の順で先に来るからといって読まない (#4038)。
+    /// - Parameter allowance: 探してよい包み (``AssetBundles/Allowance``)。**`nil` なら並んだ包みを全部探す。**
+    ///   在れば、それに無い包み (いまの宣言に無い包み・後から置き場に現れた包み) の同じ相対パスの資材を、
+    ///   名前の順で先に来るからといって読まない (#4038)。
     static func search(
         for path: String, workingDirectory: String, neighbourhood: URL, resources: URL?,
-        skipping: Set<String> = []
+        allowance: AssetBundles.Allowance? = nil
     ) -> AssetLookup.Search {
         if path.hasPrefix("/") { return AssetLookup.Search(places: [URL(fileURLWithPath: path)]) }
 
@@ -332,7 +335,7 @@ nonisolated enum ImageFile {
             urls.append(resources.appendingPathComponent(path))
         }
         for root in [neighbourhood, resources].compactMap({ $0 }) {
-            let listed = bundled(path, in: root, skipping: skipping)
+            let listed = bundled(path, in: root, allowance: allowance)
             urls.append(contentsOf: listed.urls)
             skipped.append(contentsOf: listed.skipped)
             if let reason = listed.failure {
@@ -361,9 +364,9 @@ nonisolated enum ImageFile {
     ///
     /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
     ///
-    /// 探さない包み (`skipping`) の中の場所は、探す並びに入れず `skipped` に分けて返す。どこにも無かったときに、
-    /// そこに在れば名乗るため (``AssetLookup/locate(_:unlistable:skipped:path:)``・#4038)。
-    private static func bundled(_ path: String, in root: URL, skipping: Set<String>) -> (
+    /// 探してよい包み (`allowance`) に無い包みの中の場所は、探す並びに入れず `skipped` に分けて返す。どこにも
+    /// 無かったときに、そこに在れば名乗るため (``AssetLookup/locate(_:unlistable:skipped:path:)``・#4038)。
+    private static func bundled(_ path: String, in root: URL, allowance: AssetBundles.Allowance?) -> (
         urls: [URL], skipped: [AssetLookup.Skipped], failure: String?
     ) {
         let names: [String]
@@ -382,7 +385,7 @@ nonisolated enum ImageFile {
                 bundle.appendingPathComponent(path),
                 bundle.appendingPathComponent("Contents/Resources").appendingPathComponent(path),
             ]
-            if skipping.contains(bundle.lastPathComponent) {
+            if let allowance, !allowance.allows(bundle.lastPathComponent) {
                 skipped += places.map { AssetLookup.Skipped(bundle: bundle.lastPathComponent, place: $0) }
             } else {
                 urls += places

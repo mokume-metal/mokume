@@ -451,29 +451,24 @@ struct LaunchedByToolTests {
         #expect(unsetCalls == 0)
     }
 
-    /// **探さない包みの合図も、組み立てで消す** (#4038)。資材を 1 度も探さないスケッチでも、`setup()` で
-    /// `Process` を起こす前に消えていないと、別の置き場で走る孫が合図を継いで、そこの包みを外す。main の外で
-    /// 先に探しても (待たない読み込みの裏の仕事・音の糸)、そこでは消さない — `unsetenv` を main の外で走らせない。
-    @Test("探さない包みの合図は組み立てで環境から消え、資材を探さなくても子へ継がれない")
-    func theUndeclaredBundlesSignalIsTakenAtStartup() throws {
-        let key = StartupReads.undeclaredBundles.key
-        let name = "mokume-test-\(UUID().uuidString)_Gone.bundle"
-        UndeclaredBundles.forgetStartup()
-        setenv(key, name, 1)
-        defer {
-            unsetenv(key)
-            UndeclaredBundles.forgetStartup()
-        }
-
-        // main の外の探索は読むだけで、消さず控えもしない
-        #expect(UndeclaredBundles.startup(onMain: false) == [name])
-        #expect(getenv(key) != nil, "main の外で合図を消した")
+    /// **探してよい包みの合図も、組み立てで消す** (#4038)。資材を 1 度も探さないスケッチでも、`setup()` で
+    /// `Process` を起こす前に消えていないと、別の置き場で走る孫が合図を継いで、そこで要る包みを外す。
+    ///
+    /// **置く値は、読めば「渡されていない」(全部探す) になる形にする** — 本物の環境に許す一覧を置くと、並んで走る
+    /// ほかの suite の資材の探索が、その一覧で包みを外す (#4038 の 2 回目の反証・指摘 5)。読む規則 (main でだけ消す・
+    /// 控える) は自分の環境を持つ読み手で確かめる (`AssetSearchTests`)。ここで見るのは、組み立てが消すことだけである。
+    @Test("探してよい包みの合図は組み立てで環境から消え、資材を探さなくても子へ継がれない")
+    func theAssetBundlesSignalIsTakenAtStartup() throws {
+        let key = StartupReads.assetBundles.key
+        let unreadable = "mokume-test-\(UUID().uuidString)"
+        #expect(AssetBundles.Allowance(value: unreadable) == nil, "置く値が許す一覧として読める")
+        setenv(key, unreadable, 1)
+        defer { unsetenv(key) }
 
         // 資材を探さないスケッチを組むだけで消える
         let application = try makeApplication()
         defer { application.willTerminate() }
         #expect(getenv(key) == nil, "組み立ての後も合図が環境に残っている (孫へ継がれる)")
-        #expect(UndeclaredBundles.startup() == [name], "組み立てで読んだ値を控えていない")
 
         let child = Process()
         child.executableURL = URL(fileURLWithPath: "/bin/sh")

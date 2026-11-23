@@ -192,21 +192,24 @@ nonisolated package enum StartupReads {
             + "passes it only for watch, and the sketch takes it out of its own environment once read",
         readSite: "Sources/MokumeCore/Drawing/ShaderOrigin.swift")
 
-    /// 資材を探すときに見ない、実行ファイルの隣の包み (#4038)。
+    /// 資材を探すときに見てよい、実行ファイルの隣の包み (#4038)。
     ///
     /// ビルドの置き場は共有なので、隣にはいまの宣言に無い包み (改名する前のパッケージ名・消した target・外した依存・
-    /// テストの target・別のスケッチ) も並ぶ。**どれがいまの宣言のものかは道具にしか分からない**ので、道具がその名前を
-    /// `/` で区切って子へ渡す。渡すのは `run`・`watch`・`render`・`replay` で、宣言を読めて、依存の木が要る回は
-    /// それも読めた回だけ (渡さなければ親の環境に在っても落とし、子は隣の包みを全部探す)。**受け取った子は起動の
-    /// 組み立て (`setup()` より前) で読み、自分の環境から消す。**
-    public static let undeclaredBundles = Entry(
-        name: "Undeclared bundles", origin: .environment, key: "MOKUME_UNDECLARED_BUNDLES", decidedBy: .tool,
-        note: "Resource bundles beside the executable that the sketch does not look in for assets, because no "
-            + "target of its Package.swift or dependency of it builds them now (left in the build folder, or "
-            + "another sketch's). The value is their names separated by /, and the tool passes it for run, "
-            + "watch, render and replay when it could read the package and its dependencies. Without it, "
-            + "every bundle there is looked in. The sketch takes it out of its own environment once read",
-        readSite: "Sources/MokumeCore/Image/UndeclaredBundles.swift")
+    /// テストの target・別のスケッチ) も並び、後からも増える。**どれがいまの宣言のものかは道具にしか分からない**ので、
+    /// 道具が探してよい包みを子へ渡す (``AssetBundles/Allowance``): 実行 product の閉包の target の包みの名前
+    /// (`.bundle` で終わる項) と、依存のパッケージの名前の頭 (`_` で終わる項) を `/` で区切る。渡すのは `run`・`watch`・
+    /// `render`・`replay` で、宣言を読めて、依存の木が要る回はそれも読めた回だけ (渡さなければ親の環境に在っても
+    /// 落とし、子は隣の包みを全部探す)。**読めない項が 1 つでもあれば、渡されていないものとして読む。** 受け取った
+    /// 子は起動の組み立て (`setup()` より前) で読み、自分の環境から消す。
+    public static let assetBundles = Entry(
+        name: "Asset bundles", origin: .environment, key: "MOKUME_ASSET_BUNDLES", decidedBy: .tool,
+        note: "Resource bundles beside the executable that the sketch looks in for assets: the bundles of the "
+            + "targets of its executable product (items ending in .bundle) and the bundles whose names start "
+            + "with a dependency's name (items ending in _), separated by /. Other bundles there (left in the "
+            + "build folder, or another sketch's) are not looked in. The tool passes it for run, watch, render "
+            + "and replay when it could read the package and its dependencies. Without it, or with an item it "
+            + "cannot read, every bundle there is looked in. The sketch takes it out of its own environment once read",
+        readSite: "Sources/MokumeCore/Image/AssetBundles.swift")
 
     /// 作り直しをまたいで、作者の時計を渡すファイル — `mokume watch --keep-time` ([#2414])。
     ///
@@ -339,7 +342,7 @@ nonisolated package enum StartupReads {
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        assetOrigin, undeclaredBundles, keepTime, keepTimeReadOnly, keepTimeFollows, record, replay, observe, input, params,
+        assetOrigin, assetBundles, keepTime, keepTimeReadOnly, keepTimeFollows, record, replay, observe, input, params,
         viewport,
     ]
 }

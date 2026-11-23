@@ -81,22 +81,32 @@ enum RunCommand {
             defaultConfiguration: defaultConfiguration)
     }
 
-    /// `run` が建てた実行ファイルを起こす環境。**いまの宣言に無い包みは、子に探させない** (#4038) — 置き場は共有
-    /// なので、隣に古い包みや別のスケッチの包みが並ぶ。外す包みは在れば 1 行名乗る。
+    /// 建てて、走らせる実行ファイルと、子に渡す探してよい包み (``AssetScope``・#4038)。
+    struct Prepared {
+        let executable: URL
+        /// 子に渡す探してよい包み。**`nil` なら渡さない** (子は隣の包みを全部探す)。
+        let assetBundles: AssetBundles.Allowance?
+    }
+
+    /// 建てて、子に渡す探してよい包みを決める。**`run`・`render`・`replay` は、走らせる実行ファイルをここからしか
+    /// 受け取らない** — 探してよい包みを決める口 (``AssetScope/settle(context:executable:package:say:asking:tool:)``) を
+    /// 通らずに子を起こす形にならない。`watch` は作り直しの後の段取り (``AssetScope/Carried``) で同じ口を通る。
     ///
     /// - Parameters:
-    ///   - say: 名乗りの行き先。**検査が受け取るために渡せる形にしてある。**
+    ///   - say: 名乗りの行き先。
     ///   - asking: 依存の木の問い (``AssetScope/Asking``)。**検査が偽の答えを渡すために渡せる形にしてある。**
-    static func runEnvironment(
-        for executable: URL, context: BuildContext, in directory: URL, recording: String?,
-        say: (String) -> Void = { print($0) }, asking: AssetScope.Asking = BundleCommand.askSwiftPM
-    ) -> [String: String] {
-        let undeclared = AssetScope.announced(
+    ///   - building: 建てて実行ファイルを返す手。**検査が `swift build` を走らせずに通すために渡せる形にしてある。**
+    static func prepare(
+        in directory: URL, context: BuildContext, say: (String) -> Void = { print($0) },
+        asking: AssetScope.Asking = BundleCommand.askSwiftPM,
+        building: (URL, BuildContext) throws(CommandFailure) -> URL = { directory, context throws(CommandFailure) in
+            try buildAndResolve(in: directory, context: context)
+        }
+    ) throws(CommandFailure) -> Prepared {
+        let executable = try building(directory, context)
+        let allowance = AssetScope.settle(
             context: context, executable: executable, package: directory, say: say, asking: asking)
-        return childEnvironment(
-            reportingRate: context.configurationName,
-            confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)",
-            recording: recording, undeclaredBundles: undeclared)
+        return Prepared(executable: executable, assetBundles: allowance)
     }
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
@@ -125,7 +135,8 @@ enum RunCommand {
             afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
 
-        let executable = try buildAndResolve(in: directory, context: context)
+        // **いまの宣言に無い包みは、子に探させない** (#4038)
+        let prepared = try prepare(in: directory, context: context)
         // 走らせるのは人なので、速さを名乗らせる。MCP サーバはここを通らない。
         // **名乗る名前は、いま走らせる構成と同じ値から出す**
         //
@@ -141,9 +152,11 @@ enum RunCommand {
         defer { remote?.close() }
         let launchedAt = Date()
         try launch(
-            executable, in: directory,
-            environment: runEnvironment(
-                for: executable, context: context, in: directory, recording: recording))
+            prepared.executable, in: directory,
+            environment: childEnvironment(
+                reportingRate: context.configurationName,
+                confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)",
+                recording: recording, assetBundles: prepared.assetBundles))
         // **記録を頼んだのに、この実行が書いていなければ、黙らない** (子が理由を言っている — 実時間の時計・
         // 行き先を開けない・別の実行が書いている)。在るかでは判らない: 前の回の完成品が残っているかもしれない
         if let recording, !recordWasWritten(at: recording, since: launchedAt) {
@@ -256,7 +269,7 @@ enum RunCommand {
         }
         return BuildContext(
             configuration: invocation.configuration, place: place, product: product, assets: assets,
-            declared: declared)
+            declared: declared, toolchain: toolchain)
     }
 
     /// 依存を解決させて `Package.resolved` を書かせる。**失敗しても投げない** —
@@ -863,8 +876,8 @@ enum RunCommand {
     /// - Parameter replaying: 流す記録の絶対パス (`replay` だけが渡す)。子はウィンドウも区画も開かずに記録を流して照らし、
     ///   結果を書いて終わる (``StartupReads/replay``・#3571)。
     ///   **渡さなければ、親の環境に在っても落とす。**
-    /// - Parameter undeclaredBundles: 子に探させない実行ファイルの隣の包み (``AssetScope``・``StartupReads/undeclaredBundles``・
-    ///   #4038)。**空なら、親の環境に在っても落とす** (子は隣の包みを全部探す)。
+    /// - Parameter assetBundles: 子に探させてよい実行ファイルの隣の包み (``AssetScope``・``StartupReads/assetBundles``・
+    ///   #4038)。**`nil` なら、親の環境に在っても落とす** (子は隣の包みを全部探す)。
     ///
     /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**
     /// 相対の値は読む側の作業ディレクトリから解かれる (`WorkDirectory.given`) が、子は作業
@@ -879,7 +892,7 @@ enum RunCommand {
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil,
         assetOrigin: String? = nil, keepTime: String? = nil, keepTimeReadOnly: Bool = false,
         keepTimeFollows: Int32? = nil, recording: String? = nil, replaying: String? = nil,
-        undeclaredBundles: Set<String> = []
+        assetBundles: AssetBundles.Allowance? = nil
     ) -> [String: String] {
         var environment = base
         if let workDirectory = WorkDirectory.given(environment: base) {
@@ -910,9 +923,9 @@ enum RunCommand {
         // **これも渡さなければ落とす。** 流す頼みは `replay` だけのもので、ほかの実行へ継がせると、ウィンドウを開かずに
         // 記録を流し始める (#3571)
         environment[StartupReads.replay.key] = replaying
-        // **これも渡さなければ落とす。** 探さない包みは起こす道具が自分の置き場の並びから決める値で、継がせると
-        // 別の置き場で走る子が、そこに在る包みを外してしまう (#4038)
-        environment[StartupReads.undeclaredBundles.key] = UndeclaredBundles.value(of: undeclaredBundles)
+        // **これも渡さなければ落とす。** 探してよい包みは起こす道具が自分の宣言から決める値で、継がせると
+        // 別のパッケージを走らせる子が、そこで要る包みを外してしまう (#4038)
+        environment[StartupReads.assetBundles.key] = assetBundles?.value
         return environment
     }
 

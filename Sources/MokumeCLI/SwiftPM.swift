@@ -625,7 +625,31 @@ nonisolated enum SwiftPM {
         /// 宣言の名前。
         let name: String?
         let identity: String?
+        /// パッケージの在処 (取ってきた依存は置き場の `checkouts/` の下)。
+        let path: String?
         let dependencies: [DependencyTree]?
+
+        /// 根と、推移的なすべての依存の在処。在処の読めないものは載らない。
+        var paths: [String] {
+            var found: [String] = []
+            var pending = [self]
+            while let next = pending.popLast() {
+                if let path = next.path { found.append(path) }
+                pending.append(contentsOf: next.dependencies ?? [])
+            }
+            return found
+        }
+
+        /// 根を除く依存の数 (在処を数え合わせるため)。
+        var dependencyCount: Int {
+            var count = 0
+            var pending = dependencies ?? []
+            while let next = pending.popLast() {
+                count += 1
+                pending.append(contentsOf: next.dependencies ?? [])
+            }
+            return count
+        }
 
         /// 根を除く、推移的なすべての依存の宣言の名前と identity。**1 つでも宣言の名前が読めない依存が
         /// あれば `nil`** (どの包みがその依存のものか決められない — 何も除かない側へ倒す)。identity も

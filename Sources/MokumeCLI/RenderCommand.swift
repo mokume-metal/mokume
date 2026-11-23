@@ -83,10 +83,10 @@ enum RenderCommand {
             in: directory, invocation: options.invocation,
             afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
-        let executable = try RunCommand.buildAndResolve(in: directory, context: context)
-        // いまの宣言に無い包みは、子に探させない (`run` と同じ・#4038)
-        let undeclared = AssetScope.announced(context: context, executable: executable, package: directory)
-        try render(executable, in: directory, request: options.request, undeclaredBundles: undeclared)
+        // いまの宣言に無い包みは、子に探させない (`run` と同じ口・#4038)
+        let prepared = try RunCommand.prepare(in: directory, context: context)
+        try render(
+            prepared.executable, in: directory, request: options.request, assetBundles: prepared.assetBundles)
         print(report(options.request))
     }
 
@@ -96,13 +96,13 @@ enum RenderCommand {
     /// 子 (道具と依存の版のずれ) は、何も書かずに 0 で終わる。書き出し先を事後に見て、足りなければ
     /// 名乗って 0 以外で終わる ([#2481](https://github.com/mokume-metal/mokume/issues/2481))。
     ///
-    /// - Parameter undeclaredBundles: 子に探させない包み (``AssetScope``)。
+    /// - Parameter assetBundles: 子に探させてよい包み (``AssetScope``)。`nil` なら渡さない。
     static func render(
-        _ executable: URL, in directory: URL, request: RenderRequest, undeclaredBundles: Set<String> = []
+        _ executable: URL, in directory: URL, request: RenderRequest, assetBundles: AssetBundles.Allowance? = nil
     ) throws(CommandFailure) {
         // 子を起こす前の時刻。前の回が同じ行き先に残したファイルを、この回のものと取り違えない
         let start = Date()
-        try launch(executable, in: directory, request: request, undeclaredBundles: undeclaredBundles)
+        try launch(executable, in: directory, request: request, assetBundles: assetBundles)
         if let shortfall = request.inspectOutput(since: start) {
             throw .renderOutputShort(
                 destination: request.destination, expected: request.frameCount,
@@ -120,13 +120,13 @@ enum RenderCommand {
     /// 子が 0 以外で終わったら、揃わなかったと名乗る。理由は子が既に名乗っている。
     /// 0 で終わった後の書き出し先の確かめは、呼び出し側 (``render(_:in:request:)``) が持つ。
     static func launch(
-        _ executable: URL, in directory: URL, request: RenderRequest, undeclaredBundles: Set<String> = []
+        _ executable: URL, in directory: URL, request: RenderRequest, assetBundles: AssetBundles.Allowance? = nil
     ) throws(CommandFailure) {
         do {
             try RunCommand.launch(
                 executable, in: directory,
                 environment: RunCommand.childEnvironment(
-                    rendering: request, undeclaredBundles: undeclaredBundles))
+                    rendering: request, assetBundles: assetBundles))
         } catch {
             // **合図で落ちた回も揃わなかった回である** (#2315)。名乗るのは終わり方そのもの
             switch error {
