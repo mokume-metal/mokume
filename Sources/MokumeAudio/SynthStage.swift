@@ -66,6 +66,9 @@ final class SynthStage: Inlet {
     private var clockAdvancedFrame: Int?
     /// 閉じた (スケッチが終わった・走っている実行へ足せなかった)。以後の操作は捨てる。
     private(set) var isClosed = false
+    /// 走っている実行へ足せずに閉じた (``stage(for:)``)。スケッチが終わって閉じたのと違い、エフェクトは
+    /// 渡されたものを断る理由を、足せたときと同じに知らせる (``SoundEffect``)。
+    private(set) var wasRefused = false
 
     private struct WeakSound {
         weak var sound: SynthSound?
@@ -130,6 +133,7 @@ final class SynthStage: Inlet {
         // 足せない所なら、作る口の名前で 1 度だけ警告する (`attach()` を名乗らない)。次に呼ばれたとき作り直す。
         // 返すステージは閉じておく — 鳴らす口は閉じたステージへの操作を捨て、`isPlaying` を変えない (#4140)
         if !sketch.attach(stage, calledAs: call, returning: "a sound that is never heard") {
+            stage.wasRefused = true
             stage.close()
             stages[key] = nil
         }
