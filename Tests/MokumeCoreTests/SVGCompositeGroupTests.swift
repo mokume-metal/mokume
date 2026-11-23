@@ -92,8 +92,8 @@ struct SVGCompositeGroupTests {
     @Test(
         "不透明な線の部分パスは 1 つの図形にしない: 縦だけ細くなる置き方で、太い縦の線は細い横の線との交わりでも不透明 (前と同じ)")
     func opaqueSubpathStrokesAreNotOneFigure() throws {
-        // 横の線は縦 0.04 倍で 1 画素より細くなり (被覆が 1 未満)、縦の線は横 1.5 倍で太いまま。1 つの図形にすると
-        // 型板が先に引いた横の線の被覆だけを残し、交わる所 (120, 2) の縦の線が薄くなる
+        // 横の線は縦 0.04 倍で 1 画素より細くなり (被覆が 1 未満)、縦の線は横 1.5 倍で太いまま。交わる所 (120, 2) は
+        // 縦の線が不透明のまま残る
         let (image, _) = try rendered(
             "<path d='M20 40 H140 M80 10 V120' fill='none' stroke='white' stroke-width='20'/>"
         ) { canvas, shape in
@@ -101,6 +101,24 @@ struct SVGCompositeGroupTests {
             canvas.shape(shape)
         }
         #expect(alpha(image, 120, 2) == 255, "交わる所: \(image[120, 2])")
+    }
+
+    /// 半透明の線の部分パスは 1 つの図形で、型板は同じ画素に先に積んだ片を残す。被覆 1 の片 (太い縦の線) を先に
+    /// 積むので、細い横の線を先に書いても交わる所 (120, 2) は縦の線を 1 回だけ混ぜた値 (128) で、横の線だけの所
+    /// (60, 2) は 128 × 0.8 (#4034)。
+    @Test(
+        "半透明の線の部分パスは、縦だけ細くなる置き方でも、交わる所に太い線が残り、部分パスの順に依らない",
+        arguments: ["M20 40 H140 M80 10 V120", "M80 10 V120 M20 40 H140"])
+    func translucentMixedCoverageSubpathsKeepTheFullPiece(d: String) throws {
+        let (image, _) = try rendered(
+            "<path d='\(d)' fill='none' stroke='white' stroke-width='20' stroke-opacity='0.5'/>"
+        ) { canvas, shape in
+            canvas.scale(1.5, 0.04)
+            canvas.shape(shape)
+        }
+        #expect(abs(alpha(image, 120, 2) - 128) <= 1, "交わる所: \(image[120, 2])")
+        #expect(abs(alpha(image, 60, 2) - 102) <= 1, "横の線だけ: \(image[60, 2])")
+        #expect(abs(alpha(image, 120, 3) - 128) <= 1, "縦の線だけ: \(image[120, 3])")
     }
 
     // MARK: - 完了条件 3・5

@@ -774,6 +774,232 @@ struct FlatStrokeStencilTests {
         #expect(lit > 0, "細い横の部分道が描かれていない")
     }
 
+    // MARK: - 被覆の違う片が混ざる図形 (#4034)
+
+    /// #4034 の道: 横 (20,40)→(140,40) と縦 (80,10)→(80,120) の部分道。`horizontalFirst` なら横を先に書く。
+    private static func crossingSubpaths(_ canvas: Canvas, horizontalFirst: Bool) -> Path {
+        let horizontal: [SIMD2<Float>] = [SIMD2(20, 40), SIMD2(140, 40)]
+        let vertical: [SIMD2<Float>] = [SIMD2(80, 10), SIMD2(80, 120)]
+        let subpaths = horizontalFirst ? [horizontal, vertical] : [vertical, horizontal]
+        return canvas.createPath {
+            for points in subpaths {
+                canvas.beginShape()
+                for point in points { canvas.vertex(point.x, point.y) }
+                canvas.endShape()
+            }
+        }
+    }
+
+    /// 透明地に `body` を描いて、出す画素の不透明度 (0〜255) を読む。`shaded` なら素通しの断片を効かせる
+    /// (基本図形が距離関数の経路でなく輪郭の周を描く)。
+    private func alphas(shaded: Bool = false, _ body: (Canvas) -> Void) throws -> DisplayImage {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        let shader = shaded ? try canvas.makeShader(Self.passThrough) : nil
+        try canvas.draw {
+            canvas.noFill()
+            if let shader { canvas.shader(shader) }
+            body(canvas)
+        }
+        return try canvas.output.encodeForDisplay()
+    }
+
+    /// 縦に 0.04 倍へ潰すと、横の部分道は描く画素で 0.8 画素の太さ (被覆 0.8 = alpha 204)、縦の部分道は太いまま
+    /// (被覆 1)。1 つの図形の型板は同じ画素に先に積んだ片を残すので、被覆 1 の片を先に積まないと、細い横の線が
+    /// 先に書かれた順で交わる所 (120, 2) が細い線の被覆になる。交わる所は、書いた順によらず太い縦の線が残る。
+    @Test(
+        "一部の部分道だけが細くなる道の線は、交わる所に太い線が残り、部分道を書いた順に依らない",
+        arguments: [(Float(255), true), (255, false), (128, true), (128, false)])
+    func mixedCoverageCrossingKeepsTheFullPiece(alpha: Float, horizontalFirst: Bool) throws {
+        let image = try alphas { canvas in
+            canvas.stroke(255, alpha)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.shape(Self.crossingSubpaths(canvas, horizontalFirst: horizontalFirst))
+        }
+        let full = Int(alpha.rounded())
+        let thin = Int((alpha * 0.8).rounded())
+        #expect(abs(Int(image[120, 2].alpha) - full) <= 1, "交わる所: \(image[120, 2])")
+        #expect(abs(Int(image[60, 2].alpha) - thin) <= 1, "横の線だけの所: \(image[60, 2])")
+        #expect(abs(Int(image[120, 4].alpha) - full) <= 1, "縦の線だけの所: \(image[120, 4])")
+    }
+
+    /// 細さは帯ごとに向きで測るので、折れ線 1 本の中でも被覆 1 の帯と被覆 < 1 の帯が混ざる。横の帯を先に書き、
+    /// 最後の縦の帯が (80, 40) で横の帯と交わる。
+    @Test("1 本の折れ線の中で一部の帯だけが細くなっても、交わる所に太い帯が残る")
+    func mixedCoverageInOneOutlineKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.beginShape()
+            canvas.vertex(20, 40)
+            canvas.vertex(140, 40)
+            canvas.vertex(140, 10)
+            canvas.vertex(80, 10)
+            canvas.vertex(80, 120)
+            canvas.endShape()
+        }
+        #expect(image[120, 2].alpha == 255, "交わる所: \(image[120, 2])")
+        #expect(abs(Int(image[60, 2].alpha) - 204) <= 1, "横の帯だけの所: \(image[60, 2])")
+    }
+
+    /// 保持した形を潰して置いても同じ (区間は置くときに入れる・``Canvas/place(_:of:at:carved:)``)。直前に細い線
+    /// だけの道を置くと、その被覆の区間が次の図形の細い片の区間と続いて 1 つにまとまる。並べ替えは区間の境目で
+    /// 割り、前の図形の細い線は動かさない。
+    @Test("潰して置いた保持した形でも、交わる所に太い線が残り、直前の細い線の図形は変わらない")
+    func retainedMixedCoverageCrossingKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            let shape = canvas.createShape {
+                canvas.noFill()
+                canvas.stroke(255)
+                canvas.strokeWeight(20)
+                canvas.shape(
+                    canvas.createPath {
+                        canvas.beginShape()
+                        canvas.vertex(20, 150)
+                        canvas.vertex(60, 150)
+                        canvas.endShape()
+                        canvas.beginShape()
+                        canvas.vertex(80, 150)
+                        canvas.vertex(100, 150)
+                        canvas.endShape()
+                    })
+                canvas.shape(Self.crossingSubpaths(canvas, horizontalFirst: true))
+            }
+            canvas.shape(shape, at: [Placement(scale: Vector3(1.5, 0.04, 1))])
+        }
+        #expect(image[120, 2].alpha == 255, "交わる所: \(image[120, 2])")
+        #expect(abs(Int(image[60, 2].alpha) - 204) <= 1, "横の線だけの所: \(image[60, 2])")
+        #expect(abs(Int(image[60, 6].alpha) - 204) <= 1, "前の図形の細い線: \(image[60, 6])")
+        #expect(abs(Int(image[135, 6].alpha) - 204) <= 1, "前の図形の細い線: \(image[135, 6])")
+    }
+
+    /// 上の辺 (y = 40) が細く、右の辺か縦の半径 (x = 80) が太い輪郭。太い辺は描く画素の x 105〜135 で、細い辺と
+    /// 重なる所は (110, 2)、細い辺だけの所は (60, 2)、太い辺だけの所は (110, 3)。`beginShape` は型板、ほかは
+    /// 1 つの領域として引き算で積む (断片を効かせたとき。効かせなければ矩形・扇は距離関数の経路で描く)。
+    private static func cornerOutline(_ canvas: Canvas, _ kind: String) {
+        switch kind {
+        case "rect":
+            canvas.rect(20, 40, 60, 80)
+        case "quad":
+            canvas.quad(20, 40, 80, 40, 80, 120, 20, 120)
+        case "pie":
+            // 中心 (80, 40) から下へ縦の半径、(20, 40) から中心へ横の半径。太い縦の半径が最初の帯なので、並べ替える
+            // 前から 255 (兄弟の口として見る。細い片が先に来る扇は ``thinFirstPieKeepsTheFullPiece``)
+            canvas.arc(80, 40, 120, 160, Float.pi / 2, Float.pi, .pie)
+        default:
+            canvas.beginShape()
+            canvas.vertex(20, 40)
+            canvas.vertex(80, 40)
+            canvas.vertex(80, 120)
+            canvas.vertex(20, 120)
+            canvas.endShape(.close)
+        }
+    }
+
+    /// 細い辺と太い辺が重なる所・細い辺だけの所・太い辺だけの所を見る。
+    private func expectFullPieceKept(_ image: DisplayImage, row: Int = 2) {
+        #expect(image[110, row].alpha == 255, "重なる所: \(image[110, row])")
+        #expect(abs(Int(image[60, row].alpha) - 204) <= 1, "細い辺だけの所: \(image[60, row])")
+        #expect(image[110, row + 1].alpha == 255, "太い辺だけの所: \(image[110, row + 1])")
+    }
+
+    /// 1 つの領域として引ける輪郭は、型板でなく引き算で積む。引き算も同じ画素には先に置いた片を残すので、
+    /// 被覆 1 の片を先に引かないと、細い上の辺が先に置かれた所で太い辺が負ける (矩形・四角は 204)。同じ形を
+    /// `beginShape` で描いた絵と同じく、重なる所には太い辺が残る。
+    @Test(
+        "1 つの領域として引ける輪郭も、一部の辺だけが細くなると、細い辺と重なる所に太い辺が残る",
+        arguments: ["rect", "quad", "pie", "beginShape"])
+    func oneRegionMixedCoverageKeepsTheFullPiece(kind: String) throws {
+        let image = try alphas(shaded: true) { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            Self.cornerOutline(canvas, kind)
+        }
+        expectFullPieceKept(image)
+    }
+
+    /// 上の扇は太い縦の半径が最初の帯で、並べ替える前から太い辺が残る。π から 3π/2 の扇 (中心 (80, 120)) は、細い横の
+    /// 半径が最初の帯で、弧の終わり (80, 40) の細い帯が最後の太い縦の半径と (110, 2) で重なる。並べ替える前は 205。
+    @Test("細い片が先に来る扇も、細い弧と重なる所に太い半径が残る")
+    func thinFirstPieKeepsTheFullPiece() throws {
+        let image = try alphas(shaded: true) { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.arc(80, 120, 120, 160, Float.pi, 3 * Float.pi / 2, .pie)
+        }
+        #expect(image[110, 2].alpha == 255, "重なる所: \(image[110, 2])")
+        #expect(image[110, 3].alpha == 255, "太い半径だけの所: \(image[110, 3])")
+        #expect(image[100, 2].alpha < 255, "細い弧だけの所: \(image[100, 2])")
+    }
+
+    /// `quad` は断片を効かせなくても輪郭の周を描く。
+    @Test("断片の無い quad も、細い辺と重なる所に太い辺が残る")
+    func unshadedQuadKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            Self.cornerOutline(canvas, "quad")
+        }
+        expectFullPieceKept(image)
+    }
+
+    /// 保持した形の矩形を潰して置くと、置くときに細い片を組み直して引き算で積む (``Canvas/thinVertices(_:placedBy:cache:stroke:)``)。
+    @Test("潰して置いた保持した形の矩形も、細い辺と重なる所に太い辺が残る")
+    func retainedOneRegionMixedCoverageKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            let shader = try? canvas.makeShader(Self.passThrough)
+            let shape = canvas.createShape {
+                canvas.noFill()
+                if let shader { canvas.shader(shader) }
+                canvas.stroke(255)
+                canvas.strokeWeight(20)
+                canvas.rect(20, 40, 60, 80)
+            }
+            canvas.shape(shape, at: [Placement(scale: Vector3(1.5, 0.04, 1))])
+        }
+        expectFullPieceKept(image)
+    }
+
+    /// 同じ矩形を続けて置くと、2 つ目から雛形に畳みうる (雛形も引き算で積む)。どれも同じ絵。
+    @Test("続けて置いた矩形の細い輪郭も、細い辺と重なる所に太い辺が残る")
+    func repeatedOneRegionMixedCoverageKeepsTheFullPiece() throws {
+        let image = try alphas(shaded: true) { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.rect(20, 40, 60, 80)
+            canvas.rect(20, 1040, 60, 80)
+            canvas.rect(20, 2040, 60, 80)
+        }
+        for row in [2, 42, 82] { expectFullPieceKept(image, row: row) }
+    }
+
+    /// 開いた細い輪郭の端の列の片は、ほかの細い片より先に積む (#3745)。後から来る被覆 1 の片 (最後の縦の帯は
+    /// x = 20 で太いまま、描く画素の x 15〜45) が端の列 (始点 (25, 40) は描く画素の x 37.5) に入ると、太い片が残る。
+    /// 並べ替える前は、端の列が端の割合の濃さ (64) に、細い帯が太い帯の上で細い帯の濃さ (204) になっていた。
+    @Test("開いた細い線の端の列に後から太い帯が入ると、太い帯が残る")
+    func endColumnUnderAFullBandKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.beginShape()
+            canvas.vertex(25, 40)
+            canvas.vertex(80, 40)
+            canvas.vertex(80, 120)
+            canvas.vertex(20, 120)
+            canvas.vertex(20, 20)
+            canvas.endShape()
+        }
+        #expect(image[37, 2].alpha == 255, "端の列: \(image[37, 2])")
+        #expect(image[40, 2].alpha == 255, "太い帯の上の細い帯: \(image[40, 2])")
+        #expect(abs(Int(image[46, 2].alpha) - 204) <= 1, "細い帯だけの所: \(image[46, 2])")
+    }
+
     /// 畳んだ雛形は引き算のまま (型板の外)。1 つの図形の中は 1 回、重なる 2 つの図形どうしは 2 回。
     @Test("畳んだ雛形の半透明の線は、1 つの中は 1 回、重なる 2 つは 2 回")
     func foldedTemplateMixesOncePerFigure() throws {
