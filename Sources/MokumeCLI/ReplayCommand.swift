@@ -82,7 +82,7 @@ enum ReplayCommand {
     ///
     /// `assetBundles` は子に探させてよい包み (``AssetScope``)。`nil` なら渡さない。
     static func replay(
-        _ executable: URL, in directory: URL, record: String, report: URL, assetBundles: AssetBundles.Allowance? = nil,
+        _ executable: URL, in directory: URL, record: String, report: URL, assetBundles: AssetBundles.Allowance?,
         launch: (URL, URL, [String: String]) throws(CommandFailure) -> Void = { executable, directory, environment
             throws(CommandFailure) in
             try RunCommand.launch(executable, in: directory, environment: environment)

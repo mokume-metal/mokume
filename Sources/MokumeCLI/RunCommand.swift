@@ -712,7 +712,7 @@ enum RunCommand {
     /// - Parameter signals: 道具が受けて子へ渡す合図。既定は ``stopSignals(sigint:)`` で、
     ///   **呼ぶたびにいまの SIGINT の受け口を見て決める。**
     static func launch(
-        _ executable: URL, in directory: URL, environment: [String: String] = childEnvironment(),
+        _ executable: URL, in directory: URL, environment: [String: String],
         forwarding signals: [Int32] = stopSignals()
     ) throws(CommandFailure) {
         let process = Process()
@@ -895,7 +895,7 @@ enum RunCommand {
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil,
         assetOrigin: String? = nil, keepTime: String? = nil, keepTimeReadOnly: Bool = false,
         keepTimeFollows: Int32? = nil, recording: String? = nil, recordingGeneration: Bool = false,
-        replaying: String? = nil, assetBundles: AssetBundles.Allowance? = nil
+        replaying: String? = nil, assetBundles: AssetBundles.Allowance?
     ) -> [String: String] {
         var environment = base
         if let workDirectory = WorkDirectory.given(environment: base) {

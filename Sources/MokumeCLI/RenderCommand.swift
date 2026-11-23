@@ -98,7 +98,7 @@ enum RenderCommand {
     ///
     /// - Parameter assetBundles: 子に探させてよい包み (``AssetScope``)。`nil` なら渡さない。
     static func render(
-        _ executable: URL, in directory: URL, request: RenderRequest, assetBundles: AssetBundles.Allowance? = nil
+        _ executable: URL, in directory: URL, request: RenderRequest, assetBundles: AssetBundles.Allowance?
     ) throws(CommandFailure) {
         // 子を起こす前の時刻。前の回が同じ行き先に残したファイルを、この回のものと取り違えない
         let start = Date()
@@ -120,7 +120,7 @@ enum RenderCommand {
     /// 子が 0 以外で終わったら、揃わなかったと名乗る。理由は子が既に名乗っている。
     /// 0 で終わった後の書き出し先の確かめは、呼び出し側 (``render(_:in:request:)``) が持つ。
     static func launch(
-        _ executable: URL, in directory: URL, request: RenderRequest, assetBundles: AssetBundles.Allowance? = nil
+        _ executable: URL, in directory: URL, request: RenderRequest, assetBundles: AssetBundles.Allowance?
     ) throws(CommandFailure) {
         do {
             try RunCommand.launch(

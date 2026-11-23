@@ -462,7 +462,7 @@ struct AssetScopeTests {
     @Test("探してよい包みは渡したときだけ子へ載り、親の環境に在っても落とす")
     func theAllowanceGoesOnlyWhenGiven() throws {
         let key = StartupReads.assetBundles.key
-        #expect(RunCommand.childEnvironment([key: "stale_stale.bundle"])[key] == nil, "親の値を継いだ")
+        #expect(RunCommand.childEnvironment([key: "stale_stale.bundle"], assetBundles: nil)[key] == nil, "親の値を継いだ")
         let allowance = try #require(AssetBundles.Allowance(bundles: ["b_b.bundle"], packages: ["a"]))
         #expect(RunCommand.childEnvironment([:], assetBundles: allowance)[key] == "b_b.bundle/a_")
     }

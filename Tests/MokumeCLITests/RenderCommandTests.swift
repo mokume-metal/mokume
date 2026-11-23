@@ -491,15 +491,15 @@ struct RenderCommandTests {
     @Test("書き出しの頼みは、渡したときだけ子の環境に載り、子の読み手がそのまま戻せる")
     func theRequestLandsOnlyWhenGivenAndReadsBack() throws {
         let key = StartupReads.render.key
-        #expect(RunCommand.childEnvironment([:])[key] == nil)
+        #expect(RunCommand.childEnvironment([:], assetBundles: nil)[key] == nil)
         #expect(
-            RunCommand.childEnvironment([:], reportingRate: "debug", confirmingCloseFor: "mokume run")[key]
+            RunCommand.childEnvironment([:], reportingRate: "debug", confirmingCloseFor: "mokume run", assetBundles: nil)[key]
                 == nil,
             "run が渡す組み合わせで書き出しの合図が載っている")
 
         let request = try #require(
             RenderRequest(frameRate: 30, frameCount: 90, destination: "/tmp/a:b/out.mov"))
-        let carried = RunCommand.childEnvironment([:], rendering: request)
+        let carried = RunCommand.childEnvironment([:], rendering: request, assetBundles: nil)
         #expect(RenderRequest(environmentValue: try #require(carried[key])) == request)
         // ウィンドウを持たないので、× を確かめる合図も速さの名乗りも載せない
         #expect(carried[StartupReads.closeConfirmation.key] == nil)
@@ -533,7 +533,7 @@ struct RenderCommandTests {
         let request = try #require(
             RenderRequest(frameRate: 24, frameCount: 48, destination: "/tmp/out.mov"))
         try RenderCommand.launch(
-            child.executable, in: child.executable.deletingLastPathComponent(), request: request)
+            child.executable, in: child.executable.deletingLastPathComponent(), request: request, assetBundles: nil)
         #expect(try String(contentsOf: child.seen, encoding: .utf8) == request.environmentValue)
     }
 
@@ -550,7 +550,7 @@ struct RenderCommandTests {
         ) {
             try RenderCommand.launch(
                 child.executable, in: child.executable.deletingLastPathComponent(),
-                request: request)
+                request: request, assetBundles: nil)
         }
         let failure = CommandFailure.renderIncomplete(destination: "/tmp/out.mov", ending: .exited(1))
         #expect(failure.exitCode != 0)
@@ -569,7 +569,7 @@ struct RenderCommandTests {
         let thrown = #expect(throws: CommandFailure.self) {
             try RenderCommand.launch(
                 child.executable, in: child.executable.deletingLastPathComponent(),
-                request: request)
+                request: request, assetBundles: nil)
         }
         #expect(
             thrown == .renderIncomplete(destination: "/tmp/out.mov", ending: .signalled(SIGTRAP)))
@@ -602,10 +602,10 @@ struct RenderCommandTests {
         let movie = child.directory.appendingPathComponent("take.mov").path
         let request = try #require(RenderRequest(frameRate: 24, frameCount: 48, destination: movie))
         // 子の終わり方だけを見る口は通る — 確かめがここに無いことの確認でもある
-        try RenderCommand.launch(child.executable, in: child.directory, request: request)
+        try RenderCommand.launch(child.executable, in: child.directory, request: request, assetBundles: nil)
 
         let thrown = #expect(throws: CommandFailure.self) {
-            try RenderCommand.render(child.executable, in: child.directory, request: request)
+            try RenderCommand.render(child.executable, in: child.directory, request: request, assetBundles: nil)
         }
         #expect(
             thrown == .renderOutputShort(destination: movie, expected: 48, shortfall: .notWritten))
@@ -635,7 +635,7 @@ struct RenderCommandTests {
             RenderRequest(frameRate: 30, frameCount: 4, destination: destination))
 
         let thrown = #expect(throws: CommandFailure.self) {
-            try RenderCommand.render(child.executable, in: child.directory, request: request)
+            try RenderCommand.render(child.executable, in: child.directory, request: request, assetBundles: nil)
         }
         #expect(
             thrown
@@ -691,17 +691,17 @@ struct RenderCommandTests {
         let key = StartupReads.render.key
         for left in ["", "not a request", "24:48:/tmp/left.mov"] {
             #expect(
-                RunCommand.childEnvironment([key: left])[key] == nil,
+                RunCommand.childEnvironment([key: left], assetBundles: nil)[key] == nil,
                 "親に残った \(left.debugDescription) が継がれている")
             #expect(
                 RunCommand.childEnvironment(
-                    [key: left], reportingRate: "debug", confirmingCloseFor: "mokume run")[key]
+                    [key: left], reportingRate: "debug", confirmingCloseFor: "mokume run", assetBundles: nil)[key]
                     == nil)
         }
         // 渡すときは、親の環境の値ではなく渡した頼みになる
         let request = try #require(
             RenderRequest(frameRate: 30, frameCount: 90, destination: "/tmp/a.mov"))
-        let carried = RunCommand.childEnvironment([key: "stale"], rendering: request)
+        let carried = RunCommand.childEnvironment([key: "stale"], rendering: request, assetBundles: nil)
         #expect(carried[key] == request.environmentValue)
     }
 
@@ -716,7 +716,7 @@ struct RenderCommandTests {
             RenderRequest(
                 frameRate: 30, frameCount: 3,
                 destination: directory.appendingPathComponent("f-#.png").path))
-        try RenderCommand.render(child.executable, in: child.directory, request: request)
+        try RenderCommand.render(child.executable, in: child.directory, request: request, assetBundles: nil)
     }
 
     /// **前の回の残りで通さない。** 同じ行き先へ撮り直す回に、古い子が何も書かずに終わっても、
@@ -740,7 +740,7 @@ struct RenderCommandTests {
             throws: CommandFailure.renderOutputShort(
                 destination: destination, expected: 3, shortfall: .leadingFrames(found: 0))
         ) {
-            try RenderCommand.render(child.executable, in: child.directory, request: request)
+            try RenderCommand.render(child.executable, in: child.directory, request: request, assetBundles: nil)
         }
     }
 
@@ -755,7 +755,7 @@ struct RenderCommandTests {
             throws: CommandFailure.renderIncomplete(
                 destination: "/tmp/mokume-never.mov", ending: .exited(1))
         ) {
-            try RenderCommand.render(child.executable, in: child.directory, request: request)
+            try RenderCommand.render(child.executable, in: child.directory, request: request, assetBundles: nil)
         }
     }
 
@@ -829,7 +829,7 @@ struct RenderCommandTests {
         let request = try #require(
             RenderRequest(frameRate: 30, frameCount: 900, destination: "/tmp/stopped.mov"))
         #expect(throws: CommandFailure.stopped(signal: SIGINT)) {
-            try RenderCommand.launch(executable, in: directory, request: request)
+            try RenderCommand.launch(executable, in: directory, request: request, assetBundles: nil)
         }
         #expect(sender.done.wait(timeout: .now() + 60) == .success, "合図を送る糸が戻らない")
         for failure in sender.failures { Issue.record(Comment(rawValue: failure)) }

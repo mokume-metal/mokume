@@ -46,8 +46,8 @@ struct ReplayCommandTests {
     @Test("流す合図は replay の子にだけ渡し、親の環境に在っても落とす")
     func theSignalGoesOnlyToTheReplayChild() {
         let key = StartupReads.replay.key
-        #expect(RunCommand.childEnvironment([key: "/tmp/stale.json"])[key] == nil, "親の合図を継いだ")
-        #expect(RunCommand.childEnvironment([:], replaying: "/tmp/take.json")[key] == "/tmp/take.json")
+        #expect(RunCommand.childEnvironment([key: "/tmp/stale.json"], assetBundles: nil)[key] == nil, "親の合図を継いだ")
+        #expect(RunCommand.childEnvironment([:], replaying: "/tmp/take.json", assetBundles: nil)[key] == "/tmp/take.json")
     }
 
     /// **流す子にも、探してよい包みを渡す** (#4038 の反証・指摘 8)。`run` と同じ口 (`childEnvironment`) を通る。
@@ -92,7 +92,7 @@ struct ReplayCommandTests {
         do {
             try ReplayCommand.replay(
                 URL(fileURLWithPath: "/bin/false"), in: Self.typedFrom, record: "/tmp/take.json", report: report,
-                launch: child)
+                assetBundles: nil, launch: child)
             return nil
         } catch {
             return error
