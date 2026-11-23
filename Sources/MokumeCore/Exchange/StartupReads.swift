@@ -196,8 +196,9 @@ nonisolated package enum StartupReads {
     ///
     /// ビルドの置き場は共有なので、隣にはいまの宣言に無い包み (改名する前のパッケージ名・消した target・外した依存・
     /// テストの target・別のスケッチ) も並ぶ。**どれがいまの宣言のものかは道具にしか分からない**ので、道具がその名前を
-    /// `/` で区切って子へ渡す。渡すのは `run`・`watch`・`render`・`replay` で、宣言と依存の木を読めた回だけ
-    /// (渡さなければ親の環境に在っても落とし、子は隣の包みを全部探す)。**受け取った子は読んだ時点で自分の環境から消す。**
+    /// `/` で区切って子へ渡す。渡すのは `run`・`watch`・`render`・`replay` で、宣言を読めて、依存の木が要る回は
+    /// それも読めた回だけ (渡さなければ親の環境に在っても落とし、子は隣の包みを全部探す)。**受け取った子は起動の
+    /// 組み立て (`setup()` より前) で読み、自分の環境から消す。**
     public static let undeclaredBundles = Entry(
         name: "Undeclared bundles", origin: .environment, key: "MOKUME_UNDECLARED_BUNDLES", decidedBy: .tool,
         note: "Resource bundles beside the executable that the sketch does not look in for assets, because no "

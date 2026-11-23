@@ -450,4 +450,40 @@ struct LaunchedByToolTests {
         #expect(SharedFrameSurface.takeOwner(from: [:], unset: { _ in unsetCalls += 1 }) == nil)
         #expect(unsetCalls == 0)
     }
+
+    /// **探さない包みの合図も、組み立てで消す** (#4038)。資材を 1 度も探さないスケッチでも、`setup()` で
+    /// `Process` を起こす前に消えていないと、別の置き場で走る孫が合図を継いで、そこの包みを外す。main の外で
+    /// 先に探しても (待たない読み込みの裏の仕事・音の糸)、そこでは消さない — `unsetenv` を main の外で走らせない。
+    @Test("探さない包みの合図は組み立てで環境から消え、資材を探さなくても子へ継がれない")
+    func theUndeclaredBundlesSignalIsTakenAtStartup() throws {
+        let key = StartupReads.undeclaredBundles.key
+        let name = "mokume-test-\(UUID().uuidString)_Gone.bundle"
+        UndeclaredBundles.forgetStartup()
+        setenv(key, name, 1)
+        defer {
+            unsetenv(key)
+            UndeclaredBundles.forgetStartup()
+        }
+
+        // main の外の探索は読むだけで、消さず控えもしない
+        #expect(UndeclaredBundles.startup(onMain: false) == [name])
+        #expect(getenv(key) != nil, "main の外で合図を消した")
+
+        // 資材を探さないスケッチを組むだけで消える
+        let application = try makeApplication()
+        defer { application.willTerminate() }
+        #expect(getenv(key) == nil, "組み立ての後も合図が環境に残っている (孫へ継がれる)")
+        #expect(UndeclaredBundles.startup() == [name], "組み立てで読んだ値を控えていない")
+
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sh")
+        child.arguments = ["-c", "printf '%s' \"${\(key)-unset}\""]
+        let output = Pipe()
+        child.standardOutput = output
+        let exited = ExitWait(for: child)
+        try child.run()
+        let seen = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        exited.wait()
+        #expect(seen == "unset", "起こした子が合図を継いだ (\(seen ?? "?"))")
+    }
 }

@@ -25,19 +25,32 @@ package nonisolated enum UndeclaredBundles {
 
     private static let taken = Mutex(Taken())
 
-    /// 道具が渡した、探さない包みの名前。**無ければ空。** 初めて呼んだときに環境から読んで消し、控える。
+    /// 道具が渡した、探さない包みの名前。**無ければ空。** main で初めて呼んだときに環境から読んで消し、控える。
     ///
     /// **環境を読むのはここだけ** — 一覧 ([StartupReads]) が読み場所としてこのファイルを名指している。
     /// **読んだら環境から消す** (``ShaderOrigin/startup()`` と同じ)。合図はこのプロセスを起こした道具が
-    /// 自分の置き場の並びから決めたもので、このプロセスがさらに起こす子のものではない。
-    package static func startup() -> Set<String> {
+    /// 自分の置き場の並びから決めたもので、このプロセスがさらに起こす子のものではない — 継がせると、別の置き場で
+    /// 走る孫が、そこに在る包みを外してしまう。読むのは `SketchApplication` の組み立てで、スケッチの `setup()` より
+    /// 前である (資材を探さないスケッチ・探す前に子を起こすスケッチでも消える)。
+    ///
+    /// **消すのは main で 1 度だけ。** 資材の探索 (``ImageFile/search(for:)``) も組み立てを通らない入口の保険として
+    /// ここを呼ぶが、探索は待たない読み込みの裏の仕事や音の糸からも来る。main の外では環境を読むだけで消さず、
+    /// 控えもしない (`unsetenv` を、環境を読むほかの糸と競わせない)。
+    ///
+    /// - Parameter onMain: いま main で呼ばれているか。**検査が main の外を装うために渡せる形にしてある。**
+    package static func startup(onMain: Bool = Thread.isMainThread) -> Set<String> {
         taken.withLock { taken in
-            if !taken.done {
-                taken.value = take()
-                taken.done = true
-            }
+            if taken.done { return taken.value }
+            guard onMain else { return names(from: ProcessInfo.processInfo.environment) }
+            taken.value = take()
+            taken.done = true
             return taken.value
         }
+    }
+
+    /// 控えを捨てる。**検査だけが呼ぶ** — 本番は起動の瞬間に 1 度読んだきりである。
+    static func forgetStartup() {
+        taken.withLock { $0 = Taken() }
     }
 
     /// 合図を読み、環境から消す。

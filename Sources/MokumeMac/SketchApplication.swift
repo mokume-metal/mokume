@@ -463,6 +463,8 @@ package final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         _ = SharedFrameSurface.launchOwner
         // **置き場の元の合図も同じ** (#2517)。孫へ継がせない
         _ = ShaderOrigin.startup()
+        // **探さない包みの合図も同じ** (#4038)。資材を探さないスケッチでも消し、孫へ継がせない
+        _ = UndeclaredBundles.startup()
         // **作り直しをまたぐ時計の合図も同じ** (#2414)。書き出しの頼みが在れば使わない (下の `render`)
         let render = try RenderRequest.startup()
         // **流す合図も同じ** (#3571)。ホストのアプリの中と書き出しの子は流さないが、合図は環境から消す
