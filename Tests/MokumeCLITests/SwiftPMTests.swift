@@ -308,6 +308,52 @@ struct SwiftPMTests {
         #expect(scope.kept.isEmpty)
     }
 
+    /// **宣言に載った直接の依存の identity で説明できる包みは、候補に載せない** (#4038 の反証)。依存の木を問っても
+    /// identity は必ず答えに入るので、残すことは変わらない。依存が mokume だけのスケッチは、道具立てを起こさずに
+    /// 決まる。宣言の名前が identity と違う依存 (`extra-pkg` の `Extra`。下限の Swift 6.3.3 と 6.4.2 で、
+    /// 包みの名前の頭は宣言の名前だと実測した) と、外した依存・推移の依存の包みは候補に残る。
+    @Test("直接の依存の identity で説明できる包みは、依存の木を問う候補にしない")
+    func directDependencyBundlesAreNotCandidates() throws {
+        let dump = """
+            {"name":"demo",
+             "products":[{"name":"demo","type":{"executable":null},"targets":["demo"]}],
+             "targets":[{"name":"demo","type":"executable",
+               "dependencies":[{"product":["mokume","mokume",null,null]}]}],
+             "dependencies":[
+               {"sourceControl":[{"identity":"mokume","location":{"remote":[{"urlString":"https://example.com/mokume.git"}]},
+                 "productFilter":null,"requirement":{"range":[{"lowerBound":"0.49.0","upperBound":"1.0.0"}]}}]},
+               {"fileSystem":[{"identity":"extra-pkg","path":"/work/extra-pkg","productFilter":null}]},
+               {"registry":[{"identity":"acme.widgets","productFilter":null,"requirement":{"exact":["1.0.0"]}}]}]}
+            """
+        let package = try #require(SwiftPM.package(inDumpOf: dump))
+        #expect(package.dependencies.map(\.identity) == ["mokume", "extra-pkg", "acme.widgets"])
+        #expect(package.dependencies.map(\.isFileSystem) == [false, true, false])
+        let candidates = package.leftoverCandidates(
+            forProduct: "demo",
+            beside: [
+                "demo_demo.bundle", "mokume_MokumeCore.bundle", "MOKUME_Other.bundle", "acme.widgets_W.bundle",
+                "Extra_ExtraLib.bundle", "Removed_Y.bundle",
+            ])
+        #expect(candidates == ["Extra_ExtraLib.bundle", "Removed_Y.bundle"])
+        // 依存の木が読めなくても、identity で説明できる包みは `kept` に並ばない (#4038 の反証・指摘 5)
+        let scope = package.resourceScope(
+            forProduct: "demo", beside: ["demo_demo.bundle", "mokume_MokumeCore.bundle", "Removed_Y.bundle"],
+            dependencyPackages: nil)
+        #expect(scope.kept == ["Removed_Y.bundle"])
+        #expect(scope.excluded.isEmpty)
+        // identity の読めない形の依存は、何も説明しない (候補に残り、依存の木で決める)
+        let odd = try #require(
+            SwiftPM.package(
+                inDumpOf: """
+                    {"name":"demo",
+                     "products":[{"name":"demo","type":{"executable":null},"targets":["demo"]}],
+                     "targets":[{"name":"demo","type":"executable"}],
+                     "dependencies":[{"sourceControl":[]},{"somethingNew":[{"identity":"mokume"}]}]}
+                    """))
+        #expect(odd.dependencies.map(\.identity) == [nil, nil])
+        #expect(odd.leftoverCandidates(forProduct: "demo", beside: ["mokume_MokumeCore.bundle"]) == ["mokume_MokumeCore.bundle"])
+    }
+
     /// **依存の名前が包みの名前と食い違うと、依存の包みも古い包みと読む** (#4005 の反証)。名前の出どころが
     /// 宣言の名前を返さなかった回 (name も identity も `Demo_Extras` でない) を固定する。除くが、
     /// ``SwiftPM/Package/ResourceScope/leftovers`` に載せ、束ねた報せで名乗らせる (黙って欠けさせない)。

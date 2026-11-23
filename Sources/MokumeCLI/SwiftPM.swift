@@ -160,11 +160,30 @@ nonisolated enum SwiftPM {
         /// 載る。依存の包みもここに載り、残すかは依存の名前で決める
         /// (``resourceScope(forProduct:beside:dependencyPackages:)``)。閉包が求められなければ空 (何も除かない)。
         /// **候補が無ければ、依存の名前を道具立てに問わない。**
+        ///
+        /// **宣言に載った直接の依存の identity で説明できる包みも載せない** — 依存の木を問っても、その identity は
+        /// 必ず答えに入る (``DependencyTree/dependencyNames``) ので、残すことに変わりはない。依存が mokume だけの
+        /// スケッチ (`mokume_MokumeCore.bundle`) は、これで道具立てを起こさずに決まる。宣言の名前が identity と
+        /// 違う依存 (`extra-pkg` の `Package(name: "Extra")` が作る `Extra_ExtraLib.bundle`) と推移の依存の包みは、
+        /// ここに載り、依存の木で決める。
         func leftoverCandidates(forProduct product: String, beside built: [String]) -> [String] {
             guard targetClosure(ofProduct: product) != nil else { return [] }
+            let owners = Self.prefixes(of: dependencies.compactMap(\.identity))
             return built.filter {
                 $0.hasSuffix(".bundle") && declaredTarget(ofBundle: $0, among: built) == nil
+                    && !Self.isOwned($0, by: owners)
             }
+        }
+
+        /// 依存の名前から、包みの名前の頭 (`<名前>_`。大文字と小文字は畳む)。
+        private static func prefixes(of names: [String]) -> [String] {
+            names.map { "\($0)_".lowercased() }
+        }
+
+        /// `bundle` が、頭 `owners` のどれかの依存のものと読めるか (大文字と小文字を区別しない — 残す側へ倒れる)。
+        private static func isOwned(_ bundle: String, by owners: [String]) -> Bool {
+            let folded = bundle.lowercased()
+            return owners.contains { folded.hasPrefix($0) }
         }
 
         /// `product` を配る範囲に、**いまの宣言から求めた一覧に無い包み**の除外を足したもの (#4005・#4038)。
@@ -209,10 +228,8 @@ nonisolated enum SwiftPM {
             let leftovers: Set<String>
             let kept: Set<String>
             if let dependencyPackages {
-                let owners = dependencyPackages.map { "\($0)_".lowercased() }
-                leftovers = candidates.filter { bundle in
-                    !owners.contains { bundle.lowercased().hasPrefix($0) }
-                }
+                let owners = Self.prefixes(of: dependencyPackages)
+                leftovers = candidates.filter { !Self.isOwned($0, by: owners) }
                 kept = []
             } else {
                 leftovers = []
@@ -424,11 +441,25 @@ nonisolated enum SwiftPM {
         /// 道具立ては種別を `{"fileSystem": [...]}` / `{"sourceControl": [...]}` の
         /// 形で書き分けるので、値の中身まで降りる必要が無い。
         let isFileSystem: Bool
+        /// 依存の identity (URL かパスの末尾を小文字にしたもの)。**読めなければ `nil`** — 種別の値の先頭の
+        /// オブジェクトの `identity` だけを読み、形が違えば推し量らない。宣言の名前 (包みの名前の頭) は
+        /// `dump-package` に載らないので、ここでは分からない (``DependencyTree``)。
+        let identity: String?
 
-        private enum CodingKeys: String, CodingKey { case fileSystem }
+        private enum CodingKeys: String, CodingKey { case fileSystem, sourceControl, registry }
+        private enum DetailKeys: String, CodingKey { case identity }
 
         init(from decoder: any Decoder) throws {
-            isFileSystem = try decoder.container(keyedBy: CodingKeys.self).contains(.fileSystem)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            isFileSystem = container.contains(.fileSystem)
+            var found: String?
+            if container.allKeys.count == 1, let key = container.allKeys.first,
+                var values = try? container.nestedUnkeyedContainer(forKey: key),
+                let detail = try? values.nestedContainer(keyedBy: DetailKeys.self)
+            {
+                found = try? detail.decode(String.self, forKey: .identity)
+            }
+            identity = found
         }
     }
 

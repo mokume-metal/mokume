@@ -37,4 +37,13 @@ package nonisolated struct ExitWait: Sendable {
     package func wait() {
         exited.wait()
     }
+
+    /// 子が終わるか、`deadline` を過ぎるまで塞ぐ。**終わったら `true`** — そのときだけ `terminationStatus` が
+    /// 読める。期限を持つのは待つ側である (越えた後に子をどうするかは呼び手が決める)。
+    package func wait(until deadline: DispatchTime) -> Bool {
+        guard exited.wait(timeout: deadline) == .success else { return false }
+        // 次の `wait()` も塞がずに戻れるように、取った合図を戻す
+        exited.signal()
+        return true
+    }
 }

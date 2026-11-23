@@ -4,6 +4,7 @@
 import CryptoKit
 import Foundation
 import MokumeDiagnostics
+import Synchronization
 import mokume
 
 /// 作品を、作者以外の環境で動く形に束ねる。
@@ -913,9 +914,70 @@ enum BundleCommand {
         return declared.resourceScope(forProduct: product, beside: built, dependencyPackages: dependencies)
     }
 
-    /// 本物の問い。標準出力を掴み、標準エラーを捨てる。起こせなければ 0 以外の答えにする。
+    /// 本物の問い。標準出力を掴み、標準エラーを捨てる。起こせなければ 0 以外の答えにする。期限を持つ
+    /// (``askSwiftPM(_:in:running:timeout:)``)。
     nonisolated static func askSwiftPM(_ arguments: [String], in directory: URL) -> (status: Int32, output: String) {
-        (try? RunCommand.swift(arguments, in: directory, capturing: true, errors: .discard)) ?? (status: -1, output: "")
+        askSwiftPM(arguments, in: directory, running: nil)
+    }
+
+    /// 依存の木の問いを待つ上限 (秒)。建った直後の置き場では解決が済んでいるので、ふつうは 1 秒に満たない。
+    /// 越えるのは、共有の置き場の鍵をほかのビルドが握っているときなどで、そのときは待たずに「求められない」側
+    /// (何も外さない・`bundle` は `Kept:` と名乗って入れる) へ倒す。
+    nonisolated static let askTimeout: TimeInterval = 30
+
+    /// 本物の問い。**待つ側が期限を持つ** — 越えたら子を殺し、0 以外の答えにする。
+    ///
+    /// - Parameter running: 起こした子を掴ませる先 (``RunningBuild``)。見張りが渡し、作り直しを止めるときに一緒に
+    ///   止められるようにする。止めると決めた後は起こさずに 0 以外の答えにする。
+    nonisolated static func askSwiftPM(
+        _ arguments: [String], in directory: URL, running: RunningBuild?, timeout: TimeInterval = askTimeout
+    ) -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = RunCommand.envURL
+        process.arguments = ["swift"] + arguments
+        process.currentDirectoryURL = directory
+        return ask(process, timeout: timeout, running: running)
+    }
+
+    /// 子を起こして標準出力を掴み、期限までに終わらなければ殺して 0 以外の答えにする。標準エラーは捨てる。
+    /// 起こせなかった・止めると決めた後だった回も 0 以外の答えにする。**検査が任意の子を渡せる形にしてある。**
+    nonisolated static func ask(
+        _ process: Process, timeout: TimeInterval, running: RunningBuild? = nil
+    ) -> (status: Int32, output: String) {
+        let unanswered: (status: Int32, output: String) = (-1, "")
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        let exited = ExitWait(for: process)
+        do {
+            if let running {
+                guard try running.launch(process) else { return unanswered }
+            } else {
+                try process.run()
+            }
+        } catch {
+            return unanswered
+        }
+        defer { running?.finished() }
+        // **読むのは別の糸。** 待つ糸で読み切ろうとすると、黙ったまま終わらない子に期限が効かない
+        let read = DispatchGroup()
+        let output = Mutex(Data())
+        let reader = pipe.fileHandleForReading
+        DispatchQueue.global(qos: .userInitiated).async(group: read) {
+            let data = reader.readDataToEndOfFile()
+            output.withLock { $0 = data }
+        }
+        guard exited.wait(until: .now() + timeout) else {
+            process.terminate()
+            if !exited.wait(until: .now() + 2) {
+                kill(process.processIdentifier, SIGKILL)
+                exited.wait()
+            }
+            return unanswered
+        }
+        // 子は終わった。管の書き口を継いだ孫が残っていても、期限より長くは待たない
+        guard read.wait(timeout: .now() + timeout) == .success else { return unanswered }
+        return (ChildEnding(of: process).shellStatus, String(decoding: output.withLock { $0 }, as: UTF8.self))
     }
 
     /// 古い包みの名乗り (#4005)。**黙って除かない・黙って入れない** ([ADR-0029] 決定 4)。名前の形から推した

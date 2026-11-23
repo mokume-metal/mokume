@@ -118,19 +118,22 @@ final class WatchSession {
         /// - Parameter progress: 作り直しの段数を読むたびに呼ぶ口 (#4121)。**作り直しの糸から呼ぶ** —
         ///   main actor へ届けるのは受け手 (``BuildProgressMailbox``) の仕事である。省けば読まない。
         /// - Parameter asking: 子に探させない包みを決めるときの、依存の木の問い (``AssetScope/Carried``・#4038)。
-        ///   渡すのは検査だけである。
+        ///   渡すのは検査だけである。省けば本物を、`running` に掴ませて期限つきで起こす (作り直しを止めると一緒に止まる)。
         static func live(
             resolver: BuildResolver, running: RunningBuild,
             stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil,
             recording: String? = nil, progress: (@Sendable (BuildProgress) -> Void)? = nil,
-            asking: @escaping AssetScope.Asking = BundleCommand.askSwiftPM
+            asking: AssetScope.Asking? = nil
         ) -> Hooks {
             // 起こした子の数。**作り直しは記録の切れ目**で、世代ごとに別の行き先を渡す (#3570)
             let generations = recording.map { RecordGenerations(destination: $0) }
             // 時計を渡す場所。起こす子ごとに見張りが選ぶ (``selectClock``・#3428)
             let clock = ClockPlace(keepTime)
-            // 子に探させない包み (#4038)。建つたびに作り直しの糸で隣を読み直し、子を起こす口が読む
-            let undeclared = AssetScope.Carried(asking: asking)
+            // 子に探させない包み (#4038)。建つたびに作り直しの糸で隣を読み直し、子を起こす口が読む。
+            // **問いは作り直しと同じ `running` に掴ませる** — 見張りが終わるときに作り直しを止めると、問いも止まり、
+            // 置き場の鍵を握ったまま残らない (#1147)
+            let undeclared = AssetScope.Carried(
+                asking: asking ?? { BundleCommand.askSwiftPM($0, in: $1, running: running) })
             return Hooks(
                 rebuild: { directory throws(CommandFailure) in
                     // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
