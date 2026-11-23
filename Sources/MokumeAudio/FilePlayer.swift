@@ -37,7 +37,8 @@ import Synchronization
 ///
 /// 定位 (``pan``) は、節の `AVAudioMixing.pan` ではなく ``FileVoice`` が左右の倍率を掛けて決める (節の `pan` は
 /// 機材に出さない流れで効かず、書き出しに定位が入らない)。**1 チャンネルの器は常に 2 チャンネルの節にして、左右へ
-/// 同じ標本を配る** ([ADR-0042] 決定 6)。3 チャンネル以上の器は器のままの節で、定位は先頭の 2 チャンネルにだけ掛ける。
+/// 同じ標本を配る** ([ADR-0042] 決定 6)。配置がスピーカーを名乗らない器も 2 チャンネルの節にして、先頭の 2 チャンネルを
+/// 左右として鳴らす (#4069)。配置を名乗る 3 チャンネル以上の器は器のままの節で、定位は先頭の 2 チャンネルにだけ掛ける。
 ///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 final class FilePlayer {
@@ -65,10 +66,38 @@ final class FilePlayer {
         guard flow.join(node, format: format) else { return nil }
     }
 
-    /// 節の形式。1 チャンネルの器は、左右へ配るので 2 チャンネルにする。ほかは器のまま。
+    /// 節の形式。1 チャンネルの器は、左右へ配るので 2 チャンネルにする。配置がスピーカーを名乗らない器
+    /// (``isUnplaced(_:)``) も 2 チャンネルにして、先頭の 2 チャンネルを左右として鳴らす — 器のままの節では、混ぜる節が
+    /// どのチャンネルも出力へ配らず、全チャンネルが無音になる (#4069)。``FileVoice`` は節のチャンネルの数までしか
+    /// 描かないので、3 チャンネル目から先は鳴らない。ほかは器のまま。
     private static func nodeFormat(for format: AVAudioFormat) -> AVAudioFormat? {
-        guard format.channelCount == 1 else { return format }
-        return AVAudioFormat(standardFormatWithSampleRate: format.sampleRate, channels: 2)
+        if format.channelCount == 1 || isUnplaced(format) {
+            return AVAudioFormat(standardFormatWithSampleRate: format.sampleRate, channels: 2)
+        }
+        return format
+    }
+
+    /// 2 チャンネル以上で、配置がどのチャンネルもスピーカーの位置を名乗らないか。タグが番号だけの並び
+    /// (`kAudioChannelLayoutTag_DiscreteInOrder`。配置を持たない WAV を `AVAudioFile` がこう開く) か不明
+    /// (`kAudioChannelLayoutTag_Unknown`) のもの、チャンネルごとの説明の札がどれも `Discrete`・`Unknown`・`Unused` の
+    /// ものがこれに当たる。札が 1 つでも位置を名乗れば (左・右・中央など)、混ぜる節がその配置で配るので当たらない。
+    nonisolated static func isUnplaced(_ format: AVAudioFormat) -> Bool {
+        guard format.channelCount >= 2, let layout = format.channelLayout else { return false }
+        let tag = layout.layoutTag
+        let family = tag & 0xFFFF_0000
+        if family == kAudioChannelLayoutTag_DiscreteInOrder || family == kAudioChannelLayoutTag_Unknown { return true }
+        guard tag == kAudioChannelLayoutTag_UseChannelDescriptions else { return false }
+        let raw = layout.layout
+        let count = Int(raw.pointee.mNumberChannelDescriptions)
+        guard count > 0, let offset = MemoryLayout<AudioChannelLayout>.offset(of: \.mChannelDescriptions) else {
+            return false
+        }
+        let descriptions = (UnsafeRawPointer(raw) + offset).assumingMemoryBound(to: AudioChannelDescription.self)
+        return (0..<count).allSatisfy {
+            let label = descriptions[$0].mChannelLabel
+            return label == kAudioChannelLabel_Discrete || label & 0xFFFF_0000 == kAudioChannelLabel_Discrete_0
+                || label == kAudioChannelLabel_Unknown || label == kAudioChannelLabel_Unused
+        }
     }
 
     /// 音量 (0〜1)。
