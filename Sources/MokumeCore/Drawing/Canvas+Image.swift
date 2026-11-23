@@ -81,10 +81,10 @@ extension Canvas {
             return try makeImage(decoded)
         }
         // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
-        let hashing = ReplayNotice.watchesResources
+        let hasher = ReplayNotice.resourceHasher
         let (read, digest) = try await Self.away { () throws(ImageFailure) in
             let read = try ImageFile.read(path, kind: kind)
-            return (read, hashing ? ResourceDigest.sha256(of: read.url) : nil)
+            return (read, hasher?.sha256(of: read.url, name: path))
         }
         ReplayNotice.readResource(path, sha256: digest)
         remember(read.decoded, path: path, origin: .file(url: read.url, stamp: read.stamp))

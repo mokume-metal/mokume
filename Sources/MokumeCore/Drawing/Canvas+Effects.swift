@@ -276,9 +276,9 @@ extension Canvas {
     public func loadEffect(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        let (url, body, name) = try ShaderSource.read(at: path)
-        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
-        ReplayNotice.readResource(path, text: body)
+        let (url, body, name, bytes) = try ShaderSource.read(at: path)
+        // 記録・再生しているときだけ、読んだバイト列のハッシュを取る (#4092)
+        ReplayNotice.readResource(path, data: bytes)
         return try makeEffect(name: name, url: url, body: body, values: values)
     }
 

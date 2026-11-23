@@ -379,12 +379,12 @@ extension SketchPart {
         ReplayNotice.waitingLoad()
         let url = try dataURL(path)
         // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
-        let hashing = ReplayNotice.watchesResources
+        let hasher = ReplayNotice.resourceHasher
         let (drawing, digest) = try await Self.readAway { () throws(DataFailure) in
             let data = try TextFile.readData(url, path: path)
             return (
                 try SVGFile.parse(try TextFile.text(of: data, path: path), path: path),
-                hashing ? ResourceDigest.sha256(of: data) : nil
+                hasher?.sha256(of: data, name: path)
             )
         }
         ReplayNotice.readResource(path, sha256: digest)

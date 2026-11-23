@@ -123,11 +123,14 @@ nonisolated enum ModelFile {
     ///
     /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     static func load(_ path: String) throws(ModelFailure) -> Parsed {
-        try load(path, hashing: false).parsed
+        try load(path, hasher: nil).parsed
     }
 
-    /// ``load(_:)`` と同じに読み、`hashing` なら解けたファイルの中身の SHA-256 も返す (記録・再生の資源の控え・#4092)。
-    static func load(_ path: String, hashing: Bool) throws(ModelFailure) -> (parsed: Parsed, sha256: String?) {
+    /// ``load(_:)`` と同じに読み、`hasher` があれば中身の SHA-256 も返す (記録・再生の資源の控え・#4092)。
+    /// OBJ は読んだバイト列から取る。STL は Model I/O に場所を渡すので、ファイルをもう 1 度読んで取る (`nil` は読み直せなかった)。
+    static func load(
+        _ path: String, hasher: ResourceHasher?
+    ) throws(ModelFailure) -> (parsed: Parsed, sha256: String?) {
         let url: URL
         do {
             url = try AssetLookup.locate(ImageFile.search(for: path), path: path)
@@ -145,17 +148,17 @@ nonisolated enum ModelFile {
         if let refusal = AssetOpening.refusal(at: url) {
             throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
         }
-        let parsed: Parsed
         switch format {
         case .obj:
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            // 文字への解き方は `String(contentsOf:encoding:)` と同じ (Foundation の UTF-8・先頭の BOM は落ちる)
+            guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else {
                 throw .unreadable(path: path)
             }
-            parsed = parse(text)
+            return (parse(text), hasher?.sha256(of: data, name: path))
         case .stl:
-            parsed = try loadSTL(url, path: path)
+            let parsed = try loadSTL(url, path: path)
+            return (parsed, hasher?.sha256(of: url, name: path))
         }
-        return (parsed, hashing ? ResourceDigest.sha256(of: url) : nil)
     }
 
     /// OBJ の文字列を三角形の並びへ落とす。

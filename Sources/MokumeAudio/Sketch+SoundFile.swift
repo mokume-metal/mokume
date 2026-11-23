@@ -134,7 +134,7 @@ extension Sketch {
         ) { () async throws(AudioFailure) -> SoundFile in
             let url = try audioURL(file)
             // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
-            let hashing = ReplayNotice.watchesResources
+            let hasher = ReplayNotice.resourceHasher
             // 読み・標本を解くのは裏で行う。main actor に戻って作るのは、`SoundFile` だけ
             let read: ReadSound
             do {
@@ -142,7 +142,7 @@ extension Sketch {
                     let buffer = try AudioFile.load(url, path: file)
                     return ReadSound(
                         buffer: buffer, samples: AudioFile.mono(buffer),
-                        sha256: hashing ? ResourceDigest.sha256(of: url) : nil)
+                        sha256: hasher?.sha256(of: url, name: file))
                 }.value
                 ReplayNotice.readResource(file, sha256: read.sha256)
             } catch let failure as AudioFailure {

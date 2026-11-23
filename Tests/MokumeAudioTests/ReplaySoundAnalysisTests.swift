@@ -398,6 +398,7 @@ struct SoundAnalysisNoticeTests {
         init(window: Bool) { self.window = window }
         func noteUnreproducible(_ reason: String) { reasons.append(reason) }
         func noteResource(_ name: String, sha256: String) {}
+        let resourceDigests = ResourceDigests()
         var soundRunsInRealTime: Bool {
             windowQueries += 1
             return window

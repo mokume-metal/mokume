@@ -13,9 +13,9 @@ extension Canvas {
         _ path: String, values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:], numbers: [String: Numbers] = [:]
     ) throws(ShaderFailure) -> Shader {
-        let (url, body, name) = try ShaderSource.read(at: path)
-        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
-        ReplayNotice.readResource(path, text: body)
+        let (url, body, name, bytes) = try ShaderSource.read(at: path)
+        // 記録・再生しているときだけ、読んだバイト列のハッシュを取る (#4092)
+        ReplayNotice.readResource(path, data: bytes)
 
         try Self.checkValuesFit(values, path: path)
         try Self.checkSurfacesFit(surfaces, path: path)

@@ -181,10 +181,14 @@ extension SketchPart {
             return [UInt8](try await WebFile.fetch(url, path: path))
         }
         let url = try dataURL(path)
-        let data = try await Self.readAway { () throws(DataFailure) in try TextFile.readData(url, path: path) }
-        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
-        ReplayNotice.readResource(path, data: data)
-        return [UInt8](data)
+        // 写しもハッシュも裏で済ませ、受け手の引けるここでは名乗るだけ (#4092)。記録・再生していなければ取らない
+        let hasher = ReplayNotice.resourceHasher
+        let (bytes, digest) = try await Self.readAway { () throws(DataFailure) in
+            let data = try TextFile.readData(url, path: path)
+            return ([UInt8](data), hasher?.sha256(of: data, name: path))
+        }
+        ReplayNotice.readResource(path, sha256: digest)
+        return bytes
     }
 
     /// バイト列を、そのままファイルにする。書き終わるまで返らない。
@@ -817,10 +821,10 @@ extension SketchPart {
         }
         let url = try dataURL(path)
         // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
-        let hashing = ReplayNotice.watchesResources
+        let hasher = ReplayNotice.resourceHasher
         let (value, digest) = try await Self.readAway { () throws(DataFailure) in
             let data = try TextFile.readData(url, path: path)
-            return (try parse(try TextFile.text(of: data, path: path)), hashing ? ResourceDigest.sha256(of: data) : nil)
+            return (try parse(try TextFile.text(of: data, path: path)), hasher?.sha256(of: data, name: path))
         }
         ReplayNotice.readResource(path, sha256: digest)
         return value

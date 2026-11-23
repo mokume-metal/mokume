@@ -93,6 +93,10 @@ package final class ReplayRecorder: UnreproducibleSink {
         static func resourceDiffers(_ name: String) -> String {
             "Replay is not guaranteed (a resource is not the one the record read, its hash differs: \(name))"
         }
+        /// 資源を読めたが、ハッシュを取るためにもう 1 度読めなかった (#4092)。記録はその資源を控えず、流す側は照らせない。
+        static func resourceUnhashed(_ name: String) -> String {
+            "Replay is not guaranteed (a resource was read, but could not be read again to hash it: \(name))"
+        }
         /// 待つ読み込み (`request…`) を使った。届くフレームは記録に無い (#3575)。
         static let waitingLoad =
             "Replay is not guaranteed (a request… load was used, and the frame its result arrives at depends on how "
@@ -135,6 +139,8 @@ package final class ReplayRecorder: UnreproducibleSink {
     private var resources: [Resource] = []
     /// ``resources`` の名前からハッシュ。2 度目の読みを並びを走査せずに照らす。
     private var resourceHashes: [String: String] = [:]
+    /// ファイルを読み直して取ったハッシュの控え (この記録の間だけ)。
+    let resourceDigests = ResourceDigests()
 
     /// 開始の状態。
     private struct Start {

@@ -12,7 +12,7 @@ extension Canvas {
             return cached
         }
         // 記録・再生しているときだけ中身のハッシュを取る (#4092)
-        let read = try ModelFile.load(path, hashing: ReplayNotice.watchesResources)
+        let read = try ModelFile.load(path, hasher: ReplayNotice.resourceHasher)
         ReplayNotice.readResource(path, sha256: read.sha256)
         let model = Model.make(name: path, parsed: read.parsed, fitting: fitting(normalize: normalize))
         return remember(model, path: path, normalize: normalize)
@@ -46,11 +46,11 @@ extension Canvas {
         }
         let fitting = fitting(normalize: normalize)
         // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
-        let hashing = ReplayNotice.watchesResources
+        let hasher = ReplayNotice.resourceHasher
         let model: Model
         do {
             let made = try await Task.detached(priority: .utility) {
-                let read = try ModelFile.load(path, hashing: hashing)
+                let read = try ModelFile.load(path, hasher: hasher)
                 let model = Model.make(name: path, parsed: read.parsed, fitting: fitting)
                 prepared?(model)
                 return (model, read.sha256)

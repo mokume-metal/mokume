@@ -34,7 +34,7 @@ enum ShaderSource {
     static func read(
         at path: String, origin: URL? = ShaderOrigin.startup(),
         candidates find: ((String) -> [URL])? = nil
-    ) throws(ShaderFailure) -> (url: URL, body: String, name: String) {
+    ) throws(ShaderFailure) -> (url: URL, body: String, name: String, bytes: Data) {
         // 見張りの下では、置き場の断片は束の写しではなく元のファイルへ解く (#2517)
         // **既定は他の口と同じ探し方** (包みを数えられなかった置き場も受ける・#2838)。検査は並びを差し替える
         let search = find.map { AssetLookup.Search(places: $0(path)) } ?? ImageFile.search(for: path)
@@ -50,7 +50,8 @@ enum ShaderSource {
                     path: path, location: location, reason: AssetOpening.unreachableReason(reason))
             }
         }
-        return (url, try body(at: url, path: path), url.deletingPathExtension().lastPathComponent)
+        let read = try contents(at: url, path: path)
+        return (url, read.body, url.deletingPathExtension().lastPathComponent, read.bytes)
     }
 
     /// 場所が分かった断片の中身を読む。保存を拾って読み直す経路 (``ShaderBox``) もここを通す。
@@ -61,13 +62,20 @@ enum ShaderSource {
     /// ``ShaderFailure/unreadable(path:)`` で、UTF-8 で保存し直すよう言う。どちらも、資源の宣言を
     /// 確かめよという助言 (見つからないとき) は出さない。
     static func body(at url: URL, path: String) throws(ShaderFailure) -> String {
+        try contents(at: url, path: path).body
+    }
+
+    /// ``body(at:path:)`` と同じに読み、**読んだバイト列も返す** (記録・再生の資源のハッシュはバイト列から取る・#4092)。
+    /// 文字への解き方は `String(contentsOf:encoding:)` と同じ (Foundation の UTF-8・先頭の BOM は落ちる) で、
+    /// 文字から UTF-8 へ戻したものは、BOM の付いたファイルでは読んだバイト列と一致しない。
+    static func contents(at url: URL, path: String) throws(ShaderFailure) -> (body: String, bytes: Data) {
         if let refusal = AssetOpening.refusal(at: url) {
             throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
         }
-        guard let body = try? String(contentsOf: url, encoding: .utf8) else {
+        guard let bytes = try? Data(contentsOf: url), let body = String(data: bytes, encoding: .utf8) else {
             throw .unreadable(path: path)
         }
-        return body
+        return (body, bytes)
     }
 
     /// `values:`・`surfaces:`・`numbers:` の名前が、断片の中で `values.<名前>`・`surfaces.<名前>`・
