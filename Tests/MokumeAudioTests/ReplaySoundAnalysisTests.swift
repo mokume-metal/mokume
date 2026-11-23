@@ -383,7 +383,7 @@ struct ReplaySoundAnalysisTests {
         let recorder = try SketchRuntime(
             sketch: SoundOpenerSketch(opener, path: file.path), gpu: RenderDevice(),
             clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: false, persistsParams: false)
-        try #require(recorder.startRecording(try #require(ReplayRequest(destination: url.path))))
+        try #require(recorder.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
         try recorder.advance()
         try await wait(until: { recorder.replay?.resources.count == 1 }, advancing: recorder)
         for _ in 0..<2 { try recorder.advance() }
@@ -466,7 +466,7 @@ struct ReplaySoundAnalysisTests {
             let runtime = try SketchRuntime(
                 sketch: Reattaching(path: file.path, flow: flow), gpu: RenderDevice(),
                 clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: false, persistsParams: false)
-            try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+            try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
             for frame in 1...10 {
                 try runtime.advance()
                 if frame == 6, rewrites {
