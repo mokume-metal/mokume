@@ -208,6 +208,115 @@ struct KnobOverlayLayoutTests {
         #expect(panel.frame.maxY == host.bounds.height - KnobOverlay.inset)
         #expect(panel.frame.height <= host.bounds.height - 2 * KnobOverlay.inset)
     }
+
+    /// **畳むと開くボタンだけの大きさになる** (#4137)。作品のウィンドウでは面を絵に重ねるので、
+    /// 隠す範囲をここまで減らせることが畳む目的である。左上の留め方は変えない。
+    @Test("畳むとボタンだけの大きさに縮み、開くと元に戻る。左上は動かさない")
+    func collapsesToTheButtonAndBack() throws {
+        let (panel, host) = try place(inHostOfHeight: 2_000)
+        let open = panel.frame
+        var resized = 0
+        panel.onResize = { resized += 1 }
+
+        panel.setCollapsed(true)
+        #expect(panel.state.isCollapsed)
+        #expect(panel.frame.width == KnobPanel.collapsedSide)
+        #expect(panel.frame.height == KnobPanel.collapsedSide)
+        #expect(panel.frame.minX == KnobOverlay.inset)
+        #expect(panel.frame.maxY == host.bounds.height - KnobOverlay.inset)
+
+        panel.setCollapsed(false)
+        #expect(panel.frame == open, "開き直したのに元の枠に戻らない: \(open) → \(panel.frame)")
+        #expect(resized == 2, "大きさが変わったことを知らせていない (\(resized) 回)")
+
+        // 同じ値なら何もしない
+        panel.setCollapsed(false)
+        #expect(resized == 2)
+    }
+
+    /// 道具のウィンドウは宣言の顔ぶれが変わるたびに面を作り直す。状態を外から渡せば、作り直した面も畳んだまま出る。
+    @Test("渡された状態が畳んでいれば、作ったときから畳んで出る")
+    func startsCollapsedFromTheGivenState() {
+        let state = KnobPanelState()
+        state.isCollapsed = true
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        let panel = KnobOverlay(boxes: ParamRegistry(of: Many()).knobs, state: state)
+        panel.attach(to: host)
+        #expect(panel.frame.width == KnobPanel.collapsedSide)
+    }
+}
+
+/// **道具のウィンドウでは、つまみの面と絵の面を重ねない** (#4137)。
+///
+/// 列の容れ物が左につまみ、残りに絵の面を並べる。絵の面の大きさが変われば描く大きさと触った座標の
+/// 写し方は絵の面が追随するので、ここでは**矩形が重ならないこと**を見れば足りる。
+@Suite("つまみの列は絵と重ならない")
+@MainActor
+struct KnobColumnLayoutTests {
+    private func column(width: CGFloat = 900, height: CGFloat = 600) throws -> (
+        KnobColumnLayout, KnobOverlay
+    ) {
+        let surface = NSView()
+        let layout = KnobColumnLayout(
+            frame: NSRect(x: 0, y: 0, width: width, height: height), surface: surface)
+        let panel = try #require(
+            KnobOverlay.makeIfNeeded(for: ParamRegistry(of: KnobOverlayLayoutTests.Many())))
+        layout.place(panel)
+        return (layout, panel)
+    }
+
+    @Test("つまみの面は列に収まり、絵の面は列の右の残りいっぱいに置かれる")
+    func surfaceTakesTheRestBesideTheColumn() throws {
+        let (layout, panel) = try column()
+        #expect(panel.frame.maxX <= layout.surface.frame.minX, "つまみの面と絵の面が重なっている")
+        #expect(layout.surface.frame.minX == KnobColumnLayout.expandedWidth)
+        #expect(layout.surface.frame.maxX == layout.bounds.maxX)
+        #expect(layout.surface.frame.height == layout.bounds.height)
+    }
+
+    @Test("畳むと列が細り、絵の面が広がる。開くと戻る")
+    func collapsingWidensTheSurface() throws {
+        let (layout, panel) = try column()
+        let open = layout.surface.frame
+
+        panel.setCollapsed(true)
+        #expect(layout.surface.frame.width > open.width, "畳んだのに絵の面が広がらない")
+        #expect(layout.surface.frame.minX == KnobPanel.collapsedSide + 2 * KnobOverlay.inset)
+        #expect(panel.frame.maxX <= layout.surface.frame.minX)
+
+        panel.setCollapsed(false)
+        #expect(layout.surface.frame == open)
+    }
+
+    @Test("ウィンドウの大きさを変えても重ならない")
+    func staysApartWhenResized() throws {
+        let (layout, panel) = try column()
+        layout.setFrameSize(NSSize(width: 500, height: 200))
+        #expect(panel.frame.maxX <= layout.surface.frame.minX)
+        #expect(layout.surface.frame.maxX == 500)
+        #expect(layout.surface.frame.height == 200)
+        #expect(panel.frame.maxY == 200 - KnobOverlay.inset)
+    }
+
+    @Test("つまみを外せば、絵の面がウィンドウいっぱいになる")
+    func noKnobsMeansTheWholeWindow() throws {
+        let (layout, panel) = try column()
+        layout.place(nil)
+        #expect(panel.superview == nil)
+        #expect(layout.surface.frame == layout.bounds)
+    }
+
+    /// 宣言の顔ぶれが変わって面を作り直したとき、前の面が列に残ると 2 枚が重なる。
+    @Test("面を差し替えると前の面は外れ、前の面の大きさの変化には付いていかない")
+    func replacingDropsThePreviousPanel() throws {
+        let (layout, old) = try column()
+        let fresh = KnobOverlay(boxes: [], numbers: { nil })
+        layout.place(fresh)
+        #expect(old.superview == nil)
+        #expect(old.onResize == nil)
+        #expect(layout.knobs === fresh)
+        #expect(fresh.frame.maxX <= layout.surface.frame.minX)
+    }
 }
 
 /// **つまみの面が絵に混ざらないこと** ([ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 1)。

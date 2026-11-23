@@ -23,6 +23,16 @@ import Synchronization
 /// パスを読む。**宣言はコマンドが読んだものを受け取る** — 各コマンドは宣言を読んだ直後・ビルドの
 /// 前にここを呼ぶ (`run`・`render`・`watch` は ``RunCommand/context(in:invocation:environment:home:announce:resolver:afterReading:)``
 /// の `afterReading`、`bundle` は宣言を読む段の直後)。検査のために `dump-package` を重ねない。
+///
+/// ## 見る範囲
+///
+/// 資材の置き場として見るのは `Sources/` の直下のディレクトリの `assets` (`Sources/<名前>/assets`)
+/// だけ。`path:` で `Sources/` の外へ動かした target の置き場・`src/` など別の名前の置き場の下・
+/// 入れ子 (`Sources/<名前>/<下>/assets`) の `assets` は、宣言の抜けの検査の対象にならず (抜けは
+/// 実行時に絵が読めないまで分からない)、保存しても作り直さない (#4006)。ただし target が置き場の
+/// 直下の `assets` を `.copy` で宣言していれば、`mokume watch` の下で中の `.metal` の断片は走らせたまま
+/// 差し替わる — 子へ渡す置き場の元 (``SwiftPM/Package/assetsOrigin(forProduct:in:directoryName:)``) は
+/// 宣言から決め、target の置き場の直下も見る。
 nonisolated enum ResourceDeclaration {
     /// 資材の置き場としてこの名前を見る。
     static let directoryName = "assets"

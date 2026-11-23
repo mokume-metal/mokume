@@ -59,6 +59,18 @@ package nonisolated enum Bootstrap {
         return .success(receive)
     }
 
+    /// 受信の port の待ち行列の上限を `limit` 通にする。**設定できなければ戻り値で言う** (受信の権利が無い・
+    /// `MACH_PORT_QLIMIT_MAX` を越える)。上限はそのまま残る。
+    static func setQueueLimit(_ port: mach_port_t, to limit: Int) -> kern_return_t {
+        var limits = mach_port_limits_t(mpl_qlimit: mach_port_msgcount_t(clamping: limit))
+        let count = mach_msg_type_number_t(MemoryLayout<mach_port_limits_t>.size / MemoryLayout<natural_t>.size)
+        return withUnsafeMutablePointer(to: &limits) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                mach_port_set_attributes(mach_task_self_, port, MACH_PORT_LIMITS_INFO, $0, count)
+            }
+        }
+    }
+
     /// 名前を引いて、送信の権利を得る。**引けなければ `nil`** (登録されていない・別の名前空間)。
     ///
     /// 得た送信の権利は、呼んだ側が ``releaseSend(_:)`` で手放す。

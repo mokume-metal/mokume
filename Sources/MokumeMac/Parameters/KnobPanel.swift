@@ -15,6 +15,16 @@ final class WarningFeed {
     var summary: WarningSummary?
 }
 
+/// 面を畳んでいるか (#4137)。
+///
+/// **面の外に持つ。** 道具のウィンドウは宣言の顔ぶれが変わるたびに面を作り直すので、面が自分で持つと、
+/// 保存のたびに畳んだ面が開き直る。持ち回るのは作る側 (``SharedFramePreview``) である。
+@MainActor
+@Observable
+final class KnobPanelState {
+    var isCollapsed = false
+}
+
 /// ウィンドウに重ねる、宣言した値のつまみ。
 ///
 /// **入口はここ 1 つで、型ごとの名前に分けない** ([ADR-0030] 決定 8)。宣言側で型は
@@ -48,15 +58,44 @@ struct KnobPanel: View {
     /// 走らせているスケッチが言った警告の置き場 (#3087)。**無いか、1 つも言っていなければ欄ごと出さない。**
     /// 数字と違い、古くなっても消えない (``WarningSummary``)。
     var warnings: WarningFeed?
+    /// 畳んでいるか (#4137)。`nil` なら畳めない面として描く。
+    var state: KnobPanelState?
+    /// 畳む・開くボタンが押されたとき。**値を替えるのは受け取った側** — 替えた後に枠の大きさを測り直す
+    /// 必要があり、それは面を重ねる側 (``KnobOverlay``) にしかできない。
+    var toggle: (() -> Void)?
 
     /// 面の横幅。行の折り返しではなくウィンドウの隅に収まる大きさで決める。
     static let width: CGFloat = 260
+    /// 畳んだ面の一辺。開くボタン 1 つだけが収まる大きさ。
+    static let collapsedSide: CGFloat = 28
 
     var body: some View {
+        if state?.isCollapsed == true {
+            collapsed
+        } else {
+            expanded
+        }
+    }
+
+    /// 畳んだ面: 開くボタンだけ。**絵を隠す範囲をこの大きさまで減らす**のが畳む目的である。
+    private var collapsed: some View {
+        toggleButton(systemImage: "slider.horizontal.3", help: "Show the knobs")
+            .frame(width: Self.collapsedSide, height: Self.collapsedSide)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .controlSize(.small)
+    }
+
+    private var expanded: some View {
         // **ウィンドウより丈が高くなることがある。** 宣言の数は作品が決めるので、収まらない
         // ぶんは巻き取る — はみ出したまま置くと、下のつまみへ手が届かない
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 10) {
+                if toggle != nil {
+                    HStack {
+                        Spacer(minLength: 0)
+                        toggleButton(systemImage: "sidebar.left", help: "Hide the knobs")
+                    }
+                }
                 if let numbers {
                     NumbersReadout(read: numbers, warnings: warnings)
                     // **並ぶものが無ければ仕切らない。** つまみを 1 つも宣言していない
@@ -78,6 +117,20 @@ struct KnobPanel: View {
         // 層は自分の色で描く — 混ぜ方も色の解釈も、絵の側の設定とは無関係である
         .controlSize(.small)
         .font(.system(size: 11))
+    }
+
+    /// 畳む・開くボタン。**キーは割り当てない** — これらのウィンドウにはメニューが無く、⌘ を含むキーも
+    /// スケッチへ届く入力なので、どのキーもスケッチのキーと取り合う (#4137)。
+    private func toggleButton(systemImage: String, help: String) -> some View {
+        Button(action: { toggle?() }) {
+            Image(systemName: systemImage)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 

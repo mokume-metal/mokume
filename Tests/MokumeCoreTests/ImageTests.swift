@@ -875,6 +875,52 @@ struct ImageTests {
         #expect(canvas.imagesDecoded == 2)
     }
 
+    /// 絶対パスでリンクを読み、**リンクの先だけ**を差し替える (#3994)。中身はリンクを辿って読むので、
+    /// 控えの鮮度も同じ先の時刻で見る。
+    @Test("リンクの先だけを差し替えても、次に読んだ絵に出る")
+    func replacingTheTargetOfALinkShowsUpOnTheNextLoad() throws {
+        let target = try writePNG([(1, 0, 0, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: target) }
+        let link = TestScratch.path("mokume-image-link", pathExtension: "png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        defer { try? FileManager.default.removeItem(at: link) }
+
+        let canvas = try makeCanvas()
+        let before = try canvas.loadImage(link.path)
+        #expect(before.get(0, 0).red > 0.9)
+
+        try rewritePNG(target, [(0, 0, 1, 1)], width: 1, height: 1)
+
+        let after = try canvas.loadImage(link.path)
+        #expect(after.get(0, 0).blue > 0.9, "リンクの先を差し替えたのに、控えが古い中身を返した")
+        #expect(canvas.imagesDecoded == 2)
+    }
+
+    /// リンクの先が消えたら、控えを当たりにせず読み直し、読めない失敗を返す (#3994)。
+    @Test("リンクが切れたら、古い控えを返さず読み込みの失敗を返す")
+    func aDanglingLinkDoesNotServeTheStaleCache() throws {
+        let target = try writePNG([(1, 0, 0, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: target) }
+        let link = TestScratch.path("mokume-image-link", pathExtension: "png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        defer { try? FileManager.default.removeItem(at: link) }
+
+        let canvas = try makeCanvas()
+        _ = try canvas.loadImage(link.path)
+        try FileManager.default.removeItem(at: target)
+
+        do {
+            _ = try canvas.loadImage(link.path)
+            Issue.record("切れたリンクから、控えの古い絵が返った")
+        } catch {
+            guard case .unopenable(_, let location, _) = error else {
+                Issue.record("unopenable ではない: \(error)")
+                return
+            }
+            #expect(location.hasSuffix(link.lastPathComponent), "\(location)")
+        }
+    }
+
     /// 1 色で塗った PNG を書き出す。**大きい絵を速く用意するための道具。**
     ///
     /// 画素ごとに置く ``writePNG(_:width:height:space:)`` は色を検査するためのもので、

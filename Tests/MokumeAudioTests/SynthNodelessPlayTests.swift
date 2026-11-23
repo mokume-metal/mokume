@@ -101,15 +101,23 @@ struct SynthNodelessPlayTests {
         #expect(notices.lines.isEmpty, "\(notices.lines)")
     }
 
-    @Test("閉じる前に鳴らしていた音の isPlaying は、閉じた後も true のまま (stop() で false)")
-    func aSoundPlayingWhenTheStageClosedKeepsItsFlag() {
+    @Test("閉じる前に鳴らしていた音の isPlaying は、閉じた後も true のまま (閉じた後に鳴らし直しても動かず、stop() で false)。音は無音", arguments: 0..<8)
+    func aSoundPlayingWhenTheStageClosedKeepsItsFlag(_ index: Int) {
+        let call = Self.plays[index]
         let stage = makeStage(NoticeLog())
-        let osc = SinOsc(stage: stage)
-        osc.play()
-        supply(stage, 0..<2)
+        let source: SynthSource =
+            call.label.hasPrefix("Noise") ? WhiteNoise(stage: stage) : SinOsc(stage: stage)
+        call.play(source)
+        supply(stage, 0..<8)
+        #expect(source.isPlaying && source.peak > 0.1, "\(call.label): \(source.peak)")
         stage.close()
-        #expect(osc.isPlaying)
-        osc.stop()
-        #expect(!osc.isPlaying)
+        #expect(source.isPlaying, "\(call.label)")
+        // 閉じた後は鳴らない (isPlaying が true のままでも、音は止まって数えられる値は 0)
+        #expect(source.peak == 0, "\(call.label): \(source.peak)")
+        // 閉じた後にもう一度鳴らしても、値は動かない
+        call.play(source)
+        #expect(source.isPlaying && source.peak == 0, "\(call.label)")
+        source.stop()
+        #expect(!source.isPlaying, "\(call.label)")
     }
 }

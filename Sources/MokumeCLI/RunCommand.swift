@@ -749,9 +749,12 @@ enum RunCommand {
         let session: RemoteSession?
         /// こちらが置いた区画。元から在れば `nil` (人が置いたものは畳まない)。
         let createdFacet: URL?
+        /// スマホで動かした変化を端末へ書く見張り (#4130)。受け口を開けなければ `nil`。
+        var knobLog: KnobChangeWatcher? = nil
 
         func close() {
             session?.stop()
+            knobLog?.stop()
             if let createdFacet { try? FileManager.default.removeItem(at: createdFacet) }
         }
     }
@@ -771,7 +774,9 @@ enum RunCommand {
         }
         let session = RemoteSession.open(facet: facet) { print($0) }
         session?.server.setState(.running)
-        return RunRemote(session: session, createdFacet: created)
+        return RunRemote(
+            session: session, createdFacet: created,
+            knobLog: session.map { _ in KnobChangeWatcher.start(facet: facet) })
     }
 
     /// 終わりの合図を受けたら、走らせているスケッチへ SIGTERM を渡す受け口を置く。
