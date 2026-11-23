@@ -13,7 +13,7 @@ import simd
 /// 引きずった角度が毎フレーム捨てられて何も動かない。
 ///
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-public struct Orbit: Equatable, Sendable {
+public nonisolated struct Orbit: Equatable, Sendable {
 
     /// 見ている先 (世界の座標)。
     public var center: Vector3

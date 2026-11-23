@@ -73,10 +73,7 @@ final class RecordedHandPoseSource: HandPoseSource {
 /// ``Image`` は main actor の持ち物で `Sendable` ではないので、推論 (main actor の外) へは渡せない。
 /// main actor の上で画素を ``Image/readPixels()`` で読み出した写し (``PixelBuffer``) を持たせて渡す。
 /// 画素の要らない推論 (検査の偽物) には `pixels` を持たせない。
-///
-/// `Equatable` にしない: 画素の中身まで比べる手段が main actor の外に無く (#4098)、中身を比べない `==` は取り違えを見逃す。
-/// 検査は見たい欄 (`hostTime` など) を直に比べる。
-nonisolated struct HandPoseInput: Sendable {
+nonisolated struct HandPoseInput: Sendable, Equatable {
     /// 絵の幅 (画素)。
     let width: Int
     /// 絵の高さ (画素)。
@@ -94,7 +91,6 @@ nonisolated struct HandPoseInput: Sendable {
     }
 
     /// 読み出した画素から作る。大きさは画素のもの。
-    @MainActor
     init(pixels: PixelBuffer, hostTime: UInt64) {
         self.init(width: pixels.width, height: pixels.height, hostTime: hostTime, pixels: pixels)
     }
