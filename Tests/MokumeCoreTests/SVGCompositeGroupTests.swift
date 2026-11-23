@@ -103,6 +103,24 @@ struct SVGCompositeGroupTests {
         #expect(alpha(image, 120, 2) == 255, "交わる所: \(image[120, 2])")
     }
 
+    /// 半透明の線の部分パスは 1 つの図形で、型板は同じ画素に先に積んだ片を残す。被覆 1 の片 (太い縦の線) を先に
+    /// 積むので、細い横の線を先に書いても交わる所 (120, 2) は縦の線を 1 回だけ混ぜた値 (128) で、横の線だけの所
+    /// (60, 2) は 128 × 0.8 (#4034)。
+    @Test(
+        "半透明の線の部分パスは、縦だけ細くなる置き方でも、交わる所に太い線が残り、部分パスの順に依らない",
+        arguments: ["M20 40 H140 M80 10 V120", "M80 10 V120 M20 40 H140"])
+    func translucentMixedCoverageSubpathsKeepTheFullPiece(d: String) throws {
+        let (image, _) = try rendered(
+            "<path d='\(d)' fill='none' stroke='white' stroke-width='20' stroke-opacity='0.5'/>"
+        ) { canvas, shape in
+            canvas.scale(1.5, 0.04)
+            canvas.shape(shape)
+        }
+        #expect(abs(alpha(image, 120, 2) - 128) <= 1, "交わる所: \(image[120, 2])")
+        #expect(abs(alpha(image, 60, 2) - 102) <= 1, "横の線だけ: \(image[60, 2])")
+        #expect(abs(alpha(image, 120, 3) - 128) <= 1, "縦の線だけ: \(image[120, 3])")
+    }
+
     // MARK: - 完了条件 3・5
 
     @Test("fill-opacity / stroke-opacity は別々に掛かる (SVG と同じ): 塗りと線の重なりは 1 - 0.5 × 0.5 = 191")
