@@ -523,6 +523,14 @@ extension Canvas {
     /// 被覆 1 の頂点が被覆 < 1 の頂点の後に無ければ (被覆が全部同じ図形を含む) 何も動かさない。被覆は片ごとに
     /// 付けてあり、片の三角形は続いて積むので、被覆の区間の境目で割っても三角形は割れない。
     func putFullCoverageFirst(in section: Range<Int>) {
+        Self.putFullCoverageFirst(in: section, vertices: &vertices, coverageSpans: &coverageSpans)
+    }
+
+    /// ``putFullCoverageFirst(in:)`` の本体。頂点の並び `vertices` と、その被覆の区間 `coverageSpans` (番号の順に
+    /// 並び、重ならない) を書き換える。
+    static func putFullCoverageFirst(
+        in section: Range<Int>, vertices: inout [ShapeVertex], coverageSpans: inout [CoverageSpan]
+    ) {
         // 区間に掛かる最初の被覆の区間 (被覆の区間は番号の順に並び、重ならない)
         var low = 0
         var high = coverageSpans.count
@@ -549,34 +557,37 @@ extension Canvas {
         }
         guard fullAfterThin || cursor < section.upperBound else { return }
 
-        var full: [ShapeVertex] = []
-        var thin: [ShapeVertex] = []
-        var thinValues: [(count: Int, value: Float)] = []
+        // 被覆 1 の頂点 (被覆の区間の間) を先に、被覆の区間の頂点を後に、1 つの並びへ詰める
+        var reordered: [ShapeVertex] = []
+        reordered.reserveCapacity(section.count)
         cursor = section.lowerBound
         for index in low..<end {
             let span = clipped(index)
-            full.append(contentsOf: vertices[cursor..<span.lowerBound])
-            thin.append(contentsOf: vertices[span])
-            thinValues.append((span.count, coverageSpans[index].value))
+            reordered.append(contentsOf: vertices[cursor..<span.lowerBound])
             cursor = span.upperBound
         }
-        full.append(contentsOf: vertices[cursor..<section.upperBound])
-        vertices.replaceSubrange(section, with: full + thin)
+        reordered.append(contentsOf: vertices[cursor..<section.upperBound])
+        let fullCount = reordered.count
+        for index in low..<end { reordered.append(contentsOf: vertices[clipped(index)]) }
+        vertices.replaceSubrange(section, with: reordered)
 
-        // 区間の外へはみ出す被覆の区間 (前後の図形の細い片と続いてまとまったもの) は、境目で割って外の分を残す
+        // 区間の外へはみ出す被覆の区間 (前後の図形の細い片と続いてまとまったもの) は、境目で割って外の分を残す。
+        // 後ろへはみ出す区間は、区間の終わりへ移した同じ被覆の頂点と続くので、また 1 つにまとまる
         var spans: [CoverageSpan] = []
+        spans.reserveCapacity(end - low + 1)
         let head = coverageSpans[low]
         if head.range.lowerBound < section.lowerBound {
             spans.append(CoverageSpan(range: head.range.lowerBound..<section.lowerBound, value: head.value))
         }
-        var at = section.lowerBound + full.count
-        for (count, value) in thinValues {
-            CoverageSpan.note(value, in: at..<(at + count), to: &spans)
+        var at = section.lowerBound + fullCount
+        for index in low..<end {
+            let count = clipped(index).count
+            CoverageSpan.note(coverageSpans[index].value, in: at..<(at + count), to: &spans)
             at += count
         }
         let tail = coverageSpans[end - 1]
         if tail.range.upperBound > section.upperBound {
-            spans.append(CoverageSpan(range: section.upperBound..<tail.range.upperBound, value: tail.value))
+            CoverageSpan.note(tail.value, in: section.upperBound..<tail.range.upperBound, to: &spans)
         }
         coverageSpans.replaceSubrange(low..<end, with: spans)
     }
