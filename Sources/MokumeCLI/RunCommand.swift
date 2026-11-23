@@ -134,6 +134,8 @@ enum RunCommand {
             in: directory, invocation: invocation,
             afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
+        // **道具と固定の版の食い違いを、起動の画面で名乗る** (#4074)。固定は置き場を決める解決の後に読む
+        if let mismatch = DoctorCommand.mismatchLine(forPackageAt: directory) { print(mismatch) }
 
         // **いまの宣言に無い包みは、子に探させない** (#4038)
         let prepared = try prepare(in: directory, context: context)

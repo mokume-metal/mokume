@@ -352,4 +352,80 @@ struct DependencyVersionTests {
         #expect(state.dependencyState == .unreadable)
         #expect(state.dependency == nil)
     }
+
+    // MARK: - 起動の画面での食い違い (#4074)
+
+    private static func pinned(_ version: String) -> String {
+        #"{"pins":[{"identity":"mokume","state":{"version":"\#(version)"}}],"version":3}"#
+    }
+
+    /// 道具 0.46.0 と固定 0.47.0 の組で、起動の画面は doctor と同じ文で食い違いを名乗る (ADR-0018 決定 6)。
+    @Test("道具の版と固定が食い違うと、起動の行は doctor と同じ文を返す")
+    func theStartupLineNamesAMismatch() throws {
+        let sketch = try makeSketch(resolved: Self.pinned("0.47.0"))
+        let line = DoctorCommand.mismatchLine(forPackageAt: sketch, tool: "0.46.0")
+        #expect(line == DoctorCommand.dependencyLine("0.47.0", tool: "0.46.0"))
+        #expect(
+            line
+                == "mokume dependency: 0.47.0 — does not match this tool (0.46.0); "
+                + "a sketch and a tool from different versions can leave facets silent")
+    }
+
+    /// **断定できないときは言わない** (doctor の規律 3)。揃っている・revision だけ違う・手元ビルドの道具・
+    /// 固定が版で引けない (未解決・パスの依存・改訂の固定・形の違う版・壊れた `Package.resolved`)。
+    @Test(
+        "揃うとき・道具が版を持たないとき・固定が版で引けないときは、起動の行で食い違いを言わない",
+        arguments: [
+            (#"{"pins":[{"identity":"mokume","state":{"version":"0.47.0"}}],"version":3}"# as String?, "0.47.0" as String?),
+            (#"{"pins":[{"identity":"mokume","state":{"version":"0.47.0"}}],"version":3}"#, "0.47.0_1"),
+            (#"{"pins":[{"identity":"mokume","state":{"version":"0.47.0"}}],"version":3}"#, nil),
+            (nil, "0.46.0"),
+            (#"{"pins":[{"identity":"swift-syntax","state":{"version":"603.0.2"}}],"version":3}"#, "0.46.0"),
+            (#"{"pins":[{"identity":"mokume","state":{"branch":"main","revision":"abcdef0123456789"}}],"version":3}"#,
+             "0.46.0"),
+            (#"{"pins":[{"identity":"mokume","state":{"version":"../../x"}}],"version":3}"#, "0.46.0"),
+            ("{ not json", "0.46.0"),
+        ])
+    func theStartupLineStaysSilentWhenItCannotTell(resolved: String?, tool: String?) throws {
+        let sketch = try makeSketch(resolved: resolved)
+        #expect(
+            DoctorCommand.mismatchLine(forPackageAt: sketch, tool: tool) == nil,
+            "\(resolved ?? "nil") / \(tool ?? "nil")")
+    }
+
+    /// **固定は呼んだ時に読む** — 起動は解決 (`RunCommand.context`) の後で呼ぶので、初回に解決して書かれた
+    /// `Package.resolved` の版で名乗る (完了条件 4)。
+    @Test("固定は呼んだ時に読むので、解決の後に書かれた固定でも名乗る")
+    func theStartupLineReadsThePinWhenCalled() throws {
+        let sketch = try makeSketch(resolved: nil)
+        #expect(DoctorCommand.mismatchLine(forPackageAt: sketch, tool: "0.46.0") == nil)
+        try Data(Self.pinned("0.47.0").utf8).write(to: sketch.appendingPathComponent("Package.resolved"))
+        #expect(DoctorCommand.mismatchLine(forPackageAt: sketch, tool: "0.46.0") != nil)
+    }
+
+    /// 原文を読む。**`Tool:` を名乗る起動のすべてが、置き場と固定を決めた後で食い違いの行を通す** (#4074)。
+    /// 起動を足したときに抜けないよう、口は `Tool: \(ToolVersion` の当たりから数える。使い方の表示
+    /// (`Command.swift`) はスケッチを起こさないので外す。
+    @Test("Tool: を名乗る起動のすべてが、置き場を決めた後で食い違いの行を通す")
+    func everyStartupThatNamesTheToolChecksTheDependency() throws {
+        let sources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MokumeCLI", isDirectory: true)
+        let names = try FileManager.default.contentsOfDirectory(atPath: sources.path)
+            .filter { $0.hasSuffix(".swift") && $0 != "Command.swift" }
+        var starts: [String] = []
+        for name in names.sorted() {
+            let text = try String(contentsOf: sources.appendingPathComponent(name), encoding: .utf8)
+            guard text.contains(#"Tool: \(ToolVersion"#) else { continue }
+            starts.append(name)
+            let context = try #require(text.range(of: "let context = try"), "\(name) が置き場を決めていない")
+            let call = try #require(
+                text.range(of: "DoctorCommand.mismatchLine(forPackageAt: directory)"),
+                "\(name) が起動の行で依存の版を突き合わせていない")
+            #expect(context.upperBound <= call.lowerBound, "\(name) が置き場 (解決) を決める前に固定を読んでいる")
+        }
+        #expect(
+            starts == ["RenderCommand.swift", "ReplayCommand.swift", "RunCommand.swift", "WatchCommand.swift"],
+            "\(starts)")
+    }
 }

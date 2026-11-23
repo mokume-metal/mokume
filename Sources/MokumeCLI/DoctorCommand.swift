@@ -574,6 +574,20 @@ enum DoctorCommand {
             + "a sketch and a tool from different versions can leave facets silent"
     }
 
+    /// 起動 (`run`・`render`・`replay`・`watch`) の画面に添える依存の行。**道具の版と固定の版が食い違うときだけ**
+    /// ``dependencyLine(_:tool:state:)`` と同じ文を返し、それ以外は `nil` (#4074)。
+    ///
+    /// 揃うとき・道具が版を持たないとき (手元ビルド)・固定が版で引けないときは言わない (規律 3)。
+    /// 固定は呼んだ時に読むので、起動は置き場を決める解決 (``RunCommand/context(in:invocation:environment:home:announce:resolver:afterReading:)``)
+    /// の後で呼ぶ — 作ったばかりのスケッチでも、初回に解決した版で名乗れる。版を揃えに行く・止めることはしない
+    /// (ADR-0018 決定 6)。
+    static func mismatchLine(forPackageAt directory: URL, tool: String? = ToolVersion.release()) -> String? {
+        guard let tool, let dependency = DependencyVersion.resolved(forPackageAt: directory),
+            !sameRelease(dependency, tool)
+        else { return nil }
+        return dependencyLine(dependency, tool: tool)
+    }
+
     /// 2 つの版が同じ配布版を指すか。
     ///
     /// **Homebrew の revision (`0.7.1_1`) は落としてから比べる。** formula を作り直しただけで

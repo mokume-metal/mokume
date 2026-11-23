@@ -171,6 +171,8 @@ enum WatchCommand {
         // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元
         // ビルドと配布版の取り違えに気付けない** (#633 が実際にそうなった・#684)
         say("Tool: \(ToolVersion.describe())")
+        // **依存の版と食い違えば、同じ画面で名乗る** (#4074)。固定は上の置き場を決める解決の後に読む
+        if let mismatch = DoctorCommand.mismatchLine(forPackageAt: directory) { say(mismatch) }
         // **常に名乗る。** 以前は基準がスケッチの場所と違うときだけ出していたが、それだと
         // MCP サーバの側にだけ MOKUME_WORK_DIR が効いている向きで比べる材料が出ない (#380)
         say(
