@@ -96,7 +96,7 @@ struct ReplaySoundAnalysisTests {
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60),
             now: { 0 }, onScreen: onScreen, persistsParams: false)
-        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
         for _ in 0..<3 { try runtime.advance() }
         runtime.closePlugins()
         return try ReplayRecord.read(from: url)
@@ -239,7 +239,7 @@ struct ReplaySoundAnalysisTests {
         let runtime = try SketchRuntime(
             sketch: ClockReader(read: read, flow: flow, file: file), gpu: RenderDevice(),
             clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: onScreen, persistsParams: false)
-        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
         for _ in 0..<3 { try runtime.advance() }
         runtime.closePlugins()
         return try ReplayRecord.read(from: url)
@@ -299,7 +299,7 @@ struct ReplaySoundAnalysisTests {
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: true,
             persistsParams: false)
-        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
         for _ in 0..<3 { try runtime.advance() }
         runtime.closePlugins()
         let taken = try ReplayRecord.read(from: url)
@@ -538,7 +538,7 @@ struct ReplaySoundAnalysisTests {
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: false,
             persistsParams: false)
-        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
         for frame in 1...3 {
             try runtime.advance()
             if frame == 1 { await sketch.loading?.value }

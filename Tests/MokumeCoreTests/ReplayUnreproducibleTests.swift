@@ -35,7 +35,7 @@ struct ReplayUnreproducibleTests {
     ) async throws -> ReplayRecord {
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
-        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
         for frame in 1...frames {
             try runtime.advance()
             try await between(frame, runtime)
@@ -347,7 +347,7 @@ struct ReplayUnreproducibleTests {
         func recording(_ sketch: any Sketch, to url: URL) throws -> SketchRuntime {
             let runtime = try SketchRuntime(
                 sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
-            try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+            try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
             return runtime
         }
         let ownerURL = directory.appendingPathComponent("owner.json")

@@ -936,7 +936,8 @@ extension Canvas {
             solidStrokeCoverage = saved
         }
         // 細い線の開いた端は、画面の描く画素の列 (行) の境目で切る (#3745・平面の ``thinCarving(_:thin:)`` と同じ
-        // ``ThinEndCut``)。端の列の片は、ほかの片より先に積む (型板で先の片が勝つ・平面と同じ)
+        // ``ThinEndCut``)。端の列の片は、ほかの片より先に積む (型板で先の片が勝つ・平面と同じ)。細い立体の線は片が
+        // 全部細い (被覆は線 1 本ごとに決まる) ので、平面の「被覆 1 の片を先に」(#4034) に当たる片は無い
         var ends: SolidEndCuts?
         if let thin {
             ends = solidEndCuts(world: world, edges: edges, curveSteps: curveSteps, thin: thin, camera: camera)

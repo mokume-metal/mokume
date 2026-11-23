@@ -530,7 +530,7 @@ struct ObservationKeepTests {
         let place = try place()
         let (runtime, _) = try makeRuntime(place)
         let destination = place.facet.deletingLastPathComponent().appendingPathComponent("take.json")
-        let replay = try #require(ReplayRequest(destination: destination.path))
+        let replay = try #require(ReplayRequest(destination: destination.path, generation: false))
         #expect(runtime.startRecording(replay))
         let recordID = try #require(runtime.recordingStatus?.id)
         for _ in 0..<3 { try runtime.advance() }

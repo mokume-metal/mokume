@@ -503,11 +503,96 @@ extension Canvas {
     }
 
     /// 頂点の区間 `range` を、開いている平面の列の区間として覚える (保持した形を置く口も使う・#3580)。
+    ///
+    /// 覚える前に、区間の片を被覆 1 の片が先になるよう並べ替える (``putFullCoverageFirst(in:)``)。
     func noteFlatStrokeSection(_ range: Range<Int>) {
         guard openSource == .flat, openFlat == nil else { return }
         let section = max(range.lowerBound, openFlatRunStart)..<range.upperBound
         guard !section.isEmpty else { return }
+        putFullCoverageFirst(in: section)
         flatStrokeStencilSections.append(section)
+    }
+
+    /// 型板の区間 `section` の頂点を、**被覆 1 の片を先に、被覆 < 1 の片を後に、それぞれ元の順のまま**並べ替える
+    /// (#4034)。被覆の区間 (``coverageSpans``) も付け直す。
+    ///
+    /// 型板は同じ画素に先に積んだ片を残す。被覆の違う片が混ざる図形 (一様でない拡大で一部の帯だけが細い) で
+    /// 細い片が先に印を付けると、後から来る被覆 1 の片が落ち、交わる所の濃さが片を書いた順で変わる。被覆 1 の片が
+    /// 先なら、交わる所には太い片が残る。細い片の被覆は持ち上げない。
+    ///
+    /// 分けるのは被覆の値 (``coverageSpans`` に載るか) である。広げた細い帯でも、被覆がちょうど 1 になるもの
+    /// (``widenedBand(_:along:)`` で太さが帯を切る長さと一致する向き) は、被覆 1 の片として先に積む。
+    ///
+    /// 被覆 1 の頂点が被覆 < 1 の頂点の後に無ければ (被覆が全部同じ図形を含む) 何も動かさない。被覆は片ごとに
+    /// 付けてあり、片の三角形は続いて積むので、被覆の区間の境目で割っても三角形は割れない。
+    func putFullCoverageFirst(in section: Range<Int>) {
+        Self.putFullCoverageFirst(in: section, vertices: &vertices, coverageSpans: &coverageSpans)
+    }
+
+    /// ``putFullCoverageFirst(in:)`` の本体。頂点の並び `vertices` と、その被覆の区間 `coverageSpans` (番号の順に
+    /// 並び、重ならない) を書き換える。
+    static func putFullCoverageFirst(
+        in section: Range<Int>, vertices: inout [ShapeVertex], coverageSpans: inout [CoverageSpan]
+    ) {
+        // 区間に掛かる最初の被覆の区間 (被覆の区間は番号の順に並び、重ならない)
+        var low = 0
+        var high = coverageSpans.count
+        while low < high {
+            let middle = (low + high) / 2
+            if coverageSpans[middle].range.upperBound <= section.lowerBound { low = middle + 1 } else { high = middle }
+        }
+        var end = low
+        while end < coverageSpans.count, coverageSpans[end].range.lowerBound < section.upperBound { end += 1 }
+        guard low < end else { return }
+        func clipped(_ index: Int) -> Range<Int> {
+            coverageSpans[index].range.clamped(to: section)
+        }
+        // 最初の細い頂点から区間の終わりまでが細い頂点で埋まっていれば、被覆 1 の頂点は全部その前にある
+        var cursor = clipped(low).lowerBound
+        var fullAfterThin = false
+        for index in low..<end {
+            let span = clipped(index)
+            if span.lowerBound > cursor {
+                fullAfterThin = true
+                break
+            }
+            cursor = span.upperBound
+        }
+        guard fullAfterThin || cursor < section.upperBound else { return }
+
+        // 被覆 1 の頂点 (被覆の区間の間) を先に、被覆の区間の頂点を後に、1 つの並びへ詰める
+        var reordered: [ShapeVertex] = []
+        reordered.reserveCapacity(section.count)
+        cursor = section.lowerBound
+        for index in low..<end {
+            let span = clipped(index)
+            reordered.append(contentsOf: vertices[cursor..<span.lowerBound])
+            cursor = span.upperBound
+        }
+        reordered.append(contentsOf: vertices[cursor..<section.upperBound])
+        let fullCount = reordered.count
+        for index in low..<end { reordered.append(contentsOf: vertices[clipped(index)]) }
+        vertices.replaceSubrange(section, with: reordered)
+
+        // 区間の外へはみ出す被覆の区間 (前後の図形の細い片と続いてまとまったもの) は、境目で割って外の分を残す。
+        // 後ろへはみ出す区間は、区間の終わりへ移した同じ被覆の頂点と続くので、また 1 つにまとまる
+        var spans: [CoverageSpan] = []
+        spans.reserveCapacity(end - low + 1)
+        let head = coverageSpans[low]
+        if head.range.lowerBound < section.lowerBound {
+            spans.append(CoverageSpan(range: head.range.lowerBound..<section.lowerBound, value: head.value))
+        }
+        var at = section.lowerBound + fullCount
+        for index in low..<end {
+            let count = clipped(index).count
+            CoverageSpan.note(coverageSpans[index].value, in: at..<(at + count), to: &spans)
+            at += count
+        }
+        let tail = coverageSpans[end - 1]
+        if tail.range.upperBound > section.upperBound {
+            CoverageSpan.note(tail.value, in: section.upperBound..<tail.range.upperBound, to: &spans)
+        }
+        coverageSpans.replaceSubrange(low..<end, with: spans)
     }
 
     /// 平面の線を型板に載せるか — 載せるなら、片を引かずに重ねて積み、図形の線全体を 1 回だけ混ぜる
@@ -525,7 +610,8 @@ extension Canvas {
     ///   ([#3580])。保持する形の記録 (`recordingShape`) もここでは載せないが、1 つの領域として引けない輪郭は
     ///   引かずに積み、置くときに区間へ入れる (``Canvas/place(_:of:at:carved:)``)
     /// - 1 つの領域として引ける輪郭 (``Outline/strokesAsOneRegion`` — 矩形・楕円・弧・辺の交差しない
-    ///   四角)。引き算で既に線全体が 1 回になるので、約束は同じ。畳める形の雛形と同じ積み方に揃う
+    ///   四角)。引き算で既に線全体が 1 回になるので、約束は同じ。被覆の違う片が混ざる輪郭も、型板と同じく被覆 1 の
+    ///   片を先に引く (``StrokeCarving`` の `carvingOrder`・#4034)。畳める形の雛形と同じ積み方に揃う
     ///   (``strokeOutlineAsStyled(_:discSegments:)``)。破線の片はこの印を持たないので型板に載る
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
