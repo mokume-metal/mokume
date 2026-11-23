@@ -55,6 +55,12 @@ public nonisolated struct Font: Hashable, Sendable, CustomStringConvertible {
     ///
     /// 探し方は画像と同じ (``ImageFile/locate(_:)``)。登録はしない。
     static func load(_ path: String) throws(FontFailure) -> Font {
+        try located(path).font
+    }
+
+    /// ``load(_:)`` と同じに読み、**読んだファイルの場所も返す** (記録・再生の資源のハッシュは、main で呼ぶ側が
+    /// この場所から取る・#4092)。
+    static func located(_ path: String) throws(FontFailure) -> (font: Font, url: URL) {
         let url: URL
         do {
             url = try ImageFile.locate(path)
@@ -74,8 +80,6 @@ public nonisolated struct Font: Hashable, Sendable, CustomStringConvertible {
                 as? [CTFontDescriptor],
             let first = descriptors.first
         else { throw .unreadable(path: path) }
-        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
-        ReplayNotice.readResource(path, at: url)
 
         let stamp = FileStamp.of(url)
         let identity =
@@ -87,13 +91,13 @@ public nonisolated struct Font: Hashable, Sendable, CustomStringConvertible {
         let probe = CTFontCreateWithFontDescriptor(first, 12, nil)
         if !TypefaceWeight.axes(of: probe).isEmpty {
             let face = Face(descriptor: first, trait: TypefaceWeight.trait(of: probe))
-            return Font(path: path, identity: identity, faces: [face], isVariable: true)
+            return (Font(path: path, identity: identity, faces: [face], isVariable: true), url)
         }
         let faces = descriptors.map { descriptor in
             Face(
                 descriptor: descriptor,
                 trait: TypefaceWeight.trait(of: CTFontCreateWithFontDescriptor(descriptor, 12, nil)))
         }
-        return Font(path: path, identity: identity, faces: faces, isVariable: false)
+        return (Font(path: path, identity: identity, faces: faces, isVariable: false), url)
     }
 }

@@ -38,6 +38,9 @@ extension SketchPart {
     // shot: 撮れない 読んだ書体を返す口で、書体のファイルはリポジトリに置けない。使った絵は textFont(_:) の説明が持つ
     public func loadFont(_ path: String) throws(FontFailure) -> Font {
         noticeBlockingLoad("loadFont(_:)", instead: nil)
-        return try Font.load(path)
+        let read = try Font.located(path)
+        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+        ReplayNotice.readResource(path, at: read.url)
+        return read.font
     }
 }
