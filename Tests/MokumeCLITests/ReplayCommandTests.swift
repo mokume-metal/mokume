@@ -52,7 +52,7 @@ struct ReplayCommandTests {
 
     /// **流す子にも、探してよい包みを渡す** (#4038 の反証・指摘 8)。`run` と同じ口 (`childEnvironment`) を通る。
     @Test("流す子の環境に、探してよい包みが載る")
-    func theReplayChildGetsTheUndeclaredBundles() throws {
+    func theReplayChildGetsTheAllowance() throws {
         let report = TestScratch.path("mokume-replay-undeclared").appendingPathComponent("report.json")
         try FileManager.default.createDirectory(
             at: report.deletingLastPathComponent(), withIntermediateDirectories: true)
