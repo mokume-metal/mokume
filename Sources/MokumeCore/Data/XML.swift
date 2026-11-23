@@ -54,6 +54,7 @@ import Foundation
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public struct XML: Equatable, Sendable {
+    // 既定の main actor のまま: 読み出しが main actor の警告の口 (`warnOnce` など) を呼ぶ (#4098)
     let element: XMLFile.Element
 
     init(_ element: XMLFile.Element) {

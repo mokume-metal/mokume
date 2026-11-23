@@ -40,8 +40,38 @@ nonisolated struct OffMainValueTests {
         #expect(orbit == orbit && orbit.distance > 0)
     }
 
-    /// 読み込みから作る値 (書体・3D モデル) は、ここでは作らずに型だけを見る。メンバと `==` が main の
-    /// 外で使えなければ、この関数が組めない。
+    /// 型の本体でなく**別の `extension` で足したメンバ** (リテラルからの初期化・シェーダへ渡す形) も、
+    /// main の外で使える。型に付けた `nonisolated` は別の `extension` には効かないので、ここが組めることで
+    /// 拡張の側の隔離を見る。
+    @Test("拡張で足したメンバ (リテラル・シェーダへ渡す形) も main の外で使える")
+    func extensionMembersAreUsableOffMain() {
+        let literal: ShaderValue = 1.5
+        let integer: ShaderValue = 2
+        #expect(literal == .number(1.5) && integer == .number(2))
+        #expect(Transform.identity.shaderValue == .transform(.identity))
+        #expect(ShaderValue.bool(true).shaderValue == .bool(true))
+        #expect(Camera.Projection.perspective(fieldOfView: 1, aspect: 1, near: 0.1, far: 10) != .orthographic(
+            left: -1, right: 1, bottom: -1, top: 1, near: 0.1, far: 10))
+    }
+
+    /// 失敗の型 (`Error`) は既定の隔離に載らない。`catch` した先で比べ・`case` を読み・説明を読むのが
+    /// main の外で組めることを、代表の 3 つで見る。
+    @Test("失敗の型も main の外で作り、比べ、case と説明を読める")
+    func failuresAreUsableOffMain() {
+        let asset = AssetFailure.notFound(path: "a.png", searched: ["/x"])
+        #expect(asset == .notFound(path: "a.png", searched: ["/x"]) && !asset.description.isEmpty)
+        let image = ImageFailure.undecodable(path: "b.png")
+        guard case .undecodable(let path) = image else {
+            Issue.record("case を読めない: \(image)")
+            return
+        }
+        #expect(path == "b.png" && image != .notRunning(call: "loadImage"))
+        let data = DataFailure.notRunning(call: "loadJSONObject")
+        #expect(data == .notRunning(call: "loadJSONObject") && !data.description.isEmpty)
+    }
+
+    /// 読み込みから作る値 (書体・3D モデル) は、ここでは作らずに型だけを見る。**呼ばない — 組めることを
+    /// 見る。** メンバと `==` が main の外で使えなければ、この関数が組めない。
     nonisolated static func readLoadedValuesOffMain(font: Font, model: Model) -> Bool {
         font == font && !font.description.isEmpty && model == model && model.name == model.name
     }

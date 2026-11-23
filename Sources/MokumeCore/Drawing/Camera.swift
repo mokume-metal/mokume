@@ -14,7 +14,7 @@ import simd
 public nonisolated struct Camera: Equatable, Sendable {
 
     /// どう写すか。
-    public nonisolated enum Projection: Equatable, Sendable {
+    public enum Projection: Equatable, Sendable {
         /// 遠くのものほど小さく写す。
         ///
         /// - Parameters:

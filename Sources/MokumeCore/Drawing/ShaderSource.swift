@@ -569,10 +569,12 @@ public nonisolated enum ShaderValue: Equatable, Sendable {
     }
 }
 
-extension ShaderValue: ExpressibleByFloatLiteral {
+// 型に付けた `nonisolated` は別の extension には効かず、書かなければ公開の宣言に既定の main actor が載る。
+// リテラルから作るのは main の外でも使える、を宣言に書く (#4098)
+nonisolated extension ShaderValue: ExpressibleByFloatLiteral {
     public init(floatLiteral value: Double) { self = .number(Float(value)) }
 }
 
-extension ShaderValue: ExpressibleByIntegerLiteral {
+nonisolated extension ShaderValue: ExpressibleByIntegerLiteral {
     public init(integerLiteral value: Int) { self = .number(Float(value)) }
 }
