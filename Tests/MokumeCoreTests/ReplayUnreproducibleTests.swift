@@ -44,6 +44,20 @@ struct ReplayUnreproducibleTests {
         return try ReplayRecord.read(from: url)
     }
 
+    /// 記録も再生もせずに回す。`between` は ``record(_:frames:to:between:)`` と同じ。
+    private func run(
+        _ sketch: any Sketch, frames: Int = 3,
+        between: (Int, SketchRuntime) async throws -> Void = { _, _ in }
+    ) async throws {
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
+        for frame in 1...frames {
+            try runtime.advance()
+            try await between(frame, runtime)
+        }
+        runtime.closePlugins()
+    }
+
     /// 流す。`SketchApplication` が流す子を組むのと同じ引数で組み、記録の終わりまで回す (期限は回数で持つ)。
     private func replay(
         _ sketch: any Sketch, _ url: URL,
@@ -542,14 +556,7 @@ extension ReplayUnreproducibleTests {
         try kind.write(0, to: file)
 
         // 記録も再生もしていない実行では、読んでもハッシュを 1 度も取らない
-        let plain = try SketchRuntime(
-            sketch: ResourceReader(kind, path: file.path), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60),
-            persistsParams: false)
-        for frame in 1...3 {
-            try plain.advance()
-            try await awaitLoading(frame, plain)
-        }
-        plain.closePlugins()
+        try await run(ResourceReader(kind, path: file.path), between: awaitLoading)
         #expect(ResourceHasher.timesTaken(for: file.path) == 0, "\(kind): 記録していないのにハッシュを取った")
 
         let url = directory.appendingPathComponent("take.json")
