@@ -10,7 +10,7 @@ import MokumeCore
 ///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 nonisolated enum AudioFile {
-    /// 読んだ標本列 (チャンネルを平均したモノラル) と、その標本化率。
+    /// 読んだ標本列 (チャンネルを平均したモノラル。``mono(_:)``) と、その標本化率。
     struct Decoded: Equatable {
         var samples: [Float]
         var sampleRate: Float
@@ -129,10 +129,13 @@ nonisolated enum AudioFile {
     /// 中身の無い誤りの domain (``isEndOfFile(_:)``)。
     static let emptyErrorDomain = "Foundation._GenericObjCError"
 
-    /// チャンネルを平均したモノラルの標本列。
+    /// 解析とエフェクトへ渡す、チャンネルを平均したモノラルの標本列。平均するのは直に鳴らす経路が読むチャンネルで、
+    /// 配置がスピーカーを名乗らない 3 チャンネル以上の器 (``FilePlayer/isUnplaced(_:)``) は先頭の 2 チャンネル
+    /// (3 チャンネル目から先は鳴らないので入れない)、ほかは全チャンネル。
     static func mono(_ buffer: AVAudioPCMBuffer) -> [Float] {
         let count = Int(buffer.frameLength)
-        let channelCount = Int(buffer.format.channelCount)
+        let formatChannels = Int(buffer.format.channelCount)
+        let channelCount = formatChannels > 2 && FilePlayer.isUnplaced(buffer.format) ? 2 : formatChannels
         guard count > 0, channelCount > 0, let channels = buffer.floatChannelData else { return [] }
         // 処理の形式はチャンネルごとの置き場 (分離) で届く
         let stride = buffer.stride
