@@ -288,6 +288,164 @@ struct ReplaySoundAnalysisTests {
         #expect(found.unreproducible == [reason], "流す側が自分で見つける: \(read): \(found.unreproducible)")
     }
 
+    // MARK: - 受け手を継がない所からの読み (#4144)
+
+    /// 読みを回す先。どちらもタスクローカル値を継がない。
+    enum Away: String, CaseIterable, Sendable {
+        case mainQueue, detached
+    }
+
+    /// 回した先で読む値。
+    enum AwayRead: String, CaseIterable, Sendable {
+        case position, soundTime, level
+
+        var reason: String {
+            switch self {
+            case .position: ReplayRecorder.Reason.soundClock("SoundFile.position")
+            case .soundTime: ReplayRecorder.Reason.soundClock("soundTime")
+            case .level: ReplayRecorder.Reason.soundAnalysis("SoundFile")
+            }
+        }
+    }
+
+    /// `ClockReader` と同じ音を鳴らし、2 枚目の `draw()` で読みを `away` へ回すスケッチ。読み終えたら ``finished`` を進める。
+    final class AwayReader: Sketch {
+        var away = Away.mainQueue
+        var read = AwayRead.position
+        var flow: SoundFlow?
+        var file: URL?
+        var tone: TriOsc?
+        var sound: SoundFile?
+        /// 回した先で読み終えた回数。検査はこれが揃うまで待つ。
+        private(set) var finished = 0
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8, frameRate: 60) }
+        init() {}
+        convenience init(_ away: Away, _ read: AwayRead, flow: SoundFlow?, file: URL) {
+            self.init()
+            self.away = away
+            self.read = read
+            self.flow = flow
+            self.file = file
+        }
+        func setup() throws {
+            let made = TriOsc(stage: SynthStage.stage(for: self, flow: flow))
+            made.play(440, 0.3)
+            tone = made
+            let loaded = try loadSound(try #require(file).path, flow: flow)
+            loaded.loop()
+            sound = loaded
+        }
+        func draw() {
+            background(0, 0, 0)
+            guard frameCount == 2 else { return }
+            switch away {
+            case .mainQueue: DispatchQueue.main.async { [self] in take() }
+            case .detached: Task.detached { [self] in await MainActor.run { take() } }
+            }
+        }
+        private func take() {
+            switch read {
+            case .position: _ = sound?.position
+            case .soundTime: _ = soundTime
+            case .level: _ = sound?.level
+            }
+            finished += 1
+        }
+    }
+
+    /// 回した読みが終わるまで、期限つきで待つ (読みの回数で決める)。
+    private func waitForAway(_ sketch: AwayReader) async throws {
+        let deadline = ContinuousClock.now + .seconds(30)
+        while sketch.finished == 0 {
+            guard ContinuousClock.now < deadline else {
+                Issue.record("30 秒たっても回した読みが終わらない (\(sketch.away)・\(sketch.read))")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    /// 回した読みのスケッチを録る。
+    private func recordAway(
+        _ away: Away, _ read: AwayRead, onScreen: Bool, to url: URL, file: URL
+    ) async throws -> ReplayRecord {
+        let flow = onScreen ? try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096) : nil
+        let sketch = AwayReader(away, read, flow: flow, file: file)
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: onScreen,
+            persistsParams: false)
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
+        for _ in 0..<2 { try runtime.advance() }
+        try await waitForAway(sketch)
+        try runtime.advance()
+        runtime.closePlugins()
+        return try ReplayRecord.read(from: url)
+    }
+
+    @Test(
+        "main のキューや Task.detached へ回して音の時計・解析を読んでも、ウィンドウで録った記録に理由がちょうど 1 つ載り、流す側も名乗る",
+        arguments: Away.allCases, AwayRead.allCases)
+    func aReadAwayFromTheRunIsNamed(away: Away, read: AwayRead) async throws {
+        let directory = try TestScratch.directory("mokume-replay-sound")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let url = directory.appendingPathComponent("away-\(away)-\(read).json")
+        let taken = try await recordAway(away, read, onScreen: true, to: url, file: file)
+        #expect(taken.window && taken.unreproducible == [read.reason], "\(away).\(read): \(taken.unreproducible)")
+
+        // 記録の理由を消しても、流す側が回した読みで自分で名乗る
+        var document = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        document["unreproducible"] = nil
+        let copy = directory.appendingPathComponent("away-\(away)-\(read)-stripped.json")
+        try JSONSerialization.data(withJSONObject: document).write(to: copy)
+        let player = ReplayPlayer(record: try ReplayRecord.read(from: copy), source: copy.path, reportURL: nil)
+        let sketch = AwayReader(away, read, flow: nil, file: file)
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: false,
+            persistsParams: false, opensFacets: false, handover: nil)
+        runtime.startReplaying(player)
+        var advances = 0
+        while !player.isFinished, advances < 20 {
+            player.beginAdvance(at: Double(advances))
+            try runtime.advance()
+            advances += 1
+            if advances == 2 { try await waitForAway(sketch) }
+        }
+        let report = try #require(runtime.finishReplaying())
+        runtime.closePlugins()
+        #expect(report.unreproducible == [read.reason], "流す側が自分で見つける: \(away).\(read): \(report.unreproducible)")
+    }
+
+    @Test("ウィンドウなしで録った記録は、回した先で音の時計・解析を読んでも名乗らない", arguments: Away.allCases, AwayRead.allCases)
+    func aHeadlessReadAwayIsNotNamed(away: Away, read: AwayRead) async throws {
+        let directory = try TestScratch.directory("mokume-replay-sound")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let url = directory.appendingPathComponent("away-headless-\(away)-\(read).json")
+        let taken = try await recordAway(away, read, onScreen: false, to: url, file: file)
+        #expect(!taken.window && taken.unreproducible.isEmpty, "\(away).\(read): \(taken.unreproducible)")
+    }
+
+    @Test("実行が終わった後に音の時計・解析を読んでも、落ちず、名乗らない")
+    func aReadAfterTheRunEndedIsSilent() throws {
+        let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("away-after.json")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        let sketch = ClockReader(read: nil, flow: flow, file: file)
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: true,
+            persistsParams: false)
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
+        for _ in 0..<3 { try runtime.advance() }
+        runtime.closePlugins()
+        // 終わった記録へは何も書かない
+        _ = (sketch.sound?.position, sketch.sound?.level, sketch.soundTime)
+        let taken = try ReplayRecord.read(from: url)
+        #expect(taken.unreproducible.isEmpty, "\(taken.unreproducible)")
+    }
+
     @Test("jump(_:) に数でない値を渡した警告は位置を文面に載せるが、時計の読みとして名乗らない")
     func aJumpWarningIsNotAClockRead() throws {
         let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("clock-jump.json")

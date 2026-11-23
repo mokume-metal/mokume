@@ -635,6 +635,120 @@ extension ReplayUnreproducibleTests {
         #expect(ResourceHasher.timesTaken(for: file.path) == 3)
     }
 
+    // MARK: - 受け手を継がない所からの読み (#4144)
+
+    /// `setup()` で `Task.detached` を起こし (タスクローカル値を継がない)、その中から資源を 1 度読むスケッチ。
+    /// `url` があれば、ファイルの代わりに URL から読む。読み終えたら ``finished`` を 1 つ進める。
+    final class DetachedReader: Sketch {
+        var kind = ResourceKind.bytes
+        var path = ""
+        /// 読み終えた回数 (投げても数える)。検査はこれが揃うまで待つ。
+        private(set) var finished = 0
+        /// 投げたなら、その誤り。
+        private(set) var failure: String?
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        init() {}
+        convenience init(_ kind: ResourceKind, path: String) {
+            self.init()
+            self.kind = kind
+            self.path = path
+        }
+        func setup() {
+            Task.detached { [self] in await read() }
+        }
+        private func read() async {
+            do {
+                if kind.waits {
+                    try await kind.request(path, in: self)
+                } else {
+                    try kind.loadNow(path, in: self)
+                }
+            } catch {
+                failure = "\(error)"
+            }
+            finished += 1
+        }
+        func draw() { background(0.1) }
+    }
+
+    /// 1 回読み終えるまで回す (期限つき)。
+    private var awaitDetached: (Int, SketchRuntime) async throws -> Void {
+        { frame, runtime in
+            guard frame == 1, let sketch = runtime.sketch as? DetachedReader else { return }
+            let deadline = ContinuousClock.now + .seconds(30)
+            while sketch.finished == 0 {
+                guard ContinuousClock.now < deadline else {
+                    Issue.record("30 秒たっても Task.detached の読みが終わらない (\(sketch.kind))")
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
+    }
+
+    @Test(
+        "Task.detached の中から読んだ資源も、記録が控えて流す側が照らし、待つ読み込みなら名乗る (スケッチの自分の実行へ)",
+        arguments: ResourceKind.allCases)
+    func aResourceReadFromADetachedTaskIsRecorded(kind: ResourceKind) async throws {
+        let directory = try scratch()
+        let file = directory.appendingPathComponent(kind.fileName)
+        try kind.write(0, to: file)
+        let url = directory.appendingPathComponent("take.json")
+        let sketch = DetachedReader(kind, path: file.path)
+        let recorded = try await record(sketch, to: url, between: awaitDetached)
+        #expect(sketch.failure == nil, "\(kind): \(sketch.failure ?? "")")
+        let waiting = kind.waits ? [Reason.waitingLoad] : []
+        #expect(recorded.unreproducible == waiting, "\(kind): \(recorded.unreproducible)")
+        #expect(recorded.resources.keys.sorted() == [file.path], "\(kind): \(recorded.resources)")
+
+        try kind.write(1, to: file)
+        let changed = try await replay(DetachedReader(kind, path: file.path), url, between: awaitDetached)
+        #expect(
+            changed.unreproducible == waiting + [Reason.resourceDiffers(file.path)], "\(kind): \(changed.unreproducible)")
+    }
+
+    /// `Task.detached` の中から URL を読むスケッチ。
+    final class DetachedFetcher: Sketch {
+        var url = ""
+        var waits = false
+        private(set) var finished = 0
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        init() {}
+        convenience init(_ url: String, waits: Bool) {
+            self.init()
+            self.url = url
+            self.waits = waits
+        }
+        func setup() {
+            Task.detached { [self] in await fetch() }
+        }
+        private func fetch() async {
+            if waits { _ = try? await requestBytes(url) } else { _ = try? loadBytes(url) }
+            finished += 1
+        }
+        func draw() { background(0.1) }
+    }
+
+    @Test("Task.detached の中から URL を読んでも、記録が URL を名乗る", arguments: [false, true])
+    func aWebFileFromADetachedTaskIsNamed(waits: Bool) async throws {
+        let web = CannedResponses.serve(.answer(status: 200, body: Data([1, 2, 3])))
+        let url = try scratch().appendingPathComponent("take.json")
+        let sketch = DetachedFetcher(web, waits: waits)
+        let recorded = try await record(sketch, to: url) { frame, _ in
+            guard frame == 1 else { return }
+            let deadline = ContinuousClock.now + .seconds(30)
+            while sketch.finished == 0 {
+                guard ContinuousClock.now < deadline else {
+                    Issue.record("30 秒たっても URL の読みが終わらない")
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        let expected = waits ? [Reason.waitingLoad, Reason.webFile] : [Reason.webFile]
+        #expect(recorded.unreproducible == expected, "\(recorded.unreproducible)")
+    }
+
     /// 同じ断片を、断片の口とバイト列の口の両方で読むスケッチ。
     final class TwoWayReader: Sketch {
         var path = ""
