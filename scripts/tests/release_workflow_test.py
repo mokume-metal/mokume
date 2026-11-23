@@ -81,7 +81,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_各_job_の_timeout_は実測の余裕を持つ(self):
         # release-check は #3342 で 60。11-04 に 60 分で切れて 90 でつなぎ (#3743)、検査のターゲットの
-        # WMO を外して (約 33 分) 60 へ戻した (#3750)。全探索は debug のビルドを含め 8〜16 分 → 30。
+        # WMO を外して (約 33 分) 60 へ戻した (#3750)。11-23 にまた 60 分で切れて 90 でつなぎ (#4171)、
+        # MokumeCoreTests を割ったら 60 へ戻す (#4172)。全探索は debug のビルドを含め 8〜16 分 → 30。
         # 黙って下げて切れる回を作らない・黙って上げて症状だけ隠さない — 数字を変えるなら
         # 根拠 (release.yml の注釈) と一緒に変える
         def minutes(job):
@@ -89,7 +90,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
             self.assertIsNotNone(m, job)
             return int(m.group(1))
 
-        self.assertEqual(minutes("release-check"), 60)
+        self.assertEqual(minutes("release-check"), 90)
         self.assertEqual(minutes("geometry-exploration"), 30)
 
     def test_release_check_だけが検査のターゲットの_WMO_を外す(self):
