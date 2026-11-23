@@ -165,6 +165,8 @@ final class SynthStage: Inlet {
     var soundSeconds: Double {
         Double(rack.rendered) / rack.sampleRate
     }
+    /// 公開の音の時計 (`soundTime`) を読んだことの名乗り。ウィンドウで録った記録へ 1 度だけ名乗る (#4096)。
+    var clockNotice = SoundClockNotice(reader: "soundTime")
 
     /// 予約の秒 `seconds` (音の時計) を、ラックの標本の位置にする。数でない値・無限の値は `nil`。
     /// 負の値と今より前の値は、そのまま過去の位置になり、次に作る標本の頭で適用される。
