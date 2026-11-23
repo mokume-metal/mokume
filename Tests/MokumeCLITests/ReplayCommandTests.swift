@@ -50,6 +50,24 @@ struct ReplayCommandTests {
         #expect(RunCommand.childEnvironment([:], replaying: "/tmp/take.json")[key] == "/tmp/take.json")
     }
 
+    /// **流す子にも、外す包みを渡す** (#4038 の反証・指摘 8)。`run` と同じ口 (`childEnvironment`) を通る。
+    @Test("流す子の環境に、外す包みが載る")
+    func theReplayChildGetsTheUndeclaredBundles() throws {
+        let report = TestScratch.path("mokume-replay-undeclared").appendingPathComponent("report.json")
+        try FileManager.default.createDirectory(
+            at: report.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: report.deletingLastPathComponent()) }
+        var seen: String?
+        try ReplayCommand.replay(
+            URL(fileURLWithPath: "/bin/false"), in: Self.typedFrom, record: "/tmp/take.json", report: report,
+            undeclaredBundles: ["Aaa_demo.bundle"]
+        ) { _, _, environment throws(CommandFailure) in
+            seen = environment[StartupReads.undeclaredBundles.key]
+            try? Data(#"{"matched":true}"#.utf8).write(to: report)
+        }
+        #expect(seen == "Aaa_demo.bundle")
+    }
+
     @Test("食い違いは子の終わり方を終了コードにし、報告の場所を名乗る")
     func aDifferenceKeepsTheChildsStatus() {
         let failure = CommandFailure.replayDiffered(report: "/tmp/r.json", ending: .exited(1))
