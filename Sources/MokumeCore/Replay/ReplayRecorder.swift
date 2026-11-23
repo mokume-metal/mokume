@@ -78,6 +78,13 @@ package final class ReplayRecorder: UnreproducibleSink {
             "Replay is not guaranteed (the analysis of a sound was read, such as its level, spectrum, waveform or beat; "
                 + "in a window sound plays in real time, and a replay counts frames: \(kind))"
         }
+        /// 音の時計に依る値 (`soundTime`・`SoundFile.position`・`SoundFile.isPlaying`) を読んだ (ウィンドウで録った記録だけ)。
+        /// ウィンドウでは音が実際に作った標本の数で、ウィンドウなしで流すときはフレームの数で進むので、値は割れうる (#4096)。
+        static func soundClock(_ reader: String) -> String {
+            "Replay is not guaranteed (a value that follows the clock of a sound was read, such as soundTime, or "
+                + "the position or isPlaying of a sound file; in a window sound plays in real time, and a replay "
+                + "counts frames: \(reader))"
+        }
         /// 待つ読み込み (`request…`) を使った。届くフレームは記録に無い (#3575)。
         static let waitingLoad =
             "Replay is not guaranteed (a request… load was used, and the frame its result arrives at depends on how "

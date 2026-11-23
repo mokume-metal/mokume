@@ -255,6 +255,58 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **つまみの列を出したウィンドウでも、絵の上を押した座標は絵の座標で運ばれる** (#4137)。
+    ///
+    /// 列が左を取るので、絵の面はウィンドウの左端から列の幅だけずれる。押した位置をウィンドウの座標のまま
+    /// 写すと、列の幅だけずれた座標が子へ届く。本物の `NSEvent` をウィンドウへ送り、ウィンドウ → 面の
+    /// 区間を通して見る。列の上を押したときは何も運ばない (つまみを触っただけで絵を押したことにならない)。
+    @Test("つまみの列を出したウィンドウで絵の真ん中を押すと、絵の真ん中として運ばれる。列を押しても運ばれない")
+    func clicksBesideTheKnobColumnMapToTheDrawing() throws {
+        try withFacet { facet in
+            let stage = try SharedFrameStage(gpu: RenderDevice(), facet: facet, look: look(fresh()))
+            var lines: [String] = []
+            stage.onInput = { lines.append($0) }
+            stage.open(knobColumn: true)
+            defer { stage.close() }
+            stage.placeKnobs(KnobOverlay(boxes: [], numbers: { nil }))
+            let window = try #require(stage.window)
+            let column = try #require(window.contentView as? KnobColumnLayout)
+            let surface = try #require(column.surface as? SketchSurface)
+            #expect(surface.frame.minX == column.columnWidth)
+            #expect(column.columnWidth > 0)
+
+            func press(atWindowPoint point: NSPoint) throws {
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    window.sendEvent(
+                        try #require(
+                            NSEvent.mouseEvent(
+                                with: type, location: point, modifierFlags: [], timestamp: 0,
+                                windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                clickCount: 1, pressure: 1)))
+                }
+            }
+
+            // 列の中 (つまみの面の下の余白) を押す
+            try press(atWindowPoint: column.convert(NSPoint(x: 4, y: 4), to: nil))
+            #expect(
+                !lines.contains { $0.contains("\"mouseDown\"") }, "列を押したのに絵を押したことになった: \(lines)")
+
+            // 列の右の残りの真ん中を押す。**絵の面からではなく列から測る** — 面がずれていれば、ここは面の
+            // 真ん中ではなくなる。描く大きさ (最初の絵が来るまでの仮の 1x1) の真ん中に写るはず
+            let rest = NSPoint(
+                x: column.columnWidth + (column.bounds.width - column.columnWidth) / 2,
+                y: column.bounds.midY)
+            try press(atWindowPoint: column.convert(rest, to: nil))
+            let down = try #require(lines.first { $0.contains("\"mouseDown\"") }, "\(lines)")
+            let raw = try JSONDecoder().decode(RawInputEvent.self, from: Data(down.utf8))
+            guard case .mouseDown(let x, let y, _, _)? = raw.event else {
+                Issue.record("押したことになっていない: \(down)")
+                return
+            }
+            #expect(abs(x - 0.5) < 0.01 && abs(y - 0.5) < 0.01, "(\(x), \(y))")
+        }
+    }
+
     /// **ファイルを選ばせる頼みは、作品のウィンドウが 1 度だけ出し、結果は子への 1 行になる** ([#3062])。
     /// 頼みは子が絵と一緒に面の属性へ載せる。同じ頼み (子の番号と通し番号) の次の枚では出し直さず、
     /// 別の頼みに変わったら前のダイアログは結果ごと捨てて閉じる。プレビューは出さない (パネルが 2 枚出る)。

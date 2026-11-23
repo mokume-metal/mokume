@@ -193,6 +193,9 @@ public final class SoundFile: Inlet, EffectInput {
     /// 読まれたら、ウィンドウで録る記録へ名乗る (#3575)。
     private var deferred = DeferredLevels(replayKind: "SoundFile")
     private var levels: AudioLevels { deferred.levels() }
+    /// 音の時計に依る公開の値 (``position``・``isPlaying``) を読んだら、ウィンドウで録る記録へ名乗る (#4096)。
+    private var positionNotice = SoundClockNotice(reader: "SoundFile.position")
+    private var playingNotice = SoundClockNotice(reader: "SoundFile.isPlaying")
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
     /// 位置を進める時計。開くまで `nil`。
@@ -462,7 +465,7 @@ public final class SoundFile: Inlet, EffectInput {
             notice(
                 .jumpNotANumber,
                 "jump() got a value that is not a number, or an infinite one, so \"\(name)\" stays "
-                    + "at \(position) seconds")
+                    + "at \(unnamedPosition) seconds")
             return
         }
         submit(.jump(Self.landing(seconds, sampleRate: sampleRate, count: samples.count)))
@@ -498,7 +501,13 @@ public final class SoundFile: Inlet, EffectInput {
     /// 位置を進めるのはオーディオクロックで、``SketchPart/time`` ではない。書き出し (固定クロック) では、再生を
     /// 始めてから進んだフレーム数で決まるので、同じフレームは常に同じ位置で描かれる。値はその
     /// フレームの開始時点のもの (``isPlaying`` と同じ)。停止中は停止した位置、再生が終わった後は 0。
-    public var position: Float { seconds(waitingTarget ?? pendingJump ?? samplePosition) }
+    public var position: Float {
+        positionNotice.noteRead()
+        return unnamedPosition
+    }
+
+    /// ``position`` の値。記録へ名乗らない — 絵にも `expose` の値にも返らない読み (警告の文面) が使う。
+    private var unnamedPosition: Float { seconds(waitingTarget ?? pendingJump ?? samplePosition) }
 
     /// 長さ (秒)。サンプル数 ÷ ``sampleRate``。
     public var duration: Float { seconds(samples.count) }
@@ -740,7 +749,10 @@ public final class SoundFile: Inlet, EffectInput {
     ///
     /// ``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)`` で再生を始めたときも `true` になり、エンベロープが終わって無音になっても
     /// `true` のまま (再生は止まらない)。
-    public var isPlaying: Bool { playhead.isPlaying }
+    public var isPlaying: Bool {
+        playingNotice.noteRead()
+        return playhead.isPlaying
+    }
 
     // MARK: - 包絡
 
