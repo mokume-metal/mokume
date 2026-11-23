@@ -607,7 +607,8 @@ extension Canvas {
     ///   ([#3580])。保持する形の記録 (`recordingShape`) もここでは載せないが、1 つの領域として引けない輪郭は
     ///   引かずに積み、置くときに区間へ入れる (``Canvas/place(_:of:at:carved:)``)
     /// - 1 つの領域として引ける輪郭 (``Outline/strokesAsOneRegion`` — 矩形・楕円・弧・辺の交差しない
-    ///   四角)。引き算で既に線全体が 1 回になるので、約束は同じ。畳める形の雛形と同じ積み方に揃う
+    ///   四角)。引き算で既に線全体が 1 回になるので、約束は同じ。被覆の違う片が混ざる輪郭も、型板と同じく被覆 1 の
+    ///   片を先に引く (``StrokeCarving`` の `carvingOrder`・#4034)。畳める形の雛形と同じ積み方に揃う
     ///   (``strokeOutlineAsStyled(_:discSegments:)``)。破線の片はこの印を持たないので型板に載る
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md

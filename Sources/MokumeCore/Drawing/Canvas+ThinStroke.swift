@@ -425,9 +425,11 @@ extension Canvas {
             return (carving, offset)
         }
         let segments = thin.bandHalf.count
-        // 開いた端は、描く画素の列 (行) の境目で切る (#3745・``ThinEndCut``)。**端の列の片は、ほかの片より先に
-        // 積む** — 曲線の短い端の線分で、後の片 (折れ目・次の帯) が端の列に入っても、引き算と型板で端の列の片が勝ち、
-        // 列の光の量は割合のとおりになる
+        // 開いた端は、描く画素の列 (行) の境目で切る (#3745・``ThinEndCut``)。**端の列の片は、ほかの細い片より先に
+        // 積む** — 曲線の短い端の線分で、後の細い片 (折れ目・次の帯) が端の列に入っても、引き算と型板で端の列の片が
+        // 勝ち、列の光の量は割合のとおりになる。被覆 1 の片 (一様でない拡大で太いままの帯) は、引き算でも型板でも
+        // 細い片より先に置く (#4034) ので、端の列に入れば太い片が残る — その画素は太い片が覆う
+        // (``StrokeCarving`` の `carvingOrder`・``Canvas/putFullCoverageFirst(in:)``)
         let ends = thinEnds(points, outline: outline, thin: thin, offset: offset)
         for (point, band, cut) in ends.pieces(count: count) {
             let piece = cut.piece

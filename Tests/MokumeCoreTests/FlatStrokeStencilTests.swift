@@ -790,11 +790,14 @@ struct FlatStrokeStencilTests {
         }
     }
 
-    /// 透明地に `body` を描いて、出す画素の不透明度 (0〜255) を読む。
-    private func alphas(_ body: (Canvas) -> Void) throws -> DisplayImage {
+    /// 透明地に `body` を描いて、出す画素の不透明度 (0〜255) を読む。`shaded` なら素通しの断片を効かせる
+    /// (基本図形が距離関数の経路でなく輪郭の周を描く)。
+    private func alphas(shaded: Bool = false, _ body: (Canvas) -> Void) throws -> DisplayImage {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        let shader = shaded ? try canvas.makeShader(Self.passThrough) : nil
         try canvas.draw {
             canvas.noFill()
+            if let shader { canvas.shader(shader) }
             body(canvas)
         }
         return try canvas.output.encodeForDisplay()
@@ -869,6 +872,116 @@ struct FlatStrokeStencilTests {
         #expect(abs(Int(image[60, 2].alpha) - 204) <= 1, "横の線だけの所: \(image[60, 2])")
         #expect(abs(Int(image[60, 6].alpha) - 204) <= 1, "前の図形の細い線: \(image[60, 6])")
         #expect(abs(Int(image[135, 6].alpha) - 204) <= 1, "前の図形の細い線: \(image[135, 6])")
+    }
+
+    /// 上の辺 (y = 40) が細く、右の辺か縦の半径 (x = 80) が太い輪郭。太い辺は描く画素の x 105〜135 で、細い辺と
+    /// 重なる所は (110, 2)、細い辺だけの所は (60, 2)、太い辺だけの所は (110, 3)。`beginShape` は型板、ほかは
+    /// 1 つの領域として引き算で積む (断片を効かせたとき。効かせなければ矩形・扇は距離関数の経路で描く)。
+    private static func cornerOutline(_ canvas: Canvas, _ kind: String) {
+        switch kind {
+        case "rect":
+            canvas.rect(20, 40, 60, 80)
+        case "quad":
+            canvas.quad(20, 40, 80, 40, 80, 120, 20, 120)
+        case "pie":
+            // 中心 (80, 40) から下へ縦の半径、(20, 40) から中心へ横の半径
+            canvas.arc(80, 40, 120, 160, Float.pi / 2, Float.pi, .pie)
+        default:
+            canvas.beginShape()
+            canvas.vertex(20, 40)
+            canvas.vertex(80, 40)
+            canvas.vertex(80, 120)
+            canvas.vertex(20, 120)
+            canvas.endShape(.close)
+        }
+    }
+
+    /// 細い辺と太い辺が重なる所・細い辺だけの所・太い辺だけの所を見る。
+    private func expectFullPieceKept(_ image: DisplayImage, row: Int = 2) {
+        #expect(image[110, row].alpha == 255, "重なる所: \(image[110, row])")
+        #expect(abs(Int(image[60, row].alpha) - 204) <= 1, "細い辺だけの所: \(image[60, row])")
+        #expect(image[110, row + 1].alpha == 255, "太い辺だけの所: \(image[110, row + 1])")
+    }
+
+    /// 1 つの領域として引ける輪郭は、型板でなく引き算で積む。引き算も同じ画素には先に置いた片を残すので、
+    /// 被覆 1 の片を先に引かないと、細い上の辺が先に置かれた所で太い辺が負ける (矩形・四角は 204)。同じ形を
+    /// `beginShape` で描いた絵と同じく、重なる所には太い辺が残る。
+    @Test(
+        "1 つの領域として引ける輪郭も、一部の辺だけが細くなると、細い辺と重なる所に太い辺が残る",
+        arguments: ["rect", "quad", "pie", "beginShape"])
+    func oneRegionMixedCoverageKeepsTheFullPiece(kind: String) throws {
+        let image = try alphas(shaded: true) { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            Self.cornerOutline(canvas, kind)
+        }
+        expectFullPieceKept(image)
+    }
+
+    /// `quad` は断片を効かせなくても輪郭の周を描く。
+    @Test("断片の無い quad も、細い辺と重なる所に太い辺が残る")
+    func unshadedQuadKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            Self.cornerOutline(canvas, "quad")
+        }
+        expectFullPieceKept(image)
+    }
+
+    /// 保持した形の矩形を潰して置くと、置くときに細い片を組み直して引き算で積む (``Canvas/thinVertices(_:placedBy:cache:stroke:)``)。
+    @Test("潰して置いた保持した形の矩形も、細い辺と重なる所に太い辺が残る")
+    func retainedOneRegionMixedCoverageKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            let shader = try? canvas.makeShader(Self.passThrough)
+            let shape = canvas.createShape {
+                canvas.noFill()
+                if let shader { canvas.shader(shader) }
+                canvas.stroke(255)
+                canvas.strokeWeight(20)
+                canvas.rect(20, 40, 60, 80)
+            }
+            canvas.shape(shape, at: [Placement(scale: Vector3(1.5, 0.04, 1))])
+        }
+        expectFullPieceKept(image)
+    }
+
+    /// 同じ矩形を続けて置くと、2 つ目から雛形に畳みうる (雛形も引き算で積む)。どれも同じ絵。
+    @Test("続けて置いた矩形の細い輪郭も、細い辺と重なる所に太い辺が残る")
+    func repeatedOneRegionMixedCoverageKeepsTheFullPiece() throws {
+        let image = try alphas(shaded: true) { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.rect(20, 40, 60, 80)
+            canvas.rect(20, 1040, 60, 80)
+            canvas.rect(20, 2040, 60, 80)
+        }
+        for row in [2, 42, 82] { expectFullPieceKept(image, row: row) }
+    }
+
+    /// 開いた細い輪郭の端の列の片は、ほかの細い片より先に積む (#3745)。後から来る被覆 1 の片 (最後の縦の帯は
+    /// x = 20 で太いまま、描く画素の x 15〜45) が端の列 (始点 (25, 40) は描く画素の x 37.5) に入ると、太い片が残る。
+    /// 並べ替える前は、端の列が端の割合の濃さ (64) に、細い帯が太い帯の上で細い帯の濃さ (204) になっていた。
+    @Test("開いた細い線の端の列に後から太い帯が入ると、太い帯が残る")
+    func endColumnUnderAFullBandKeepsTheFullPiece() throws {
+        let image = try alphas { canvas in
+            canvas.stroke(255)
+            canvas.strokeWeight(20)
+            canvas.scale(1.5, 0.04)
+            canvas.beginShape()
+            canvas.vertex(25, 40)
+            canvas.vertex(80, 40)
+            canvas.vertex(80, 120)
+            canvas.vertex(20, 120)
+            canvas.vertex(20, 20)
+            canvas.endShape()
+        }
+        #expect(image[37, 2].alpha == 255, "端の列: \(image[37, 2])")
+        #expect(image[40, 2].alpha == 255, "太い帯の上の細い帯: \(image[40, 2])")
+        #expect(abs(Int(image[46, 2].alpha) - 204) <= 1, "細い帯だけの所: \(image[46, 2])")
     }
 
     /// 畳んだ雛形は引き算のまま (型板の外)。1 つの図形の中は 1 回、重なる 2 つの図形どうしは 2 回。
