@@ -120,8 +120,10 @@ date -u '+%Y-%m-%dT%H:%M:%SZ'
 queue に複数の PR があるとき、同時刻に 2 本の `render` が別々の runner で走り、
 両方が事前チェックとテストを通ることを run の時刻と runner 名で確かめる。
 `render-pr` は、merge group があっても専用機の枠 (group の `render`・`render-pr`・定期の job) が
-2 本未満なら走る。merge group のゲートのジョブは `render-pr` が取る枠も数えて待つ
-(`scripts/render-turn.sh`「専用機の枠を数える」・#4018)。
+2 本未満なら走る。merge group のゲートのジョブは `render-pr` が取る枠も数えて待ち、
+queue-sweep は枠を越える分のまだ拾われていない `render-pr` だけを cancel する。
+枠の数え方は `scripts/render-turn.sh`「専用機の枠を数える」の 1 か所にあり、queue-sweep も
+同じ実装 (`render-turn.sh slots`) を呼ぶ (#4018)。
 
 切り替え後 7 日の評価は #2252 の完了条件 4 に従う。開始待ち p50 が 5 分以下、
 並走した回の所要が単独の +25% 以内、GPU の打ち切り・ウィンドウのテストの失敗が増えないことを見る。

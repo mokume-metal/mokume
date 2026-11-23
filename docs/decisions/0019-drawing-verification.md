@@ -275,11 +275,18 @@ runner は同じユーザー・同じ画面のセッションで 2 本にする 
 
 #### 改訂 (2026-11-24) — 門番は `render-pr` が取る枠も数え、空いた枠で `render-pr` を走らせる ([#4018](https://github.com/mokume-metal/mokume/issues/4018))
 
-**決定**: 門番は、専用機の枠を job の名前ではなく render.yml の run ごとに数える。終わっていない run のうち、専用機の job (ラベル `mokume-render`) が終わっていなければその数だけ、終わっていない job が 1 本も無いのに run が終わっていなければ (門番が通してから専用機の job が一覧に出るまでの数秒) 1 本、枠を取っていると数える。ホストの job だけが走っている run (門番の中・起票) は取っていない。判断は `scripts/render-turn.sh` が持つ。
+**決定**: 門番は、専用機の枠を job の名前ではなく render.yml の run ごとに数える。job が runner を取っているのは status が `queued` か `in_progress` のときだけとする (`needs` や concurrency で待つ `waiting`・`pending` の job は取っていない。`scripts/stall-watch.sh` の数え方と同じ)。終わっていない run のうち:
+
+- 専用機の job (ラベル `mokume-render`) が走っていれば、その数だけ枠を取っている
+- 走っている job が 1 本も無いのに run が終わっていなければ、1 本取っている (門番の後。門番が通してから専用機の job が `queued` になるまでの数秒と、job の間の隙間)。待つ job が何本並んでいても run 1 本で 1 枠
+- pull_request の run で、門番 (GitHub ホストの job) が走っていて専用機の job がまだ走っていなければ、1 本取っている (門番の中)。`yield` はその場で結論を出すので、通るかもしれない 1 本として数える
+- それ以外 (定期の門番 `wait` だけが走っている・専用機の job が終わり後続のホストの job だけが走っている) は取っていない。定期の門番は最大 60 分待つので、数えると group を長く止める
+
+**数え方の実装は `scripts/render-turn.sh` の 1 か所に置き、`queue-sweep` もその `slots` の mode を呼ぶ。** 門番と掃除が別々に数えると、片方が通した `render-pr` を片方が枠の外と読む。
 
 - `yield` は、merge_group の run が無ければ今までどおり通す。あれば、その数と、`render-pr` と定期の job が取っている枠の合計が N 本未満のときだけ通す。必須でない `render-pr` のために、group の `render` と定期の job の上へ N+1 本目を積まない。枠を読めなければ、引き直さずに見送る (以前の結論と同じ。「判定できないときは通す」の理由は必須でない `render-pr` には当たらない)。N=1 の `yield` の結論は変わらない
 - `merge_group` の門番は、前の group に加えて `render-pr` が取っている枠を数え、合計が N 本未満になるまで待つ (先頭の group も数える)。定期の job は今までどおり数えない (下の「queue の期限を 60 分から約 95 分へ延ばす」で、割り込みうる 1 本として受け入れてある)。読めなければ今までどおり引き直してから通す
-- `queue-sweep` は、まだ拾われていない `render-pr` のうち、runner の枠を越える分だけを cancel する。今の group の run の数と走っている `render-pr` の数を N から引き、残った枠の数だけ古い run から残す。N=1 なら今のグループがある限り全部 cancel する (上の #2064 と同じ)
+- `queue-sweep` は、まだ拾われていない `render-pr` のうち、runner の枠を越える分だけを cancel する。`yield` と同じ種類 (`render-pr` と定期の job) で枠を数え、今の group の run の数と、退かせられない枠 (走っている job・門番の中・門番の後・jobs を読めなかった run) の数を N から引き、残った枠の数だけ古い run から残す。`yield` なら見送る `render-pr` は残さない。N=1 なら今のグループがある限り全部 cancel する (上の #2064 と同じ)
 - `wait` と古い head の判定 (#3551) は変えない
 
 これで上の不変条件 (専用機に積まれた job が runner の数を越えない) を、`render-pr` が枠を取る場合にも保つ。
@@ -292,9 +299,11 @@ runner は同じユーザー・同じ画面のセッションで 2 本にする 
 
 - `render-pr` が枠を取っている間に来た group の `render` は、`render-pr` の 1 本分 (最大 30 分) 門番で待ちうる。N=1 では、先頭の group も走っている `render-pr` を待つ (以前は待たずに積まれ、専用機の queue で同じだけ待った。runner が 2 本 online のまま変数を 1 に戻すと、空いた runner があっても待つ)
 - 入れてから 7 日、`render-pr` の見送り率と merge_group の `render` の待ち (run の作成から専用機で走り出すまで) の p50・p90 を測り、p90 が 10 分を越えたら戻す
-- 2 本の PR の `yield` が同時に読むと、互いの run を門番の中と読むので、同じ空き枠に 2 本とも通りうる。積まれた後は merge_group の門番が両方を数えて待つので、group の `render` が専用機の queue で抜かれる形にはならない
-- merge_group の門番は定期の job を数えないので、group の `render` と定期の job が重なる形は今までどおり残る (`render-pr` がそこへ足されることは `yield` が塞ぐ)
-- 門番が隙間の run を数えるので、go=false で見送った run も `render-pr` が skipped で現れるまでの数秒は枠を取っていると数える (数え過ぎで、次の周で解ける)
+- 門番は門番の中の pull_request の run も数えるので、2 本の PR の `yield` が同時に走ると互いを数え、空き枠が 1 本でも両方が見送りうる (見送りの側に倒れる)。merge_group の門番は、`yield` が走っている間は 1 周 (60 秒) 余計に待ちうる
+- 門番の後の run も数えるので、go=false で見送った run も `render-pr` が skipped で現れるまでの数秒は枠を取っていると数える (数え過ぎで、次の周で解ける)
+- `yield` は merge_group の run を run の状態で数える (merge_group の門番が前の group を数えるのと同じ)。group の `render` が終わった後もホストの後続 (`render-notice-report` は concurrency で前の run を待ちうる) が走る間は枠を取っていると数え、空いた runner があっても `render-pr` を見送る (見送りの側・短い間)。`render` の job の結論で数えれば縮まるが、merge_group の門番と数え方が食い違い、門番で待つ group (まだ `render` の job が走っていない) を落とさない条件を足すことになるので、この改訂では変えない
+- merge_group の門番は定期の job を数えないので、定期の job が走っている間は group の `render` と合わせて N+1 本になりうる (今までどおり残る重なり)。`queue-sweep` は group ができた時点で定期の job も数え、枠を越える queued の `render-pr` を退かせるので、`render-pr` がそこへ重なる形はその時点で解く
+- 2 本の門番 (`yield` どうし、`yield` と merge_group の門番) は、相手の run が render.yml の run の一覧に現れる前に読めば相手を数えない (run の作成から一覧に出るまでの数秒)。現れた後は、門番の中・門番の後・走っている job のどれかで数える
 - 1 周の API の呼び出しは、枠を数える回に 2 + (数える種類の終わっていない run の数) 件増える
 
 **退けた案**: group が来たら走っている `render-pr` を取り消して枠を譲る — 仕組みが増え、塞ぐ実害を示せていない。`queue-sweep` の cancel は、まだ拾われていない `render-pr` のうち枠を越える分に限るので、この案とは違う。
