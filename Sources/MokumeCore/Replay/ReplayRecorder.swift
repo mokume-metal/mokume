@@ -34,7 +34,8 @@ import MokumeDiagnostics
 /// 同じ行き先へ書く実行は、行き先の隣の錠 (`<行き先>.lock`・``ReplayClaim``) で 1 つに絞る。取れなければ
 /// 記録を始めない。錠を取った実行は、前の回が同じ行き先に残した完成品と `.partial` を消す (今回の回が
 /// 落ちたとき、古い完成品を今回のものと取り違えない)。**消すのは、実時間の時計で記録を始めない回も同じ**
-/// (``ReplayClaim/discardPrevious()``)。
+/// (``ReplayClaim/discardPrevious()``)。`watch` の世代の行き先では、行き先に在る記録でないものは消さずに
+/// その回を記録せず、書き終えた記録も行き先に置かれたものを上書きしない (``finish(last:)``)。
 ///
 /// ## 形は足せる向きにだけ変える
 ///
@@ -145,7 +146,9 @@ package final class ReplayRecorder: UnreproducibleSink {
     }
 
     /// 錠を取り、前の回の残りを消して、開く。**開けなければ `nil`** で、理由を `failure` に載せる。
-    static func open(destination: URL, generation: Bool = false) -> (recorder: ReplayRecorder?, failure: String?) {
+    ///
+    /// - Parameter generation: 行き先が道具の作った `watch` の世代の名前か (``ReplayClaim/take(destination:generation:)``)。
+    static func open(destination: URL, generation: Bool) -> (recorder: ReplayRecorder?, failure: String?) {
         let taken = ReplayClaim.take(destination: destination, generation: generation)
         guard let claim = taken.claim else { return (nil, taken.failure) }
         if let failure = claim.discardPrevious() { return (nil, failure) }
@@ -153,22 +156,26 @@ package final class ReplayRecorder: UnreproducibleSink {
     }
 
     /// 取った錠のもとで、書き途中のファイルを作る。**錠は記録が握り、終わりで手放す。**
+    ///
+    /// 書き途中のファイルは**新しく作れたときだけ**使う (`O_EXCL`)。前の回の `.partial` は ``ReplayClaim/discardPrevious()``
+    /// が先に消しているので、在るのはその後に置かれたもので、置き換えずに理由を返す。
     static func open(claim: ReplayClaim) -> (recorder: ReplayRecorder?, failure: String?) {
         let partial = URL(
             fileURLWithPath: claim.destination.path + ".\(getpid())" + partialSuffix)
-        do {
-            guard FileManager.default.createFile(atPath: partial.path, contents: nil) else {
-                // 同じ名前のフォルダは記録が作ったものではないので消さず、それが理由だと名指す (#3943)
-                if AtomicFile.isDirectory(partial, following: true) {
-                    return (nil, "\(partial.path) is a directory, not a file")
-                }
-                return (nil, "Could not create \(partial.path)")
+        let descriptor = Darwin.open(partial.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else {
+            let code = errno
+            // 同じ名前のフォルダは記録が作ったものではないので消さず、それが理由だと名指す (#3943)
+            if AtomicFile.isDirectory(partial, following: true) {
+                return (nil, "\(partial.path) is a directory, not a file")
             }
-            let handle = try FileHandle(forWritingTo: partial)
-            return (ReplayRecorder(claim: claim, partial: partial, handle: handle), nil)
-        } catch {
-            return (nil, "Could not open \(partial.path): \(Diagnostics.reason(error))")
+            if code == EEXIST {
+                return (nil, "\(partial.path) is already there, and it is left as it is")
+            }
+            return (nil, "Could not create \(partial.path): \(String(cString: strerror(code)))")
         }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        return (ReplayRecorder(claim: claim, partial: partial, handle: handle), nil)
     }
 
     private init(claim: ReplayClaim, partial: URL, handle: FileHandle) {
@@ -322,8 +329,9 @@ package final class ReplayRecorder: UnreproducibleSink {
     ///
     /// **`watch` の世代の行き先では、行き先に在るものを置き換えない** (#3999)。開いたときに行き先を空けてあるので、
     /// 在ればこの記録のものではない (記録している間に利用者が置いた)。`renamex_np(2)` の `RENAME_EXCL` で
-    /// 「無ければ置く」を 1 回で行い、在れば書き終えた記録を `.partial` のまま残して理由を言う。`RENAME_EXCL` を
-    /// 受けないファイルシステムでは在るかを見てから改名するので、見てから改名するまでの間に置かれたものは上書きされうる。
+    /// 「無ければ置く」を 1 回で行い、在れば書き終えた記録を ``keptAside`` の名前へ移して在処を言う (移せなければ
+    /// `.partial` に残す)。`RENAME_EXCL` を受けないファイルシステムでは在るかを見てから改名するので、見てから
+    /// 改名するまでの間に置かれたものは上書きされうる。
     /// 世代でない行き先 (`run --record`) は、利用者が名指した行き先なので置き換える。
     ///
     /// - Parameter last: 最後に描いたフレームの番号と画素のハッシュ。1 枚も描いていなければ `nil`。
@@ -361,9 +369,7 @@ package final class ReplayRecorder: UnreproducibleSink {
                 failed = true
                 claim?.release()
                 claim = nil
-                Diagnostics.warn(
-                    "Recording stopped: \(destination.path) was not replaced, because something that is not "
-                        + "this record was placed there while it was recorded. The record is left at \(partial.path)")
+                keepAside()
                 return
             }
             if let code { throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO) }
@@ -375,6 +381,34 @@ package final class ReplayRecorder: UnreproducibleSink {
         claim = nil
     }
 
+    /// 世代の行き先が塞がれていたとき、書き終えた記録を ``keptAside`` の名前へ移して、在処を言う (#3999)。
+    ///
+    /// `.partial` の名前のままにすると、次の `watch --record` の始まり (``ReplayRequest/discardGenerations(of:)``) が
+    /// 落ちた回の残りとして消すので、掃除の当たらない名前へ移す。移せなければ (その名前も塞がれていた) `.partial` に
+    /// 残し、次の `watch --record` が片付けることを言う。
+    private func keepAside() {
+        let kept = keptAside
+        let reason =
+            "Recording stopped: \(destination.path) was not replaced, because something that is not this record "
+            + "was placed there while it was recorded"
+        if Self.placeWithoutReplacing(partial, at: kept) == nil {
+            Diagnostics.warn("\(reason). The record is kept at \(kept.path)")
+        } else {
+            Diagnostics.warn(
+                "\(reason). The record is left at \(partial.path), which the next mokume watch --record "
+                    + "clears, so move it if you need it")
+        }
+    }
+
+    /// 世代の行き先が塞がれていたときに記録を移す名前 (`take-3.json` → `take-3.kept-<識別子の頭 8 字>.json`)。
+    /// 世代の並び (`<stem>-<番号>.<ext>`) にも `.partial` の形にも当たらないので、番号を選ぶ側と掃除の側に触れられない。
+    var keptAside: URL {
+        let ext = destination.pathExtension
+        let stem = destination.deletingPathExtension().lastPathComponent
+        let name = "\(stem).kept-\(id.prefix(8))" + (ext.isEmpty ? "" : "." + ext)
+        return destination.deletingLastPathComponent().appendingPathComponent(name)
+    }
+
     /// 書き終えた `.partial` を行き先へ改名し、在るものを置き換える。
     ///
     /// - Returns: 改名できなかった理由の `errno`。改名できたら `nil`。
@@ -384,15 +418,25 @@ package final class ReplayRecorder: UnreproducibleSink {
 
     /// 書き終えた `.partial` を、行き先に何も無いときだけ改名する (#3999)。
     ///
+    /// `RENAME_EXCL` を受けないボリューム (``AtomicFile/renameFlagsUnsupported(_:)``) では、在るかを見てから改名する。
+    ///
+    /// - Parameter exclusive: 在れば断る改名。**差し替えるのは検査だけ** (受けないボリュームを演じる)。
+    ///   断った・失敗した理由の `errno` を返し、置けたら `nil`。
     /// - Returns: 改名できなかった理由の `errno`。行き先に何か在れば `EEXIST`。改名できたら `nil`。
-    private static func placeWithoutReplacing(_ partial: URL, at destination: URL) -> Int32? {
-        if renamex_np(partial.path, destination.path, UInt32(RENAME_EXCL)) == 0 { return nil }
-        let code = errno
-        guard code == ENOTSUP else { return code }
-        // `RENAME_EXCL` を受けないファイルシステム。見てから改名するまでの隙間は残る
+    static func placeWithoutReplacing(
+        _ partial: URL, at destination: URL, exclusive: (URL, URL) -> Int32? = renameExclusive
+    ) -> Int32? {
+        guard let code = exclusive(partial, destination) else { return nil }
+        guard AtomicFile.renameFlagsUnsupported(code) else { return code }
+        // 見てから改名するまでの隙間は残る
         var status = stat()
         if lstat(destination.path, &status) == 0 { return EEXIST }
         return place(partial, at: destination)
+    }
+
+    /// `renamex_np(2)` の `RENAME_EXCL`。置けたら `nil`、断った・失敗した理由の `errno`。
+    nonisolated static func renameExclusive(_ from: URL, _ to: URL) -> Int32? {
+        renamex_np(from.path, to.path, UInt32(RENAME_EXCL)) == 0 ? nil : errno
     }
 
     /// 完成と呼べない終わり方をした。**行き先は作らず、`.partial` を残す** — `setup()` が投げて終わった

@@ -47,7 +47,7 @@ nonisolated final class ReplayClaim {
     ///
     /// - Parameter generation: 行き先が道具の作った `watch` の世代の名前か (``ReplayRequest/isGeneration``)。
     ///   真なら ``discardPrevious()`` と記録の終わりが、行き先に在る記録でないものを残す。
-    static func take(destination: URL, generation: Bool = false) -> (claim: ReplayClaim?, failure: String?) {
+    static func take(destination: URL, generation: Bool) -> (claim: ReplayClaim?, failure: String?) {
         let manager = FileManager.default
         var isDirectory: ObjCBool = false
         if manager.fileExists(atPath: destination.path, isDirectory: &isDirectory), isDirectory.boolValue {
@@ -131,6 +131,10 @@ nonisolated final class ReplayClaim {
     /// ものは、記録でなければ消さずに理由を返す (呼ぶ側はその回を記録しない)。記録かを見てから消すまでの間 (数回の
     /// システムコール) に差し替わったものは消えうる — 名前を「記録なら消す」で 1 回に消す口は無い。
     /// 世代でない行き先 (`run --record`) は、利用者が名指した行き先なので中身を見ずに置き換える。
+    ///
+    /// **`.partial` は名前の形 (`<行き先の名前>.<数字>.partial`) だけで選び、中身も種類も見ずに `unlink` する** (世代の
+    /// 行き先でも同じ)。その形は記録が書き途中に使う名前で、塞がれた世代の書き終えた記録はこの形に残さない
+    /// (``ReplayRecorder/keptAside``)。
     ///
     /// - Returns: 消せなかったときの理由。
     func discardPrevious() -> String? {

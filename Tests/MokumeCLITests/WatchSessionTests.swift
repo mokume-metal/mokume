@@ -3791,6 +3791,41 @@ struct FrameRateHandoffTests {
         #expect(WatchSession.viewportOwnerName.hasSuffix(" watch"))
     }
 
+    /// 本物の起こす口が、`watch --record` の子へ世代の行き先と世代の印を一緒に渡す (#3999)。印が落ちると、子は
+    /// 世代の行き先に置かれた利用者のファイルを消し・上書きする。
+    @Test("本物の起こす口は、記録の世代の行き先と世代の印を子へ渡し、記録しない見張りは印を渡さない")
+    func theLiveLaunchMarksTheRecordGeneration() throws {
+        let directory = try TestScratch.directory("mokume-record-generation")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let seen = directory.appendingPathComponent("seen")
+        let executable = directory.appendingPathComponent("sketch")
+        try """
+            #!/bin/sh
+            printf '%s|%s' "$\(StartupReads.record.key)" "$\(StartupReads.recordGeneration.key)" > '\(seen.path)'
+            """.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let resolver = BuildResolver(directory: directory) { _ in
+            BuildResolution(
+                context: BuildContext(
+                    configuration: nil, place: .inPackage(.localDependency), product: "sketch",
+                    assets: .notCopied),
+                binPath: directory)
+        }
+        let take = directory.appendingPathComponent("take.json").path
+
+        let recording = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild(), recording: take)
+        let child = try recording.launch(executable, directory, nil, nil)
+        child.waitUntilExit()
+        let expected = ReplayRequest.generation(of: take, number: 1) + "|1"
+        #expect(try String(contentsOf: seen, encoding: .utf8) == expected)
+
+        let plain = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild())
+        let other = try plain.launch(executable, directory, nil, nil)
+        other.waitUntilExit()
+        #expect(try String(contentsOf: seen, encoding: .utf8) == "|")
+    }
+
     /// **置き場の元は、渡したときだけ載り、親の環境からは継がない** (#2517)。
     @Test("資材の置き場の元は渡したときだけ載り、親の環境からは継がない")
     func theAssetOriginLandsOnlyWhenGiven() {

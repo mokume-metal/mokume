@@ -32,14 +32,14 @@ struct ReplayRecordFormatTests {
 
     @Test("頼みは絶対パスだけを受け、世代ごとの行き先は拡張子の前に番号を挟む")
     func theRequestTakesAnAbsolutePath() {
-        #expect(ReplayRequest(destination: "/tmp/take.json")?.environmentValue == "/tmp/take.json")
-        #expect(ReplayRequest(destination: "take.json") == nil, "相対の値は読む側の作業ディレクトリで別の場所になる")
-        #expect(ReplayRequest(destination: "") == nil)
-        #expect(ReplayRequest(destination: "/") == nil)
+        #expect(ReplayRequest(destination: "/tmp/take.json", generation: false)?.environmentValue == "/tmp/take.json")
+        #expect(ReplayRequest(destination: "take.json", generation: false) == nil, "相対の値は読む側の作業ディレクトリで別の場所になる")
+        #expect(ReplayRequest(destination: "", generation: false) == nil)
+        #expect(ReplayRequest(destination: "/", generation: false) == nil)
         // 前後の空白や改行は削らない (道具が言った綴りと、子が書く場所が食い違わない)
-        #expect(ReplayRequest(destination: "/tmp/ take.json ")?.destination.path == "/tmp/ take.json ")
-        #expect(ReplayRequest(destination: " /tmp/take.json") == nil, "先頭の空白は絶対パスではない")
-        #expect(ReplayRequest(destination: "/tmp/take.json\n")?.environmentValue == "/tmp/take.json\n")
+        #expect(ReplayRequest(destination: "/tmp/ take.json ", generation: false)?.destination.path == "/tmp/ take.json ")
+        #expect(ReplayRequest(destination: " /tmp/take.json", generation: false) == nil, "先頭の空白は絶対パスではない")
+        #expect(ReplayRequest(destination: "/tmp/take.json\n", generation: false)?.environmentValue == "/tmp/take.json\n")
         #expect(ReplayRequest.generation(of: "/tmp/out/take.json", number: 2) == "/tmp/out/take-2.json")
         #expect(ReplayRequest.generation(of: "/tmp/out/take", number: 1) == "/tmp/out/take-1")
         #expect(ReplayRequest.generation(of: "/tmp/a.b/take.rec.json", number: 3) == "/tmp/a.b/take.rec-3.json")
@@ -104,7 +104,7 @@ struct ReplayRecordFormatTests {
     func onlyAFinishedRecordIsAtTheDestination() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
-        let (opened, failure) = ReplayRecorder.open(destination: destination)
+        let (opened, failure) = ReplayRecorder.open(destination: destination, generation: false)
         let recorder = try #require(opened, "開けなかった: \(failure ?? "")")
         let partial = recorder.partial
         #expect(partial.lastPathComponent == "take.json.\(getpid()).partial", "プロセス番号を含む名前")
@@ -141,7 +141,7 @@ struct ReplayRecordFormatTests {
         let destination = directory.appendingPathComponent("take.json")
         // 前の回が残した完成品は、今回の回が落ちたときに取り違えられないよう、開始で消える
         try Data("{\"complete\":true}".utf8).write(to: destination)
-        var recorder: ReplayRecorder? = ReplayRecorder.open(destination: destination).recorder
+        var recorder: ReplayRecorder? = ReplayRecorder.open(destination: destination, generation: false).recorder
         #expect(recorder != nil)
         let partial = try #require(recorder?.partial)
         #expect(!FileManager.default.fileExists(atPath: destination.path), "前の回の完成品は消す")
@@ -156,7 +156,7 @@ struct ReplayRecordFormatTests {
     @Test("行き先がフォルダなら開かず、理由を返す")
     func aDirectoryIsNotADestination() throws {
         let directory = try scratch()
-        let (recorder, failure) = ReplayRecorder.open(destination: directory)
+        let (recorder, failure) = ReplayRecorder.open(destination: directory, generation: false)
         #expect(recorder == nil)
         #expect(failure?.contains("directory") == true, "理由: \(failure ?? "nil")")
     }
@@ -165,7 +165,7 @@ struct ReplayRecordFormatTests {
     func aStepCarriesWhatPiledUp() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
-        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
         recorder.noteInput(.keyDown(code: .arrowRight, characters: "", isRepeat: false))
         recorder.noteInput(.mouseMovedBy(dx: .nan, dy: 1))
@@ -210,7 +210,7 @@ struct ReplayRecordFormatTests {
     func theHashIsTakenEverySixtyFrames() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
-        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
         var asked: [Int] = []
         for frame in 1...120 {
@@ -233,12 +233,12 @@ struct ReplayRecordFormatTests {
     func aSecondRunCannotRecordToTheSameDestination() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
-        let first = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let first = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         first.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
         first.beginStep()
         first.endStep(frame: 1, drew: true) { nil }
 
-        let (second, failure) = ReplayRecorder.open(destination: destination)
+        let (second, failure) = ReplayRecorder.open(destination: destination, generation: false)
         #expect(second == nil)
         #expect(failure?.contains("another run is already recording") == true, "理由: \(failure ?? "nil")")
         #expect(FileManager.default.fileExists(atPath: first.partial.path), "先の実行の書き途中に触らない")
@@ -248,14 +248,14 @@ struct ReplayRecordFormatTests {
         // 終えたら錠は手放され、錠のファイルも残らない。次の実行は書ける
         let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         #expect(names == ["take.json"], "錠も .partial も残らない: \(names)")
-        #expect(ReplayRecorder.open(destination: destination).recorder != nil)
+        #expect(ReplayRecorder.open(destination: destination, generation: false).recorder != nil)
     }
 
     @Test("落ちた実行の錠は手放される: 錠のファイルが残っていても次の実行は書け、死んだ実行の .partial は消える")
     func aCrashedRunsLockDoesNotBlockTheNext() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
-        var crashed: ReplayRecorder? = ReplayRecorder.open(destination: destination).recorder
+        var crashed: ReplayRecorder? = ReplayRecorder.open(destination: destination, generation: false).recorder
         let stale = try #require(crashed?.partial)
         crashed = nil  // 終わりの経路を通らずに手放す (プロセスが落ちて記述子が閉じるのと同じ)
         #expect(FileManager.default.fileExists(atPath: stale.path), "落ちた回の .partial は残る")
@@ -265,7 +265,7 @@ struct ReplayRecordFormatTests {
         let unrelated = directory.appendingPathComponent("take.json.notes")
         try Data("keep".utf8).write(to: unrelated)
 
-        let next = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let next = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         #expect(!FileManager.default.fileExists(atPath: other.path), "死んだ実行の .partial は錠を握った実行が消す")
         #expect(FileManager.default.fileExists(atPath: unrelated.path), "無関係なファイルには触らない")
         #expect(next.partial.lastPathComponent == stale.lastPathComponent, "同じプロセスなので同じ名前になる")
@@ -295,7 +295,7 @@ struct ReplayRecordFormatTests {
         let link = directory.appendingPathComponent("take.json.125.partial")
         try manager.createSymbolicLink(at: link, withDestinationURL: elsewhere)
 
-        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         #expect(!manager.fileExists(atPath: stale.path), "落ちた前回の .partial は片付ける")
         #expect((try? Data(contentsOf: kept)) == Data("mine".utf8), "フォルダとその中のバイトは残る")
         #expect((try? Data(contentsOf: pointed)) == Data("theirs".utf8), "リンクの指す先は残る")
@@ -312,7 +312,7 @@ struct ReplayRecordFormatTests {
         let kept = folder.appendingPathComponent("keep.txt")
         try Data("mine".utf8).write(to: kept)
 
-        let opened = ReplayRecorder.open(destination: destination)
+        let opened = ReplayRecorder.open(destination: destination, generation: false)
         #expect(opened.recorder == nil)
         // 理由はその名前がフォルダで占められていることを名指す (`take()` と同じ言い方・#3943)
         #expect(opened.failure == "\(folder.path) is a directory, not a file")
@@ -324,9 +324,9 @@ struct ReplayRecordFormatTests {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
         try Data("{\"complete\":true}".utf8).write(to: destination)
-        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        let claim = try #require(ReplayClaim.take(destination: destination, generation: false).claim)
         // 錠を握っている間に、別の実行が来る
-        let refused = ReplayClaim.take(destination: destination)
+        let refused = ReplayClaim.take(destination: destination, generation: false)
         #expect(refused.claim == nil)
         #expect(FileManager.default.fileExists(atPath: destination.path), "取れなかった実行は消さない")
         #expect(claim.discardPrevious() == nil)
@@ -340,7 +340,7 @@ struct ReplayRecordFormatTests {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
         try Data("{\"complete\":true}".utf8).write(to: destination)
-        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        let claim = try #require(ReplayClaim.take(destination: destination, generation: false).claim)
         defer { claim.release() }
         // 錠を取ってから消すまでの間に、同じ名前がフォルダになる
         try FileManager.default.removeItem(at: destination)
@@ -409,20 +409,20 @@ struct ReplayRecordFormatTests {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
         try Data("{\"keep\":true}".utf8).write(to: destination)
-        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        let claim = try #require(ReplayClaim.take(destination: destination, generation: false).claim)
         #expect(!claim.isGeneration)
         #expect(claim.discardPrevious() == nil)
         #expect(!FileManager.default.fileExists(atPath: destination.path))
         claim.release()
 
         // 書いている間に置かれたものも、終わりで置き換える
-        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         try Data("{\"keep\":true}".utf8).write(to: destination)
         recorder.finish(last: nil)
         #expect(try object(at: destination)["complete"] as? Bool == true)
     }
 
-    @Test("世代の行き先では、記録している間に置かれたファイルを終わりで上書きせず、書き終えた記録を .partial に残す")
+    @Test("世代の行き先では、記録している間に置かれたファイルを終わりで上書きせず、書き終えた記録を掃除の当たらない名前に残す")
     func aGenerationDoesNotOverwriteWhatWasPlacedWhileRecording() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take-3.json")
@@ -436,14 +436,75 @@ struct ReplayRecordFormatTests {
         recorder.finish(last: nil)
 
         #expect((try? Data(contentsOf: destination)) == Data("{\"keep\":true}".utf8), "置かれたファイルを上書きした")
-        let left = try object(at: recorder.partial)
-        #expect(left["complete"] as? Bool == true, "書き終えた記録を .partial に残す")
+        let kept = recorder.keptAside
+        #expect(kept.lastPathComponent == "take-3.kept-\(recorder.id.prefix(8)).json")
+        #expect(try object(at: kept)["id"] as? String == recorder.id, "書き終えた記録を残す")
+        #expect(!FileManager.default.fileExists(atPath: recorder.partial.path))
         #expect(recorder.isFinished)
         // 錠は手放している
         #expect(!FileManager.default.fileExists(atPath: destination.path + ReplayClaim.lockSuffix))
-        let next = ReplayClaim.take(destination: destination)
+        let next = ReplayClaim.take(destination: destination, generation: false)
         #expect(next.claim != nil, "錠を握ったまま: \(next.failure ?? "")")
         next.claim?.release()
+
+        // 次の watch --record の始まりの掃除が、残した記録に触れない
+        let base = directory.appendingPathComponent("take.json").path
+        ReplayRequest.discardGenerations(of: base)
+        #expect(try object(at: kept)["id"] as? String == recorder.id, "次の watch の始まりが残した記録を消した")
+    }
+
+    @Test("掃除の当たらない名前も塞がれていれば、書き終えた記録を .partial に残し、どちらも上書きしない")
+    func aGenerationLeavesThePartialWhenTheKeptNameIsTaken() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take-3.json")
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: true).recorder)
+        try Data("{\"keep\":true}".utf8).write(to: destination)
+        try Data("mine".utf8).write(to: recorder.keptAside)
+        recorder.finish(last: nil)
+        #expect((try? Data(contentsOf: destination)) == Data("{\"keep\":true}".utf8))
+        #expect((try? Data(contentsOf: recorder.keptAside)) == Data("mine".utf8))
+        #expect(try object(at: recorder.partial)["complete"] as? Bool == true)
+    }
+
+    @Test("在れば断る改名を受けないボリューム (ENOTSUP・EOPNOTSUPP・EINVAL) では、見てから置き、在れば上書きしない", arguments: [ENOTSUP, EOPNOTSUPP, EINVAL])
+    func placingFallsBackOnVolumesWithoutTheFlag(code: Int32) throws {
+        let directory = try scratch()
+        let partial = directory.appendingPathComponent("take-3.json.1.partial")
+        let destination = directory.appendingPathComponent("take-3.json")
+        let refusing: (URL, URL) -> Int32? = { _, _ in code }
+
+        try Data("record".utf8).write(to: partial)
+        try Data("mine".utf8).write(to: destination)
+        #expect(ReplayRecorder.placeWithoutReplacing(partial, at: destination, exclusive: refusing) == EEXIST)
+        #expect((try? Data(contentsOf: destination)) == Data("mine".utf8), "在るものを上書きした")
+        #expect((try? Data(contentsOf: partial)) == Data("record".utf8), ".partial を残さない")
+
+        try FileManager.default.removeItem(at: destination)
+        #expect(ReplayRecorder.placeWithoutReplacing(partial, at: destination, exclusive: refusing) == nil)
+        #expect((try? Data(contentsOf: destination)) == Data("record".utf8), "無ければ置く")
+        #expect(!FileManager.default.fileExists(atPath: partial.path))
+
+        // 受けない印でない失敗は、そのまま返す
+        try Data("record".utf8).write(to: partial)
+        try FileManager.default.removeItem(at: destination)
+        #expect(ReplayRecorder.placeWithoutReplacing(partial, at: destination, exclusive: { _, _ in EACCES }) == EACCES)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    @Test("書き途中のファイルの名前に何かが置かれていれば、置き換えずに記録を始めない")
+    func theOpenDoesNotReplaceAFileAtThePartialName() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let claim = try #require(ReplayClaim.take(destination: destination, generation: false).claim)
+        #expect(claim.discardPrevious() == nil)
+        // 前の回の残りを消した後に置かれる
+        let partial = directory.appendingPathComponent("take.json.\(getpid()).partial")
+        try Data("mine".utf8).write(to: partial)
+        let opened = ReplayRecorder.open(claim: claim)
+        #expect(opened.recorder == nil)
+        #expect(opened.failure?.contains(partial.path) == true, "理由: \(opened.failure ?? "nil")")
+        #expect((try? Data(contentsOf: partial)) == Data("mine".utf8))
+        claim.release()
     }
 
     @Test("世代の行き先でも、何も置かれなければ終わりで行き先へ改名する")
@@ -506,7 +567,7 @@ struct ReplayRecordFormatTests {
         }
         // 別の実行が書いている世代 (錠を握られている) は飛ばす
         try writeRecordHead(first)
-        let busy = try #require(ReplayClaim.take(destination: first).claim)
+        let busy = try #require(ReplayClaim.take(destination: first, generation: false).claim)
         #expect(ReplayRequest.discardGenerations(of: base.path).isEmpty)
         #expect(FileManager.default.fileExists(atPath: first.path))
         busy.release()
@@ -546,9 +607,9 @@ struct ReplayRecordFormatTests {
         let lock = directory.appendingPathComponent("take.json.lock")
         try Data("mine".utf8).write(to: lock)
 
-        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         // 在るファイルを錠に使っても、排他は効く
-        #expect(ReplayRecorder.open(destination: destination).recorder == nil)
+        #expect(ReplayRecorder.open(destination: destination, generation: false).recorder == nil)
         recorder.finish(last: nil)
         #expect((try? Data(contentsOf: lock)) == Data("mine".utf8), "利用者の .lock を消した・書き換えた")
         #expect(try object(at: destination)["complete"] as? Bool == true)
@@ -562,13 +623,13 @@ struct ReplayRecordFormatTests {
         // 落ちた回の残り (記録が作る形の、中身の無い通常ファイル)
         try Data().write(to: lock)
 
-        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        let claim = try #require(ReplayClaim.take(destination: destination, generation: false).claim)
         claim.release()
         #expect(FileManager.default.fileExists(atPath: lock.path), "今回作っていない .lock を消した")
 
         // 何も無いところから始めた回は、自分の .lock を消す
         try FileManager.default.removeItem(at: lock)
-        let fresh = try #require(ReplayClaim.take(destination: destination).claim)
+        let fresh = try #require(ReplayClaim.take(destination: destination, generation: false).claim)
         #expect(FileManager.default.fileExists(atPath: lock.path))
         fresh.release()
         #expect(!FileManager.default.fileExists(atPath: lock.path), "今回作った .lock が残った")
@@ -586,7 +647,7 @@ struct ReplayRecordFormatTests {
         let link = directory.appendingPathComponent("take.json.lock")
         try manager.createSymbolicLink(atPath: link.path, withDestinationPath: target.path)
 
-        let taken = ReplayClaim.take(destination: destination)
+        let taken = ReplayClaim.take(destination: destination, generation: false)
         taken.claim?.release()
         #expect(taken.claim == nil, "リンクを錠に使った")
         #expect(taken.failure?.contains("symbolic link") == true, "理由: \(taken.failure ?? "nil")")
@@ -750,7 +811,7 @@ struct ReplayRecordFormatTests {
         let kept = folder.appendingPathComponent("keep.txt")
         try Data("mine".utf8).write(to: kept)
 
-        let taken = ReplayClaim.take(destination: destination)
+        let taken = ReplayClaim.take(destination: destination, generation: false)
         taken.claim?.release()
         #expect(taken.claim == nil, "フォルダを錠に使った")
         #expect(taken.failure?.contains("not a regular file") == true, "理由: \(taken.failure ?? "nil")")
@@ -766,7 +827,7 @@ struct ReplayRecordFormatTests {
 
         let failure = Mutex<String?>(nil)
         let returned = returnsInTime(unblocking: fifo) {
-            let taken = ReplayClaim.take(destination: destination)
+            let taken = ReplayClaim.take(destination: destination, generation: false)
             taken.claim?.release()
             failure.withLock { $0 = taken.failure }
         }
@@ -782,7 +843,7 @@ struct ReplayRecordFormatTests {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
         let lock = directory.appendingPathComponent("take.json.lock")
-        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        let claim = try #require(ReplayClaim.take(destination: destination, generation: false).claim)
         // 今回作った錠のファイルを別の名前へ退け、同じ名前に利用者のファイルを置く
         try manager.moveItem(at: lock, to: directory.appendingPathComponent("moved.lock"))
         try Data("theirs".utf8).write(to: lock)
@@ -830,7 +891,7 @@ struct ReplayRecordFormatTests {
     func nonFiniteStartParamsAreWrittenAsStrings() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
-        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         recorder.noteStart(
             seed: 0,
             params: [
@@ -858,7 +919,7 @@ struct ReplayRecordFormatTests {
         let directory = try scratch()
         for window in [true, false] {
             let destination = directory.appendingPathComponent("take-\(window).json")
-            let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+            let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
             recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2, window: window)
             recorder.beginStep()
             recorder.endStep(frame: 1, drew: true) { nil }
@@ -871,7 +932,7 @@ struct ReplayRecordFormatTests {
     func anAbandonedRecordIsNotComplete() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
-        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
         recorder.abandon(because: "the sketch's setup() threw")
         recorder.finish(last: nil)  // 閉じの経路が続けて呼んでも、完成にならない
@@ -887,7 +948,7 @@ struct ReplayRecordFormatTests {
     func missingPicturesAreNamed() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
-        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
         recorder.beginStep()
         recorder.endStep(frame: 60, drew: true) { nil }  // 読み戻せない
@@ -911,7 +972,7 @@ struct ReplayRecordFormatTests {
 
         // 描けなかった枚が入力を持っていれば載り、drew は偽で、理由を名乗る
         let again = directory.appendingPathComponent("failed.json")
-        let second = try #require(ReplayRecorder.open(destination: again).recorder)
+        let second = try #require(ReplayRecorder.open(destination: again, generation: false).recorder)
         second.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
         second.noteInput(.scrolled(dx: 0, dy: 1))
         second.beginStep()
@@ -930,7 +991,7 @@ struct ReplayRecordFormatTests {
     func filesArriveByPathOnly() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
-        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: false).recorder)
         recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
         recorder.beginStep()
         recorder.endStep(frame: 1, drew: true) { nil }
@@ -998,7 +1059,7 @@ struct ReplayClaimProcessTests {
         }
         try #require(held, "別のプロセスが錠を握らない")
 
-        let refused = ReplayClaim.take(destination: destination)
+        let refused = ReplayClaim.take(destination: destination, generation: false)
         #expect(refused.claim == nil)
         #expect(refused.failure?.contains("another run is already recording") == true, "理由: \(refused.failure ?? "nil")")
 
@@ -1006,7 +1067,7 @@ struct ReplayClaimProcessTests {
         let exited = try ReplayRecordProcess.wait(upTo: .seconds(30)) { !process.isRunning }
         try #require(exited, "別のプロセスが終わらない")
 
-        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        let claim = try #require(ReplayClaim.take(destination: destination, generation: false).claim)
         claim.release()
         #expect(FileManager.default.fileExists(atPath: lock.path), "今回作っていない .lock を消した")
     }
@@ -1068,7 +1129,7 @@ struct ReplayRecordingRuntimeTests {
             runtime = try SketchRuntime(
                 sketch: sketch, gpu: RenderDevice(), clock: clock, persistsParams: false)
         }
-        let request = try #require(ReplayRequest(destination: destination.path))
+        let request = try #require(ReplayRequest(destination: destination.path, generation: false))
         runtime.startRecording(request)
         return runtime
     }
@@ -1266,7 +1327,7 @@ struct ReplayRecordingRuntimeTests {
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
             observer: nil, paramStore: store)
-        runtime.startRecording(try #require(ReplayRequest(destination: destination.path)))
+        runtime.startRecording(try #require(ReplayRequest(destination: destination.path, generation: false)))
         try runtime.advance()
         runtime.closePlugins()
         let record = try read(destination)
@@ -1452,7 +1513,7 @@ struct ReplayRecordingRuntimeTests {
             sketch: Playground(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
             onScreen: true, persistsParams: false)
         runtime.defersEnlargedGlyphBakes = true  // ウィンドウの経路が立てる
-        runtime.startRecording(try #require(ReplayRequest(destination: destination.path)))
+        runtime.startRecording(try #require(ReplayRequest(destination: destination.path, generation: false)))
         #expect(!runtime.defersEnlargedGlyphBakes, "記録を始めたら切る")
         runtime.closePlugins()
 
@@ -1587,7 +1648,7 @@ struct ReplayRecordingRuntimeTests {
         let first = try makeRuntime(Playground(), to: destination)
         let second = try SketchRuntime(
             sketch: Playground(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
-        #expect(!second.startRecording(try #require(ReplayRequest(destination: destination.path))))
+        #expect(!second.startRecording(try #require(ReplayRequest(destination: destination.path, generation: false))))
         #expect(second.replay == nil)
         try second.advance()
         second.closePlugins()

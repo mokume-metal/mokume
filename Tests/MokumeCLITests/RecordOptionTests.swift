@@ -97,7 +97,7 @@ struct RecordOptionTests {
             "render の子へ継がせない")
         // 子が読む値の形と同じ型で読み戻せる
         let carried = RunCommand.childEnvironment([:], recording: "/tmp/take.json")[key]
-        #expect(ReplayRequest(destination: carried ?? "")?.destination.path == "/tmp/take.json")
+        #expect(ReplayRequest(destination: carried ?? "", generation: false)?.destination.path == "/tmp/take.json")
     }
 
     @Test("世代の印は watch の世代の行き先と一緒にだけ載り、立てなければ親の環境に在っても落とす (#3999)")
@@ -210,7 +210,7 @@ struct RecordOptionTests {
     func theToldDestinationIsTheWrittenOne() throws {
         let given = try #require(try destination(["--record", "/tmp/ record dir/take .json "]))
         #expect(given == "/tmp/ record dir/take .json ")
-        #expect(ReplayRequest(destination: given)?.environmentValue == given)
+        #expect(ReplayRequest(destination: given, generation: false)?.environmentValue == given)
         let carried = RunCommand.childEnvironment([:], recording: given)[StartupReads.record.key]
         #expect(carried == given)
     }

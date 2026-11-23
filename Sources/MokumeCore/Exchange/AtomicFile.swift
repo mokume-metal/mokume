@@ -601,6 +601,13 @@ package enum AtomicFile {
         }
     }
 
+    /// `renamex_np(2)` の失敗が、そのボリュームが旗 (`RENAME_EXCL`・`RENAME_SWAP`) を持たないと言ったものか。
+    /// ボリュームによって `ENOTSUP`・`EOPNOTSUPP`・`EINVAL` のどれかで断るので、3 つとも受けない印として読む。
+    /// 呼び手は旗なしの手 (見てから `rename(2)`) へ倒す。
+    package nonisolated static func renameFlagsUnsupported(_ code: Int32) -> Bool {
+        code == ENOTSUP || code == EOPNOTSUPP || code == EINVAL
+    }
+
     /// JSON を組んで原子的に置く。**判断が呼び手にあるときだけこちら。**
     ///
     /// **書き方はここに固定する。** `.sortedKeys` を付けないと `JSONEncoder` は辞書の

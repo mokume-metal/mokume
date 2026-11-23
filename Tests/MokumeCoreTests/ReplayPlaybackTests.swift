@@ -277,7 +277,7 @@ struct ReplayPlaybackTests {
             runtime = try SketchRuntime(
                 sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
         }
-        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path))))
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
         for frame in 1...frames {
             try body(frame, runtime)
             try runtime.advance()
@@ -510,7 +510,7 @@ struct ReplayChildTests {
         let runtime = try SketchRuntime(
             sketch: ReplayPlaybackTests.Playground(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60),
             persistsParams: false)
-        runtime.startRecording(try #require(ReplayRequest(destination: url.path)))
+        runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false)))
         for frame in 1...30 {
             if frame == 7 { runtime.input.enqueue(.keyDown(code: .arrowRight, characters: "", isRepeat: false)) }
             try runtime.advance()
@@ -554,7 +554,7 @@ struct ReplayChildTests {
         let runtime = try SketchRuntime(
             sketch: ReplayPlaybackTests.Playground(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60),
             persistsParams: false)
-        runtime.startRecording(try #require(ReplayRequest(destination: url.path)))
+        runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false)))
         for _ in 1...20 { try runtime.advance() }
         runtime.closePlugins()
 
