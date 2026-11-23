@@ -7,8 +7,9 @@ import simd
 ///
 /// 平面の線は、帯・折れ目の形・端の形・曲線の刻みの円板を別々の凸多角形として積む
 /// (`Canvas.strokeRing`)。重ねたまま積むと、半透明の線や下地を読む混ぜ方で重なった所だけが
-/// 2〜3 回混ざる。ここでは片を積む順に並べ、**先に置いた関係する片との差**を凸多角形の
-/// 組として返す。形は変えず、塗る領域 (片の和) も変えない。
+/// 2〜3 回混ざる。ここでは片を引く順 (``carvingOrder``: 被覆 1 の片が先・被覆 < 1 の片が後で、それぞれ積んだ順)
+/// に並べ、**引く順で先に置いた関係する片との差**を凸多角形の組として返す。形は変えず、塗る領域 (片の和) も
+/// 変えない。
 ///
 /// **どの片を引くか ([#1536] の判断 1):**
 ///
@@ -53,6 +54,10 @@ nonisolated struct StrokeCarving {
     private var uppers: [Float] = []
     /// 片ごとの被覆 (#1637)。細い線を広げた片だけが 1 未満を持ち、引いた残りへそのまま渡る。
     private var coverages: [Float] = []
+    /// 被覆 1 の片と被覆 < 1 の片が両方あるか (``carvingOrder`` が並べ替えるか)。
+    private var mixesCoverage: Bool { hasFullPiece && hasThinPiece }
+    private var hasFullPiece = false
+    private var hasThinPiece = false
     /// 帯の添字ごとの片の添字。帯を置かなかった線分 (長さ 0) は -1。
     private var bandPieces: [Int]
     /// 点の添字ごとの、点に置いた形の片の添字。置かなかった点は -1。
@@ -136,6 +141,7 @@ nonisolated struct StrokeCarving {
         lowers.append(lower)
         uppers.append(upper)
         coverages.append(coverage)
+        if coverage >= 1 { hasFullPiece = true } else { hasThinPiece = true }
         return pieces.ranges.count - 1
     }
 
@@ -162,8 +168,14 @@ nonisolated struct StrokeCarving {
     ///
     /// 引き算は重なった画素を先に置いた片に残すので、型板と同じく被覆 1 の片を先にしないと、一様でない拡大で
     /// 一部の帯だけが細い輪郭の、細い片と太い片が重なる所に細い片の被覆が残る (``Canvas/putFullCoverageFirst(in:)``
-    /// と同じ約束)。被覆が全部同じなら積んだ順のまま。
-    private var carvingOrder: [Int] {
+    /// と同じ約束)。
+    ///
+    /// 分けるのは被覆の値である。広げた細い帯でも、被覆がちょうど 1 になるもの (描く画素での太さが帯を切る長さと
+    /// 一致する向き・``Canvas/widenedBand(_:along:)``) は、被覆 1 の片として先に引く。
+    ///
+    /// 被覆 1 の片と被覆 < 1 の片が混ざらなければ `nil` (積んだ順のまま。並びを確保しない)。
+    private var carvingOrder: [Int]? {
+        guard mixesCoverage else { return nil }
         var order: [Int] = []
         order.reserveCapacity(coverages.count)
         for index in coverages.indices where coverages[index] >= 1 { order.append(index) }
@@ -196,10 +208,14 @@ nonisolated struct StrokeCarving {
         let tolerance = magnitude * 32 * Float.ulpOfOne
         let reach = tolerance * 4
         let count = pieces.ranges.count
+        // 引く順と、片ごとの引く順での位置。被覆が混ざらなければ積んだ順のまま (`nil`)
         let order = carvingOrder
-        // 片ごとの、引く順での位置
-        var rank = [Int](repeating: 0, count: count)
-        for (position, index) in order.enumerated() { rank[index] = position }
+        var rank: [Int]?
+        if let order {
+            var positions = [Int](repeating: 0, count: count)
+            for (position, index) in order.enumerated() { positions[index] = position }
+            rank = positions
+        }
         var stamps = [Int](repeating: -1, count: count)
         var candidates: [(gap: Float, piece: Int)] = []
         var work = Polygons()
@@ -209,7 +225,8 @@ nonisolated struct StrokeCarving {
         var carved = Polygons()
         var owners = [Range<Int>](repeating: 0..<0, count: count)
         var pairs: [(Int, Int)] = []
-        for index in order {
+        for step in 0..<count {
+            let index = order?[step] ?? step
             candidates.removeAll(keepingCapacity: true)
             collectCandidates(of: index, order: order, rank: rank, into: &candidates, stamps: &stamps)
             if candidates.count > 1 { candidates.sort { $0.gap < $1.gap } }
@@ -258,7 +275,8 @@ nonisolated struct StrokeCarving {
         var nearby: [SIMD2<Float>] = []
         var rim: [SIMD2<Float>] = []
         var onEdge: [(t: Float, point: SIMD2<Float>)] = []
-        for index in order {
+        for step in 0..<count {
+            let index = order?[step] ?? step
             let owner = owners[index]
             let around = starts[index]..<starts[index + 1]
             for fragment in owner {
@@ -423,18 +441,18 @@ nonisolated struct StrokeCarving {
     }
 
     /// 片 `index` が引く相手 (引く順 `order` で先に置いた片のうち、箱が掛かるもの) を、線に沿った隙間と共に集める。
-    /// `rank` は片ごとの、`order` での位置。
+    /// `rank` は片ごとの、`order` での位置。どちらも `nil` なら積んだ順。
     private func collectCandidates(
-        of index: Int, order: [Int], rank: [Int], into candidates: inout [(gap: Float, piece: Int)],
+        of index: Int, order: [Int]?, rank: [Int]?, into candidates: inout [(gap: Float, piece: Int)],
         stamps: inout [Int]
     ) {
         let box = pieces.boxes[index]
         let lower = lowers[index]
         let upper = uppers[index]
         let perimeter = positions[positions.count - 1]
-        let position = rank[index]
+        let position = rank?[index] ?? index
         func take(_ other: Int) {
-            guard other >= 0, rank[other] < position, stamps[other] != index else { return }
+            guard other >= 0, (rank?[other] ?? other) < position, stamps[other] != index else { return }
             stamps[other] = index
             guard box.overlaps(pieces.boxes[other]) else { return }
             // 線に沿った隙間。閉じた周は一周ずらした相手とも比べ、近いほうを取る
@@ -447,7 +465,11 @@ nonisolated struct StrokeCarving {
             candidates.append((gap, other))
         }
         if wholeOutline {
-            for other in order[..<position] { take(other) }
+            if let order {
+                for other in order[..<position] { take(other) }
+            } else {
+                for other in 0..<index { take(other) }
+            }
             return
         }
         for other in unindexedPieces { take(other) }
