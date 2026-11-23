@@ -559,10 +559,43 @@ struct BuildPlacementTests {
             in: sketch, invocation: Invocation(place: sketch.path),
             environment: [BuildDirectory.environmentKey: store.path],
             announce: { recorder.record("say: \($0)") },
+            resolver: { arguments, _ in recorder.record("swift \(arguments.joined(separator: " "))") },
+            afterReading: { _ in })
+
+        // 名乗りが 1 度、解決より先。綴りはこのとおり (#3427)。行は足さない (#4073)
+        //
+        // **`Package.resolved` の無いスケッチは `update` で解決する** (#4073)。`resolve` は共有の置き場に残る
+        // 別のスケッチの版を採るので、作ったばかりのスケッチが最新の 0.x に届かない (`Templates.libraryMinimumVersion`)
+        let resolving = store.appendingPathComponent(BuildDirectory.resolveSegment, isDirectory: true)
+        #expect(
+            recorder.events == [
+                "say: Resolving the sketch's dependencies… (the first one takes a while)",
+                "swift package update --scratch-path \(resolving.path)",
+            ])
+    }
+
+    /// **`Package.resolved` が在るのに mokume の固定が引けない回は、`resolve` のまま** (#4073)。`update` は
+    /// 在るファイルの他の依存の固定まで動かすので、作ったばかりのスケッチ (ファイルが無い) に限る。
+    @Test(
+        "Package.resolved が在れば、mokume の固定が引けなくても update ではなく resolve で解決する",
+        arguments: [
+            #"{"pins":[{"identity":"swift-syntax","state":{"version":"603.0.2"}}],"version":3}"#,
+            "{ not json",
+        ])
+    func keepsResolveWhenAResolvedFileIsThere(resolved: String) throws {
+        let store = try BuildDirectoryTests.directory()
+        let sketch = try Self.unresolvedSketch()
+        try resolved.write(
+            to: sketch.appendingPathComponent("Package.resolved"), atomically: true, encoding: .utf8)
+        let recorder = ResolveRecorder()
+
+        _ = try RunCommand.context(
+            in: sketch, invocation: Invocation(place: sketch.path),
+            environment: [BuildDirectory.environmentKey: store.path],
+            announce: { recorder.record("say: \($0)") },
             resolver: { arguments, _ in recorder.record("swift \(arguments.prefix(2).joined(separator: " "))") },
             afterReading: { _ in })
 
-        // 名乗りが 1 度、解決より先。綴りはこのとおり (#3427)
         #expect(
             recorder.events == [
                 "say: Resolving the sketch's dependencies… (the first one takes a while)",
