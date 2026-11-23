@@ -12,8 +12,11 @@ import Foundation
 /// **ディレクトリは実体 (装置とファイル番号) ごとに 1 度だけ歩く** — 祖先や互いを指すリンクが
 /// あっても列挙は終わり、同じディレクトリの中身を 2 度挙げない。実体のディレクトリを先に歩き
 /// 切ってからリンクを辿るので、実体とリンクの両方から着けるディレクトリは実体の側の名前で挙がる。
-/// **同じ実体へ着くリンクが複数あれば、名前の順で先に歩いたリンクの名前で挙がる** — リンクを
-/// 足す・消す・名前を変えると、中身を保存しなくても挙がる名前が変わりうる。辿れないリンクは降りない。
+/// **同じ実体へ着くリンクが複数あれば、リンクを通ったパスの順 (文字列の順) で先のリンクの名前で
+/// 挙がる** — 辿るのを待つリンクから、いつもパスの最も小さいものを取る。リンクの中で見つかるリンクの
+/// パスは、それを見つけたリンクのパスより大きいので、辿る順はパスの順のまま崩れない。巡回のたびに
+/// 同じ名前で挙がるが、リンクを足す・消す・名前を変えると、中身を保存しなくても挙がる名前が変わりうる。
+/// 辿れないリンクは降りない。
 ///
 /// **資材の置き場 (`Sources/<名前>/assets`) には降りない** — 置き場の中は見張りの資材の数え方
 /// (``SourceStamp/sources(in:)``) が数え、置き場の中のシンボリックリンクは範囲の外 (#2519)。
@@ -25,15 +28,23 @@ nonisolated enum SourceTree {
     /// ファイルへのリンクは、拡張子が合えば先を辿らずに挙げる (辿れないリンクも挙げ、読めるかは
     /// 読む側が決める)。
     ///
-    /// - Parameters:
-    ///   - descendingIntoPackages: 包みの形をしたディレクトリ (`.bundle` など) の中へも降りるか。
-    ///   - shouldContinue: ディレクトリを 1 つ歩くごとに問う。`false` ならそこで止め、それまでに
-    ///     挙げたものを返す。
+    /// - Parameter descendingIntoPackages: 包みの形をしたディレクトリ (`.bundle` など) の中へも降りるか。
+    static func files(
+        under sources: URL, extensions: Set<String>, descendingIntoPackages: Bool
+    ) -> [URL] {
+        // 問いがいつも「続ける」なら、止められた (`nil`) にはならない
+        files(
+            under: sources, extensions: extensions, descendingIntoPackages: descendingIntoPackages,
+            shouldContinue: { true }) ?? []
+    }
+
+    /// 止められる列挙。ディレクトリを 1 つ歩くごとに `shouldContinue` を問い、`false` なら止めて
+    /// **`nil` を返す** — 途中までの一覧を、歩き切った一覧と取り違えさせない。
     static func files(
         under sources: URL, extensions: Set<String>, descendingIntoPackages: Bool,
-        shouldContinue: () -> Bool = { true }
-    ) -> [URL] {
-        guard let root = Place(linkAt: sources, depth: 0) else { return [] }
+        shouldContinue: () -> Bool
+    ) -> [URL]? {
+        guard let root = Place(linkAt: sources) else { return [] }
         // 資材の置き場は歩いたものとして始める — 置き場そのものにも、他所から置き場を指すリンクにも
         // 降りない。置き場の名前で引いて実体を取るので、大文字と小文字を区別しないボリュームの
         // `Assets` も置き場になる
@@ -47,13 +58,14 @@ nonisolated enum SourceTree {
         // 歩く実体のディレクトリと、後で辿るディレクトリへのリンク
         var directories: [Place] = [root]
         var links: [Place] = []
-        while shouldContinue() {
+        while true {
+            guard shouldContinue() else { return nil }
             if let directory = directories.popLast() {
                 for (name, values) in entries(of: directory.physical) {
                     let entry = directory.url.appendingPathComponent(name)
                     let physical = directory.physical.appendingPathComponent(name)
                     if values.isSymbolicLink == true {
-                        guard let link = Place(linkAt: entry, depth: directory.depth + 1) else {
+                        guard let link = Place(linkAt: entry) else {
                             // ファイルへのリンク・辿れないリンク
                             if extensions.contains(entry.pathExtension.lowercased()) {
                                 found.append(entry)
@@ -69,21 +81,18 @@ nonisolated enum SourceTree {
                             let identity = Identity(of: physical), walked.insert(identity).inserted
                         else { continue }
                         directories.append(
-                            Place(
-                                url: entry, physical: physical, depth: directory.depth + 1,
-                                identity: identity))
+                            Place(url: entry, physical: physical, identity: identity))
                     } else if extensions.contains(entry.pathExtension.lowercased()) {
                         found.append(entry)
                     }
                 }
-            } else if !links.isEmpty {
-                let link = links.removeFirst()
+            } else if let next = links.indices.min(by: { links[$0].url.path < links[$1].url.path }) {
+                let link = links.remove(at: next)
                 if walked.insert(link.identity).inserted { directories.append(link) }
             } else {
-                break
+                return found
             }
         }
-        return found
     }
 
     /// 歩くディレクトリ。`url` は挙げる名前 (リンクを通った名前)、`physical` は中身を読む実体の
@@ -91,24 +100,21 @@ nonisolated enum SourceTree {
     private struct Place {
         let url: URL
         let physical: URL
-        /// `Sources` からの深さ (`Sources/<名前>` が 1)。
-        let depth: Int
         let identity: Identity
 
-        init(url: URL, physical: URL, depth: Int, identity: Identity) {
+        init(url: URL, physical: URL, identity: Identity) {
             self.url = url
             self.physical = physical
-            self.depth = depth
             self.identity = identity
         }
 
         /// リンクかもしれない `url` を辿った先のディレクトリ。辿れない・ディレクトリでなければ `nil`。
-        init?(linkAt url: URL, depth: Int) {
+        init?(linkAt url: URL) {
             guard let resolved = realpath(url.path, nil) else { return nil }
             defer { free(resolved) }
             let physical = URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
             guard let identity = Identity(of: physical), identity.isDirectory else { return nil }
-            self.init(url: url, physical: physical, depth: depth, identity: identity)
+            self.init(url: url, physical: physical, identity: identity)
         }
     }
 

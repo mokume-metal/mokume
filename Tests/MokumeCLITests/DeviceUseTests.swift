@@ -130,6 +130,18 @@ struct DeviceUseTests {
         #expect(DeviceUse.cameraUsers(in: root) == ["Sources/mirror/Foo.bundle/Mirror.swift"])
     }
 
+    /// **資材の置き場の中は読まない** — 置き場の中の `.swift` は束へ写されるだけで組まれない。宣言の
+    /// 無い置き場に中身があれば、bundle は資材の宣言の検査で止まる。
+    @Test("資材の置き場の中で開いても、使っているファイルとして名指ししない")
+    func theAssetsDirectoryIsNotRead() throws {
+        let root = try makeSketch(files: [
+            "Sources/mirror/Plain.swift": "func draw() {}",
+            "Sources/mirror/assets/Mirror.swift": "camera = try? createCapture()",
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(DeviceUse.cameraUsers(in: root).isEmpty)
+    }
+
     @Test("置き場が無ければ、使っていないものとして扱う")
     func noSourcesMeansNoUse() throws {
         let root = try makeSketch(files: ["Package.swift": ""])

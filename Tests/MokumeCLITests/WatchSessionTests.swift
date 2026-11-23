@@ -3803,8 +3803,26 @@ struct SourceStampTests {
         stop.withLock { $0 = true }
         if done.wait(timeout: .now() + seconds) != .success {
             Issue.record("止まれと伝えても列挙が止まらない")
+        } else if let partial = result.withLock({ $0 }) {
+            Issue.record("止めた列挙が、途中までの一覧を歩き切った一覧として返した: \(partial.count) 件")
         }
         return nil
+    }
+
+    /// **止めた列挙は `nil` を返す** — 途中までの一覧を、歩き切った一覧と取り違えさせない。
+    @Test("止めた列挙は、途中までの一覧ではなく nil を返す")
+    func aStoppedWalkReturnsNil() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let sources = sketch.appendingPathComponent("Sources")
+        #expect(
+            SourceTree.files(
+                under: sources, extensions: ["swift"], descendingIntoPackages: false,
+                shouldContinue: { false }) == nil)
+        #expect(
+            SourceTree.files(
+                under: sources, extensions: ["swift"], descendingIntoPackages: false,
+                shouldContinue: { true })?.map(\.lastPathComponent) == ["main.swift"])
     }
 
     /// `urls` の、`root` からの相対パス。
@@ -3842,6 +3860,94 @@ struct SourceStampTests {
                 "Sources/app/B/b.swift", "Sources/app/C/c.swift",
                 "Sources/app/Lib1/Shared.swift", "Sources/app/main.swift",
             ], "\(names)")
+    }
+
+    /// **別々のディレクトリにある 2 本のリンクが同じ先を指すと、リンクを通ったパスの順で先の名前で
+    /// 挙がる** — 実体のディレクトリを歩く順 (見つけた順) ではない。`B` は `A` より先に歩かれるので、
+    /// 見つけた順なら `B/l` になる。
+    @Test("別々のディレクトリの 2 本のリンクが同じ先を指すと、パスの順で先のリンクの名前で挙がる")
+    func linksInDifferentDirectoriesFollowThePathOrder() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let outside = try outsideDirectory(["Shared.swift": "let shared = 1"])
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let app = sketch.appendingPathComponent("Sources/app")
+        try FileManager.default.createDirectory(
+            at: app.appendingPathComponent("A"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: app.appendingPathComponent("B"), withIntermediateDirectories: true)
+        try link(app.appendingPathComponent("B/l"), to: outside)
+        try link(app.appendingPathComponent("A/m"), to: outside)
+        let names = relative(
+            SourceTree.files(
+                under: sketch.appendingPathComponent("Sources"), extensions: ["swift"],
+                descendingIntoPackages: false),
+            to: sketch
+        ).sorted()
+        #expect(names == ["Sources/app/A/m/Shared.swift", "Sources/app/main.swift"], "\(names)")
+    }
+
+    /// **`Sources/<名前>` そのものがリンクでも、その先の `assets` は置き場** — 中の `.swift` は資材として
+    /// 1 度だけ数え、置き場の中のディレクトリへのリンクは辿らない。
+    @Test("Sources/<名前> がリンクでも、その先の assets は置き場として扱う")
+    func theAssetsOfALinkedTargetAreThePlace() throws {
+        let root = try TestScratch.directory("mokume-tree")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "// p".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let target = try outsideDirectory([
+            "main.swift": "print(1)", "assets/Inside.swift": "let a = 1",
+        ])
+        let other = try outsideDirectory(["Greeting.swift": "let greeting = 1"])
+        defer { for url in [target, other] { try? FileManager.default.removeItem(at: url) } }
+        try link(target.appendingPathComponent("assets/linked"), to: other)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        try link(root.appendingPathComponent("Sources/app"), to: target)
+
+        let listed = SourceStamp.sources(in: root).map(\.lastPathComponent)
+        #expect(listed.filter { $0 == "Inside.swift" }.count == 1, "\(listed)")
+        #expect(!listed.contains("Greeting.swift"), "\(listed)")
+        #expect(listed.contains("main.swift"), "\(listed)")
+    }
+
+    /// **他所から置き場そのものを指すリンクは、`.swift` の列挙では辿らない** — 中のファイルは資材の
+    /// 数え方が置き場の名前で 1 度だけ数える (見張りの世代には出る)。
+    @Test("別の target の置き場を指すリンクは辿らず、置き場の中のファイルは資材として 1 度だけ数える")
+    func aLinkToAnotherPlaceIsNotWalked() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("let x = 1", to: "Sources/other/assets/X.swift", in: sketch)
+        try link(
+            sketch.appendingPathComponent("Sources/app/Lib"),
+            to: sketch.appendingPathComponent("Sources/other/assets"))
+
+        let tree = relative(
+            SourceTree.files(
+                under: sketch.appendingPathComponent("Sources"), extensions: ["swift"],
+                descendingIntoPackages: false),
+            to: sketch)
+        #expect(!tree.contains { $0.hasSuffix("X.swift") }, "\(tree)")
+        let listed = SourceStamp.sources(in: sketch).map(\.path)
+        #expect(listed.filter { $0.hasSuffix("/X.swift") }.count == 1, "\(listed)")
+        #expect(listed.contains { $0.hasSuffix("Sources/other/assets/X.swift") }, "\(listed)")
+    }
+
+    /// **置き場そのものがリンクなら、中は数えない** (前から同じ。#2519 の「置き場のシンボリック
+    /// リンクは範囲の外」)。資材の数え方は置き場のリンクの中へ降りず、`.swift` の列挙も置き場へ
+    /// 降りない。
+    @Test("置き場そのものがリンクなら、中を書き換えても世代は変わらない")
+    func aLinkedPlaceIsNotCounted() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let outside = try outsideDirectory(["v.txt": "one", "Inside.swift": "let a = 1"])
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try link(sketch.appendingPathComponent("Sources/app/assets"), to: outside)
+        let first = SourceStamp.current(for: sketch)
+        try "two".write(to: outside.appendingPathComponent("v.txt"), atomically: true, encoding: .utf8)
+        try "let a = 2".write(
+            to: outside.appendingPathComponent("Inside.swift"), atomically: true, encoding: .utf8)
+        #expect(SourceStamp.current(for: sketch) == first)
     }
 
     /// 歩き方の形 (#3993)。`SourceTree` を直に叩き、挙がる `.swift` を見る。SwiftPM が組むかは
