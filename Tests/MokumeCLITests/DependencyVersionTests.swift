@@ -393,39 +393,69 @@ struct DependencyVersionTests {
             "\(resolved ?? "nil") / \(tool ?? "nil")")
     }
 
-    /// **固定は呼んだ時に読む** — 起動は解決 (`RunCommand.context`) の後で呼ぶので、初回に解決して書かれた
-    /// `Package.resolved` の版で名乗る (完了条件 4)。
-    @Test("固定は呼んだ時に読むので、解決の後に書かれた固定でも名乗る")
-    func theStartupLineReadsThePinWhenCalled() throws {
-        let sketch = try makeSketch(resolved: nil)
-        #expect(DoctorCommand.mismatchLine(forPackageAt: sketch, tool: "0.46.0") == nil)
-        try Data(Self.pinned("0.47.0").utf8).write(to: sketch.appendingPathComponent("Package.resolved"))
-        #expect(DoctorCommand.mismatchLine(forPackageAt: sketch, tool: "0.46.0") != nil)
+    /// プレリリースは配布版と別の版なので、文字列が違えば食い違いとして名乗る (`_N` だけを落とす)。
+    @Test("プレリリースの固定は、同じ番号の配布版の道具と食い違うと名乗る")
+    func aPrereleasePinIsAMismatch() throws {
+        let sketch = try makeSketch(resolved: Self.pinned("0.47.0-beta.1"))
+        #expect(
+            DoctorCommand.mismatchLine(forPackageAt: sketch, tool: "0.47.0")
+                == DoctorCommand.dependencyLine("0.47.0-beta.1", tool: "0.47.0"))
     }
 
-    /// 原文を読む。**`Tool:` を名乗る起動のすべてが、置き場と固定を決めた後で食い違いの行を通す** (#4074)。
-    /// 起動を足したときに抜けないよう、口は `Tool: \(ToolVersion` の当たりから数える。使い方の表示
-    /// (`Command.swift`) はスケッチを起こさないので外す。
-    @Test("Tool: を名乗る起動のすべてが、置き場を決めた後で食い違いの行を通す")
-    func everyStartupThatNamesTheToolChecksTheDependency() throws {
-        let sources = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/MokumeCLI", isDirectory: true)
-        let names = try FileManager.default.contentsOfDirectory(atPath: sources.path)
-            .filter { $0.hasSuffix(".swift") && $0 != "Command.swift" }
-        var starts: [String] = []
-        for name in names.sorted() {
-            let text = try String(contentsOf: sources.appendingPathComponent(name), encoding: .utf8)
-            guard text.contains(#"Tool: \(ToolVersion"#) else { continue }
-            starts.append(name)
-            let context = try #require(text.range(of: "let context = try"), "\(name) が置き場を決めていない")
-            let call = try #require(
-                text.range(of: "DoctorCommand.mismatchLine(forPackageAt: directory)"),
-                "\(name) が起動の行で依存の版を突き合わせていない")
-            #expect(context.upperBound <= call.lowerBound, "\(name) が置き場 (解決) を決める前に固定を読んでいる")
-        }
-        #expect(
-            starts == ["RenderCommand.swift", "ReplayCommand.swift", "RunCommand.swift", "WatchCommand.swift"],
-            "\(starts)")
+    // MARK: - 名乗りの手 (#4074)
+
+    /// 名乗りを数える。
+    private nonisolated final class Said: @unchecked Sendable {
+        private let lock = NSLock()
+        private var lines: [String] = []
+        var all: [String] { lock.withLock { lines } }
+        func append(_ line: String) { lock.withLock { lines.append(line) } }
+    }
+
+    /// **固定は呼んだ時に読み、変わったときだけ言う** (完了条件 4)。置き場を明示した新しいスケッチは、組む前には
+    /// `Package.resolved` が無く、組んだ後に固定が書かれる。同じ食い違いを 2 度言わない。
+    @Test("名乗りの手は固定を呼んだ時に読み、食い違いが変わったときだけ 1 度言う")
+    func theNoticeSaysEachChangeOnce() throws {
+        let sketch = try makeSketch(resolved: nil)
+        let said = Said()
+        let notice = DoctorCommand.MismatchNotice(tool: "0.46.0", say: { said.append($0) })
+        let resolved = sketch.appendingPathComponent("Package.resolved")
+
+        notice.check(in: sketch)  // 組む前: 固定が無い
+        #expect(said.all.isEmpty)
+        try Data(Self.pinned("0.47.0").utf8).write(to: resolved)
+        notice.check(in: sketch)  // 組んだ後: 0.47.0 が固定された
+        notice.check(in: sketch)  // 同じまま
+        #expect(said.all == [DoctorCommand.dependencyLine("0.47.0", tool: "0.46.0")])
+        try Data(Self.pinned("0.46.0").utf8).write(to: resolved)
+        notice.check(in: sketch)  // 揃った: 言わない
+        #expect(said.all.count == 1, "\(said.all)")
+        try Data(Self.pinned("0.48.0").utf8).write(to: resolved)
+        notice.check(in: sketch)  // また食い違った
+        #expect(said.all == [
+            DoctorCommand.dependencyLine("0.47.0", tool: "0.46.0"),
+            DoctorCommand.dependencyLine("0.48.0", tool: "0.46.0"),
+        ])
+    }
+
+    /// 起動の行で言った食い違いは、組んだ後に同じなら言わない (1 回の起動で 2 度出さない)。
+    @Test("起動の行で言った食い違いを、組んだ後にもう 1 度は言わない")
+    func theStartupLineIsNotRepeatedAfterTheBuild() throws {
+        let sketch = try makeSketch(resolved: Self.pinned("0.47.0"))
+        let said = Said()
+        let notice = DoctorCommand.MismatchNotice(tool: "0.46.0", say: { said.append($0) })
+        notice.check(in: sketch)
+        notice.check(in: sketch)
+        #expect(said.all.count == 1, "\(said.all)")
+    }
+
+    /// 手元ビルドの道具 (版を持たない) は、固定がどうであれ何も言わない。
+    @Test("道具が版を持たなければ、名乗りの手は何も言わない")
+    func theNoticeStaysSilentForALocalBuild() throws {
+        let sketch = try makeSketch(resolved: Self.pinned("0.47.0"))
+        let said = Said()
+        let notice = DoctorCommand.MismatchNotice(tool: nil, say: { said.append($0) })
+        notice.check(in: sketch)
+        #expect(said.all.isEmpty)
     }
 }

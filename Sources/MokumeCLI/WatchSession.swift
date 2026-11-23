@@ -107,6 +107,8 @@ final class WatchSession {
         ///   丸ごと乗る ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
         /// - Parameter running: 走っている `swift` を掴む先。**導き手と同じものを渡す** —
         ///   止めると決めた後に導き直しが `swift` を起こすと、それが新しく置き場の鍵を握る (#1147)。
+        /// - Parameter dependencies: 作り直しのたびに道具と固定の版の食い違いを読み、変わったときだけ名乗る手 (#4074)。
+        ///   **見張りは起動の行で読んだものと同じものを渡す。** 省けば何も言わない (道具の版を持たない)。
         /// - Parameter keepTime: 作り直しをまたいで作者の時計を渡すファイルの絶対パス (`watch --keep-time`)。
         ///   起こす子ごとに環境変数で渡す (``StartupReads/keepTime``・#2414)。省けば渡さない。
         /// - Parameter recording: 記録の行き先の絶対パス (`watch --record`)。起こす子ごとに、世代の番号つきの
@@ -123,6 +125,8 @@ final class WatchSession {
         ///   起こす子へ届くまでを通す)。省けば `RunCommand.rebuild`。
         static func live(
             resolver: BuildResolver, running: RunningBuild,
+            dependencies: DoctorCommand.MismatchNotice = DoctorCommand.MismatchNotice(
+                tool: nil, say: { WatchCommand.say($0) }),
             stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil,
             recording: String? = nil, progress: (@Sendable (BuildProgress) -> Void)? = nil,
             assetBundles given: AssetScope.Carried? = nil,
@@ -157,7 +161,8 @@ final class WatchSession {
                                 rebuilt = try rebuilding(directory, resolved).get()
                             } else {
                                 rebuilt = try RunCommand.rebuild(
-                                    in: directory, context: resolved.context, capturing: true,
+                                    in: directory, context: resolved.context, dependencies: dependencies,
+                                    capturing: true,
                                     running: running, binPath: resolved.binPath, progress: progress)
                             }
                             // **いまの宣言に無い包みは、子に探させない** (#4038)。`run` と同じ口で決め、外す包みが

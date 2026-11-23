@@ -446,7 +446,7 @@ struct AssetScopeTests {
     }
 
     /// **`run`・`render`・`replay` が実行ファイルを受け取る口は、探してよい包みも決める** (2 回目の反証・指摘 2)。
-    /// 建てる手だけを差し替えた本物の口 (``RunCommand/prepare(in:context:say:asking:building:)``) が、許す一覧を返し、
+    /// 建てる手だけを差し替えた本物の口 (``RunCommand/prepare(in:context:dependencies:say:asking:building:)``) が、許す一覧を返し、
     /// 名乗る。
     @Test("実行ファイルを受け取る口は、探してよい包みを決めて名乗る")
     func preparingDecidesTheAllowance() throws {
@@ -455,7 +455,8 @@ struct AssetScopeTests {
         let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
         var said: [String] = []
         let prepared = try RunCommand.prepare(
-            in: build.package, context: context(build, declared: declared), say: { said.append($0) },
+            in: build.package, context: context(build, declared: declared),
+            dependencies: DoctorCommand.MismatchNotice(tool: nil, say: { _ in }), say: { said.append($0) },
             asking: Asker([(0, tree(build))]).asking,
             building: { _, _ throws(CommandFailure) in build.executable })
         #expect(prepared.executable == build.executable)

@@ -93,17 +93,23 @@ enum RunCommand {
     /// 通らずに子を起こす形にならない。`watch` は作り直しの後の段取り (``AssetScope/Carried``) で同じ口を通る。
     ///
     /// - Parameters:
+    ///   - dependencies: 道具と固定の版の食い違いを名乗る手 (#4074)。起動の行で読んだものと同じものを渡す。
     ///   - say: 名乗りの行き先。
     ///   - asking: 依存の木の問い (``AssetScope/Asking``)。**検査が偽の答えを渡すために渡せる形にしてある。**
     ///   - building: 建てて実行ファイルを返す手。**検査が `swift build` を走らせずに通すために渡せる形にしてある。**
+    ///     省けば ``buildAndResolve(in:context:dependencies:)``。
     static func prepare(
-        in directory: URL, context: BuildContext, say: (String) -> Void = { print($0) },
+        in directory: URL, context: BuildContext, dependencies: DoctorCommand.MismatchNotice,
+        say: (String) -> Void = { print($0) },
         asking: AssetScope.Asking = BundleCommand.askSwiftPM,
-        building: (URL, BuildContext) throws(CommandFailure) -> URL = { directory, context throws(CommandFailure) in
-            try buildAndResolve(in: directory, context: context)
-        }
+        building: ((URL, BuildContext) throws(CommandFailure) -> URL)? = nil
     ) throws(CommandFailure) -> Prepared {
-        let executable = try building(directory, context)
+        let executable: URL
+        if let building {
+            executable = try building(directory, context)
+        } else {
+            executable = try buildAndResolve(in: directory, context: context, dependencies: dependencies)
+        }
         let allowance = AssetScope.settle(
             context: context, executable: executable, package: directory, say: say, asking: asking)
         return Prepared(executable: executable, assetBundles: allowance)
@@ -134,11 +140,13 @@ enum RunCommand {
             in: directory, invocation: invocation,
             afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
-        // **道具と固定の版の食い違いを、起動の画面で名乗る** (#4074)。固定は置き場を決める解決の後に読む
-        if let mismatch = DoctorCommand.mismatchLine(forPackageAt: directory) { print(mismatch) }
+        // **道具と固定の版の食い違いを、起動の画面で名乗る** (#4074)。固定は置き場を決める解決の後に読み、
+        // 組んだ後にもう 1 度読む (変わったときだけ言う)
+        let dependencies = dependencyNotice()
+        dependencies.check(in: directory)
 
         // **いまの宣言に無い包みは、子に探させない** (#4038)
-        let prepared = try prepare(in: directory, context: context)
+        let prepared = try prepare(in: directory, context: context, dependencies: dependencies)
         // 走らせるのは人なので、速さを名乗らせる。MCP サーバはここを通らない。
         // **名乗る名前は、いま走らせる構成と同じ値から出す**
         //
@@ -395,7 +403,8 @@ enum RunCommand {
     /// - Parameter progress: 組み立ての段数が読めるたびに呼ぶ口 (#4121)。掴む形でだけ働き、
     ///   **作り直しの糸から呼ぶ。** 返す出力は変えない。
     nonisolated static func rebuild(
-        in directory: URL, context: BuildContext, capturing: Bool = false,
+        in directory: URL, context: BuildContext, dependencies: DoctorCommand.MismatchNotice,
+        capturing: Bool = false,
         running: RunningBuild? = nil, binPath: URL? = nil,
         progress: (@Sendable (BuildProgress) -> Void)? = nil
     )
@@ -420,6 +429,8 @@ enum RunCommand {
         let result = try swift(
             ["build"] + context.arguments, in: directory, capturing: capturing,
             errors: .merge, running: running, progress: progress)
+        // **固定を確定させるのは組み立てなので、組んだ後に読む** (#4074)。通らなかった回も解決は済んでいることがある
+        dependencies.check(in: directory)
 
         // **名前が分からなかったときは、建った後に読み直す。** 宣言が直っていることが
         // あるためで、この経路の置き場は必ずパッケージ直下なので取り違えは起きない
@@ -518,10 +529,18 @@ enum RunCommand {
     }
 
     /// 作り直して、走らせるものを返す。**通らなければ投げる** (人へ見せる経路の形)。
-    static func buildAndResolve(in directory: URL, context: BuildContext) throws(CommandFailure)
-        -> URL
-    {
-        try executable(from: rebuild(in: directory, context: context), in: directory)
+    ///
+    /// - Parameter dependencies: 道具と固定の版の食い違いを名乗る手 (#4074)。起動の行で読んだものと同じものを渡す
+    ///   (同じ食い違いを 2 度言わない)。
+    static func buildAndResolve(
+        in directory: URL, context: BuildContext, dependencies: DoctorCommand.MismatchNotice
+    ) throws(CommandFailure) -> URL {
+        try executable(from: rebuild(in: directory, context: context, dependencies: dependencies), in: directory)
+    }
+
+    /// `run`・`render`・`replay`・`bundle` の名乗りの手。行き先は標準出力で、道具の版は配布物から読む。
+    static func dependencyNotice() -> DoctorCommand.MismatchNotice {
+        DoctorCommand.MismatchNotice(tool: ToolVersion.release(), say: { print($0) })
     }
 
     /// 作り直しの結果を、人へ見せる経路の形に読む。

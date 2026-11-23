@@ -49,9 +49,10 @@ enum ReplayCommand {
             afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
         // 道具と固定の版の食い違いを名乗る (`run` と同じ・#4074)
-        if let mismatch = DoctorCommand.mismatchLine(forPackageAt: directory) { print(mismatch) }
+        let dependencies = RunCommand.dependencyNotice()
+        dependencies.check(in: directory)
         // いまの宣言に無い包みは、子に探させない (`run` と同じ口・#4038)
-        let prepared = try RunCommand.prepare(in: directory, context: context)
+        let prepared = try RunCommand.prepare(in: directory, context: context, dependencies: dependencies)
         try replay(
             prepared.executable, in: directory, record: options.record, report: report,
             assetBundles: prepared.assetBundles)

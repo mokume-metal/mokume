@@ -984,9 +984,57 @@ struct RunCommandTests {
         let given = directory.appendingPathComponent("given-bin", isDirectory: true)
 
         let rebuilt = try RunCommand.rebuild(
-            in: directory, context: testContext(), capturing: true, binPath: given)
+            in: directory, context: testContext(), dependencies: Self.quiet, capturing: true, binPath: given)
 
         #expect(rebuilt.binPath == given, "渡した置き場を使わず、道具立てに聞き直している")
+    }
+
+    /// 版の食い違いを何も言わない名乗りの手 (道具の版を持たない)。
+    static var quiet: DoctorCommand.MismatchNotice { .init(tool: nil, say: { _ in }) }
+
+    /// 名乗りを数える。作り直しの糸からも呼ばれる形なので鍵で守る。
+    nonisolated final class Said: @unchecked Sendable {
+        private let lock = NSLock()
+        private var lines: [String] = []
+        var all: [String] { lock.withLock { lines } }
+        func append(_ line: String) { lock.withLock { lines.append(line) } }
+    }
+
+    /// **作り直しは、組んだ後に固定を読み直して食い違いを名乗る** (#4074)。固定を確定させるのは組み立てなので、
+    /// 起動の行 (組む前) だけでは、置き場を明示した新しいスケッチや要求を上げた `Package.swift` で黙るか古い版を言う。
+    /// `run`・`render`・`replay`・`bundle`・`watch` はどれもこの作り直しで組む。組み立ては空の場所で即座に失敗させ、
+    /// 読む手を差し替えて固定の移り変わりを作る。
+    @Test("作り直しは組んだ後に食い違いを読み、変わったときだけ 1 度名乗る")
+    func rebuildingNamesTheDependencyMismatchOnceItChanges() throws {
+        let directory = try makeEmptyDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let given = directory.appendingPathComponent("given-bin", isDirectory: true)
+        let said = Said()
+        let pinned = Said()  // 読む手が返す固定の移り変わり (最後の 1 件がいまの固定)
+        let notice = DoctorCommand.MismatchNotice(
+            tool: "0.46.0", say: { said.append($0) },
+            line: { _, tool in
+                pinned.all.last.flatMap { DoctorCommand.dependencyLine($0, tool: tool) }
+            })
+
+        // 起動の行 (組む前): 固定がまだ無い (置き場を明示した新しいスケッチ)
+        notice.check(in: directory)
+        #expect(said.all.isEmpty)
+        // 組み立てが 0.47.0 を固定した
+        pinned.append("0.47.0")
+        _ = try RunCommand.rebuild(
+            in: directory, context: testContext(), dependencies: notice, capturing: true, binPath: given)
+        #expect(said.all == [DoctorCommand.dependencyLine("0.47.0", tool: "0.46.0")])
+        // 同じ固定のまま作り直しても、2 度は言わない
+        _ = try RunCommand.rebuild(
+            in: directory, context: testContext(), dependencies: notice, capturing: true, binPath: given)
+        #expect(said.all.count == 1, "\(said.all)")
+        // 見張りの途中で固定が変わった (`swift package update`)
+        pinned.append("0.48.0")
+        _ = try RunCommand.rebuild(
+            in: directory, context: testContext(), dependencies: notice, capturing: true, binPath: given)
+        #expect(said.all.last == DoctorCommand.dependencyLine("0.48.0", tool: "0.46.0"))
+        #expect(said.all.count == 2, "\(said.all)")
     }
 
     /// 裏。**渡さなければ今までどおり聞く** — `run` と `bundle` はこちらを通る。
@@ -1002,7 +1050,7 @@ struct RunCommandTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let rebuilt = try RunCommand.rebuild(
-            in: directory, context: testContext(), capturing: true)
+            in: directory, context: testContext(), dependencies: Self.quiet, capturing: true)
 
         // place を組み立てて確かめない (道具立てが並びを変えた日に黙って別の場所を指す)。
         // **このパッケージの下の `.build` であること**だけを見る
@@ -1061,7 +1109,7 @@ struct RunCommandTests {
         @discardableResult
         func rebuild(product: String) throws -> RunCommand.Rebuilt {
             try RunCommand.rebuild(
-                in: package, context: testContext(product: product), capturing: true, binPath: bin)
+                in: package, context: testContext(product: product), dependencies: RunCommandTests.quiet, capturing: true, binPath: bin)
         }
     }
 
@@ -1164,7 +1212,7 @@ struct RunCommandTests {
         let package = root.appendingPathComponent("package", isDirectory: true)
         try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
         _ = try RunCommand.rebuild(
-            in: package, context: testContext(product: "Dang"), capturing: true, binPath: bin)
+            in: package, context: testContext(product: "Dang"), dependencies: RunCommandTests.quiet, capturing: true, binPath: bin)
         #expect(
             (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil,
             "行き先の無い symlink が残った")
