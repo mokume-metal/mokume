@@ -391,21 +391,33 @@ package final class ReplayRecorder: UnreproducibleSink {
     /// 世代の行き先が塞がれていたとき、書き終えた記録を ``keptAside`` の名前へ移して、在処を言う (#3999)。
     ///
     /// `.partial` の名前のままにすると、次の `watch --record` の始まり (``ReplayRequest/discardGenerations(of:)``) が
-    /// 落ちた回の残りとして消すので、掃除の当たらない名前へ移す。移せなければ (その名前も塞がれていた) `.partial` に
-    /// 残し、次の `watch --record` が片付けることを言う。
-    private func keepAside() {
+    /// 落ちた回の残りとして消すので、掃除の当たらない名前へ移す。移せなければ `.partial` に残し、移せなかった理由
+    /// (その名前に既に何か在る・それ以外の失敗の理由) と、次の `watch --record` が片付けることを言う。
+    ///
+    /// - Parameter exclusive: 在れば断る改名 (``placeWithoutReplacing(_:at:exclusive:)``)。**差し替えるのは検査だけ。**
+    func keepAside(exclusive: (URL, URL) -> Int32? = renameExclusive) {
         let kept = keptAside
         let reason =
             "Recording stopped: \(destination.path) was not replaced, because something that is not this record "
             + "was placed there while it was recorded"
-        if Self.placeWithoutReplacing(partial, at: kept) == nil {
-            Diagnostics.warn("\(reason). The record is kept at \(kept.path)")
+        let notice: String
+        if let code = Self.placeWithoutReplacing(partial, at: kept, exclusive: exclusive) {
+            let why =
+                code == EEXIST
+                ? "\(kept.path) is already there"
+                : "it could not be moved to \(kept.path): \(String(cString: strerror(code)))"
+            notice =
+                "\(reason). The record is left at \(partial.path), because \(why). The next mokume watch --record "
+                + "clears it, so move it if you need it"
         } else {
-            Diagnostics.warn(
-                "\(reason). The record is left at \(partial.path), which the next mokume watch --record "
-                    + "clears, so move it if you need it")
+            notice = "\(reason). The record is kept at \(kept.path)"
         }
+        keepAsideNotice = notice
+        Diagnostics.warn(notice)
     }
+
+    /// ``keepAside(exclusive:)`` が言った 1 行。**読むのは検査だけ。**
+    private(set) var keepAsideNotice: String?
 
     /// 世代の行き先が塞がれていたときに記録を移す名前 (`take-3.json` → `take-3.kept-<識別子の頭 8 字>.json`)。
     /// 世代の並び (`<stem>-<番号>.<ext>`) にも `.partial` の形にも当たらないので、番号を選ぶ側と掃除の側に触れられない。

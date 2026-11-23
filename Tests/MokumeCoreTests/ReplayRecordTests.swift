@@ -464,6 +464,26 @@ struct ReplayRecordFormatTests {
         #expect((try? Data(contentsOf: destination)) == Data("{\"keep\":true}".utf8))
         #expect((try? Data(contentsOf: recorder.keptAside)) == Data("mine".utf8))
         #expect(try object(at: recorder.partial)["complete"] as? Bool == true)
+        let notice = try #require(recorder.keepAsideNotice)
+        #expect(
+            notice.contains("left at \(recorder.partial.path), because \(recorder.keptAside.path) is already there"),
+            "移せなかった理由を言わない: \(notice)")
+    }
+
+    @Test("掃除の当たらない名前へ移すのがほかの理由で失敗したら、.partial に残し、失敗の理由を言う")
+    func aGenerationNamesWhyTheRecordCouldNotBeKeptAside() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take-3.json")
+        let recorder = try #require(ReplayRecorder.open(destination: destination, generation: true).recorder)
+        recorder.keepAside(exclusive: { _, _ in EACCES })
+        #expect(FileManager.default.fileExists(atPath: recorder.partial.path), ".partial を残さない")
+        #expect(!FileManager.default.fileExists(atPath: recorder.keptAside.path))
+        let notice = try #require(recorder.keepAsideNotice)
+        let reason = String(cString: strerror(EACCES))
+        #expect(
+            notice.contains("could not be moved to \(recorder.keptAside.path): \(reason)"),
+            "失敗の理由を言わない: \(notice)")
+        recorder.abandon(because: "test")
     }
 
     @Test("在れば断る改名を受けないボリューム (ENOTSUP・EOPNOTSUPP・EINVAL) では、見てから置き、在れば上書きしない", arguments: [ENOTSUP, EOPNOTSUPP, EINVAL])
