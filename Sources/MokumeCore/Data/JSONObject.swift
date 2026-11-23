@@ -101,6 +101,7 @@ import Foundation
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public struct JSONObject: Equatable, Sendable {
+    // 既定の main actor のまま: 読み出しが main actor の警告の口 (`warnOnce` など) を呼ぶ (#4098)
     /// キーと値。順は持たない (JSON のオブジェクトは順を約束しない)。
     var members: [String: JSONValue]
 

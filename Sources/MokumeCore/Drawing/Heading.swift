@@ -14,7 +14,7 @@ import simd
 /// 向きは出た場所と無関係に引く。半径のある ``Emitter/sphere(_:_:_:radius:)`` から `.sphere` で
 /// 撒いても、パーティクルが球の外向きへ飛ぶとは限らない。中心から吹き出す形にするなら、1 点
 /// (``Emitter/point(_:_:_:)``) から `.sphere` で撒く。
-public enum Heading: Equatable, Sendable {
+public nonisolated enum Heading: Equatable, Sendable {
     /// 画面の面内 (x と y の面) で、`angle` の幅から一様に引いた角度 (ラジアン) へ。
     ///
     /// 0 が +x (右)、π/2 が +y (下)。**奥行き (z) の成分は常に 0** なので、視点を回して

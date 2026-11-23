@@ -387,13 +387,15 @@ struct HandPoseReadTests {
 
 // MARK: - Vision へ渡す絵 (#3587 の条件 5)
 
-@MainActor
-struct HandPosePictureTests {
+/// 画素の写しは main の外で作り、比べられる (#4098)。推論と同じく main actor に載せない。
+nonisolated struct HandPosePictureTests {
     @Test("Vision へ渡す絵は、乗算済みを外し sRGB の転送関数を掛けた 8 bit。画素の並びは変えない")
     func thePictureIsStraightAndEncoded() throws {
         // 2×1: 左は不透明度 0.5 で乗算済みの赤 (乗算前は赤 1)、右は不透明な線形 0.5 の灰
         let pixels = PixelBuffer(width: 2, height: 1, components: [0.5, 0, 0, 0.5, 0.5, 0.5, 0.5, 1])
         let frame = HandPoseInput(pixels: pixels, hostTime: 1)
+        #expect(frame == HandPoseInput(width: 2, height: 1, hostTime: 1, pixels: pixels), "大きさは画素のもの")
+        #expect(frame != HandPoseInput(width: 2, height: 1, hostTime: 1), "画素の有無も比べる")
         let picture = try #require(VisionHandPoseEstimator.picture(of: frame))
         #expect(picture.width == 2 && picture.height == 1)
         #expect(picture.alphaInfo == .last, "アルファは乗算していない形で名乗る")

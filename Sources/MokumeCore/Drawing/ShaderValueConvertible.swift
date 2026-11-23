@@ -58,10 +58,14 @@ extension LinearRGBA: ShaderValueConvertible {
     public var shaderValue: ShaderValue { .color(self) }
 }
 
-extension Transform: ShaderValueConvertible {
-    public var shaderValue: ShaderValue { .transform(self) }
+// 値の型 (`Transform`・`ShaderValue`) の適合は、型に付けた `nonisolated` が効かないのでここにも書く。
+// main actor のプロトコルの要件を満たすメンバは、`nonisolated extension` の中でも要件の隔離を継ぐので、
+// メンバにも書く。これで値から `shaderValue` を読むのが main の外でも組める。プロトコル自体は main actor の
+// まま — 利用者の型の適合を変えないため (#4098)
+nonisolated extension Transform: ShaderValueConvertible {
+    public nonisolated var shaderValue: ShaderValue { .transform(self) }
 }
 
-extension ShaderValue: ShaderValueConvertible {
-    public var shaderValue: ShaderValue { self }
+nonisolated extension ShaderValue: ShaderValueConvertible {
+    public nonisolated var shaderValue: ShaderValue { self }
 }
