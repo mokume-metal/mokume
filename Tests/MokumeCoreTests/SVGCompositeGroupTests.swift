@@ -92,8 +92,8 @@ struct SVGCompositeGroupTests {
     @Test(
         "不透明な線の部分パスは 1 つの図形にしない: 縦だけ細くなる置き方で、太い縦の線は細い横の線との交わりでも不透明 (前と同じ)")
     func opaqueSubpathStrokesAreNotOneFigure() throws {
-        // 横の線は縦 0.04 倍で 1 画素より細くなり (被覆が 1 未満)、縦の線は横 1.5 倍で太いまま。1 つの図形にすると
-        // 型板が先に引いた横の線の被覆だけを残し、交わる所 (120, 2) の縦の線が薄くなる
+        // 横の線は縦 0.04 倍で 1 画素より細くなり (被覆が 1 未満)、縦の線は横 1.5 倍で太いまま。交わる所 (120, 2) は
+        // 縦の線が不透明のまま残る
         let (image, _) = try rendered(
             "<path d='M20 40 H140 M80 10 V120' fill='none' stroke='white' stroke-width='20'/>"
         ) { canvas, shape in
