@@ -331,6 +331,104 @@ struct ReplaySoundAnalysisTests {
         #expect(changed.matched)
     }
 
+    /// `loadSound` のほかに音声ファイルを読む口。
+    enum SoundOpener: String, CaseIterable, Sendable {
+        case requestSound, audioIn
+    }
+
+    /// 音声ファイルを 1 度開くスケッチ (`requestSound` は `Task` で)。
+    final class SoundOpenerSketch: Sketch {
+        var opener = SoundOpener.requestSound
+        var path = ""
+        var loading: Task<Void, Never>?
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8, frameRate: 60) }
+        init() {}
+        convenience init(_ opener: SoundOpener, path: String) {
+            self.init()
+            self.opener = opener
+            self.path = path
+        }
+        func setup() throws {
+            switch opener {
+            case .requestSound: loading = Task { [self] in _ = try? await requestSound(path) }
+            case .audioIn: _ = try createAudioIn(file: path)
+            }
+        }
+        func draw() { background(0, 0, 0) }
+    }
+
+    @Test(
+        "requestSound(_:) と createAudioIn(file:) で開いた音声ファイルも、記録の後に書き換えて流すと資源のハッシュが違うと名乗る",
+        arguments: SoundOpener.allCases)
+    func aChangedSoundFileOpenedOtherwiseIsNamed(opener: SoundOpener) async throws {
+        let directory = try TestScratch.directory("mokume-replay-sound")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let url = directory.appendingPathComponent("opener-\(opener).json")
+
+        // ハッシュを取った回数が `count` になるまで待つ。`requestSound` はフレームの頭で足し終えるまで返らないので、
+        // `Task` の終わりではなく、足す前に名乗ったこと (取った回数) を待つ。**待つ側が期限を持つ**
+        func waitForHash(_ count: Int, advancing runtime: SketchRuntime?) async throws {
+            let deadline = ContinuousClock.now + .seconds(30)
+            while ResourceHasher.timesTaken(for: file.path) < count {
+                guard ContinuousClock.now < deadline else {
+                    Issue.record("30 秒たってもハッシュを取らない (\(opener))")
+                    return
+                }
+                try runtime?.advance()
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        let recorder = try SketchRuntime(
+            sketch: SoundOpenerSketch(opener, path: file.path), gpu: RenderDevice(),
+            clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: false, persistsParams: false)
+        try #require(recorder.startRecording(try #require(ReplayRequest(destination: url.path))))
+        try recorder.advance()
+        try await waitForHash(1, advancing: recorder)
+        for _ in 0..<2 { try recorder.advance() }
+        recorder.closePlugins()
+        let taken = try ReplayRecord.read(from: url)
+        // `requestSound` は待つ読み込みを、`createAudioIn(file:)` は外から値が届く入り口 (音声ファイル) を名乗る
+        let waiting =
+            opener == .requestSound
+            ? [ReplayRecorder.Reason.waitingLoad] : [ReplayRecorder.Reason.outsideInput("audio file: \(file.path)")]
+        #expect(taken.unreproducible == waiting, "\(taken.unreproducible)")
+        #expect(taken.resources.keys.sorted() == [file.path], "\(taken.resources)")
+
+        // 流すのは記録の終わりまで。読み込みが記録より遅く届いても、報告を書く前に名乗り終えるのを待つ
+        func replay(hashedBefore: Int) async throws -> ReplayPlayer.Report {
+            let player = ReplayPlayer(record: try ReplayRecord.read(from: url), source: url.path, reportURL: nil)
+            let runtime = try SketchRuntime(
+                sketch: SoundOpenerSketch(opener, path: file.path), gpu: RenderDevice(),
+                clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: false, persistsParams: false,
+                opensFacets: false, handover: nil)
+            runtime.startReplaying(player)
+            var advances = 0
+            while !player.isFinished, advances < 40 {
+                player.beginAdvance(at: Double(advances))
+                try runtime.advance()
+                advances += 1
+                if ResourceHasher.timesTaken(for: file.path) <= hashedBefore {
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+            }
+            try #require(player.isFinished, "記録の終わりまで流せなかった")
+            try await waitForHash(hashedBefore + 1, advancing: nil)
+            let report = try #require(runtime.finishReplaying())
+            runtime.closePlugins()
+            return report
+        }
+        let same = try await replay(hashedBefore: 1)
+        #expect(same.unreproducible == waiting && same.matched, "\(same.unreproducible)")
+
+        let other = try writeWAV(chord.map { $0 * 0.5 }, sampleRate: 48_000)
+        _ = try FileManager.default.replaceItemAt(file, withItemAt: other)
+        let changed = try await replay(hashedBefore: 2)
+        #expect(
+            changed.unreproducible == waiting + [ReplayRecorder.Reason.resourceDiffers(file.path)],
+            "\(changed.unreproducible)")
+    }
+
     @Test("音を鳴らし続けるだけで時計を読まない作品は、ウィンドウで録っても名乗らない")
     func playingWithoutAClockReadIsNotNamed() throws {
         let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("clock-quiet.json")

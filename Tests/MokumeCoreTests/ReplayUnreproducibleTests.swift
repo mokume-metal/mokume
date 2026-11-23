@@ -365,19 +365,33 @@ struct ReplayUnreproducibleTests {
 // MARK: - 資源のハッシュ (#4092)
 
 extension ReplayUnreproducibleTests {
-    /// 資源の読み手。1 つずつ確かめる (音は `MokumeAudioTests` の `ReplayResourceSoundTests`)。
+    /// 資源の読み手。名乗りを通す口を 1 つずつ確かめる (音は `MokumeAudioTests` の `ReplaySoundAnalysisTests`)。
+    /// 表・JSON・XML の待つ口は `requestStrings` と同じ本体 (`requestParsed`) を通る。
     enum ResourceKind: String, CaseIterable, Sendable {
-        case image, requestImage, strings, shape, model, font, shader
+        case image, requestImage, strings, requestStrings, bytes, requestBytes, shape, requestShape, model,
+            requestModel, font, shader, effect, computation
+
+        /// 待つ読み込みか (記録も再生も「待つ読み込み」を名乗る)。
+        var waits: Bool {
+            switch self {
+            case .requestImage, .requestStrings, .requestBytes, .requestShape, .requestModel: true
+            default: false
+            }
+        }
 
         /// 書き出すファイルの名前。
         var fileName: String {
             switch self {
             case .image, .requestImage: "dot.png"
-            case .strings: "words.txt"
-            case .shape: "mark.svg"
-            case .model: "pyramid.obj"
+            case .strings, .requestStrings: "words.txt"
+            case .bytes, .requestBytes: "blob.bin"
+            case .shape, .requestShape: "mark.svg"
+            case .model, .requestModel: "pyramid.obj"
             case .font: "face.ttf"
             case .shader: "paint.metal"
+            case .effect: "tint.metal"
+            // 計算の入口の関数の名前はファイルの名前
+            case .computation: "fill.metal"
             }
         }
 
@@ -387,27 +401,72 @@ extension ReplayUnreproducibleTests {
             case .image, .requestImage:
                 // 大きさも変える — 書き換えの前後で更新の印 (大きさ・時刻) が必ず変わる
                 try writePNG(side: variant == 0 ? 1 : 2, gray: variant == 0 ? 0.2 : 0.8, to: url)
-            case .strings:
+            case .strings, .requestStrings:
                 try (variant == 0 ? "alpha\nbeta\n" : "gamma\n").write(to: url, atomically: true, encoding: .utf8)
-            case .shape:
+            case .bytes, .requestBytes:
+                try Data(variant == 0 ? [1, 2, 3] : [4, 5]).write(to: url, options: .atomic)
+            case .shape, .requestShape:
                 let side = variant == 0 ? 4 : 6
                 try """
                     <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">\
                     <rect x="0" y="0" width="\(side)" height="\(side)"/></svg>
                     """.write(to: url, atomically: true, encoding: .utf8)
-            case .model:
+            case .model, .requestModel:
                 let text = variant == 0 ? ModelFixture.pyramidText : ModelFixture.cubeText
                 try text.write(to: url, atomically: true, encoding: .utf8)
             case .font:
-                let source = variant == 0 ? "/System/Library/Fonts/Geneva.ttf" : "/System/Library/Fonts/Apple Braille.ttf"
+                // 書体の検査と同じく、この Mac に同梱の書体を使う (リポジトリに書体を置かない)
+                let source = variant == 0 ? FontFileTests.variableFile : FontFileTests.staticFile
                 if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
                 try FileManager.default.copyItem(atPath: source, toPath: url.path)
+                // 写しは元の更新時刻を引き継ぐ。同梱の書体どうしは時刻が揃いうるので、書き換えたことを印に残す
+                try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
             case .shader:
                 try """
                     float4 paint(Fragment in, Values values) {
                         return float4(0.0, \(variant == 0 ? "0.2" : "0.8"), 0.0, 1.0);
                     }
                     """.write(to: url, atomically: true, encoding: .utf8)
+            case .effect:
+                try "float4 effect(Pixel in, Values values) { return in.color * \(variant == 0 ? "0.5" : "0.25"); }"
+                    .write(to: url, atomically: true, encoding: .utf8)
+            case .computation:
+                try """
+                    kernel void fill(device float *out [[buffer(0)]], uint id [[thread_position_in_grid]])
+                    {
+                        out[id] = \(variant == 0 ? "1.0" : "2.0");
+                    }
+                    """.write(to: url, atomically: true, encoding: .utf8)
+            }
+        }
+
+        /// 待たない口で 1 度読む。
+        @MainActor
+        func loadNow(_ path: String, in sketch: some Sketch) throws {
+            switch self {
+            case .image: _ = try sketch.loadImage(path)
+            case .strings: _ = try sketch.loadStrings(path)
+            case .bytes: _ = try sketch.loadBytes(path)
+            case .shape: _ = try sketch.loadShape(path)
+            case .model: _ = try sketch.loadModel(path)
+            case .font: _ = try sketch.loadFont(path)
+            case .shader: _ = try sketch.loadShader(path)
+            case .effect: _ = try sketch.loadEffect(path)
+            case .computation: _ = try sketch.loadComputation(path)
+            case .requestImage, .requestStrings, .requestBytes, .requestShape, .requestModel: break
+            }
+        }
+
+        /// 待つ口で 1 度読む (`Task` の中から)。
+        @MainActor
+        func request(_ path: String, in sketch: some Sketch) async throws {
+            switch self {
+            case .requestImage: _ = try await sketch.requestImage(path)
+            case .requestStrings: _ = try await sketch.requestStrings(path)
+            case .requestBytes: _ = try await sketch.requestBytes(path)
+            case .requestShape: _ = try await sketch.requestShape(path)
+            case .requestModel: _ = try await sketch.requestModel(path)
+            default: break
             }
         }
 
@@ -450,16 +509,19 @@ extension ReplayUnreproducibleTests {
             switch kind {
             case .image: picture = try loadImage(path)
             case .requestImage: loading = Task { [self] in picture = try? await requestImage(path) }
-            case .strings: _ = try loadStrings(path)
-            case .shape: _ = try loadShape(path)
-            case .model: _ = try loadModel(path)
-            case .font: _ = try loadFont(path)
-            case .shader: _ = try loadShader(path)
+            default:
+                if kind.waits {
+                    loading = Task { [self] in try? await kind.request(path, in: self) }
+                } else {
+                    try kind.loadNow(path, in: self)
+                }
             }
         }
         func draw() {
             background(0.1)
-            if everyFrame { picture = try? loadImage(path) }
+            if everyFrame {
+                if kind == .image { picture = try? loadImage(path) } else { try? kind.loadNow(path, in: self) }
+            }
             if draws, let picture { image(picture, 0, 0, width, height) }
         }
     }
@@ -478,9 +540,22 @@ extension ReplayUnreproducibleTests {
         let directory = try scratch()
         let file = directory.appendingPathComponent(kind.fileName)
         try kind.write(0, to: file)
+
+        // 記録も再生もしていない実行では、読んでもハッシュを 1 度も取らない
+        let plain = try SketchRuntime(
+            sketch: ResourceReader(kind, path: file.path), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60),
+            persistsParams: false)
+        for frame in 1...3 {
+            try plain.advance()
+            try await awaitLoading(frame, plain)
+        }
+        plain.closePlugins()
+        #expect(ResourceHasher.timesTaken(for: file.path) == 0, "\(kind): 記録していないのにハッシュを取った")
+
         let url = directory.appendingPathComponent("take.json")
         let recorded = try await record(ResourceReader(kind, path: file.path), to: url, between: awaitLoading)
-        let waiting = kind == .requestImage ? [Reason.waitingLoad] : []
+        #expect(ResourceHasher.timesTaken(for: file.path) == 1, "\(kind): 記録では 1 度だけ取る")
+        let waiting = kind.waits ? [Reason.waitingLoad] : []
         #expect(recorded.unreproducible == waiting, "\(kind): \(recorded.unreproducible)")
         #expect(recorded.resources.keys.sorted() == [file.path], "\(kind): \(recorded.resources)")
 
@@ -529,6 +604,57 @@ extension ReplayUnreproducibleTests {
         #expect(quiet.unreproducible.isEmpty, "\(quiet.unreproducible)")
     }
 
+    @Test("毎フレーム loadFont しても、書体のファイルが変わらない間はハッシュを取り直さず、変われば記録が名乗る")
+    func aFontReadEveryFrameIsHashedOnceUntilItChanges() async throws {
+        let directory = try scratch()
+        let file = directory.appendingPathComponent("face.ttf")
+        try ResourceKind.font.write(0, to: file)
+        let quiet = try await record(
+            ResourceReader(.font, path: file.path, everyFrame: true), frames: 4,
+            to: directory.appendingPathComponent("quiet.json"))
+        #expect(quiet.unreproducible.isEmpty, "\(quiet.unreproducible)")
+        #expect(ResourceHasher.timesTaken(for: file.path) == 1, "4 フレーム読んでも、取るのは 1 度")
+
+        let changed = try await record(
+            ResourceReader(.font, path: file.path, everyFrame: true), frames: 4,
+            to: directory.appendingPathComponent("changed.json")
+        ) { frame, _ in
+            if frame == 1 { try ResourceKind.font.write(1, to: file) }
+        }
+        #expect(changed.unreproducible == [Reason.resourceChanged(file.path)], "\(changed.unreproducible)")
+        // 新しい記録の 1 度目と、変わった後の 1 度 (その後の 2 フレームは控えを使う)
+        #expect(ResourceHasher.timesTaken(for: file.path) == 3)
+    }
+
+    /// 同じ断片を、断片の口とバイト列の口の両方で読むスケッチ。
+    final class TwoWayReader: Sketch {
+        var path = ""
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        init() {}
+        convenience init(path: String) {
+            self.init()
+            self.path = path
+        }
+        func setup() throws {
+            _ = try loadShader(path)
+            _ = try loadBytes(path)
+        }
+        func draw() { background(0.1) }
+    }
+
+    @Test("BOM の付いた断片を loadShader と loadBytes の両方で読んでも、同じ中身として 1 つのハッシュになる")
+    func aFragmentWithAByteOrderMarkHashesLikeItsBytes() async throws {
+        let directory = try scratch()
+        let file = directory.appendingPathComponent("paint.metal")
+        let body = "float4 paint(Fragment in, Values values) { return float4(0.0, 0.5, 0.0, 1.0); }"
+        try (Data([0xEF, 0xBB, 0xBF]) + Data(body.utf8)).write(to: file)
+        let recorded = try await record(TwoWayReader(path: file.path), to: directory.appendingPathComponent("take.json"))
+        #expect(recorded.unreproducible.isEmpty, "\(recorded.unreproducible)")
+        #expect(
+            recorded.resources == [file.path: ResourceDigest.sha256(of: try Data(contentsOf: file))],
+            "ファイルのバイト列そのもののハッシュ: \(recorded.resources)")
+    }
+
     @Test("resources を持たない記録も読めて流せ、資源を書き換えていても名乗らない (欄を足す前の記録)")
     func aRecordWithoutResourcesStillReplays() async throws {
         let directory = try scratch()
@@ -569,5 +695,63 @@ struct ResourceDigestTests {
         defer { try? FileManager.default.removeItem(at: empty) }
         #expect(ResourceDigest.sha256(of: empty) == ResourceDigest.sha256(of: Data()))
         #expect(ResourceDigest.sha256(of: url.appendingPathExtension("missing")) == nil)
+    }
+
+    /// 名乗りを聞くだけの受け手。検査の main actor の上でだけ触る。
+    final class ListeningSink: UnreproducibleSink, @unchecked Sendable {
+        private(set) var reasons: [String] = []
+        private(set) var resources: [String: String] = [:]
+        let resourceDigests = ResourceDigests()
+        var soundRunsInRealTime: Bool { false }
+        func noteUnreproducible(_ reason: String) { reasons.append(reason) }
+        func noteResource(_ name: String, sha256: String) { resources[name] = sha256 }
+    }
+
+    @Test("読めたのに読み直してハッシュを取れなかった資源は、黙って落とさず理由つきで名乗る")
+    @MainActor
+    func anUnhashableResourceIsNamed() throws {
+        let sink = ListeningSink()
+        let gone = TestScratch.path("mokume-resource-gone", pathExtension: "png")
+        LaunchingSketch.$replay.withValue(sink) {
+            ReplayNotice.readResource("gone.png", at: gone)
+            // 裏の仕事で読み直せなかった (待つ読み込み)
+            ReplayNotice.readResource("late.png", sha256: nil)
+        }
+        #expect(
+            sink.reasons == [
+                ReplayRecorder.Reason.resourceUnhashed("gone.png"), ReplayRecorder.Reason.resourceUnhashed("late.png"),
+            ])
+        #expect(sink.resources.isEmpty)
+
+        // 対照: 読めるファイルは名乗らず、控える
+        let here = TestScratch.path("mokume-resource-here", pathExtension: "bin")
+        try Data([1, 2, 3]).write(to: here)
+        defer { try? FileManager.default.removeItem(at: here) }
+        let quiet = ListeningSink()
+        LaunchingSketch.$replay.withValue(quiet) { ReplayNotice.readResource(here.path, at: here) }
+        #expect(quiet.reasons.isEmpty && quiet.resources == [here.path: ResourceDigest.sha256(of: Data([1, 2, 3]))])
+    }
+
+    @Test("記録も再生もしていなければ、ハッシュを取る係は作られない")
+    @MainActor
+    func noHasherOutsideARecordOrReplay() {
+        #expect(ReplayNotice.resourceHasher == nil)
+        LaunchingSketch.$replay.withValue(ListeningSink()) { #expect(ReplayNotice.resourceHasher != nil) }
+    }
+
+    @Test("断片と OBJ の文字への解き方は String(contentsOf:encoding:) と同じで、BOM を落とす (落とした文字はバイト列と一致しない)")
+    func textDecodingMatchesContentsOf() throws {
+        let file = TestScratch.path("mokume-resource-bom", pathExtension: "metal")
+        let bytes = Data([0xEF, 0xBB, 0xBF]) + Data("// green".utf8)
+        try bytes.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let viaURL = try String(contentsOf: file, encoding: .utf8)
+        #expect(String(data: bytes, encoding: .utf8) == viaURL)
+        #expect(viaURL == "// green", "BOM は落ちる")
+        #expect(Data(viaURL.utf8) != bytes, "文字から戻したものからハッシュを取ると、ファイルのバイト列と食い違う")
+        #expect(try ShaderSource.contents(at: file, path: "bom.metal").bytes == bytes)
+        // UTF-8 でない中身は、どちらの解き方でも読めない
+        let invalid = Data([0xFF, 0xFE, 0x00])
+        #expect(String(data: invalid, encoding: .utf8) == nil)
     }
 }
