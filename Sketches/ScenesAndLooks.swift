@@ -75,7 +75,7 @@ final class ScenesAndLooks: Sketch {
     let looks: [Look] = [
         Look(radius: 40, heading: 350, tint: color(250, 150, 60), filled: true),
         Look(radius: 100, heading: 10, tint: color(70, 160, 250), filled: false),
-        Look(radius: 70, heading: 170, tint: color(120, 220, 130), filled: true),
+        Look(radius: 24, heading: 170, tint: color(120, 220, 130), filled: false),
     ]
 
     /// 遷移にかける秒数。
