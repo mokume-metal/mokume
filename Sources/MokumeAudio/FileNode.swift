@@ -51,7 +51,7 @@ import Synchronization
 ///
 /// ## 左右は畳む
 ///
-/// ``SoundFile`` が持つのはチャンネルを平均したモノラルの標本列で、この節の出口は中央に定位する
+/// ``SoundFile`` が持つのはチャンネルを平均したモノラルのサンプル列 (``AudioFile/mono(_:)``) で、この節の出口は中央に定位する
 /// (エフェクトの出口と同じ)。
 ///
 /// ## 進み具合の返し方
@@ -80,7 +80,7 @@ nonisolated final class FileNode: RackNode {
     private static let generationMask: UInt64 = (1 << generationBits) - 1
     private static let loopingBit: UInt64 = 1 << countBits
 
-    /// ファイルの標本 (チャンネルを平均したモノラル)。
+    /// ファイルのサンプル (``AudioFile/mono(_:)`` が作るモノラル)。
     private let samples: [Float]
     /// ファイルの標本化率と、ラックの標本化率 (Hz)。位置は `count × fileRate ÷ sampleRate` と、掛けてから
     /// 割って導く。
