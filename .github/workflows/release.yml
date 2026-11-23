@@ -84,9 +84,14 @@ jobs:
       || (github.event.pull_request.merged
       && contains(github.event.pull_request.labels.*.name, 'release:now'))
     runs-on: macos-26
-    # **60 分。** #3342 で 60 分にした。debug の全探索 (#3338) は別 job (geometry-exploration) に
-    # 出したので、ここは release のビルドと検査だけである。「下げると余裕が無くなり、上げると症状の
-    # 手当てになる」ので動かさない。
+    # **90 分 (つなぎ)。** #3342 で 60 分にした。debug の全探索 (#3338) は別 job (geometry-exploration) に
+    # 出したので、ここは release のビルドと検査だけである。
+    #
+    # 11-23 の日次 (run 45149584651) がまた 60 分で切れ、版が出なかった (#4171)。ビルドに 48.5 分
+    # (うち MokumeCoreTests のコンパイルが 37 分) かかり、検査の途中で切れた。前日の緑から木はほぼ
+    # 変わらず、差はランナーの速さのぶれで、11-14〜11-22 の 9 回も 40.8〜59.1 分と上限すれすれだった。
+    # 90 分に上げてつなぎ、根の直し (MokumeCoreTests を割る・#3750 の案 B) は #4172 で決める。割れたら
+    # 60 分へ戻す — 上げたままにすると、伸びが症状として見えなくなる
     #
     # 経緯: 11-04 の日次 (run 41795925106) が 60 分で切れ、版が出なかった (#3743)。切れたのは検査では
     # なくビルドで、release の whole-module 最適化 (WMO) で MokumeCoreTests 1 モジュールを組む
@@ -95,7 +100,7 @@ jobs:
     # (下の step の MOKUME_TESTS_WITHOUT_WMO。理由と既定にしない理由は Package.swift の mokumeTests)。
     # 同じ時刻の 2 台で測ると、MokumeCoreTests の完了は +46.8 → +24.9 分、job 全体は 56.6 → 33.4 分
     # (run 41983967975)。ランナーの速さは日に 1.7 倍ほどぶれるので、遅い日でも 60 分の内に収まる見込み
-    timeout-minutes: 60
+    timeout-minutes: 90
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
     steps:
