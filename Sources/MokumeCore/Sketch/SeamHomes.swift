@@ -65,6 +65,8 @@ enum SketchHomes {
     private struct Home {
         weak var sketch: AnyObject?
         weak var runtime: SketchRuntime?
+        /// 結んだ実行が後片付けを終えた。実行を手放しても、実体が在る間は残す (``hasEnded(_:)``)。
+        var ended = false
     }
 
     private static var homes: [ObjectIdentifier: Home] = [:]
@@ -72,18 +74,33 @@ enum SketchHomes {
     /// `sketch` を走らせる実行を控える。
     static func record(_ sketch: any Sketch, in runtime: SketchRuntime) {
         // 持ち主の消えた控えを、結ぶたびに掃く (数は作った実行の数だけで小さい)
-        homes = homes.filter { $0.value.sketch != nil && $0.value.runtime != nil }
+        homes = homes.filter { $0.value.sketch != nil && ($0.value.runtime != nil || $0.value.ended) }
         homes[ObjectIdentifier(sketch)] = Home(sketch: sketch, runtime: runtime)
     }
 
     /// `sketch` を走らせている実行。結ばれていない・後片付けを終えた・消えた、なら `nil`。
     static func runtime(of sketch: any Sketch) -> SketchRuntime? {
-        guard let home = homes[ObjectIdentifier(sketch)], home.sketch === sketch else { return nil }
+        guard let home = homes[ObjectIdentifier(sketch)], home.sketch === sketch, !home.ended else { return nil }
         return home.runtime
     }
 
-    /// 実行の後片付けで、その実行の結びを忘れる。
-    static func forget(_ runtime: SketchRuntime) {
-        homes = homes.filter { $0.value.runtime !== runtime }
+    /// `sketch` を最後に走らせた実行が、後片付けを終えたか。終えた実行へは何も足し直せない。
+    /// 結ばれたことの無い実体は `false`。
+    static func hasEnded(_ sketch: any Sketch) -> Bool {
+        guard let home = homes[ObjectIdentifier(sketch)], home.sketch === sketch else { return false }
+        return home.ended
     }
+
+    /// 実行の後片付けで、その実行の結びを終わった印に替える (実行は手放す)。
+    static func forget(_ runtime: SketchRuntime) {
+        for (key, home) in homes where home.runtime === runtime {
+            homes[key] = Home(sketch: home.sketch, runtime: nil, ended: true)
+        }
+    }
+}
+
+extension Sketch {
+    /// このスケッチを最後に走らせた実行が終わった (後片付けを終えた) か。終わった実行へは入り口を足し直せないので、
+    /// 足し直して鳴らす道の無い音が、鳴っていると名乗らないために読む (#4175)。
+    package var hasEndedItsRun: Bool { SketchHomes.hasEnded(self) }
 }

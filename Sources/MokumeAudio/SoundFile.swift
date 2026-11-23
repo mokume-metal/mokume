@@ -765,6 +765,12 @@ public final class SoundFile: Inlet, EffectInput {
     ///
     /// ``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)`` で再生を始めたときも `true` になり、エンベロープが終わって無音になっても
     /// `true` のまま (再生は止まらない)。
+    ///
+    /// スケッチが終わった時点で `false` になる (終わる前から再生していても)。スケッチが終わった後の ``play()``・``loop()``・
+    /// ``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)`` も、鳴らないのでこの値を変えない。合成した音源の
+    /// ``SynthSource/isPlaying`` は、終わる前から鳴らしていた音なら終わった後も `true` のままで、ここが違う。
+    /// ``SketchPart/detach(_:)-(Inlet)`` で外している間は鳴らないが、外している間の ``play()`` は `true` にし、
+    /// 足し直したフレームから鳴らす。
     public var isPlaying: Bool {
         playingNotice.noteRead()
         return playhead.isPlaying
@@ -1375,6 +1381,14 @@ public final class SoundFile: Inlet, EffectInput {
     }
 
     private func perform(_ operation: Operation) {
+        // スケッチが終わった後は足し直せず、鳴らす道が無い。鳴らし始める操作で ``isPlaying`` を true にしない (#4175)。
+        // 外しただけ (同じ ``close()`` を通る) なら、足し直したとき ``open()`` が鳴らし始めるので捨てない
+        if owner?.hasEndedItsRun == true {
+            switch operation {
+            case .play, .envelope: return
+            case .pause, .stop, .jump: break
+            }
+        }
         switch operation {
         case .play(let looping):
             // 飛び先を待つのは鳴っている間だけで、鳴っている最中の play() / loop() は頭から鳴らし直す
