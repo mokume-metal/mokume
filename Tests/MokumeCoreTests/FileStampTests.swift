@@ -106,6 +106,109 @@ struct FileStampTests {
         #expect(FileStamp.lookUp(directory.appendingPathComponent("absent.json")) == .absent)
     }
 
+    // MARK: - 時刻の同じ別のファイルへ読む先が替わる (#4148)
+
+    /// 中身を置き、更新時刻を `moment` に据える。**時刻を揃えた別のファイル**を作るために要る。
+    static func place(_ bytes: String, at url: URL, _ moment: Date) throws {
+        try Data(bytes.utf8).write(to: url)
+        try FileManager.default.setAttributes([.modificationDate: moment], ofItemAtPath: url.path)
+    }
+
+    /// `link` を `target` へ付け替える (`ln -sfn`)。
+    static func repoint(_ link: URL, to target: URL) throws {
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+    }
+
+    /// 大きさも時刻も同じで中身だけが違うファイルへの付け替えは、別の印 (inode が違う)。
+    @Test("リンクを、時刻と大きさの同じ別のファイルへ付け替えると変わる")
+    func repointingALinkToAnotherFileWithTheSameTimeChanges() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let moment = Date(timeIntervalSince1970: 4_000_000)
+        let first = directory.appendingPathComponent("a.json")
+        let second = directory.appendingPathComponent("b.json")
+        try Self.place("aaaa", at: first, moment)
+        try Self.place("bbbb", at: second, moment)
+        let link = directory.appendingPathComponent("link.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: first)
+
+        let before = try #require(FileStamp.of(link))
+        try Self.repoint(link, to: second)
+        #expect(FileStamp.of(link) != before, "時刻の同じ別のファイルへ付け替えたのに、同じ印のまま")
+    }
+
+    /// 時刻を保った写しを `rename` で置き換える (`cp -p b tmp && mv tmp a`) と、名前は同じでも別のファイル。
+    @Test("時刻を保った写しを rename で置き換えると変わる")
+    func renamingACopyWithTheSameTimeOverTheFileChanges() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let moment = Date(timeIntervalSince1970: 4_000_000)
+        let file = directory.appendingPathComponent("a.json")
+        let copy = directory.appendingPathComponent("tmp.json")
+        try Self.place("aaaa", at: file, moment)
+        let before = try #require(FileStamp.of(file))
+
+        try Self.place("bbbb", at: copy, moment)
+        #expect(rename(copy.path, file.path) == 0)
+        #expect(FileStamp.of(file) != before, "時刻の同じ写しで置き換えたのに、同じ印のまま")
+    }
+
+    /// 同じファイルを書き換えて時刻だけを戻しても、大きさが違えば別の印。
+    @Test("同じファイルを書き換えて時刻を戻しても、大きさが変われば変わる")
+    func rewritingInPlaceWithAnotherSizeChanges() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let moment = Date(timeIntervalSince1970: 4_000_000)
+        let file = directory.appendingPathComponent("a.json")
+        try Self.place("aaaa", at: file, moment)
+        let before = try #require(FileStamp.of(file))
+
+        try Self.place("aaaaaa", at: file, moment)
+        #expect(FileStamp.of(file) != before, "大きさが変わったのに、同じ印のまま")
+    }
+
+    /// **代償**: 同じファイルを同じ大きさで書き換え、時刻を手で戻すと見分けない (説明文に書いた限界)。
+    @Test("同じファイルを同じ大きさで書き換え、時刻を戻すと同じ印のまま (代償)")
+    func rewritingInPlaceWithTheSameSizeAndTimeIsNotSeen() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let moment = Date(timeIntervalSince1970: 4_000_000)
+        let file = directory.appendingPathComponent("a.json")
+        try Self.place("aaaa", at: file, moment)
+        let before = try #require(FileStamp.of(file))
+
+        try Self.place("bbbb", at: file, moment)
+        #expect(FileStamp.of(file) == before)
+    }
+
+    /// 在るのに辿れないリンクの改訂も、同じ欄 (リンク自身の inode など) で見分ける。
+    @Test("辿れないリンクを、時刻の同じ別のリンクに置き換えると、別の改訂に見える")
+    func replacingAnUnreachableLinkWithTheSameTimeChanges() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appendingPathComponent("a.json")
+        let second = directory.appendingPathComponent("b.json")
+        try FileManager.default.createSymbolicLink(atPath: first.path, withDestinationPath: second.path)
+        try FileManager.default.createSymbolicLink(atPath: second.path, withDestinationPath: first.path)
+        let times = [timeval(tv_sec: 5_000_000, tv_usec: 0), timeval(tv_sec: 5_000_000, tv_usec: 0)]
+        #expect(lutimes(first.path, times) == 0)
+        guard case .unreachable(let before) = FileStamp.lookUp(first) else {
+            Issue.record("循環するリンクを辿れないと見ていない: \(FileStamp.lookUp(first))")
+            return
+        }
+
+        try FileManager.default.removeItem(at: first)
+        try FileManager.default.createSymbolicLink(atPath: first.path, withDestinationPath: second.path)
+        #expect(lutimes(first.path, times) == 0)
+        guard case .unreachable(let after) = FileStamp.lookUp(first) else {
+            Issue.record("置き換えた循環するリンクを辿れないと見ていない: \(FileStamp.lookUp(first))")
+            return
+        }
+        #expect(before.seconds == after.seconds && before.nanoseconds == after.nanoseconds)
+        #expect(after != before, "時刻の同じ別のリンクに置き換えたのに、同じ改訂のまま")
+    }
+
     // MARK: - 要求のファイル (``RequestFile``) がリンクのとき
 
     private struct Probe: ExchangeRequest, Equatable {
@@ -148,5 +251,29 @@ struct FileStampTests {
         try FileManager.default.setAttributes(
             [.modificationDate: Date(timeIntervalSince1970: 3_000_002)], ofItemAtPath: target.path)
         #expect(requests.pending() == .request(Probe(id: "c")))
+    }
+
+    /// 要求の置き場のリンクを、時刻の同じ別の要求へ付け替えても、次の要求として拾う (#4148)。
+    @Test("要求のファイルのリンクを、時刻の同じ別の要求へ付け替えると拾う")
+    @MainActor
+    func aRequestLinkRepointedToAnotherFileWithTheSameTimeIsPickedUp() throws {
+        let facet = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let moment = Date(timeIntervalSince1970: 6_000_000)
+        let first = facet.appendingPathComponent("first.json")
+        let second = facet.appendingPathComponent("second.json")
+        try Self.place(#"{"id":"a"}"#, at: first, moment)
+        try Self.place(#"{"id":"b"}"#, at: second, moment)
+        let requests = RequestFile<Probe>(facet: facet, handover: .rereadsReport)
+        try FileManager.default.createSymbolicLink(at: requests.url, withDestinationURL: first)
+
+        #expect(requests.pending() == .request(Probe(id: "a")))
+        requests.markHandled("a")
+        #expect(requests.pending() == nil)
+
+        try Self.repoint(requests.url, to: second)
+        #expect(
+            requests.pending() == .request(Probe(id: "b")),
+            "時刻の同じ別の要求へ付け替えたのに、新しい要求を拾わない")
     }
 }

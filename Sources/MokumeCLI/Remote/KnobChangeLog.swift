@@ -129,7 +129,7 @@ nonisolated struct KnobChangeLog {
 
 /// ``KnobChangeLog`` を、つまみの面の応答を見張って回す。
 ///
-/// 自分の直列の列で 50 ms ごとに応答を最終更新時刻で見て、変わっていれば読む (受け口の
+/// 自分の直列の列で 50 ms ごとに応答を改訂の印 (``FileStamp``) で見て、変わっていれば読む (受け口の
 /// `RemoteServer` と同じ読み方)。`run` は子を待つ間 main を塞ぐので main には載せない。
 nonisolated final class KnobChangeWatcher: @unchecked Sendable {
     private let queue = DispatchQueue(label: "mokume.knob-change-log")
@@ -137,7 +137,7 @@ nonisolated final class KnobChangeWatcher: @unchecked Sendable {
     private let colored: Bool
     private let write: @Sendable (String) -> Void
     private var log = KnobChangeLog()
-    private var stamp: Date?
+    private var stamp: FileStamp?
     private var timer: DispatchSourceTimer?
 
     /// - Parameter write: 1 行を書く口。既定は見張りの行と同じく、速さの行を消してから標準出力へ。
@@ -186,8 +186,7 @@ nonisolated final class KnobChangeWatcher: @unchecked Sendable {
     }
 
     private func readIfChanged(at now: Date) {
-        let modified = (try? FileManager.default.attributesOfItem(atPath: reportURL.path))?[.modificationDate] as? Date
-        guard let modified, modified != stamp else { return }
+        guard let modified = FileStamp.of(reportURL), modified != stamp else { return }
         guard let data = try? Data(contentsOf: reportURL),
             let report = try? JSONDecoder().decode(RemoteKnobs.Report.self, from: data)
         else { return }  // 書きかけ・読めない外枠は確定させず、次の拍で読み直す

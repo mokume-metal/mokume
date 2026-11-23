@@ -36,7 +36,7 @@ nonisolated final class RemoteServer: @unchecked Sendable {
 
     private var state: RemoteKnobs.State = .waiting
     private var payload = RemoteKnobs.Payload.waiting()
-    private var reportStamp: Date?
+    private var reportStamp: FileStamp?
     private var writes = PendingParamWrites()
     private var ticks = 0
     private var writeFailureSaid = false
@@ -161,8 +161,8 @@ nonisolated final class RemoteServer: @unchecked Sendable {
 
     private func readReportIfChanged() {
         let url = WorkDirectory.reportURL(under: facet)
-        let stamp = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
-        guard let stamp, stamp != reportStamp else { return }
+        // 時刻だけで見ると、刻みの粗い置き場で同じ刻みに 2 度置かれた応答を落とす (#4148)
+        guard let stamp = FileStamp.of(url), stamp != reportStamp else { return }
         guard let data = try? Data(contentsOf: url), let read = RemoteKnobs.payload(from: data) else {
             return  // 書きかけ・読めない外枠は確定させず、次の拍で読み直す
         }

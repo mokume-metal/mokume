@@ -896,6 +896,56 @@ struct ImageTests {
         #expect(canvas.imagesDecoded == 2)
     }
 
+    /// リンクを、**更新時刻の同じ別の絵**へ付け替える (#4148)。時刻だけを控えると、付け替えを
+    /// 見分けられず古い絵を返し続ける。
+    @Test("リンクを時刻の同じ別の絵へ付け替えると、次に読んだ絵に出る")
+    func repointingALinkToAnotherImageWithTheSameTimeShowsUpOnTheNextLoad() throws {
+        let moment = Date(timeIntervalSince1970: 1_500_000_000)
+        let red = try writePNG([(1, 0, 0, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: red) }
+        let blue = try writePNG([(0, 0, 1, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: blue) }
+        for url in [red, blue] {
+            try FileManager.default.setAttributes([.modificationDate: moment], ofItemAtPath: url.path)
+        }
+        let link = TestScratch.path("mokume-image-link", pathExtension: "png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: red)
+        defer { try? FileManager.default.removeItem(at: link) }
+
+        let canvas = try makeCanvas()
+        #expect(try canvas.loadImage(link.path).get(0, 0).red > 0.9)
+
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: blue)
+
+        let after = try canvas.loadImage(link.path)
+        #expect(after.get(0, 0).blue > 0.9, "時刻の同じ別の絵へ付け替えたのに、控えが古い絵を返した")
+        #expect(canvas.imagesDecoded == 2)
+    }
+
+    /// 時刻を保った写しを `rename` で置き換える (`cp -p b tmp && mv tmp a`・#4148)。名前は同じでも、
+    /// 読む先は別のファイルである。
+    @Test("時刻を保った写しを rename で置き換えると、次に読んだ絵に出る")
+    func renamingACopyWithTheSameTimeOverTheImageShowsUpOnTheNextLoad() throws {
+        let moment = Date(timeIntervalSince1970: 1_500_000_000)
+        let file = try writePNG([(1, 0, 0, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let copy = try writePNG([(0, 0, 1, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: copy) }
+        for url in [file, copy] {
+            try FileManager.default.setAttributes([.modificationDate: moment], ofItemAtPath: url.path)
+        }
+
+        let canvas = try makeCanvas()
+        #expect(try canvas.loadImage(file.path).get(0, 0).red > 0.9)
+
+        #expect(rename(copy.path, file.path) == 0)
+
+        let after = try canvas.loadImage(file.path)
+        #expect(after.get(0, 0).blue > 0.9, "時刻の同じ写しで置き換えたのに、控えが古い絵を返した")
+        #expect(canvas.imagesDecoded == 2)
+    }
+
     /// リンクの先が消えたら、控えを当たりにせず読み直し、読めない失敗を返す (#3994)。
     @Test("リンクが切れたら、古い控えを返さず読み込みの失敗を返す")
     func aDanglingLinkDoesNotServeTheStaleCache() throws {

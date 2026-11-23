@@ -82,8 +82,7 @@ public nonisolated struct Font: Hashable, Sendable, CustomStringConvertible {
         else { throw .unreadable(path: path) }
 
         let stamp = FileStamp.of(url)
-        let identity =
-            "\(url.standardizedFileURL.path)@\(stamp?.seconds ?? 0).\(stamp?.nanoseconds ?? 0)"
+        let identity = "\(url.standardizedFileURL.path)@\(stamp?.description ?? "-")"
 
         // **可変書体は、名前つきのインスタンスの全部が返る** (`SFNS.ttf` は 369 個で、先頭は最も細い
         // 面)。先頭を使うと、何も頼まない書体が細い面になる。可変なら面は 1 つで、既定の面は軸の

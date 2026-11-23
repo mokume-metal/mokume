@@ -62,9 +62,9 @@ import MokumeDiagnostics
 @MainActor
 package final class WatchedFile<Value: Decodable> {
     package let url: URL
-    /// もう読んだことにした改訂の最終更新時刻。
+    /// もう読んだことにした改訂の印。
     private var readAt: FileStamp?
-    /// 読めなかったと知らせた改訂の最終更新時刻。**同じ改訂では繰り返さない** (確定ではない)。
+    /// 読めなかったと知らせた改訂の印。**同じ改訂では繰り返さない** (確定ではない)。
     private var unreadableAt: FileStamp?
     /// 読めない改訂を初めて掴んだときに、その失敗を受け取る。**改訂ごとに 1 度。**
     private let onUnreadable: (UnreadableRevision.Failure) -> Void
