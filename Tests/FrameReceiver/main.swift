@@ -291,7 +291,8 @@ connect()
 /// **`disconnect` を送らずに受信の port を作り直して**繋ぎ直す (2026-11-14 の決定)。古い port を消すので、遅れて届く
 /// 答え (`refused` はどの connect への答えか見分けられない) と前の面の frame は、新しい繋がりに混ざらない。送り手は
 /// 古い port の dead-name で古い枠 (待つ間に書いた面ごと) を回収し、まだ読んでいなかった古い connect は返信先が死んで
-/// いるので受け入れない。`disconnect` を送ると、送り手の短い待ち行列を埋めて新しい connect を落とす。
+/// いるので受け入れない。`disconnect` を送ると、送り手の待ち行列 (上限 `FrameLink.sketchQueueLimit`) の 1 枠を、新しい
+/// connect より先に取る。
 func recoverFromALostAnswer() {
     lostAnswers += 1
     guard lostAnswers < 3 else {
