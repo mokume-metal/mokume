@@ -551,6 +551,7 @@ extension ReplayUnreproducibleTests {
         "記録の後に資源を書き換えて流すと、流す側が「資源のハッシュが違う」を名乗り、描かない資源なら matched は真のまま",
         arguments: ResourceKind.allCases)
     func aChangedResourceIsNamedWhenReplayed(kind: ResourceKind) async throws {
+        ResourceHasher.startCounting()
         let directory = try scratch()
         let file = directory.appendingPathComponent(kind.fileName)
         try kind.write(0, to: file)
@@ -613,6 +614,7 @@ extension ReplayUnreproducibleTests {
 
     @Test("毎フレーム loadFont しても、書体のファイルが変わらない間はハッシュを取り直さず、変われば記録が名乗る")
     func aFontReadEveryFrameIsHashedOnceUntilItChanges() async throws {
+        ResourceHasher.startCounting()
         let directory = try scratch()
         let file = directory.appendingPathComponent("face.ttf")
         try ResourceKind.font.write(0, to: file)
@@ -746,19 +748,26 @@ struct ResourceDigestTests {
         LaunchingSketch.$replay.withValue(ListeningSink()) { #expect(ReplayNotice.resourceHasher != nil) }
     }
 
-    @Test("断片と OBJ の文字への解き方は String(contentsOf:encoding:) と同じで、BOM を落とす (落とした文字はバイト列と一致しない)")
+    @Test("断片と OBJ の文字への解き方 (TextFile) は前の String(contentsOf:encoding:) と同じ文字になり、BOM を落とす (落とした文字はバイト列と一致しない)")
     func textDecodingMatchesContentsOf() throws {
         let file = TestScratch.path("mokume-resource-bom", pathExtension: "metal")
         let bytes = Data([0xEF, 0xBB, 0xBF]) + Data("// green".utf8)
         try bytes.write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
         let viaURL = try String(contentsOf: file, encoding: .utf8)
-        #expect(String(data: bytes, encoding: .utf8) == viaURL)
+        let read = try ShaderSource.contents(at: file, path: "bom.metal")
+        #expect(read.body == viaURL)
         #expect(viaURL == "// green", "BOM は落ちる")
         #expect(Data(viaURL.utf8) != bytes, "文字から戻したものからハッシュを取ると、ファイルのバイト列と食い違う")
-        #expect(try ShaderSource.contents(at: file, path: "bom.metal").bytes == bytes)
-        // UTF-8 でない中身は、どちらの解き方でも読めない
-        let invalid = Data([0xFF, 0xFE, 0x00])
-        #expect(String(data: invalid, encoding: .utf8) == nil)
+        #expect(read.bytes == bytes)
+
+        // UTF-8 でない中身は、前の解き方でも今の解き方でも読めず、断片は同じ unreadable で断る
+        let invalid = TestScratch.path("mokume-resource-invalid", pathExtension: "metal")
+        try Data([0x2F, 0x2F, 0xFF, 0xFE, 0x41]).write(to: invalid)
+        defer { try? FileManager.default.removeItem(at: invalid) }
+        #expect((try? String(contentsOf: invalid, encoding: .utf8)) == nil)
+        #expect(throws: ShaderFailure.unreadable(path: "bad.metal")) {
+            try ShaderSource.contents(at: invalid, path: "bad.metal")
+        }
     }
 }

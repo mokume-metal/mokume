@@ -88,15 +88,23 @@ package enum ReplayNotice {
 package nonisolated struct ResourceHasher: Sendable {
     let digests: ResourceDigests
 
-    /// 取った回数 (名前ごと)。**検査が「取らなかった」「取り直さなかった」を数えて確かめる口。**
+    /// 検査が数えを差し込んだか。**差していなければ、数えの錠も辞書も触らない** (読むのは不可分の値 1 つ)。
+    private static let counts = Atomic<Bool>(false)
+    /// 取った回数 (名前ごと)。検査が「取らなかった」「取り直さなかった」を数えて確かめる。
     private static let taken = Mutex<[String: Int]>([:])
 
-    /// 資源 `name` のハッシュを取った回数 (検査の口)。
+    /// 取った回数を数え始める (検査の口)。外さない — 名前ごとに数えるので、並べて走る検査どうしは混ざらない。
+    package static func startCounting() {
+        counts.store(true, ordering: .releasing)
+    }
+
+    /// 資源 `name` のハッシュを取った回数 (検査の口。``startCounting()`` の後に取ったものだけ)。
     package static func timesTaken(for name: String) -> Int {
         taken.withLock { $0[name, default: 0] }
     }
 
     private static func count(_ name: String) {
+        guard counts.load(ordering: .acquiring) else { return }
         taken.withLock { $0[name, default: 0] += 1 }
     }
 
@@ -120,7 +128,8 @@ package nonisolated struct ResourceHasher: Sendable {
 /// ファイルを読み直して取ったハッシュの控え (#4092)。受け手 (記録する係・流す係) が 1 つずつ持ち、その寿命の中だけ使う。
 ///
 /// **毎フレーム `loadFont` する作品が、毎フレームもう 1 度フォントを読まないため。** 鍵は場所と更新の印で、印が変われば
-/// 取り直す。印は ``FileStamp`` そのもので、更新の印を保ったまま中身を変える書き方 (`cp -p` など) は見分けない。
+/// 取り直す。印は ``FileStamp`` そのもの (更新時刻だけ・#4148) で、更新時刻を保ったまま中身を変える書き方 (`cp -p`・
+/// `rsync -t`) や、時刻の粒度の粗い置き場 (exFAT・SMB) での同じ時刻の内の書き換えは見分けない。
 package nonisolated final class ResourceDigests: Sendable {
     private let entries = Mutex<[URL: (stamp: FileStamp, sha256: String)]>([:])
 

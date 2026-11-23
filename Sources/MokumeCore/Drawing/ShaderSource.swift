@@ -66,13 +66,13 @@ enum ShaderSource {
     }
 
     /// ``body(at:path:)`` と同じに読み、**読んだバイト列も返す** (記録・再生の資源のハッシュはバイト列から取る・#4092)。
-    /// 文字への解き方は `String(contentsOf:encoding:)` と同じ (Foundation の UTF-8・先頭の BOM は落ちる) で、
+    /// 文字への解き方はデータの読み手と同じ (UTF-8 でなければ読めない・先頭の BOM は落とす。``TextFile/text(of:path:)``) で、
     /// 文字から UTF-8 へ戻したものは、BOM の付いたファイルでは読んだバイト列と一致しない。
     static func contents(at url: URL, path: String) throws(ShaderFailure) -> (body: String, bytes: Data) {
         if let refusal = AssetOpening.refusal(at: url) {
             throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
         }
-        guard let bytes = try? Data(contentsOf: url), let body = String(data: bytes, encoding: .utf8) else {
+        guard let bytes = try? Data(contentsOf: url), let body = try? TextFile.text(of: bytes, path: path) else {
             throw .unreadable(path: path)
         }
         return (body, bytes)

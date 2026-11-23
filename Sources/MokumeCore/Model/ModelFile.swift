@@ -150,8 +150,8 @@ nonisolated enum ModelFile {
         }
         switch format {
         case .obj:
-            // 文字への解き方は `String(contentsOf:encoding:)` と同じ (Foundation の UTF-8・先頭の BOM は落ちる)
-            guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else {
+            // 文字への解き方はデータの読み手と同じ (UTF-8 でなければ読めない・先頭の BOM は落とす。``TextFile/text(of:path:)``)
+            guard let data = try? Data(contentsOf: url), let text = try? TextFile.text(of: data, path: path) else {
                 throw .unreadable(path: path)
             }
             return (parse(text), hasher?.sha256(of: data, name: path))

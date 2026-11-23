@@ -136,7 +136,7 @@ package final class ReplayRecorder: UnreproducibleSink {
     private var openStep: Open?
     private var nextOrdinal = 0
     /// 読んだ資源 (読んだ順・#4092)。名前ごとに最初に読んだ中身のハッシュを持つ。
-    private var resources: [Resource] = []
+    private(set) var resources: [Resource] = []
     /// ``resources`` の名前からハッシュ。2 度目の読みを並びを走査せずに照らす。
     private var resourceHashes: [String: String] = [:]
     /// ファイルを読み直して取ったハッシュの控え (この記録の間だけ)。
