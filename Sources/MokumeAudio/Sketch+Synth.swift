@@ -267,6 +267,9 @@ extension Sketch {
     ///
     /// Tone.js の `Tone.now()` と Web Audio の `AudioContext.currentTime` に当たる。
     public var soundTime: Double {
-        SynthStage.existing(for: self)?.soundSeconds ?? 0
+        // ステージが無ければ常に 0 で、記録と再生で割れないので名乗らない
+        guard let stage = SynthStage.existing(for: self) else { return 0 }
+        stage.clockNotice.noteRead()
+        return stage.soundSeconds
     }
 }

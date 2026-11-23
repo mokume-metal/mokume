@@ -87,6 +87,40 @@ struct FontFileTests {
         #expect(before != after)
     }
 
+    /// リンクを通して読んだ書体も、**先だけ**が更新されれば別の値 (#3994)。先が消えたら落ちずに
+    /// unopenable でリンクの場所を名乗る。
+    @Test("リンクの先が更新されると別の値になり、切れたら unopenable")
+    func aChangedFileBehindALinkIsAnotherValue() throws {
+        let directory = TestScratch.path("mokume-font-link", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("target.ttc")
+        let link = directory.appendingPathComponent("link.ttc")
+        try FileManager.default.copyItem(atPath: Self.staticFile, toPath: target.path)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_000_000_000)], ofItemAtPath: target.path)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        let before = try Font.load(link.path)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_000_000_001)], ofItemAtPath: target.path)
+        let after = try Font.load(link.path)
+        #expect(before != after, "リンクの先が更新されたのに、同じ値のまま")
+
+        try FileManager.default.removeItem(at: target)
+        do {
+            _ = try Font.load(link.path)
+            Issue.record("切れたリンクから読めてしまった")
+        } catch {
+            // 宛先の無いリンクは「無い」と数えず、その場所を名乗る (``AssetLookup``)
+            guard case .unopenable(_, let location, _) = error else {
+                Issue.record("unopenable ではない: \(error)")
+                return
+            }
+            #expect(location.hasSuffix("/link.ttc"), "\(location)")
+        }
+    }
+
     @Test("無いパスは notFound で、探した場所を名乗る")
     func aMissingPathSaysWhereItLooked() {
         let path = "assets/fonts/does-not-exist-\(UUID().uuidString).otf"

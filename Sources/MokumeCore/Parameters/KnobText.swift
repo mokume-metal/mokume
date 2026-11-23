@@ -56,7 +56,7 @@ package enum KnobText {
     }
 
     /// 値を 1 行で。**桁を揃える** — 引いている最中に幅が伸び縮みすると読みにくい。
-    package static func value(of value: ParamValue) -> String {
+    package nonisolated static func value(of value: ParamValue) -> String {
         switch value {
         case .float(let number): number.formatted(.number.precision(.fractionLength(2)))
         case .int(let number): String(number)
@@ -74,7 +74,7 @@ package enum KnobText {
         }
     }
 
-    private static func pair(_ numbers: Float...) -> String {
+    private nonisolated static func pair(_ numbers: Float...) -> String {
         numbers.map { $0.formatted(.number.precision(.fractionLength(2))) }.joined(separator: ", ")
     }
 }

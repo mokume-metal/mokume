@@ -181,7 +181,7 @@ nonisolated final class RemoteServer: @unchecked Sendable {
     private func placeRequest() {
         guard state == .running else { return }
         let echo = currentEcho()
-        let id = "remote-" + UUID().uuidString
+        let id = KnobWriter.phone.prefix + UUID().uuidString
         guard let values = writes.nextRequest(echoNow: echo, id: id) else { return }
         do {
             try AtomicFile.writeJSON(Request(id: id, values: values), to: WorkDirectory.requestURL(under: facet))

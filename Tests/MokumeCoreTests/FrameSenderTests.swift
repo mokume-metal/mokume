@@ -365,6 +365,65 @@ struct FrameSenderTests {
         #expect(ModelReceiver.frames(in: receiver.receiveAll()).count == harness.sender.deliveredFrames)
     }
 
+    /// **送り手が忙しい間に受け手が面を全部返しても、`release` は落ちず、送り手は返された面の全部へ書く** (#4060)。
+    /// 送り手の名前の port (名乗りが登録したもの) を使う — 上限は名乗りが上げる。送り手が捌かない間に 8 通を続けて送る。
+    @Test("送り手が忙しい間に 8 枚の受け手が release を 8 通続けて送っても全部送れ、送り手は返された 8 枚の全部へ書く")
+    func everyReleaseSentWhileTheSketchIsBusyComesBack() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "S", identity: "/s", title: "S", in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        defer { announcement.withdraw() }
+        let sender = try #require(
+            announcement.startSending(gpu: gpu, width: Self.width, height: Self.height, startsListening: false))
+        sender.warn = { _ in }
+        let service = try #require(Bootstrap.lookUp(announcement.entry.serviceName))
+        defer { Bootstrap.releaseSend(service) }
+        let source = try RenderTarget(gpu: gpu, width: Self.width, height: Self.height)
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        let count = FrameLink.surfaceCountRange.upperBound
+        let receiver = ModelReceiver(width: Self.width, height: Self.height, count: count)
+        defer { receiver.die() }
+        receiver.connect(to: service)
+        sender.drain()
+        _ = receiver.receiveAll()
+        try #require(receiver.id != nil, "検査の前提: 受け入れられない")
+
+        /// 頼みを捌かずに 1 枚書き、受け手が知らせを読む (受け手の待ち行列を溢れさせない)。
+        var frame: Int64 = 0
+        func step() throws -> [ModelReceiver.Frame] {
+            frame += 1
+            try sender.deliver(width: Self.width, height: Self.height, frameCount: frame, hostTime: 0) {
+                texture throws(RenderFailure) in try presenter.draw(source, into: texture)
+            }
+            _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+            return ModelReceiver.frames(in: receiver.receiveAll())
+        }
+        // 面を全部掴ませる (最後の 1 枚の知らせは次の呼び出しで届く)
+        var held: [ModelReceiver.Frame] = []
+        for _ in 0...count { held += try step() }
+        try #require(Set(held.map(\.slot)).count == count, "検査の前提: 全部の面へ書けない: \(held)")
+
+        // 送り手は忙しい (捌かない)。受け手は読んだ面を全部返す
+        let results = held.map { got -> kern_return_t in
+            var payload = FrameLink.Payload()
+            payload.append(got.receiver)
+            payload.append(got.slot)
+            return FrameLink.send(.release, to: service, payload: payload)
+        }
+        #expect(results.allSatisfy { $0 == KERN_SUCCESS }, "落ちた release: \(results)")
+
+        // 送り手が動き出すと、返された面の全部へ書く
+        sender.drain()
+        var rewritten: [ModelReceiver.Frame] = []
+        for _ in 0...count { rewritten += try step() }
+        let after = held.map(\.frameCount).max() ?? 0
+        let slots = Set(rewritten.filter { $0.frameCount > after }.map(\.slot))
+        #expect(slots.count == count, "返した面のうち書かれたのは \(slots.count) 枚: \(rewritten)")
+    }
+
     @Test(
         "形の合わない頼みは断り、理由を返して診断に 1 行出す",
         arguments: [

@@ -226,6 +226,9 @@ enum WatchCommand {
         if RemoteOption.requested(in: values) {
             remote = openRemote(for: session, viewer: viewer)
         }
+        // **窓とスマホで動かしたつまみを、時刻付きの 1 行で端末へ書く** (#4130)。窓を出せなかった回は、
+        // 子が自分の窓でつまみを持ち面の要求を通らないので、見張っても書くものが無い
+        let knobLog = viewer == nil ? nil : KnobChangeWatcher.start(facet: paramsFacet(for: session))
 
         // 子を起こす前に受け口を置く。起こした後だと、その隙間に来た合図で
         // 既定の振る舞い (親だけが即座に終わる) に落ちて子が残る
@@ -246,6 +249,7 @@ enum WatchCommand {
             isFinished: { session.finishStage == .done },
             teardown: {
                 remote?.stop()
+                knobLog?.stop()
                 teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile)
             })
         NSApplication.shared.delegate = delegate
@@ -255,6 +259,7 @@ enum WatchCommand {
         refuseThrottling()
         watching(session, viewer)
         remote?.stop()
+        knobLog?.stop()
         teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile)
     }
 
