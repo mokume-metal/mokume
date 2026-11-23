@@ -290,10 +290,17 @@ nonisolated enum ImageFile {
     /// (``AssetLookup/locate(_:unlistable:path:)``)。
     ///
     /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
-    static func search(for path: String) -> AssetLookup.Search {
+    ///
+    /// **探してよい包みは、道具が渡した合図から取る** (``AssetBundles/Signal/startup(onMain:)``・#4038)。起点と合図は
+    /// 本番では実行ファイルの束とプロセスの環境で、検査だけが差し替えて、合図がここまで届くことを確かめる
+    /// (プロセスの環境に触らずに)。
+    static func search(
+        for path: String, neighbourhood: URL = Bundle.main.bundleURL, resources: URL? = Bundle.main.resourceURL,
+        signal: AssetBundles.Signal = .process
+    ) -> AssetLookup.Search {
         search(
             for: path, workingDirectory: FileManager.default.currentDirectoryPath,
-            neighbourhood: Bundle.main.bundleURL, resources: Bundle.main.resourceURL)
+            neighbourhood: neighbourhood, resources: resources, allowance: signal.startup())
     }
 
     /// 探す場所を並べる (どこを起点にするかを渡せる形)。
@@ -310,26 +317,33 @@ nonisolated enum ImageFile {
     }
 
     /// ``candidates(for:workingDirectory:neighbourhood:resources:)`` と、数えられなかった置き場。
+    ///
+    /// - Parameter allowance: 探してよい包み (``AssetBundles/Allowance``)。**`nil` なら並んだ包みを全部探す。**
+    ///   在れば、それに無い包み (いまの宣言に無い包み・後から置き場に現れた包み) の同じ相対パスの資材を、
+    ///   名前の順で先に来るからといって読まない (#4038)。
     static func search(
-        for path: String, workingDirectory: String, neighbourhood: URL, resources: URL?
+        for path: String, workingDirectory: String, neighbourhood: URL, resources: URL?,
+        allowance: AssetBundles.Allowance? = nil
     ) -> AssetLookup.Search {
         if path.hasPrefix("/") { return AssetLookup.Search(places: [URL(fileURLWithPath: path)]) }
 
         var urls: [URL] = []
         var unlistable: [AssetLookup.Unlistable] = []
+        var skipped: [AssetLookup.Skipped] = []
         urls.append(URL(fileURLWithPath: workingDirectory).appendingPathComponent(path))
         if let resources {
             urls.append(resources.appendingPathComponent(path))
         }
         for root in [neighbourhood, resources].compactMap({ $0 }) {
-            let listed = bundled(path, in: root)
+            let listed = bundled(path, in: root, allowance: allowance)
             urls.append(contentsOf: listed.urls)
+            skipped.append(contentsOf: listed.skipped)
             if let reason = listed.failure {
                 unlistable.append(AssetLookup.Unlistable(root: root, reason: reason))
             }
         }
         urls.append(neighbourhood.appendingPathComponent(path))
-        return AssetLookup.Search(places: urls, unlistable: unlistable)
+        return AssetLookup.Search(places: urls, unlistable: unlistable, skipped: skipped)
     }
 
     /// 置き場に並んだ包みの中を、探す場所として広げる。
@@ -349,23 +363,34 @@ nonisolated enum ImageFile {
     /// 包みが無いだけだが、それ以外 (読む権利が無いなど) は、包みが在るかを確かめられない。
     ///
     /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
-    private static func bundled(_ path: String, in root: URL) -> (urls: [URL], failure: String?) {
+    ///
+    /// 探してよい包み (`allowance`) に無い包みの中の場所は、探す並びに入れず `skipped` に分けて返す。どこにも
+    /// 無かったときに、そこに在れば名乗るため (``AssetLookup/locate(_:unlistable:skipped:path:)``・#4038)。
+    private static func bundled(_ path: String, in root: URL, allowance: AssetBundles.Allowance?) -> (
+        urls: [URL], skipped: [AssetLookup.Skipped], failure: String?
+    ) {
         let names: [String]
         do {
             names = try FileManager.default.contentsOfDirectory(atPath: root.path)
         } catch {
             let code = Diagnostics.posixCode(in: error)
             let absent = code == ENOENT || code == ENOTDIR || (error as? CocoaError)?.code == .fileReadNoSuchFile
-            return ([], absent ? nil : Diagnostics.failureText(error))
+            return ([], [], absent ? nil : Diagnostics.failureText(error))
         }
         let listing = names.map { root.appendingPathComponent($0) }
         var urls: [URL] = []
-        for bundle in listing.sorted(by: { $0.path < $1.path })
-        where bundle.pathExtension == "bundle" {
-            urls.append(bundle.appendingPathComponent(path))
-            urls.append(
-                bundle.appendingPathComponent("Contents/Resources").appendingPathComponent(path))
+        var skipped: [AssetLookup.Skipped] = []
+        for bundle in listing.sorted(by: { $0.path < $1.path }) where bundle.pathExtension == "bundle" {
+            let places = [
+                bundle.appendingPathComponent(path),
+                bundle.appendingPathComponent("Contents/Resources").appendingPathComponent(path),
+            ]
+            if let allowance, !allowance.allows(bundle.lastPathComponent) {
+                skipped += places.map { AssetLookup.Skipped(bundle: bundle.lastPathComponent, place: $0) }
+            } else {
+                urls += places
+            }
         }
-        return (urls, nil)
+        return (urls, skipped, nil)
     }
 }

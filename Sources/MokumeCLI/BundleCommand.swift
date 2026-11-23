@@ -4,6 +4,7 @@
 import CryptoKit
 import Foundation
 import MokumeDiagnostics
+import Synchronization
 import mokume
 
 /// 作品を、作者以外の環境で動く形に束ねる。
@@ -121,8 +122,8 @@ enum BundleCommand {
             configuration: configuration, place: place, product: product)
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
 
-        // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)。宣言から消えた
-        // target の古い包みも除く — 置き場は利用者の `swift build` / `swift test` と共有なので残る (#4005)
+        // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)。いまの宣言にも
+        // 依存にも無い古い包みも除く — 置き場は利用者の `swift build` / `swift test` と共有なので残る (#4005・#4038)
         let scope = declared.map {
             Self.resourceScope(of: $0, product: product, executable: executable, package: directory)
         }
@@ -143,7 +144,7 @@ enum BundleCommand {
 
     /// 束ねるときのビルドの置き場。**ビルドと、依存の木を引く ``resourceScope(of:product:executable:package:asking:)``
     /// が同じ置き場を見る** (依存の解決の結果は置き場ごとに在る)。
-    static let place: BuildDirectory.Place = .inPackage(.packaging)
+    nonisolated static let place: BuildDirectory.Place = .inPackage(.packaging)
 
     /// 組み立て → 仕上げ (資材の検め・紙・署名) → 公開。**公開するまで `--out` の `<name>.app` と紙に
     /// 触れない** ([#3981](https://github.com/mokume-metal/mokume/issues/3981))。
@@ -867,7 +868,7 @@ enum BundleCommand {
     /// 宣言を辿っても出てこないが、無ければそもそも絵が出ない。除くのは、このパッケージの target のうち
     /// 実行 product が使わないもの (テストの target の fixture など — #3982) で、名前の形ではなく
     /// 依存の閉包で決めたものを受け取る。
-    static func resourceBundles(besides executable: URL, excluding: Set<String>) -> [URL] {
+    nonisolated static func resourceBundles(besides executable: URL, excluding: Set<String>) -> [URL] {
         let listing =
             (try? FileManager.default.contentsOfDirectory(
                 at: executable.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? []
@@ -876,9 +877,11 @@ enum BundleCommand {
     }
 
     /// 配る範囲。宣言の閉包 (#3982) に、実行ファイルの隣の並びと依存の木 (`show-dependencies`) の
-    /// 宣言の名前から決めた、宣言から消えた target の古い包みの除外を足す (#4005)。依存の木が読めなければ
+    /// 宣言の名前から決めた、いまの宣言に無い包みの除外を足す (#4005・#4038)。依存の木が読めなければ
     /// (道具立てが 0 以外で終わった・JSON が読めない・宣言の名前の無い依存がある)、古い包みは除かない
-    /// (``SwiftPM/Package/resourceScope(forProduct:beside:dependencyPackages:)``)。
+    /// (``SwiftPM/Package/resourceScope(forProduct:beside:dependencyPackages:)``)。`run`・`watch` が
+    /// 子に渡す探してよい包み (``AssetScope``) も、同じ閉包・同じ依存の名前・同じ問い (``dependencyTree(of:place:asking:)``)
+    /// から求める。**控え (``AssetScope/Record``) は使わない** — 配る中身は毎回いまの答えで決める。
     ///
     /// **依存の名前は `.build/workspace-state.json` から読まない** — 下限の道具立てはそこへ宣言の名前でなく
     /// URL の末尾を書く (``SwiftPM/DependencyTree``)。
@@ -889,26 +892,104 @@ enum BundleCommand {
     /// 名乗る (``ResourceScope/kept``)。
     ///
     /// - Parameters:
-    ///   - package: パッケージの場所。依存の木は束ねる置き場 (``place``) で引く。
+    ///   - package: パッケージの場所。
+    ///   - place: 依存の木を引く置き場 (依存の解決の結果は置き場ごとに在る)。既定は束ねる置き場 (``place``)。
     ///   - asking: 道具立てへの問い (引数と場所を受けて終了コードと標準出力を返す)。**検査が偽の答えを渡し、
     ///     渡された引数と場所・問うたかどうかを見るために外から渡せる形にしてある。**
-    static func resourceScope(
+    nonisolated static func resourceScope(
         of declared: SwiftPM.Package, product: String, executable: URL, package: URL,
-        asking: (_ arguments: [String], _ directory: URL) -> (status: Int32, output: String) = {
-            (try? RunCommand.swift($0, in: $1, capturing: true, errors: .discard)) ?? (status: -1, output: "")
-        }
+        place: BuildDirectory.Place = place,
+        asking: (_ arguments: [String], _ directory: URL) -> (status: Int32, output: String) = askSwiftPM
     ) -> SwiftPM.Package.ResourceScope {
         let built = resourceBundles(besides: executable, excluding: []).map(\.lastPathComponent)
         var dependencies: [String]? = []
         if !declared.leftoverCandidates(forProduct: product, beside: built).isEmpty {
-            let answer = asking(
-                ["package"] + place.arguments + ["show-dependencies", "--format", "json"], package)
-            let tree =
-                answer.status == 0
-                ? SwiftPM.read(SwiftPM.DependencyTree.self, from: Data(answer.output.utf8)) : nil
-            dependencies = tree?.dependencyNames
+            dependencies = dependencyTree(of: package, place: place, asking: asking)?.dependencyNames
         }
         return declared.resourceScope(forProduct: product, beside: built, dependencyPackages: dependencies)
+    }
+
+    /// 依存の木を問う。**読めなければ `nil`** (道具立てが 0 以外で終わった・期限を越えた・JSON が読めない)。
+    ///
+    /// - Parameters:
+    ///   - package: パッケージの場所。
+    ///   - place: 依存の木を引く置き場 (依存の解決の結果は置き場ごとに在る)。
+    ///   - asking: 道具立てへの問い。
+    nonisolated static func dependencyTree(
+        of package: URL, place: BuildDirectory.Place,
+        asking: (_ arguments: [String], _ directory: URL) -> (status: Int32, output: String)
+    ) -> SwiftPM.DependencyTree? {
+        let answer = asking(["package"] + place.arguments + ["show-dependencies", "--format", "json"], package)
+        guard answer.status == 0 else { return nil }
+        return SwiftPM.read(SwiftPM.DependencyTree.self, from: Data(answer.output.utf8))
+    }
+
+    /// 本物の問い。標準出力を掴み、標準エラーを捨てる。起こせなければ 0 以外の答えにする。期限を持つ
+    /// (``askSwiftPM(_:in:running:timeout:)``)。
+    nonisolated static func askSwiftPM(_ arguments: [String], in directory: URL) -> (status: Int32, output: String) {
+        askSwiftPM(arguments, in: directory, running: nil)
+    }
+
+    /// 依存の木の問いを待つ上限 (秒)。建った直後の置き場では解決が済んでいるので、ふつうは 1 秒に満たない。
+    /// 越えるのは、共有の置き場の鍵をほかのビルドが握っているときなどで、そのときは待たずに「求められない」側
+    /// (`run` などは全部探して 1 行名乗る・`bundle` は `Kept:` と名乗って入れる) へ倒す。子の終わりと管の読み切りを
+    /// 合わせた全体の期限である。
+    nonisolated static let askTimeout: TimeInterval = 30
+
+    /// 本物の問い。**待つ側が期限を持つ** — 越えたら子を殺し、0 以外の答えにする。
+    ///
+    /// - Parameter running: 起こした子を掴ませる先 (``RunningBuild``)。見張りが渡し、作り直しを止めるときに一緒に
+    ///   止められるようにする。止めると決めた後は起こさずに 0 以外の答えにする。
+    nonisolated static func askSwiftPM(
+        _ arguments: [String], in directory: URL, running: RunningBuild?, timeout: TimeInterval = askTimeout
+    ) -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = RunCommand.envURL
+        process.arguments = ["swift"] + arguments
+        process.currentDirectoryURL = directory
+        return ask(process, timeout: timeout, running: running)
+    }
+
+    /// 子を起こして標準出力を掴み、期限までに終わらなければ殺して 0 以外の答えにする。標準エラーは捨てる。
+    /// 起こせなかった・止めると決めた後だった回も 0 以外の答えにする。**検査が任意の子を渡せる形にしてある。**
+    nonisolated static func ask(
+        _ process: Process, timeout: TimeInterval, running: RunningBuild? = nil
+    ) -> (status: Int32, output: String) {
+        let unanswered: (status: Int32, output: String) = (-1, "")
+        let deadline = DispatchTime.now() + timeout
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        let exited = ExitWait(for: process)
+        do {
+            if let running {
+                guard try running.launch(process) else { return unanswered }
+            } else {
+                try process.run()
+            }
+        } catch {
+            return unanswered
+        }
+        defer { running?.finished() }
+        // **読むのは別の糸。** 待つ糸で読み切ろうとすると、黙ったまま終わらない子に期限が効かない
+        let read = DispatchGroup()
+        let output = Mutex(Data())
+        let reader = pipe.fileHandleForReading
+        DispatchQueue.global(qos: .userInitiated).async(group: read) {
+            let data = reader.readDataToEndOfFile()
+            output.withLock { $0 = data }
+        }
+        // **期限は全体で 1 つ。** 子の終わりと管の読み切りを、同じ期限までしか待たない
+        guard exited.wait(until: deadline) else {
+            // 越えたら直接の子を落とす (見張りが作り直しの子を止めるのと同じく、`SIGKILL` を撃ち、消えるのを短く待つ)
+            let pid = process.processIdentifier
+            if pid > 0, process.isRunning { kill(pid, SIGKILL) }
+            _ = exited.wait(until: .now() + 2)
+            return unanswered
+        }
+        // 子は終わった。管の書き口を継いだ孫が残っていても、同じ期限より長くは待たない
+        guard read.wait(timeout: deadline) == .success else { return unanswered }
+        return (ChildEnding(of: process).shellStatus, String(decoding: output.withLock { $0 }, as: UTF8.self))
     }
 
     /// 古い包みの名乗り (#4005)。**黙って除かない・黙って入れない** ([ADR-0029] 決定 4)。名前の形から推した

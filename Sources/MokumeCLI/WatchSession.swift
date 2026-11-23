@@ -117,15 +117,27 @@ final class WatchSession {
         ///   渡すのは検査だけである (要約を塞いで、待っている間に main が進むかを見る)。
         /// - Parameter progress: 作り直しの段数を読むたびに呼ぶ口 (#4121)。**作り直しの糸から呼ぶ** —
         ///   main actor へ届けるのは受け手 (``BuildProgressMailbox``) の仕事である。省けば読まない。
+        /// - Parameter assetBundles: 子に渡す探してよい包みの持ち回り (``AssetScope/Carried``・#4038)。渡すのは検査だけである
+        ///   (偽の問いを持たせる)。省けば本物の問いを、`running` に掴ませて期限つきで起こす (作り直しを止めると一緒に止まる)。
+        /// - Parameter rebuilding: 作り直す手。**渡すのは検査だけである** (`swift build` を走らせずに、作り直しの後の段取りが
+        ///   起こす子へ届くまでを通す)。省けば `RunCommand.rebuild`。
         static func live(
             resolver: BuildResolver, running: RunningBuild,
             stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil,
-            recording: String? = nil, progress: (@Sendable (BuildProgress) -> Void)? = nil
+            recording: String? = nil, progress: (@Sendable (BuildProgress) -> Void)? = nil,
+            assetBundles given: AssetScope.Carried? = nil,
+            rebuilding: (@Sendable (URL, BuildResolution) -> Result<RunCommand.Rebuilt, CommandFailure>)? = nil
         ) -> Hooks {
             // 起こした子の数。**作り直しは記録の切れ目**で、世代ごとに別の行き先を渡す (#3570)
             let generations = recording.map { RecordGenerations(destination: $0) }
             // 時計を渡す場所。起こす子ごとに見張りが選ぶ (``selectClock``・#3428)
             let clock = ClockPlace(keepTime)
+            // 子に渡す探してよい包み (#4038)。建つたびに作り直しの糸で決め直し、子を起こす口が読む。
+            // **問いは作り直しと同じ `running` に掴ませる** — 見張りが終わるときに作り直しを止めると、問いも止まり、
+            // 置き場の鍵を握ったまま残らない (#1147)
+            let assetBundles =
+                given ?? AssetScope.Carried(asking: { BundleCommand.askSwiftPM($0, in: $1, running: running) })
+
             return Hooks(
                 rebuild: { directory throws(CommandFailure) in
                     // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
@@ -140,9 +152,19 @@ final class WatchSession {
                     try await Task.detached(priority: .userInitiated) {
                         Result { () throws(CommandFailure) in
                             let resolved = try resolver.current()
-                            return try RunCommand.rebuild(
-                                in: directory, context: resolved.context, capturing: true,
-                                running: running, binPath: resolved.binPath, progress: progress)
+                            let rebuilt: RunCommand.Rebuilt
+                            if let rebuilding {
+                                rebuilt = try rebuilding(directory, resolved).get()
+                            } else {
+                                rebuilt = try RunCommand.rebuild(
+                                    in: directory, context: resolved.context, capturing: true,
+                                    running: running, binPath: resolved.binPath, progress: progress)
+                            }
+                            // **いまの宣言に無い包みは、子に探させない** (#4038)。`run` と同じ口で決め、外す包みが
+                            // 変わった回だけ 1 行名乗る
+                            assetBundles.afterRebuild(
+                                rebuilt, context: resolved.context, package: directory, say: { WatchCommand.say($0) })
+                            return rebuilt
                         }
                     }.value.get()
                 },
@@ -178,7 +200,8 @@ final class WatchSession {
                         assetOrigin: resolved?.context.assets.url?.path,
                         keepTime: clock.path, keepTimeReadOnly: clock.readsOnly, keepTimeFollows: clock.follows,
                         // 世代の名前は道具が作ったもので、子は記録でないものを置き換えない (#3999)
-                        recording: generations?.next(), recordingGeneration: true)
+                        recording: generations?.next(), recordingGeneration: true,
+                        assetBundles: assetBundles.current)
                     do {
                         try process.run()
                     } catch {

@@ -92,22 +92,22 @@ struct WatchKeepTimeTests {
     @Test("時計を運ぶ場所は、渡したときだけ載り、親の環境からは継がない")
     func theKeepTimeFileLandsOnlyWhenGiven() {
         let key = StartupReads.keepTime.key
-        #expect(RunCommand.childEnvironment([:])[key] == nil)
-        #expect(RunCommand.childEnvironment([key: "/tmp/clock"])[key] == nil, "親の合図を継いだ")
-        #expect(RunCommand.childEnvironment([:], keepTime: "/tmp/clock")[key] == "/tmp/clock")
+        #expect(RunCommand.childEnvironment([:], assetBundles: nil)[key] == nil)
+        #expect(RunCommand.childEnvironment([key: "/tmp/clock"], assetBundles: nil)[key] == nil, "親の合図を継いだ")
+        #expect(RunCommand.childEnvironment([:], keepTime: "/tmp/clock", assetBundles: nil)[key] == "/tmp/clock")
         // 読むだけの合図も、立てたときだけ (場所と一緒にだけ) 載り、親の環境からは継がない (#4070)
         let readOnly = StartupReads.keepTimeReadOnly.key
-        #expect(RunCommand.childEnvironment([readOnly: "1"], keepTime: "/tmp/clock")[readOnly] == nil, "親の合図を継いだ")
-        #expect(RunCommand.childEnvironment([:], keepTime: "/tmp/clock", keepTimeReadOnly: true)[readOnly] == "1")
-        #expect(RunCommand.childEnvironment([:], keepTimeReadOnly: true)[readOnly] == nil, "場所なしで載せた")
+        #expect(RunCommand.childEnvironment([readOnly: "1"], keepTime: "/tmp/clock", assetBundles: nil)[readOnly] == nil, "親の合図を継いだ")
+        #expect(RunCommand.childEnvironment([:], keepTime: "/tmp/clock", keepTimeReadOnly: true, assetBundles: nil)[readOnly] == "1")
+        #expect(RunCommand.childEnvironment([:], keepTimeReadOnly: true, assetBundles: nil)[readOnly] == nil, "場所なしで載せた")
         // 従う子の番号は、読むだけの合図と一緒にだけ載り、親の環境からは継がない (#3566)
         let follows = StartupReads.keepTimeFollows.key
-        #expect(RunCommand.childEnvironment([follows: "7"], keepTime: "/tmp/clock", keepTimeReadOnly: true)[follows] == nil)
+        #expect(RunCommand.childEnvironment([follows: "7"], keepTime: "/tmp/clock", keepTimeReadOnly: true, assetBundles: nil)[follows] == nil)
         #expect(
-            RunCommand.childEnvironment([:], keepTime: "/tmp/clock", keepTimeReadOnly: true, keepTimeFollows: 7)[follows]
+            RunCommand.childEnvironment([:], keepTime: "/tmp/clock", keepTimeReadOnly: true, keepTimeFollows: 7, assetBundles: nil)[follows]
                 == "7")
-        #expect(RunCommand.childEnvironment([:], keepTime: "/tmp/clock", keepTimeFollows: 7)[follows] == nil, "書く子に載せた")
-        #expect(RunCommand.childEnvironment([:], keepTimeReadOnly: true, keepTimeFollows: 7)[follows] == nil, "場所なしで載せた")
+        #expect(RunCommand.childEnvironment([:], keepTime: "/tmp/clock", keepTimeFollows: 7, assetBundles: nil)[follows] == nil, "書く子に載せた")
+        #expect(RunCommand.childEnvironment([:], keepTimeReadOnly: true, keepTimeFollows: 7, assetBundles: nil)[follows] == nil, "場所なしで載せた")
         // 子の口は、読むだけの子にだけ番号を持たせ、0 以上の整数でなければ従う子が分からないとする
         let take = { (env: [String: String]) in ClockHandover.startup(environment: env, unset: { _ in }) }
         let base = [StartupReads.keepTime.key: "/tmp/clock"]
@@ -122,7 +122,7 @@ struct WatchKeepTimeTests {
         #expect(unset.contains(follows), "番号を孫へ継がせる")
         // 書き出しの子にも、渡さなければ落ちる
         let request = RenderRequest(frameRate: 60, frameCount: 1, destination: "/tmp/x.mov")
-        #expect(RunCommand.childEnvironment([key: "/tmp/clock"], rendering: request)[key] == nil)
+        #expect(RunCommand.childEnvironment([key: "/tmp/clock"], rendering: request, assetBundles: nil)[key] == nil)
     }
 
     @Test("本物の起こす口は、渡された場所を子へ載せ、渡されなければ載せない")
@@ -300,7 +300,7 @@ struct WatchKeepTimeTests {
             living: Living, timers: Timers = Timers()
         ) throws {
             let environment = RunCommand.childEnvironment(
-                [:], keepTime: path, keepTimeReadOnly: audition, keepTimeFollows: follows)
+                [:], keepTime: path, keepTimeReadOnly: audition, keepTimeFollows: follows, assetBundles: nil)
             let given = try #require(ClockHandover.startup(environment: environment, unset: { _ in }))
             living.start(pid)
             let sink = ClockHandover.FileSink(path: path, warn: { _ in }, isAlive: { living.contains($0) })
@@ -639,7 +639,7 @@ struct WatchKeepTimeTests {
         func handover(_ index: Int, _ process: Process) throws -> (ClockHandover, ClockHandover.FileSink) {
             let environment = RunCommand.childEnvironment(
                 [:], keepTime: path, keepTimeReadOnly: harness.readOnlyClocks[index],
-                keepTimeFollows: harness.followedClocks[index])
+                keepTimeFollows: harness.followedClocks[index], assetBundles: nil)
             let given = try #require(ClockHandover.startup(environment: environment, unset: { _ in }))
             let sink = ClockHandover.FileSink(path: path, warn: { _ in })
             return (

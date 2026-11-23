@@ -1010,8 +1010,10 @@ struct BundleCommandTests {
         /// 入れなかった古い包み (束ねた報せで `Left out:` と名乗るもの)。
         var leftOut: Set<String> {
             switch self {
-            case .declaredNames: ["Sketch_DemoTests.bundle"]
-            case .mismatchedNames: ["Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle"]
+            // `demo_demo.bundle` (``makeBuildOutput(in:)`` が置く) はこのパッケージ (`Sketch`) のどの target のものでも、
+            // どの依存のものでもない (#4038)
+            case .declaredNames: ["Sketch_DemoTests.bundle", "demo_demo.bundle"]
+            case .mismatchedNames: ["Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle", "demo_demo.bundle"]
             case .unanswered: []
             }
         }
@@ -1020,7 +1022,10 @@ struct BundleCommandTests {
         var kept: Set<String> {
             switch self {
             case .declaredNames, .mismatchedNames: []
-            case .unanswered: ["Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle"]
+            // 依存の名前が読めなければ、どの target のものでもない包みは依存のものも含めて全部入れ、名乗る (#4038)
+            case .unanswered:
+                // 直接の依存 `mokume` の包みは identity で説明できるので並べない (#4038 の反証・指摘 5)
+                ["Sketch_DemoTests.bundle", "Sketch_Extras_Foo.bundle", "demo_demo.bundle"]
             }
         }
     }
@@ -1055,7 +1060,8 @@ struct BundleCommandTests {
              "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
              "targets":[
                {"name":"Demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
-                "dependencies":[{"product":["Foo","extras",null,null]}]}]}
+                "dependencies":[{"product":["Foo","extras",null,null]}]}],
+             "dependencies":[{"sourceControl":[{"identity":"mokume","productFilter":null}]}]}
             """
         let package = try #require(SwiftPM.package(inDumpOf: dump))
         var asked: [(arguments: [String], directory: URL)] = []
@@ -1098,13 +1104,15 @@ struct BundleCommandTests {
     }
 
     /// **古い包みの候補が無ければ、道具立てに問わない** (#4005 の 2 回目の反証)。隣に並ぶのがいまの宣言の
-    /// target の包みと、自分の名前で始まらない依存の包みだけなら、`show-dependencies` を起こさない。
+    /// target の包みと、直接の依存の identity で説明できる包み (実物と同じく `mokume_MokumeCore.bundle`) だけなら、
+    /// `show-dependencies` を起こさない (#4038 の反証・指摘 3)。
     @Test("古い包みの候補が無ければ、依存の木を問わない")
     func noCandidatesAskNothing() throws {
         let root = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
         let executable = try makeBuildOutput(in: root)
         let bin = executable.deletingLastPathComponent()
+        try FileManager.default.removeItem(at: bin.appendingPathComponent("demo_demo.bundle"))
         for name in ["Sketch_Demo.bundle", "mokume_MokumeCore.bundle"] {
             try FileManager.default.createDirectory(
                 at: bin.appendingPathComponent(name, isDirectory: true), withIntermediateDirectories: true)
@@ -1114,7 +1122,8 @@ struct BundleCommandTests {
                 inDumpOf: """
                     {"name":"Sketch",
                      "products":[{"name":"Demo","type":{"executable":null},"targets":["Demo"]}],
-                     "targets":[{"name":"Demo","type":"executable"}]}
+                     "targets":[{"name":"Demo","type":"executable"}],
+                     "dependencies":[{"sourceControl":[{"identity":"mokume","productFilter":null}]}]}
                     """))
         var asked = 0
         let scope = BundleCommand.resourceScope(

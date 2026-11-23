@@ -4103,14 +4103,14 @@ struct FrameRateHandoffTests {
     /// **渡したときだけ載る。** 置かないことで、受け取る側は「無ければ黙る」だけで済む。
     @Test("子へ渡す環境に載るのは、渡したものだけ")
     func onlyWhatWasGivenLandsInTheChildEnvironment() {
-        let bare = RunCommand.childEnvironment([:])
+        let bare = RunCommand.childEnvironment([:], assetBundles: nil)
         #expect(bare[StartupReads.frameRateNotice.key] == nil)
         #expect(bare[StartupReads.sourceStamp.key] == nil)
 
-        let carried = RunCommand.childEnvironment([:], stamp: "abc", reportingRate: "debug")
+        let carried = RunCommand.childEnvironment([:], stamp: "abc", reportingRate: "debug", assetBundles: nil)
         #expect(carried[StartupReads.frameRateNotice.key] == "debug")
         #expect(carried[StartupReads.sourceStamp.key] == "abc")
-        #expect(RunCommand.childEnvironment(["A": "1"])["A"] == "1", "親の環境は運ぶ")
+        #expect(RunCommand.childEnvironment(["A": "1"], assetBundles: nil)["A"] == "1", "親の環境は運ぶ")
     }
 
     /// **ウィンドウの持ち主は、起こした道具にしか決められない** ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
@@ -4119,20 +4119,20 @@ struct FrameRateHandoffTests {
     @Test("ウィンドウの持ち主は渡したときだけ載り、親の環境からは継がない")
     func theViewportOwnerLandsOnlyWhenGiven() throws {
         let key = StartupReads.viewportOwner.key
-        #expect(RunCommand.childEnvironment([:])[key] == nil)
-        #expect(RunCommand.childEnvironment([key: "mokume watch"])[key] == nil, "親の合図を継いだ")
+        #expect(RunCommand.childEnvironment([:], assetBundles: nil)[key] == nil)
+        #expect(RunCommand.childEnvironment([key: "mokume watch"], assetBundles: nil)[key] == nil, "親の合図を継いだ")
         #expect(
             RunCommand.childEnvironment(
-                [key: "mokume watch"], reportingRate: "debug", confirmingCloseFor: "mokume run")[key]
+                [key: "mokume watch"], reportingRate: "debug", confirmingCloseFor: "mokume run", assetBundles: nil)[key]
                 == nil,
             "run が渡す組み合わせでウィンドウの持ち主が載っている")
         let request = try #require(
             RenderRequest(frameRate: 30, frameCount: 3, destination: "/tmp/out.mov"))
         #expect(
-            RunCommand.childEnvironment([key: "mokume watch"], rendering: request)[key] == nil,
+            RunCommand.childEnvironment([key: "mokume watch"], rendering: request, assetBundles: nil)[key] == nil,
             "render が渡す組み合わせでウィンドウの持ち主が載っている")
         #expect(
-            RunCommand.childEnvironment([:], viewportOwner: "mokume watch")[key] == "mokume watch")
+            RunCommand.childEnvironment([:], viewportOwner: "mokume watch", assetBundles: nil)[key] == "mokume watch")
     }
 
     /// **本物の起こす口が、ウィンドウの持ち主として名乗りを渡す。** 替え玉の起こす口は環境を
@@ -4197,11 +4197,11 @@ struct FrameRateHandoffTests {
     @Test("資材の置き場の元は渡したときだけ載り、親の環境からは継がない")
     func theAssetOriginLandsOnlyWhenGiven() {
         let key = StartupReads.assetOrigin.key
-        #expect(RunCommand.childEnvironment([:])[key] == nil)
+        #expect(RunCommand.childEnvironment([:], assetBundles: nil)[key] == nil)
         #expect(
-            RunCommand.childEnvironment([key: "/a/Sources/wa/assets"])[key] == nil, "親の合図を継いだ")
+            RunCommand.childEnvironment([key: "/a/Sources/wa/assets"], assetBundles: nil)[key] == nil, "親の合図を継いだ")
         #expect(
-            RunCommand.childEnvironment([:], assetOrigin: "/a/Sources/wa/assets")[key]
+            RunCommand.childEnvironment([:], assetOrigin: "/a/Sources/wa/assets", assetBundles: nil)[key]
                 == "/a/Sources/wa/assets")
     }
 

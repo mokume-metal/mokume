@@ -212,7 +212,7 @@ struct RunCommandTests {
         let expected = CommandFailure.cannotLaunch(
             tool: "sketch", place: directory.path, reason: String(cString: strerror(ENOEXEC)))
         #expect(throws: expected) {
-            try RunCommand.launch(garbage, in: directory)
+            try RunCommand.launch(garbage, in: directory, environment: RunCommand.childEnvironment(assetBundles: nil))
         }
         #expect(!expected.message.contains("Check the place you gave"), "場所を疑わせている")
         #expect(!expected.message.contains("no such directory"))
@@ -295,14 +295,14 @@ struct RunCommandTests {
             throws: CommandFailure.placeUnusable(
                 tool: "sketch", place: missing.path, presence: .missing)
         ) {
-            try RunCommand.launch(executable, in: missing)
+            try RunCommand.launch(executable, in: missing, environment: RunCommand.childEnvironment(assetBundles: nil))
         }
         // 裏側。走らせるものが無ければ、無いと言う — ただし `Package.swift` を指さない (#2522)。
         // `launch` に届く実行ファイルは宣言済みで、作り直しの直後に建ったことを確かめたもの
         // なので、無いのは消えたのであって、宣言のせいではない
         let absent = missingPlace().appendingPathComponent("sketch")
         #expect(throws: CommandFailure.executableVanished(path: absent.path)) {
-            try RunCommand.launch(absent, in: executable.deletingLastPathComponent())
+            try RunCommand.launch(absent, in: executable.deletingLastPathComponent(), environment: RunCommand.childEnvironment(assetBundles: nil))
         }
     }
 
@@ -333,7 +333,7 @@ struct RunCommandTests {
             throws: CommandFailure.cannotLaunch(
                 tool: "sketch", place: locked.path, reason: String(cString: strerror(EACCES)))
         ) {
-            try RunCommand.launch(executable, in: locked)
+            try RunCommand.launch(executable, in: locked, environment: RunCommand.childEnvironment(assetBundles: nil))
         }
     }
 
@@ -351,7 +351,7 @@ struct RunCommandTests {
                 tool: "sketch", place: place.path,
                 reason: "\(executable.path) is not executable (Permission denied)")
         ) {
-            try RunCommand.launch(executable, in: place)
+            try RunCommand.launch(executable, in: place, environment: RunCommand.childEnvironment(assetBundles: nil))
         }
     }
 
@@ -372,7 +372,7 @@ struct RunCommandTests {
         }
         func reason(_ executable: URL) -> CommandFailure {
             do {
-                try RunCommand.launch(executable, in: place)
+                try RunCommand.launch(executable, in: place, environment: RunCommand.childEnvironment(assetBundles: nil))
                 return .noExecutable(path: "(起こせてしまった)")
             } catch { return error }
         }
@@ -497,7 +497,7 @@ struct RunCommandTests {
         let recorder = try makeWorkingDirectoryRecorder()
         let invocation = Invocation(place: place, currentDirectory: typedFrom)
 
-        try RunCommand.launch(recorder.executable, in: try invocation.directory)
+        try RunCommand.launch(recorder.executable, in: try invocation.directory, environment: RunCommand.childEnvironment(assetBundles: nil))
 
         let ran = try String(contentsOf: recorder.marker, encoding: .utf8)
             .trimmingCharacters(in: .newlines)
@@ -567,7 +567,7 @@ struct RunCommandTests {
     func nonZeroExitsAreThrown() throws {
         let executable = try makeExecutable(exiting: 3)
         #expect(throws: CommandFailure.sketchExited(status: 3)) {
-            try RunCommand.launch(executable, in: executable.deletingLastPathComponent())
+            try RunCommand.launch(executable, in: executable.deletingLastPathComponent(), environment: RunCommand.childEnvironment(assetBundles: nil))
         }
     }
 
@@ -579,11 +579,11 @@ struct RunCommandTests {
     func aSignalledSketchIsNotAnExitWithTheSameNumber() throws {
         let exited = try makeExecutable(exiting: Int32(SIGTRAP))
         #expect(throws: CommandFailure.sketchExited(status: SIGTRAP)) {
-            try RunCommand.launch(exited, in: exited.deletingLastPathComponent())
+            try RunCommand.launch(exited, in: exited.deletingLastPathComponent(), environment: RunCommand.childEnvironment(assetBundles: nil))
         }
         let crashed = try makeCrasher(signal: "TRAP")
         #expect(throws: CommandFailure.sketchSignalled(signal: SIGTRAP)) {
-            try RunCommand.launch(crashed, in: crashed.deletingLastPathComponent())
+            try RunCommand.launch(crashed, in: crashed.deletingLastPathComponent(), environment: RunCommand.childEnvironment(assetBundles: nil))
         }
         // 名乗りと終了コード: 合図は 128 + 番号 (シェルの `$?` と同じ)、exit は番号そのもの
         let signalled = CommandFailure.sketchSignalled(signal: SIGTRAP)
@@ -629,7 +629,7 @@ struct RunCommandTests {
     @Test("0 で終わったスケッチは、何も投げない")
     func cleanExitsAreQuiet() throws {
         let executable = try makeExecutable(exiting: 0)
-        try RunCommand.launch(executable, in: executable.deletingLastPathComponent())
+        try RunCommand.launch(executable, in: executable.deletingLastPathComponent(), environment: RunCommand.childEnvironment(assetBundles: nil))
     }
 
     /// **道具の PID だけへ届く合図で、スケッチを孤児にしない**
@@ -692,7 +692,7 @@ struct RunCommandTests {
         }
 
         #expect(throws: CommandFailure.stopped(signal: stopSignal)) {
-            try RunCommand.launch(executable, in: directory)
+            try RunCommand.launch(executable, in: directory, environment: RunCommand.childEnvironment(assetBundles: nil))
         }
         #expect(sender.done.wait(timeout: .now() + 60) == .success, "合図を送る糸が戻らない")
         for failure in sender.failures { Issue.record(Comment(rawValue: failure)) }
@@ -782,7 +782,7 @@ struct RunCommandTests {
 
         // 外から SIGTERM で落とされた子は、合図で落ちたと名乗る (道具が止めた回ではない)
         #expect(throws: CommandFailure.sketchSignalled(signal: SIGTERM)) {
-            try RunCommand.launch(executable, in: directory)
+            try RunCommand.launch(executable, in: directory, environment: RunCommand.childEnvironment(assetBundles: nil))
         }
         #expect(watcher.done.wait(timeout: .now() + 60) == .success, "見る糸が戻らない")
         for failure in watcher.failures { Issue.record(Comment(rawValue: failure)) }
@@ -854,7 +854,7 @@ struct RunCommandTests {
         defer { bystander.disarm() }
 
         bystander.waiting = true
-        try RunCommand.launch(executable, in: directory)
+        try RunCommand.launch(executable, in: directory, environment: RunCommand.childEnvironment(assetBundles: nil))
         bystander.waiting = false
 
         #expect(
@@ -920,13 +920,13 @@ struct RunCommandTests {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     @Test("ウィンドウの × を確かめさせる合図は、渡したときだけ子の環境に載る")
     func theCloseSignalLandsOnlyWhenGiven() {
-        #expect(RunCommand.childEnvironment([:])[StartupReads.closeConfirmation.key] == nil)
+        #expect(RunCommand.childEnvironment([:], assetBundles: nil)[StartupReads.closeConfirmation.key] == nil)
         #expect(
-            RunCommand.childEnvironment([:], stamp: "abc", reportingRate: "debug")[
+            RunCommand.childEnvironment([:], stamp: "abc", reportingRate: "debug", assetBundles: nil)[
                 StartupReads.closeConfirmation.key] == nil,
             "見張りが渡す組み合わせで合図が載っている")
 
-        let carried = RunCommand.childEnvironment([:], confirmingCloseFor: "mokume run")
+        let carried = RunCommand.childEnvironment([:], confirmingCloseFor: "mokume run", assetBundles: nil)
         #expect(carried[StartupReads.closeConfirmation.key] == "mokume run")
     }
 
@@ -940,12 +940,12 @@ struct RunCommandTests {
         let key = StartupReads.workDirectory.key
         let toolSide = try #require(WorkDirectory.given(environment: [key: "wd"]))
 
-        let environment = RunCommand.childEnvironment([key: "wd"])
+        let environment = RunCommand.childEnvironment([key: "wd"], assetBundles: nil)
         #expect(environment[key] == toolSide.path)
         #expect(environment[key]?.hasPrefix("/") == true, "相対のまま子へ渡している")
         // 与えられていなければ、置かない (子は自分の既定に任せる)
-        #expect(RunCommand.childEnvironment([:])[key] == nil)
-        #expect(RunCommand.childEnvironment([key: ""])[key] == "", "空は与えられていない扱いのまま運ぶ")
+        #expect(RunCommand.childEnvironment([:], assetBundles: nil)[key] == nil)
+        #expect(RunCommand.childEnvironment([key: ""], assetBundles: nil)[key] == "", "空は与えられていない扱いのまま運ぶ")
 
         // 子を、道具とは別の作業ディレクトリ (スケッチ) で起こし、受け取った値を
         // その場所から解く — 子が見る区画の基準である

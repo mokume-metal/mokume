@@ -93,19 +93,19 @@ nonisolated enum SwiftPM {
             /// `<パッケージ>_<ターゲット>.bundle` の名前で作る。
             let required: [String]
             /// 配るものに入れない包みの名前 (このパッケージの target のうち、閉包の外のもの)。資材の
-            /// 宣言が無くても道具立てが包みを作る種類があるので、宣言の有無は見ない。他のパッケージの
-            /// 包みは宣言を辿らずに入れる (依存が持ち込む資材は無ければ絵が出ない) ので、ここには載らない。
-            /// 隣の並びを渡した形 (``resourceScope(forProduct:beside:dependencyPackages:)``) では、宣言から
-            /// 消えた target の古い包み (``leftovers``) も載る (#4005)。
+            /// 宣言が無くても道具立てが包みを作る種類があるので、宣言の有無は見ない。いまの依存の
+            /// パッケージの包みは宣言を辿らずに入れる (依存が持ち込む資材は無ければ絵が出ない) ので、
+            /// ここには載らない。隣の並びを渡した形 (``resourceScope(forProduct:beside:dependencyPackages:)``)
+            /// では、いまの宣言からも依存の名前からも説明できない包み (``leftovers``) も載る (#4005・#4038)。
             let excluded: Set<String>
-            /// `excluded` のうち、宣言から消えた target の古い包みと読んで除いたもの (#4005)。**束ねた報せで
-            /// 名乗る** — 名前の形から推した除外なので、依存の包みを取り違えて除いたときに黙って欠けさせない
-            /// ([ADR-0029] 決定 4)。
+            /// `excluded` のうち、いまの宣言の target のものでも、いまの依存のものでもないと読んで除いたもの
+            /// (#4005・#4038)。**束ねた報せと `run`・`watch` の起動で名乗る** — 名前の形から推した除外なので、
+            /// 依存の包みを取り違えて除いたときに黙って欠けさせない ([ADR-0029] 決定 4)。
             ///
             /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
             let leftovers: Set<String>
-            /// 古い包みの候補 (``leftoverCandidates(forProduct:beside:)``) のうち、依存の名前を読めなかった
-            /// ので除かずに入れたもの (#4005)。**束ねた報せで名乗る** — 古い包みが入ったかもしれないことを
+            /// いまの宣言の target のものと決められない包み (``leftoverCandidates(forProduct:beside:)``) のうち、
+            /// 依存の名前を読めなかったので除かずに入れたもの (#4005)。**束ねた報せで名乗る** — 古い包みが入ったかもしれないことを
             /// 黙らない。
             let kept: Set<String>
 
@@ -154,36 +154,58 @@ nonisolated enum SwiftPM {
             }
         }
 
-        /// 宣言から消えた target の古い包みの候補 (#4005): 隣に並んだ包みのうち、いまのパッケージの宣言の
-        /// 名前で始まり (`<name>_…`。大文字と小文字を区別する — 区別しないと除くものが増える)、いまの宣言の
-        /// どの target の包みでもない (``declaredTarget(ofBundle:among:)``) もの。閉包が求められなければ空
-        /// (何も除かない)。**候補が無ければ、依存の名前を道具立てに問わない。**
+        /// いまの宣言の target のものと決められない包み (#4005・#4038): 隣に並んだ包みのうち、いまの宣言の
+        /// どの target の包みでもない (``declaredTarget(ofBundle:among:)``) もの。**頭の名前は問わない** —
+        /// 改名する前のパッケージ名の包み・外した依存の包み・共有の置き場に並ぶ別のスケッチの包みも、ここに
+        /// 載る。依存の包みもここに載り、残すかは依存の名前で決める
+        /// (``resourceScope(forProduct:beside:dependencyPackages:)``)。閉包が求められなければ空 (何も除かない)。
+        /// **候補が無ければ、依存の名前を道具立てに問わない。**
+        ///
+        /// **宣言に載った直接の依存の identity で説明できる包みも載せない** — 依存の木を問っても、その identity は
+        /// 必ず答えに入る (``DependencyTree/dependencyNames``) ので、残すことに変わりはない。依存が mokume だけの
+        /// スケッチ (`mokume_MokumeCore.bundle`) は、これで道具立てを起こさずに決まる。宣言の名前が identity と
+        /// 違う依存 (`extra-pkg` の `Package(name: "Extra")` が作る `Extra_ExtraLib.bundle`) と推移の依存の包みは、
+        /// ここに載り、依存の木で決める。
         func leftoverCandidates(forProduct product: String, beside built: [String]) -> [String] {
             guard targetClosure(ofProduct: product) != nil else { return [] }
+            let owners = Self.prefixes(of: dependencies.compactMap(\.identity))
             return built.filter {
-                $0.hasSuffix(".bundle") && $0.hasPrefix("\(name)_")
-                    && declaredTarget(ofBundle: $0, among: built) == nil
+                $0.hasSuffix(".bundle") && declaredTarget(ofBundle: $0, among: built) == nil
+                    && !Self.isOwned($0, by: owners)
             }
         }
 
-        /// `product` を配る範囲に、**宣言から消えた target の古い包み**の除外を足したもの (#4005)。
+        /// 依存の名前から、包みの名前の頭 (`<名前>_`。大文字と小文字は畳む)。
+        private static func prefixes(of names: [String]) -> [String] {
+            names.map { "\($0)_".lowercased() }
+        }
+
+        /// `bundle` が、頭 `owners` のどれかの依存のものと読めるか (大文字と小文字を区別しない — 残す側へ倒れる)。
+        private static func isOwned(_ bundle: String, by owners: [String]) -> Bool {
+            let folded = bundle.lowercased()
+            return owners.contains { folded.hasPrefix($0) }
+        }
+
+        /// `product` を配る範囲に、**いまの宣言から求めた一覧に無い包み**の除外を足したもの (#4005・#4038)。
         ///
         /// 束ねる置き場は利用者の `swift build` / `swift test` と共有なので、`Package.swift` から消した・
-        /// 改名した target の包みが隣に残る。宣言に無いので閉包からは出てこない。除くのは、隣に並んだ包みの
-        /// うち、**いまのパッケージの宣言の名前**で始まり (`<name>_…`)、いまの宣言のどの target の包みでもなく、
-        /// **どの依存のパッケージの名前 (`<依存>_…`) でも説明できない**もの。自分の名前が依存の名前で始まる
-        /// (`Demo_Extras` と `Demo`) と、`Demo_Extras_Gone.bundle` はどちらのものとも読めるので除かない
-        /// (入れすぎる側へ倒す)。閉包が求められないときは、何も除かない。依存の名前が読めない (`nil`) ときは
-        /// 古い包みの候補を除かず、``ResourceScope/kept`` に載せる。
+        /// 改名した target の包み、改名する前のパッケージ名の包み、外した依存の包みが隣に残る (`run`・`watch` の
+        /// 共有の置き場なら、別のスケッチの包みも並ぶ)。宣言に無いので閉包からは出てこない。残すのは、
+        /// (i) いまの宣言の target の包みのうち閉包の中のものと、(ii) **いまの依存のパッケージの名前
+        /// (`<依存>_…`) で始まる**包みだけで、それ以外は除く。依存の中の target の名前は宣言から分からないので、
+        /// 依存の包みは名前の頭までしか絞れない。自分の名前が依存の名前で始まる (`Demo_Extras` と `Demo`) と、
+        /// `Demo_Extras_Gone.bundle` は依存 `Demo` のものとも読めるので除かない (入れすぎる側へ倒す)。閉包が
+        /// 求められないときは、何も除かない。依存の名前が読めない (`nil`) ときは、どの target のものでもない
+        /// 包みを除かず、``ResourceScope/kept`` に載せる。
         ///
         /// 隣の包みを宣言の target に結び付けるのは ``declaredTarget(ofBundle:among:)`` の 1 つの規則で、
         /// 閉包の外の target の包みを除く判定 (#3982) も同じ規則を使う。依存の名前との比べ方は大文字と
         /// 小文字を区別しない (残す側へ倒れる)。依存の identity も根拠に数えるので、identity が自分の
-        /// パッケージ名と大文字と小文字を除いて一致する依存があると、古い包みは 1 つも除かれない (決められない
-        /// ときは入れる側へ倒す。包みの名前に identity を使う版の道具立てに備えて残す)。
+        /// パッケージ名と大文字と小文字を除いて一致する依存があると、自分の名前で始まる古い包みは除かれない
+        /// (決められないときは入れる側へ倒す。包みの名前に identity を使う版の道具立てに備えて残す)。
         ///
-        /// 範囲の外: `Package(name:)` を改名する前の名前で始まる包みと、`Package.swift` から外した依存の
-        /// 包みは、持ち主を名前の形から決められないので除かない。
+        /// 範囲の外: いまの依存の名前で始まる古い包み (依存の版を上げて、依存の中で消えた target の包み) は、
+        /// 依存の中の target の名前が宣言から分からないので除かない。
         ///
         /// - Parameters:
         ///   - built: 実行ファイルの隣に並んだ包みの名前。
@@ -206,10 +228,8 @@ nonisolated enum SwiftPM {
             let leftovers: Set<String>
             let kept: Set<String>
             if let dependencyPackages {
-                let owners = dependencyPackages.map { "\($0)_".lowercased() }
-                leftovers = candidates.filter { bundle in
-                    !owners.contains { bundle.lowercased().hasPrefix($0) }
-                }
+                let owners = Self.prefixes(of: dependencyPackages)
+                leftovers = candidates.filter { !Self.isOwned($0, by: owners) }
                 kept = []
             } else {
                 leftovers = []
@@ -421,11 +441,25 @@ nonisolated enum SwiftPM {
         /// 道具立ては種別を `{"fileSystem": [...]}` / `{"sourceControl": [...]}` の
         /// 形で書き分けるので、値の中身まで降りる必要が無い。
         let isFileSystem: Bool
+        /// 依存の identity (URL かパスの末尾を小文字にしたもの)。**読めなければ `nil`** — 種別の値の先頭の
+        /// オブジェクトの `identity` だけを読み、形が違えば推し量らない。宣言の名前 (包みの名前の頭) は
+        /// `dump-package` に載らないので、ここでは分からない (``DependencyTree``)。
+        let identity: String?
 
-        private enum CodingKeys: String, CodingKey { case fileSystem }
+        private enum CodingKeys: String, CodingKey { case fileSystem, sourceControl, registry }
+        private enum DetailKeys: String, CodingKey { case identity }
 
         init(from decoder: any Decoder) throws {
-            isFileSystem = try decoder.container(keyedBy: CodingKeys.self).contains(.fileSystem)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            isFileSystem = container.contains(.fileSystem)
+            var found: String?
+            if container.allKeys.count == 1, let key = container.allKeys.first,
+                var values = try? container.nestedUnkeyedContainer(forKey: key),
+                let detail = try? values.nestedContainer(keyedBy: DetailKeys.self)
+            {
+                found = try? detail.decode(String.self, forKey: .identity)
+            }
+            identity = found
         }
     }
 
@@ -591,7 +625,31 @@ nonisolated enum SwiftPM {
         /// 宣言の名前。
         let name: String?
         let identity: String?
+        /// パッケージの在処 (取ってきた依存は置き場の `checkouts/` の下)。
+        let path: String?
         let dependencies: [DependencyTree]?
+
+        /// 根と、推移的なすべての依存の在処。在処の読めないものは載らない。
+        var paths: [String] {
+            var found: [String] = []
+            var pending = [self]
+            while let next = pending.popLast() {
+                if let path = next.path { found.append(path) }
+                pending.append(contentsOf: next.dependencies ?? [])
+            }
+            return found
+        }
+
+        /// 根を除く依存の数 (在処を数え合わせるため)。
+        var dependencyCount: Int {
+            var count = 0
+            var pending = dependencies ?? []
+            while let next = pending.popLast() {
+                count += 1
+                pending.append(contentsOf: next.dependencies ?? [])
+            }
+            return count
+        }
 
         /// 根を除く、推移的なすべての依存の宣言の名前と identity。**1 つでも宣言の名前が読めない依存が
         /// あれば `nil`** (どの包みがその依存のものか決められない — 何も除かない側へ倒す)。identity も

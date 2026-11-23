@@ -49,6 +49,15 @@ package nonisolated enum AssetLookup {
         package var places: [URL]
         /// 包みの置き場のうち、数えられなかったもの。
         package var unlistable: [Unlistable] = []
+        /// 道具が探させなかった包み (``AssetBundles``) の中の、探さなかった場所。**どこにも無かったときだけ**見る。
+        package var skipped: [Skipped] = []
+    }
+
+    /// 道具が探させなかった包みの中の、探さなかった場所 1 つ (#4038)。
+    package struct Skipped: Equatable, Sendable {
+        /// 包みの名前 (`Aaa_demo.bundle`)。
+        package var bundle: String
+        package var place: URL
     }
 
     /// 包みを数えられなかった置き場 (読む権利が無いなど)。そこに在るはずの包みの候補は落ちている。
@@ -100,8 +109,27 @@ package nonisolated enum AssetLookup {
     /// - Throws: 全部無ければ ``AssetFailure/notFound(path:searched:)`` (数えられなかった置き場があれば、
     ///   代わりに ``AssetFailure/unreachable(path:location:reason:)``)。確かめられない候補に当たったら、
     ///   そこで止めて ``AssetFailure/unreachable(path:location:reason:)``。
+    /// - Parameter skipped: 道具が探させなかった包みの中の、探さなかった場所。**どこにも無かったときだけ**、しかも
+    ///   **同じパスでは 1 度だけ**見て (``AssetBundles/shouldCheck(_:)``)、在ればその包みの名前を挙げて 1 度知らせる
+    ///   (``AssetBundles/noteMissed(path:in:)``)。外した包みの取り違えで読めなくなったときに、原因へ辿れるようにする。
+    ///   投げる失敗は変えない。
     package static func locate(
-        _ candidates: [URL], unlistable: [Unlistable] = [], path: String
+        _ candidates: [URL], unlistable: [Unlistable] = [], skipped: [Skipped] = [], path: String
+    ) throws(AssetFailure) -> URL {
+        do {
+            return try firstPresent(candidates, unlistable: unlistable, path: path)
+        } catch {
+            if case .notFound = error, !skipped.isEmpty, AssetBundles.shouldCheck(path),
+                let hidden = skipped.first(where: { presence(of: $0.place) == .present })
+            {
+                AssetBundles.noteMissed(path: path, in: hidden.bundle)
+            }
+            throw error
+        }
+    }
+
+    private static func firstPresent(
+        _ candidates: [URL], unlistable: [Unlistable], path: String
     ) throws(AssetFailure) -> URL {
         for candidate in candidates {
             switch presence(of: candidate) {
@@ -125,6 +153,6 @@ package nonisolated enum AssetLookup {
 
     /// ``Search`` を受けて探す。
     package static func locate(_ search: Search, path: String) throws(AssetFailure) -> URL {
-        try locate(search.places, unlistable: search.unlistable, path: path)
+        try locate(search.places, unlistable: search.unlistable, skipped: search.skipped, path: path)
     }
 }

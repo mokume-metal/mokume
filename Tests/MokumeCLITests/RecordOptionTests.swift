@@ -87,28 +87,28 @@ struct RecordOptionTests {
     @Test("行き先は子の環境に載り、渡さなければ親の環境に在っても落とす (render の子にも継がせない)")
     func theChildGetsItOnlyWhenAsked() throws {
         let key = StartupReads.record.key
-        #expect(RunCommand.childEnvironment([:])[key] == nil)
-        #expect(RunCommand.childEnvironment([key: "/tmp/stale.json"])[key] == nil, "親の合図を継いだ")
-        #expect(RunCommand.childEnvironment([:], recording: "/tmp/take.json")[key] == "/tmp/take.json")
+        #expect(RunCommand.childEnvironment([:], assetBundles: nil)[key] == nil)
+        #expect(RunCommand.childEnvironment([key: "/tmp/stale.json"], assetBundles: nil)[key] == nil, "親の合図を継いだ")
+        #expect(RunCommand.childEnvironment([:], recording: "/tmp/take.json", assetBundles: nil)[key] == "/tmp/take.json")
         let request = try #require(
             RenderRequest(frameRate: 24, frameCount: 1, destination: "/tmp/mokume-never-written.mov"))
         #expect(
-            RunCommand.childEnvironment([key: "/tmp/stale.json"], rendering: request)[key] == nil,
+            RunCommand.childEnvironment([key: "/tmp/stale.json"], rendering: request, assetBundles: nil)[key] == nil,
             "render の子へ継がせない")
         // 子が読む値の形と同じ型で読み戻せる
-        let carried = RunCommand.childEnvironment([:], recording: "/tmp/take.json")[key]
+        let carried = RunCommand.childEnvironment([:], recording: "/tmp/take.json", assetBundles: nil)[key]
         #expect(ReplayRequest(destination: carried ?? "", generation: false)?.destination.path == "/tmp/take.json")
     }
 
     @Test("世代の印は watch の世代の行き先と一緒にだけ載り、立てなければ親の環境に在っても落とす (#3999)")
     func theGenerationMarkTravelsOnlyWithAGeneration() {
         let mark = StartupReads.recordGeneration.key
-        #expect(RunCommand.childEnvironment([:], recording: "/tmp/take.json")[mark] == nil, "run --record に載せた")
-        #expect(RunCommand.childEnvironment([mark: "1"], recording: "/tmp/take.json")[mark] == nil, "親の印を継いだ")
-        #expect(RunCommand.childEnvironment([mark: "1"])[mark] == nil, "記録しない子へ継いだ")
+        #expect(RunCommand.childEnvironment([:], recording: "/tmp/take.json", assetBundles: nil)[mark] == nil, "run --record に載せた")
+        #expect(RunCommand.childEnvironment([mark: "1"], recording: "/tmp/take.json", assetBundles: nil)[mark] == nil, "親の印を継いだ")
+        #expect(RunCommand.childEnvironment([mark: "1"], assetBundles: nil)[mark] == nil, "記録しない子へ継いだ")
         #expect(
-            RunCommand.childEnvironment([:], recording: "/tmp/take-1.json", recordingGeneration: true)[mark] == "1")
-        #expect(RunCommand.childEnvironment([:], recordingGeneration: true)[mark] == nil, "行き先なしで載せた")
+            RunCommand.childEnvironment([:], recording: "/tmp/take-1.json", recordingGeneration: true, assetBundles: nil)[mark] == "1")
+        #expect(RunCommand.childEnvironment([:], recordingGeneration: true, assetBundles: nil)[mark] == nil, "行き先なしで載せた")
     }
 
     @Test("watch は子を起こすたびに別の世代の行き先を渡す")
@@ -211,7 +211,7 @@ struct RecordOptionTests {
         let given = try #require(try destination(["--record", "/tmp/ record dir/take .json "]))
         #expect(given == "/tmp/ record dir/take .json ")
         #expect(ReplayRequest(destination: given, generation: false)?.environmentValue == given)
-        let carried = RunCommand.childEnvironment([:], recording: given)[StartupReads.record.key]
+        let carried = RunCommand.childEnvironment([:], recording: given, assetBundles: nil)[StartupReads.record.key]
         #expect(carried == given)
     }
 }
