@@ -39,6 +39,8 @@ enum Command {
         Bool, a color or a list of choices gets a control. The sketch opens no port and needs no change;
         the phone's changes reach it the way the knob panel's do, and --record records them. For quick demos
         and prototypes on the local network: a bundled app (bundle) has no tool to serve the page.
+        Each change the sketch takes is printed as one timestamped line once the knob settles
+        (12:03:04.512  radius  0.40 → 0.55  (phone)).
         """
 
     /// どの口でも、値を取る選択肢の宣言の和集合。**宣言は各口が 1 つずつ持ち、ここは並べるだけ。**
@@ -162,9 +164,16 @@ enum Command {
                     What it watches: Package.swift, every .swift under Sources/, and the regular files
                     under Sources/<target>/assets/ (not hidden files or symbolic links). A .metal
                     fragment is not rebuilt: it swaps in while the sketch keeps running.
+                    Assets count only in Sources/<directory>/assets/. In the assets/ of a target moved out
+                    of Sources/ with path:, under another source directory such as src/, or nested deeper
+                    (Sources/<directory>/<sub>/assets/), a missing resources declaration is not caught
+                    before running (it shows only when the sketch cannot load the file) and saving a file
+                    does not rebuild; only a .metal fragment there swaps in, when the target declares
+                    that assets/ with .copy.
                     A change anywhere else does not rebuild — resources Package.swift declares outside
-                    assets/ (.process("Resources"), .copy("data.json"), a changed path:), Package.resolved,
-                    a dependency given by path (--local). After those, place a rebuild request in
+                    assets/ (.process("Resources"), .copy("data.json"), a target moved out of Sources/
+                    with path:), Package.resolved, a dependency given by path (--local). After those,
+                    place a rebuild request in
                     .mokume/watch/request.json ({"id": "<new each time>", "action": "rebuild"}): it builds
                     and swaps in once without stopping watch. "restart" starts the running version again
                     from the beginning (time from 0, also with --keep-time) without building

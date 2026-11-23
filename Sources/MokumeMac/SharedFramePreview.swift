@@ -28,8 +28,13 @@ import MokumeCore
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
 package final class SharedFramePreview {
-    /// 覚えている枠が無いときの大きさ。作品のウィンドウ (`SharedFrameWindow.defaultSize`) と揃える。
+    /// 覚えている枠が無いときの**絵の領域**の大きさ。作品のウィンドウ (`SharedFrameWindow.defaultSize`) と揃える。
     static let defaultSize = NSSize(width: 480, height: 270)
+
+    /// つまみの列を出すときのウィンドウの既定の大きさ。**絵の領域を ``defaultSize`` に保つため、列の幅だけ広げる** —
+    /// 広げないと、既定の 480 の幅から列が 284 を取り、絵は 200 足らずに縮む (#4137)。
+    static let defaultSizeWithKnobColumn = NSSize(
+        width: defaultSize.width + KnobColumnLayout.expandedWidth, height: defaultSize.height)
 
     /// 覚えている枠が無いとき、中央からどれだけずらすか。
     ///
@@ -50,8 +55,10 @@ package final class SharedFramePreview {
     private let notice = NoticeOverlay()
     /// 面越しのつまみ。区画を渡されたときだけ在る。
     private let params: RemoteParams?
-    /// いま重ねているつまみの面。宣言の顔ぶれが変われば作り直す。
+    /// いま列に置いているつまみの面。宣言の顔ぶれが変われば作り直す。
     private var knobs: KnobOverlay?
+    /// 面を畳んでいるか。**面を作り直しても持ち回る** — 保存のたびに畳んだ面が開き直らないように (#4137)。
+    private let knobState = KnobPanelState()
     /// `watch --remote` の QR コード。出していなければ `nil`。
     private var remoteBadge: RemoteBadge?
 
@@ -68,7 +75,8 @@ package final class SharedFramePreview {
             gpu: gpu, facet: facet,
             look: SharedFrameStage.Look(
                 title: title, autosaveName: WindowPlacement.previewAutosaveName,
-                defaultSize: Self.defaultSize, nudge: Self.nudge,
+                defaultSize: params == nil ? Self.defaultSize : Self.defaultSizeWithKnobColumn,
+                nudge: Self.nudge,
                 placesBeneathRequestedArtwork: true))
     }
 
@@ -197,7 +205,8 @@ package final class SharedFramePreview {
 
     /// ウィンドウを出し、ディレクトリの監視を始める。
     public func open() {
-        stage.open(overlay: notice)
+        // つまみは絵の横の列に置き、絵に重ねない (#4137)。区画が無ければつまみも数字も出ないので列も作らない
+        stage.open(overlay: notice, knobColumn: params != nil)
         // **1 拍ごとに面を読み直す。** 走っている側が値を変えることもあるので、
         // こちらから動かしたときだけ見に行く形にはしない
         stage.onTick = { [weak self] in self?.refreshKnobs() }
@@ -240,13 +249,14 @@ package final class SharedFramePreview {
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     private func refreshKnobs(force: Bool = false) {
-        guard let params, let host = stage.host else { return }
+        guard let params, stage.host != nil else { return }
         if params.refresh() || force {
-            knobs?.removeFromSuperview()
             // **数字は面から読む。** 数えているのは走っている側で、こちらは読み手である
             // ([ADR-0030] 決定 7) — 届いていなければ `nil` が返り、面は「—」と描く
-            let overlay = KnobOverlay(boxes: params.boxes, numbers: { [stage] in stage.numbers })
-            overlay.attach(to: host)
+            let overlay = KnobOverlay(
+                boxes: params.boxes, numbers: { [stage] in stage.numbers }, state: knobState)
+            // 前の面は列が外す
+            stage.placeKnobs(overlay)
             knobs = overlay
         }
         // **警告は拍ごとに押し込む** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。欄が出入りすると
