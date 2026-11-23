@@ -77,14 +77,15 @@ final class FilePlayer {
         return format
     }
 
-    /// 2 チャンネル以上で、配置がどのチャンネルもスピーカーの位置を名乗らない (番号だけの並び) か。タグが
-    /// `kAudioChannelLayoutTag_DiscreteInOrder` (配置を持たない WAV を `AVAudioFile` がこう開く) か、チャンネルごとの
-    /// 説明がどれも `Discrete` の札のものがこれに当たる。札が 1 つでも位置を名乗れば (左・右・中央など)、混ぜる節が
-    /// その配置で配るので当たらない。
+    /// 2 チャンネル以上で、配置がどのチャンネルもスピーカーの位置を名乗らないか。タグが番号だけの並び
+    /// (`kAudioChannelLayoutTag_DiscreteInOrder`。配置を持たない WAV を `AVAudioFile` がこう開く) か不明
+    /// (`kAudioChannelLayoutTag_Unknown`) のもの、チャンネルごとの説明の札がどれも `Discrete`・`Unknown`・`Unused` の
+    /// ものがこれに当たる。札が 1 つでも位置を名乗れば (左・右・中央など)、混ぜる節がその配置で配るので当たらない。
     nonisolated static func isUnplaced(_ format: AVAudioFormat) -> Bool {
         guard format.channelCount >= 2, let layout = format.channelLayout else { return false }
         let tag = layout.layoutTag
-        if tag & 0xFFFF_0000 == kAudioChannelLayoutTag_DiscreteInOrder { return true }
+        let family = tag & 0xFFFF_0000
+        if family == kAudioChannelLayoutTag_DiscreteInOrder || family == kAudioChannelLayoutTag_Unknown { return true }
         guard tag == kAudioChannelLayoutTag_UseChannelDescriptions else { return false }
         let raw = layout.layout
         let count = Int(raw.pointee.mNumberChannelDescriptions)
@@ -95,6 +96,7 @@ final class FilePlayer {
         return (0..<count).allSatisfy {
             let label = descriptions[$0].mChannelLabel
             return label == kAudioChannelLabel_Discrete || label & 0xFFFF_0000 == kAudioChannelLabel_Discrete_0
+                || label == kAudioChannelLabel_Unknown || label == kAudioChannelLabel_Unused
         }
     }
 

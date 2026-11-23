@@ -94,10 +94,17 @@ struct MultichannelFileLayoutTests {
     }
 
     /// `url` を読んで鳴らす。読んだチャンネルの数と長さはファイルのまま (2 に減らさない)。
-    private static func heard(_ url: URL, channels: Int, pan: Float = 0) throws -> (left: Float, right: Float) {
+    ///
+    /// - Parameter unplaced: 開いたファイルの処理の形式を、配置を名乗らない形 (``FilePlayer/isUnplaced(_:)``) と
+    ///   見なすはずか。検査の前提 (手で組んだ WAV を `AVAudioFile` がどの配置で開くか) をここで断言する。
+    private static func heard(
+        _ url: URL, channels: Int, unplaced: Bool, pan: Float = 0
+    ) throws -> (left: Float, right: Float) {
         let buffer = try AudioFile.load(url, path: url.lastPathComponent)
         #expect(Int(buffer.format.channelCount) == channels)
         #expect(buffer.frameLength == 4800)
+        let tag = buffer.format.channelLayout.map { String($0.layoutTag, radix: 16) } ?? "nil"
+        #expect(FilePlayer.isUnplaced(buffer.format) == unplaced, "\(url.lastPathComponent) の配置のタグ 0x\(tag)")
         return try heard(buffer, pan: pan)
     }
 
@@ -117,7 +124,7 @@ struct MultichannelFileLayoutTests {
             for active in 0..<channels {
                 let url = directory.appendingPathComponent("\(layout.rawValue)-\(channels)-\(active).wav")
                 try Self.writeWAV(to: url, channels: channels, active: active, layout: layout)
-                let heard = try Self.heard(url, channels: channels)
+                let heard = try Self.heard(url, channels: channels, unplaced: true)
                 let expected = Self.expectedUnplaced(active: active)
                 #expect(
                     Self.matches(heard, expected),
@@ -126,18 +133,21 @@ struct MultichannelFileLayoutTests {
         }
     }
 
-    @Test("配置が 左・右・中央 の 3 チャンネルの WAV は、中央が左右へ配られるまま鳴る")
+    /// 中央を左右へ配る倍率は OS のミキサーが決める (macOS 26・27 で約 0.7071) ので、決め打たない。
+    @Test("配置が 左・右・中央 の 3 チャンネルの WAV は、左右がそのまま・中央が左右へ等しく配られるまま鳴る")
     func placedFileKeepsItsLayout() throws {
         try Self.withDirectory { directory in
-            let expected: [(left: Float, right: Float)] = [(0.5, 0), (0, 0.5), (0.3536, 0.3536)]
+            var heard: [(left: Float, right: Float)] = []
             for active in 0..<3 {
                 let url = directory.appendingPathComponent("lrc-\(active).wav")
                 try Self.writeWAV(to: url, channels: 3, active: active, layout: .extensibleLRC)
-                let heard = try Self.heard(url, channels: 3)
-                #expect(
-                    Self.matches(heard, expected[active], tolerance: 1e-3),
-                    "\(active + 1) チャンネル目: 左 \(heard.left) / 右 \(heard.right)")
+                heard.append(try Self.heard(url, channels: 3, unplaced: false))
             }
+            #expect(Self.matches(heard[0], (0.5, 0)), "1 チャンネル目: 左 \(heard[0].left) / 右 \(heard[0].right)")
+            #expect(Self.matches(heard[1], (0, 0.5)), "2 チャンネル目: 左 \(heard[1].left) / 右 \(heard[1].right)")
+            let centre = heard[2]
+            #expect(abs(centre.left - centre.right) < 1e-6, "中央は左右へ等しく: 左 \(centre.left) / 右 \(centre.right)")
+            #expect(centre.left > 0.01 && centre.left < 0.5, "中央は鳴り、元の大きさより小さい: \(centre.left)")
         }
     }
 
@@ -146,12 +156,13 @@ struct MultichannelFileLayoutTests {
         try Self.withDirectory { directory in
             let mono = directory.appendingPathComponent("\(layout.rawValue)-1.wav")
             try Self.writeWAV(to: mono, channels: 1, active: 0, layout: layout)
-            let heardMono = try Self.heard(mono, channels: 1)
+            let heardMono = try Self.heard(mono, channels: 1, unplaced: false)
             #expect(Self.matches(heardMono, (0.5, 0.5)), "1 ch: 左 \(heardMono.left) / 右 \(heardMono.right)")
             for active in 0..<2 {
                 let url = directory.appendingPathComponent("\(layout.rawValue)-2-\(active).wav")
                 try Self.writeWAV(to: url, channels: 2, active: active, layout: layout)
-                let heard = try Self.heard(url, channels: 2)
+                // WAV の 2 チャンネルは配置を持たない形 (nil) で開く — 直しの前から左右に鳴る
+                let heard = try Self.heard(url, channels: 2, unplaced: false)
                 #expect(
                     Self.matches(heard, Self.expectedUnplaced(active: active)),
                     "2 ch の \(active + 1) チャンネル目: 左 \(heard.left) / 右 \(heard.right)")
@@ -171,7 +182,7 @@ struct MultichannelFileLayoutTests {
                 for active in 0..<3 {
                     let url = directory.appendingPathComponent("pan-\(pan)-\(active).wav")
                     try Self.writeWAV(to: url, channels: 3, active: active, layout: .plain)
-                    let heard = try Self.heard(url, channels: 3, pan: pan)
+                    let heard = try Self.heard(url, channels: 3, unplaced: true, pan: pan)
                     #expect(
                         Self.matches(heard, expected[active]),
                         "pan \(pan) の \(active + 1) チャンネル目: 左 \(heard.left) / 右 \(heard.right)")
@@ -208,38 +219,125 @@ struct MultichannelFileLayoutTests {
         return made
     }
 
-    @Test("番号だけを名乗る配置 (2 チャンネルの DiscreteInOrder・どれも Discrete の札の説明) も、先頭の 2 チャンネルが左右に鳴る")
-    func everyDiscreteLayoutPlaysTheFirstTwoChannels() throws {
-        let layouts: [(name: String, layout: AVAudioChannelLayout)] = [
-            ("DiscreteInOrder 2", try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 2))),
-            (
-                "Discrete の札 3",
-                try Self.describedLayout([kAudioChannelLabel_Discrete_0, kAudioChannelLabel_Discrete_1, kAudioChannelLabel_Discrete])
-            ),
-        ]
-        for (name, layout) in layouts {
-            for active in 0..<Int(layout.channelCount) {
-                let heard = try Self.heard(try Self.buffer(layout, active: active))
-                #expect(
-                    Self.matches(heard, Self.expectedUnplaced(active: active)),
-                    "\(name) の \(active + 1) チャンネル目: 左 \(heard.left) / 右 \(heard.right)")
-            }
+    /// 検査が組む配置の形。`tag` は組んだ `AVAudioChannelLayout` が持つはずのタグ (OS が別のタグへ直していないか)。
+    struct Shape: CustomTestStringConvertible, Sendable {
+        var name: String
+        var tag: AudioChannelLayoutTag
+        var labels: [AudioChannelLabel] = []
+        var unplaced: Bool
+        var testDescription: String { name }
+
+        func layout() throws -> AVAudioChannelLayout {
+            if tag == kAudioChannelLayoutTag_UseChannelDescriptions { return try describedLayout(labels) }
+            return try #require(AVAudioChannelLayout(layoutTag: tag))
         }
     }
 
-    @Test("位置を 1 つでも名乗る配置は、名乗らない配置と見なさない")
-    func layoutsNamingAPositionAreNotUnplaced() throws {
-        let lrc = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_MPEG_3_0_A))
-        let mixed = try Self.describedLayout([
-            kAudioChannelLabel_Discrete_0, kAudioChannelLabel_Right, kAudioChannelLabel_Discrete_2,
-        ])
-        let discrete = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 3))
-        #expect(!FilePlayer.isUnplaced(AVAudioFormat(standardFormatWithSampleRate: 48_000, channelLayout: lrc)))
-        #expect(!FilePlayer.isUnplaced(AVAudioFormat(standardFormatWithSampleRate: 48_000, channelLayout: mixed)))
-        #expect(FilePlayer.isUnplaced(AVAudioFormat(standardFormatWithSampleRate: 48_000, channelLayout: discrete)))
-        // 1 チャンネルは配置に依らず左右へ配る (別の道)
+    nonisolated static let shapes: [Shape] = [
+        // 位置を名乗らない形
+        Shape(name: "DiscreteInOrder 3", tag: kAudioChannelLayoutTag_DiscreteInOrder | 3, unplaced: true),
+        Shape(name: "DiscreteInOrder 2", tag: kAudioChannelLayoutTag_DiscreteInOrder | 2, unplaced: true),
+        Shape(name: "Unknown 3", tag: kAudioChannelLayoutTag_Unknown | 3, unplaced: true),
+        Shape(
+            name: "札がどれも Discrete", tag: kAudioChannelLayoutTag_UseChannelDescriptions,
+            labels: [kAudioChannelLabel_Discrete_0, kAudioChannelLabel_Discrete_1, kAudioChannelLabel_Discrete],
+            unplaced: true),
+        Shape(
+            name: "札がどれも Unknown", tag: kAudioChannelLayoutTag_UseChannelDescriptions,
+            labels: [kAudioChannelLabel_Unknown, kAudioChannelLabel_Unknown, kAudioChannelLabel_Unknown], unplaced: true),
+        Shape(
+            name: "札がどれも Unused", tag: kAudioChannelLayoutTag_UseChannelDescriptions,
+            labels: [kAudioChannelLabel_Unused, kAudioChannelLabel_Unused, kAudioChannelLabel_Unused], unplaced: true),
+        Shape(
+            name: "札が Discrete・Unknown・Unused", tag: kAudioChannelLayoutTag_UseChannelDescriptions,
+            labels: [kAudioChannelLabel_Discrete_0, kAudioChannelLabel_Unknown, kAudioChannelLabel_Unused],
+            unplaced: true),
+        // 位置を名乗る形
+        Shape(name: "Stereo", tag: kAudioChannelLayoutTag_Stereo, unplaced: false),
+        Shape(name: "MPEG 3.0 A (L R C)", tag: kAudioChannelLayoutTag_MPEG_3_0_A, unplaced: false),
+        Shape(name: "MPEG 5.1 A", tag: kAudioChannelLayoutTag_MPEG_5_1_A, unplaced: false),
+        Shape(
+            name: "札が Discrete・Right・Discrete", tag: kAudioChannelLayoutTag_UseChannelDescriptions,
+            labels: [kAudioChannelLabel_Discrete_0, kAudioChannelLabel_Right, kAudioChannelLabel_Discrete_2],
+            unplaced: false),
+        Shape(
+            name: "札が Left・Right・Unknown", tag: kAudioChannelLayoutTag_UseChannelDescriptions,
+            labels: [kAudioChannelLabel_Left, kAudioChannelLabel_Right, kAudioChannelLabel_Unknown], unplaced: false),
+    ]
+
+    @Test("配置の形ごとに、位置を名乗らない形かを見分ける (組んだ配置のタグが変わっていないことも見る)", arguments: shapes)
+    func isUnplacedTellsEachShape(shape: Shape) throws {
+        let layout = try shape.layout()
+        #expect(layout.layoutTag == shape.tag, "組んだ配置のタグ 0x\(String(layout.layoutTag, radix: 16))")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channelLayout: layout)
+        #expect(format.channelCount >= 2)
+        #expect(FilePlayer.isUnplaced(format) == shape.unplaced)
+    }
+
+    @Test("配置を持たない 1・2 チャンネルの形式は、名乗らない形と見なさない (1 チャンネルは別の道で左右へ配る)")
+    func monoAndPlainStereoFormatsAreNotUnplaced() throws {
         let mono = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let stereo = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
         #expect(!FilePlayer.isUnplaced(mono))
+        #expect(!FilePlayer.isUnplaced(stereo))
+    }
+
+    /// 直す前の版では、このどれも全チャンネルが無音だった (2 チャンネルの `DiscreteInOrder` も)。札がどれも `Unknown` の形
+    /// とタグ `Unknown` は直す前から同じ鳴り方なので、直しを見分けない (``isUnplacedTellsEachShape(shape:)`` が見る)。
+    @Test(
+        "番号だけ・札が Unused だけの配置 (2 チャンネルの DiscreteInOrder を含む) も、先頭の 2 チャンネルが左右に鳴る",
+        arguments: shapes.filter {
+            $0.unplaced && ($0.tag & 0xFFFF_0000 == kAudioChannelLayoutTag_DiscreteInOrder || $0.labels.contains { $0 != kAudioChannelLabel_Unknown })
+        })
+    func unplacedLayoutsPlayTheFirstTwoChannels(shape: Shape) throws {
+        let layout = try shape.layout()
+        for active in 0..<Int(layout.channelCount) {
+            let heard = try Self.heard(try Self.buffer(layout, active: active))
+            #expect(
+                Self.matches(heard, Self.expectedUnplaced(active: active)),
+                "\(shape.name) の \(active + 1) チャンネル目: 左 \(heard.left) / 右 \(heard.right)")
+        }
+    }
+
+    /// 2 チャンネルの節に描く道 (速さ ≠ 1 の読み直し・ループ・途中から・書き出しの音声トラック) でも、配置を持たない
+    /// 4 チャンネルの 1 チャンネル目は左だけ・2 チャンネル目は右だけに出て、3・4 チャンネル目は出ない。
+    @Test("配置を持たない 4 チャンネルを、速さを変えて・ループで・途中から・書き出しの流れで鳴らしても、先頭の 2 チャンネルだけが左右に出る")
+    func unplacedFileKeepsItsChannelsOnEveryPath() throws {
+        try Self.withDirectory { directory in
+            for active in 0..<4 {
+                let url = directory.appendingPathComponent("paths-\(active).wav")
+                try Self.writeWAV(to: url, channels: 4, active: active, layout: .plain)
+                let buffer = try AudioFile.load(url, path: url.lastPathComponent)
+                #expect(FilePlayer.isUnplaced(buffer.format))
+                let expected = Self.expectedUnplaced(active: active)
+                // (名前, 速さ, 始まり, ループ)
+                let paths: [(String, Double, Int, Bool)] = [
+                    ("遅く", 0.5, 0, false), ("速く", 2, 0, true), ("ループ", 1, 0, true), ("途中から", 1, 3000, true),
+                ]
+                for (name, rate, start, looping) in paths {
+                    let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+                    let player = try #require(FilePlayer(flow: flow, buffer: buffer, rate: rate, kernel: nil))
+                    player.play(from: start, looping: looping)
+                    let heard = try renderBoth(flow, 9600)
+                    player.leave()
+                    let peaks = (left: Self.peak(heard.left), right: Self.peak(heard.right))
+                    #expect(
+                        Self.matches(peaks, expected, tolerance: 1e-3),
+                        "\(name) の \(active + 1) チャンネル目: 左 \(peaks.left) / 右 \(peaks.right)")
+                }
+                // 書き出しの音声トラックを描く流れ
+                let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+                let player = try #require(FilePlayer(flow: flow, buffer: buffer))
+                player.play(from: 0, looping: true)
+                let track = TrackFlow(flow: flow, base: 0).advance(to: 9600, keeping: 9600)
+                player.leave()
+                #expect(track.complete)
+                let peaks = (left: Self.peak(track.left), right: Self.peak(track.right))
+                #expect(
+                    Self.matches(peaks, expected),
+                    "書き出しの流れの \(active + 1) チャンネル目: 左 \(peaks.left) / 右 \(peaks.right)")
+            }
+        }
     }
 }
 
@@ -304,8 +402,16 @@ struct MultichannelSoundFileTests {
             (.plain, 3, 0, nil, (0.5, 0)), (.plain, 3, 1, nil, (0, 0.5)), (.plain, 3, 2, nil, (0, 0)),
             (.plain, 3, 0, -1, (0.5, 0)), (.plain, 3, 1, -1, (0, 0)),
             (.plain, 6, 0, nil, (0.5, 0)), (.plain, 6, 1, nil, (0, 0.5)), (.plain, 6, 5, nil, (0, 0)),
-            (.extensibleLRC, 3, 2, nil, (0.3536, 0.3536)),
         ]
+        // 対照: 左・右・中央の中央は、SoundFile を通しても、節へ直に鳴らした値 (倍率は OS のミキサーが決める) と同じ
+        let centre = directory.appendingPathComponent("lrc-centre.wav")
+        try MultichannelFileLayoutTests.writeWAV(to: centre, channels: 3, active: 2, layout: .extensibleLRC)
+        let direct = try MultichannelFileLayoutTests.heard(try AudioFile.load(centre, path: "lrc-centre.wav"))
+        let throughSoundFile = try heard(centre, pan: nil)
+        #expect(direct.left > 0.01 && abs(direct.left - direct.right) < 1e-6)
+        #expect(
+            MultichannelFileLayoutTests.matches(throughSoundFile, direct, tolerance: 1e-6),
+            "中央: SoundFile 左 \(throughSoundFile.left) / 右 \(throughSoundFile.right)、直 \(direct.left) / \(direct.right)")
         for (layout, channels, active, pan, expected) in cases {
             let url = directory.appendingPathComponent("\(layout.rawValue)-\(channels)-\(active).wav")
             try MultichannelFileLayoutTests.writeWAV(to: url, channels: channels, active: active, layout: layout)
