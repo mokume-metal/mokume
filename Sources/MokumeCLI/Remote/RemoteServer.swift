@@ -39,7 +39,6 @@ nonisolated final class RemoteServer: @unchecked Sendable {
     private var reportStamp: Date?
     private var writes = PendingParamWrites()
     private var ticks = 0
-    private var everConnected = false
     private var writeFailureSaid = false
 
     /// 同時に持つ接続の上限。スマホ数台とつなぎ直しの重なりに足りる。
@@ -49,8 +48,6 @@ nonisolated final class RemoteServer: @unchecked Sendable {
     /// 状態の配信が黙っている間に送る空行の間隔 (拍の数)。途中の機器に切られないため。
     static let keepAliveTicks = 300
 
-    /// 最初のスマホが状態の配信につながった (窓の QR を下げる合図)。列の上で呼ばれる。
-    var onFirstConnection: (@Sendable () -> Void)?
     /// 名乗り (面に要求を置けなかったなど)。列の上で呼ばれる。
     var warn: @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
 
@@ -280,10 +277,6 @@ nonisolated final class RemoteServer: @unchecked Sendable {
                     ("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n"
                         + "Connection: keep-alive\r\n\r\n").utf8))
             if let event = event(for: payload) { client.send(event) }
-            if !everConnected {
-                everConnected = true
-                onFirstConnection?()
-            }
         case ("POST", "/set"):
             guard effectiveState == .running else {
                 client.respond(status: "409 Conflict")

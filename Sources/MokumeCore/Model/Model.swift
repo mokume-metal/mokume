@@ -24,7 +24,7 @@ import simd
 /// 3 つ目も整える側に入れてあるので、`normalize: false` では**ファイルの座標が
 /// そのまま残る**。ただし**貼るテクスチャの読み取り位置は整えの対象ではない** — 形の座標では
 /// なくテクスチャを読む位置なので、`normalize` の有無で値が変わらない (#406)。
-public struct Model: Equatable, Sendable {
+public nonisolated struct Model: Equatable, Sendable {
     /// 読み込んだ名前。
     public let name: String
     /// 三角形の枚数。

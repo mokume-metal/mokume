@@ -43,7 +43,7 @@ import simd
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-public struct Transform: Equatable, Sendable {
+public nonisolated struct Transform: Equatable, Sendable {
     /// 同次座標の 4x4 行列。4 行目は変換を重ねる限り常に (0, 0, 0, 1)。
     private(set) var matrix: simd_float4x4
 

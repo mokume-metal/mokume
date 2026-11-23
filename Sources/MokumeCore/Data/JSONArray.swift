@@ -63,6 +63,7 @@ import Foundation
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public struct JSONArray: Equatable, Sendable {
+    // 既定の main actor のまま: 読み出しが main actor の警告の口 (`warnOnce` など) を呼ぶ (#4098)
     /// 要素。
     var items: [JSONValue]
 
