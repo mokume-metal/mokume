@@ -22,15 +22,15 @@
 # ## mode
 #
 #   merge_group  自分より前の N 本 (RENDER_TURN_SLOTS) の group の run のうち終わっていないものと、
-#                走っている render-pr の job (下の「render-pr を数える」) の合計が N 本未満に
+#                render-pr が専用機で取っている枠 (下の「専用機の枠を数える」) の合計が N 本未満に
 #                なるまで待つ。N=1 なら 1 つ前の group の run (自分の base sha を head に持つ
 #                merge_group の run) が終わるまで待ち、group は queue の順に 1 本ずつ専用機に
 #                積まれる。base sha が base ref (既定 refs/heads/main) の先端なら、自分が先頭なので
 #                前の group は数えない (merge 済みの前の group の run を人が走らせ直していても
 #                待たない)。先頭も render-pr は数える
-#   yield        merge_group の run が無ければ通す。あれば、その数と走っている render-pr の job の
-#                合計が N 本未満のときだけ通し、そうでなければ go=false を出して抜ける (render-pr は
-#                見送る。必須ではないので merge の可否は変わらない)。通す直前に、
+#   yield        merge_group の run が無ければ通す。あれば、その数と、render-pr と定期の job が
+#                専用機で取っている枠の合計が N 本未満のときだけ通し、そうでなければ go=false を出して
+#                抜ける (render-pr は見送る。必須ではないので merge の可否は変わらない)。通す直前に、
 #                この run の head (RENDER_TURN_HEAD_SHA) が PR の branch (RENDER_TURN_HEAD_REF)
 #                の今の先端と違えば、同じく go=false で見送る (下の「古い head」)
 #   wait         merge_group の run が 1 本でも終わっていなければ、終わるまで待つ
@@ -54,24 +54,43 @@
 # runner を足した後の切り替えと戻しは変数だけで行う。wait は N を見ない (merge_group の run が
 # 1 本でも残っていれば待つ)。
 #
-# ## render-pr を数える (#4018)
+# ## 専用機の枠を数える (#4018)
 #
 # group が専用機を待っている間も、runner が空いていれば render-pr を走らせる。そのぶん、
-# merge_group の門番も走っている render-pr を枠に数えて待つ — 数えないと、render-pr が 1 本
+# merge_group の門番も render-pr が取っている枠を数えて待つ — 数えないと、render-pr が 1 本
 # 走っている間に group が N 本来たとき、専用機に積まれる job が N+1 本になり、上の不変条件が
-# 破れる。数えるのは render.yml の pull_request の run の render-pr の job のうち queued と
-# in_progress のもの (門番を通る前の run はまだ job を持たない。自分の run は数えない)。
+# 破れる。
 #
-# **merge_group の run が無い間の yield は、render-pr を数えずに通す** (N=1 では今までと同じ
-# 結論)。待たせる相手が居ないからで、その間に積まれた render-pr は、拾われる前に group が
-# できれば queue-sweep.sh が cancel し (#2064)、走っていれば merge_group の門番が数えて待つ。
+# 枠は job の名前ではなく、render.yml の run ごとに数える (runner_slots)。終わっていない run の
+# うち:
+#   - 専用機の job (ラベル mokume-render) が終わっていなければ、その数だけ取っている
+#   - 終わっていない job が 1 本も無いのに run が終わっていなければ、1 本取っていると数える。
+#     門番が通してから専用機の job が一覧に現れるまでの数秒 (と、job の間の隙間) で、ここを数えないと
+#     yield が通した直後の render-pr を後ろの group の門番が見落とし、両方が積まれる。go=false の
+#     run も render-pr が skipped で現れるまでの数秒は数えられるが、数え過ぎは次の周で解ける
+#   - GitHub ホストの job (門番・起票) だけが走っている run は取っていない
+# 自分の run (GITHUB_RUN_ID) は数えない。自分の門番は走っているので普通は数えられないが、
+# 門番の後ろの専用機の job を GitHub が先に一覧へ出す場合にも、自分を数えないためである。
+#
+# 数える run の種類は mode で違う:
+#   - merge_group は pull_request の run (render-pr) だけを数える。定期の scheduled-* は数えない
+#     — 割り込みうる 1 本として queue の期限で受け入れてある (下の「上限」・ADR-0019 決定 7 の
+#     「queue の期限を 60 分から約 95 分へ延ばす」)
+#   - yield は pull_request と schedule の run を数える。必須でない render-pr のために、定期の job と
+#     group の render の上へ N+1 本目を積まない
+#
+# **merge_group の run が無い間の yield は、数えずに通す** (N=1 では今までと同じ結論)。
+# 待たせる相手が居ないからで、その間に積まれた render-pr は、拾われる前に group ができて
+# 枠を越えれば queue-sweep.sh が cancel し (#2064)、走っていれば merge_group の門番が数えて待つ。
 # 代償は、render-pr が枠を取っている間に来た group の render が、render-pr の 1 本分
-# (最大 30 分) 待ちうることである。入れてから 7 日、merge_group の render の待ちの p90 を測り、
-# 10 分を越えたら戻す (#4018)。
+# (最大 30 分) 待ちうることである。N=1 では、先頭の group も走っている render-pr を待つ
+# (以前は待たずに積まれ、専用機の queue で待った)。入れてから 7 日、merge_group の render の
+# 待ちの p90 を測り、10 分を越えたら戻す (#4018)。
 #
-# 2 本の PR の門番が同時に空き枠を見ると、どちらも通りうる (読んでから job が積まれるまでの
-# 数秒)。merge_group の門番は積まれた後の render-pr を数えて待つので、group の render が
-# 専用機の queue で抜かれる形にはならない。
+# 残る競合は、2 本の PR の yield が同時に読む場合だけである。どちらも相手の run を門番の中
+# (ホストの job が走っている) と読むので、同じ空き枠に 2 本とも通りうる。積まれた後は
+# merge_group の門番が両方を数えて待つので、group の render が専用機の queue で抜かれる形には
+# ならない。
 #
 # ## 古い head (yield・#3551)
 #
@@ -109,7 +128,8 @@
 # 期限は、前の group の render 30 分 + 割り込みうる専用機の job 1 本 30 分 + 自分の render
 # 30 分 + 門番の間隔に収まるよう 60 分から 95 分へ延ばした (#3502)。「割り込みうる 1 本」は走っている
 # render-pr か、wait で放された定期の job のどちらか 1 本で、両方が重なる形 (30 + 30 + 30 + 30 = 120 分)
-# は 95 分でも覆えず、今までどおり期限で外れる。適用後 7 日の測定で数える (ADR-0019 の改訂 (2026-10-30))。
+# は 95 分でも覆えず、今までどおり期限で外れる。適用後 7 日の測定で数える (ADR-0019 決定 7 の
+# 「queue の期限を 60 分から約 95 分へ延ばす」)。
 #
 # **上限は自分で終わって守る。** render.yml の門番の timeout-minutes に任せると、timeout は
 # GitHub が job を cancel する扱いになり、後ろの render がどう終わるか (skipped は必須
@@ -125,8 +145,8 @@
 # リポジトリで 1 時間 1,000 件を共有する (review-gate・queue-sweep も同じ枠)。1 周に引くのは
 # merge_group で 2N 件 (先端・前の N 本の run・遡るための親 N-1 件)、yield / wait で 2 件
 # (queued と in_progress) なので、N=1 の門番 1 本で 1 時間 120 件、N=2 で 240 件になる。
-# 前の group が N 本未満のときだけ、render-pr を数えるのに 2 + k 件 (pull_request の run の
-# 一覧 2 件と、終わっていない run k 本の jobs) を足す。
+# 前の group が N 本未満のときだけ、枠を数えるのに 2 + k 件 (render.yml の run の一覧 2 件と、
+# 数える種類の終わっていない run k 本の jobs) を足す。
 # 同時に待つ merge_group の門番は、group で待つものは queue が同時に組む group の数
 # (main-protection.json の max_entries_to_build) より N 本少ない。今の 2 なら N=1 で 1 本
 # (120 件)、N=2 では group で待つ門番が無い。render-pr で待つのは render-pr が終わるまで
@@ -138,6 +158,11 @@
 # API が 3 回続けて読めなければ go=true で通し、::warning:: を出す。門番の失敗で検査が
 # 走らないほうが、順番が乱れるより重い。1 回の 502 では通さない — 通すと後ろの group と
 # render-pr が一度に積まれ、元の症状に戻る。終了コードは使い方の誤りでだけ非 0 にする。
+#
+# **例外は yield で、merge_group の run があるのに専用機の枠を読めなかったときは、引き直さずに
+# 見送る** (#4018)。この判定の結論は以前は常に「見送る」で、通す理由 (必須の検査が走らない
+# ほうが重い) は必須でない render-pr には当たらない。引き直しで yield が遅れると、古い head の
+# ウィンドウ (上の「古い head」) も広がる。merge_group の run の一覧を読めないときは今までどおり。
 #
 # ## 出力
 #
@@ -256,22 +281,29 @@ unreadable() { # $1=何を読めなかったか
   finish true
 }
 
-# 走っている render-pr の job を、その run について 1 行ずつ「<id> <head_branch> (render-pr)」で
-# 出す (上の「render-pr を数える」)。読めなければ非 0
-active_render_pr() {
-  local active got runs="" id branch job
+# 専用機の枠を取っている render.yml の run を、取っている枠 1 本につき 1 行
+# 「<id> <head_branch> (<専用機の job の名前、または「門番の後」>)」で出す (上の「専用機の枠を数える」)。
+# $1 は数える run の event を | で区切った並び。読めなければ非 0
+runner_slots() {
+  local events=$1 active got runs="" id branch slots slot
   for active in $ACTIVE_STATUSES; do
-    got=$(gh api "$RUNS?event=pull_request&status=$active&per_page=100" \
-      --jq '.workflow_runs[] | "\(.id) \(.head_branch)"') || return 1
+    got=$(gh api "$RUNS?status=$active&per_page=100" \
+      --jq ".workflow_runs[] | select(.event | test(\"^($events)\$\")) | \"\(.id) \(.head_branch)\"") ||
+      return 1
     runs+="$got"$'\n'
   done
   while read -r id branch; do
     [ -n "$id" ] && [ "$id" != "${GITHUB_RUN_ID:-}" ] || continue
-    job=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
-      --jq '[.jobs[] | select(.name == "render-pr") | .status] | first // ""') || return 1
-    case "$job" in
-      queued | in_progress) echo "$id $branch (render-pr)" ;;
-    esac
+    slots=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+      --jq '[.jobs[] | select(.status != "completed")] as $open
+        | [$open[] | select((.labels // []) | index("mokume-render"))] as $runner
+        | if ($runner | length) > 0 then $runner[] | .name
+          elif ($open | length) == 0 then "門番の後"
+          else empty end') || return 1
+    [ -n "$slots" ] || continue
+    while IFS= read -r slot; do
+      echo "$id $branch ($slot)"
+    done <<<"$slots"
   done < <(printf '%s' "$runs" | sort -u)
 }
 
@@ -305,10 +337,10 @@ blocking_runs() {
         sha=$(gh api "repos/$REPO/commits/$sha" --jq '.parents[0].sha') || return 1
         [ -n "$sha" ] || return 1
       done
-      # 終わっていない group と走っている render-pr が合わせて N 本未満なら、自分の分の runner が
-      # 空いている。group だけで N 本なら render-pr は引かない
+      # 終わっていない group と render-pr が取っている枠が合わせて N 本未満なら、自分の分の runner が
+      # 空いている。group だけで N 本なら枠は引かない。定期の job は数えない (上の「専用機の枠を数える」)
       if [ "$busy" -lt "$SLOTS" ]; then
-        prs=$(active_render_pr) || return 1
+        prs=$(runner_slots pull_request) || return 1
         [ -z "$prs" ] || out+="$prs"$'\n'
         busy=$((busy + $(count_lines "$prs")))
         [ "$busy" -ge "$SLOTS" ] || return 0
@@ -321,12 +353,16 @@ blocking_runs() {
         out+="$got"$'\n'
       done
       out=$(printf '%s' "$out" | sed '/^$/d' | sort -u)
-      # yield: group が N 本未満なら、走っている render-pr と合わせて N 本未満のときだけ通す
-      # (上の「render-pr を数える」)。group が無ければ今までどおり通す
+      # yield: group が N 本未満なら、render-pr と定期の job が取っている枠と合わせて N 本未満の
+      # ときだけ通す (上の「専用機の枠を数える」)。group が無ければ今までどおり通す。枠を読めなければ
+      # 引き直さずに見送る (上の「判定できないときは通す」の例外)
       if [ "$mode" = yield ] && [ -n "$out" ]; then
         busy=$(count_lines "$out")
         if [ "$busy" -lt "$SLOTS" ]; then
-          prs=$(active_render_pr) || return 1
+          if ! prs=$(runner_slots 'pull_request|schedule'); then
+            prs="- (専用機の枠を読めなかったので見送る側に倒した)"
+            busy=$SLOTS
+          fi
           busy=$((busy + $(count_lines "$prs")))
           [ "$busy" -ge "$SLOTS" ] || return 0
           out+=$'\n'"$prs"
@@ -352,19 +388,19 @@ while :; do
     case "$mode" in
       merge_group)
         if [ "$SLOTS" -eq 1 ]; then
-          say "前の group の render は終わっていて (または自分が先頭)、render-pr も走っていない。$((SECONDS / 60)) 分待った"
+          say "前の group の render は終わっていて (または自分が先頭)、render-pr も専用機の枠を取っていない。$((SECONDS / 60)) 分待った"
         else
-          say "前の $SLOTS 本の group のうち終わっていない render (自分が先頭なら数えない) と、走っている render-pr は合わせて $SLOTS 本未満。$((SECONDS / 60)) 分待った"
+          say "前の $SLOTS 本の group のうち終わっていない render (自分が先頭なら数えない) と、render-pr が取っている枠は合わせて $SLOTS 本未満。$((SECONDS / 60)) 分待った"
         fi
         ;;
-      yield) say "merge queue の render と走っている render-pr は合わせて $SLOTS 本未満 (merge queue の render が無ければ render-pr は数えない)" ;;
+      yield) say "merge queue の render と、render-pr・定期の job が取っている枠は合わせて $SLOTS 本未満 (merge queue の render が無ければ枠は数えない)" ;;
       *) say "merge queue の render は走っていない。$((SECONDS / 60)) 分待った" ;;
     esac
     finish true
   fi
 
   if [ "$mode" = yield ]; then
-    say "専用機の枠 ($SLOTS 本) が merge queue の render と render-pr で埋まっているので、render-pr は見送った (#2062・#4018):"
+    say "専用機の枠 ($SLOTS 本) が merge queue の render と render-pr・定期の job で埋まっているので、render-pr は見送った (#2062・#4018):"
     say "$(sed 's/^/- run /' <<<"$blockers")"
     finish false
   fi

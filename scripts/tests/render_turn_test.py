@@ -21,9 +21,11 @@
 8. **merge_group は RENDER_TURN_SLOTS (N) 本まで並走する** (#3319)。前の group を base sha の
    親を辿って N 段まで遡り、終わっていない run を持つ group が N 本未満なら通す。base ref の
    先端に着いたら遡らない。未設定なら 1 で、親を引かない (今までと同じ呼び出し)
-9. **走っている render-pr も枠に数える** (#4018)。merge_group は group と render-pr の合計が
-   N 本未満なら通す (先頭も render-pr は数える)。yield は merge_group の run が無ければ通し、
-   あれば合計が N 本未満のときだけ通す。N=1 の yield は今までと同じ結論になる
+9. **専用機の枠を run ごとに数える** (#4018)。merge_group は group と render-pr が取る枠の合計が
+   N 本未満なら通す (先頭も数える・定期の job は数えない)。yield は merge_group の run が無ければ
+   通し、あれば render-pr と定期の job も数えて N 本未満のときだけ通す (N=1 は今までと同じ結論)。
+   門番が通してから専用機の job が一覧に出るまでの run は数える側に倒す。yield は枠を読めなければ
+   引き直さずに見送る
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は絞り込みそのものを踏む (queue_sweep_test.py と同じ理由)。応答は呼ばれた回数で
@@ -66,8 +68,8 @@ case "$all" in
   *"/commits/"*) sha=${all#*/commits/}; sha=${sha%% *}; kind=commit-$sha ;;
   *"/actions/workflows/render.yml/runs?event=merge_group&status="*)
     kind=${all#*status=}; kind=${kind%%&*} ;;
-  *"/actions/workflows/render.yml/runs?event=pull_request&status="*)
-    kind=${all#*status=}; kind=pr-${kind%%&*} ;;
+  *"/actions/workflows/render.yml/runs?status="*)
+    kind=${all#*status=}; kind=all-${kind%%&*} ;;
   *"/actions/runs/"*"/jobs"*) id=${all#*/actions/runs/}; id=${id%%/*}; kind=jobs-$id ;;
   *"/git/matching-refs/heads/main"*) kind=tip ;;
   *"/git/matching-refs/heads/"*) kind=head ;;
@@ -475,26 +477,55 @@ class RenderTurnTest(unittest.TestCase):
         self.assertEqual(self.go(), "true")
         self.assertIn("::warning::", r.stdout)
 
-    # --- render-pr を数える (#4018) --------------------------------------------
+    # --- 専用機の枠を数える (#4018) --------------------------------------------
 
-    def render_prs(self, *jobs, round_no=1):
-        """走っている render.yml の pull_request の run と、その render-pr の job の status を置く。
+    RUNNER = ["self-hosted", "mokume-render"]
+    HOSTED = ["ubuntu-latest"]
 
-        jobs は (run id, render-pr の job の status) の並び。status が None なら render-pr の job が
-        まだ無い (門番の中) run。run の status は queued と in_progress に分けて置く。
+    def runner_runs(self, *runs, round_no=1):
+        """終わっていない render.yml の run (merge_group 以外) と、その jobs を置く。
+
+        runs は (run id, event, 形) の並び。形は:
+          "gate"  門番 (ホスト) が走っていて、専用機の job はまだ無い
+          "gap"   門番は終わったが、専用機の job がまだ一覧に無い (yield が通した直後の数秒)
+          "hosted" 専用機の job は終わり、ホストの後続 (起票など) が走っている
+          "completed" run ごと終わった (一覧に出ない)
+          それ以外 専用機の job の status (render-pr か scheduled-debug)
+        run の status は、専用機の job が queued なら queued、ほかは in_progress に置く。
         """
         by_status = {"queued": [], "in_progress": []}
-        for run_id, job in jobs:
-            run_status = "queued" if job == "queued" else "in_progress"
-            by_status[run_status].append(run_of(run_id, f"fix/pr-{run_id}", run_status))
-            listed = [{"name": "render-turn", "status": "completed"}]
-            if job is not None:
-                listed.append({"name": "render-pr", "status": job})
+        for run_id, event, shape in runs:
+            if shape == "completed":
+                continue
+            run_status = "queued" if shape == "queued" else "in_progress"
+            run = run_of(run_id, f"fix/pr-{run_id}" if event == "pull_request" else "main", run_status)
+            run["event"] = event
+            by_status[run_status].append(run)
+            turn = "render-turn" if event == "pull_request" else "scheduled-release-turn"
+            job = "render-pr" if event == "pull_request" else "scheduled-debug"
+            if shape == "gate":
+                listed = [{"name": turn, "status": "in_progress", "labels": self.HOSTED}]
+            elif shape == "gap":
+                listed = [{"name": turn, "status": "completed", "labels": self.HOSTED}]
+            elif shape == "hosted":
+                listed = [
+                    {"name": job, "status": "completed", "labels": self.RUNNER},
+                    {"name": "scheduled-report", "status": "in_progress", "labels": self.HOSTED},
+                ]
+            else:
+                listed = [
+                    {"name": turn, "status": "completed", "labels": self.HOSTED},
+                    {"name": job, "status": shape, "labels": self.RUNNER},
+                ]
             (self.data / f"jobs-{run_id}-{round_no}.json").write_text(
                 json.dumps({"jobs": listed}), encoding="utf-8"
             )
-        for status, runs in by_status.items():
-            self.answer(f"pr-{status}", round_no, runs)
+        for status, listed_runs in by_status.items():
+            self.answer(f"all-{status}", round_no, listed_runs)
+
+    def render_prs(self, *jobs, round_no=1):
+        """pull_request の run。jobs は (run id, 形) の並び (形は runner_runs と同じ)。"""
+        self.runner_runs(*[(i, "pull_request", s) for i, s in jobs], round_no=round_no)
 
     def groups_running(self, count):
         """merge_group の run が count 本終わっていない (yield / wait が引く一覧)。"""
@@ -522,6 +553,24 @@ class RenderTurnTest(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertEqual(self.go(), go, r.stdout)
 
+    def test_yield_は定期の_job_も枠に数える(self):
+        """N=2・group 1 本・定期の job 1 本: render-pr を通すと専用機に 3 本積まれる。"""
+        for shape in ("in_progress", "queued", "gap"):
+            with self.subTest(shape=shape):
+                self.setUp()
+                self.groups_running(1)
+                self.runner_runs((61, "schedule", shape))
+                r = self.turn("yield", RENDER_TURN_SLOTS=2)
+                self.assertEqual(self.go(), "false", r.stdout)
+                self.assertIn("61 main (", self.summary.read_text(encoding="utf-8"))
+
+    def test_yield_は門番で待つ定期の_run_と後続だけの_run_を数えない(self):
+        """定期の門番 (ホスト) の中・専用機の job が終わって起票だけが走る run は、枠を取っていない。"""
+        self.groups_running(1)
+        self.runner_runs((61, "schedule", "gate"), (62, "schedule", "hosted"))
+        r = self.turn("yield", RENDER_TURN_SLOTS=2)
+        self.assertEqual(self.go(), "true", r.stdout)
+
     def merge_group_queue(self, groups):
         """自分の前に group が並ぶ queue。groups 本の前の group の run が終わっていない。"""
         self.queue_of_two()
@@ -529,7 +578,8 @@ class RenderTurnTest(unittest.TestCase):
         self.answer_for(G1_HEAD, 1, [run_of(11, G1, "in_progress" if groups >= 2 else "completed")])
 
     def test_merge_group_は_N_と_group_と_render_pr_の組で待つかを決める(self):
-        """待つ組は上限 0 で通し、警告 (待っていた相手) が出たかで読む。"""
+        """待つ組は上限 0 で通し、警告 (待っていた相手) が出たかで読む。
+        N=1 では先頭の group も走っている render-pr を待つ (以前は待たずに専用機の queue で待った)。"""
         expected = {
             # (N, group, render-pr): 待つか
             (1, 0, 0): False, (1, 0, 1): True,
@@ -552,6 +602,25 @@ class RenderTurnTest(unittest.TestCase):
                 if waits and prs and groups < slots:
                     self.assertIn("51 fix/pr-51 (render-pr)", self.summary.read_text(encoding="utf-8"))
 
+    def test_merge_group_は_yield_が通した直後の_render_pr_を数える(self):
+        """yield の job が終わり render-pr の job がまだ一覧に無い数秒を、通す側でなく数える側に倒す。
+        N=2・G1 が走っている所で R と G2 が両方積まれる競合を塞ぐ。"""
+        self.merge_group_queue(1)
+        self.render_prs((51, "gap"))
+        self.render_prs((51, "completed"), round_no=2)
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2)
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertIn(f"待っている相手: 12 {PREV} 51 fix/pr-51 (門番の後)", r.stdout)
+        self.assertEqual(len(self.calls_of("/actions/runs/51/jobs")), 1, r.stdout)
+
+    def test_merge_group_は定期の_job_を数えない(self):
+        """定期の job は queue の期限で受け入れた割り込み (ADR-0019 決定 7)。この門番では広げない。"""
+        self.merge_group_queue(1)
+        self.runner_runs((61, "schedule", "in_progress"))
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
+        self.assertNotIn("::warning::", r.stdout)
+        self.assertEqual(self.calls_of("/actions/runs/61/jobs"), [])
+
     def test_render_pr_が終わるまで_group_は門番で待つ(self):
         """N=2・group 1 本・render-pr 1 本: render-pr が終わった周で通る。"""
         self.merge_group_queue(1)
@@ -561,7 +630,7 @@ class RenderTurnTest(unittest.TestCase):
         self.assertEqual(self.go(), "true", r.stdout)
         self.assertNotIn("::warning::", r.stdout)
         self.assertIn(f"待っている相手: 12 {PREV} 51 fix/pr-51 (render-pr)", r.stdout)
-        self.assertEqual(len(self.calls_of("/actions/runs/51/jobs")), 3, r.stdout)
+        self.assertEqual(len(self.calls_of("/actions/runs/51/jobs")), 2, r.stdout)
 
     def test_先頭の_group_も_render_pr_を数える(self):
         """group の無い間に N 本通った render-pr の上に、先頭を積まない。"""
@@ -577,47 +646,58 @@ class RenderTurnTest(unittest.TestCase):
 
     def test_終わった_render_pr_と門番の中の_run_は数えない(self):
         self.merge_group_queue(1)
-        self.render_prs((51, "completed"), (52, None))
+        self.render_prs((51, "completed"), (52, "gate"))
         r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
         self.assertNotIn("::warning::", r.stdout)
 
-    def test_自分の_run_は数えない(self):
+    def test_門番の後ろの_job_を_GitHub_が先に出しても自分の_run_は数えない(self):
+        """自分の門番が走っている間に、後ろの render-pr を GitHub が一覧へ出す場合の守り。
+        普段は自分の門番が走っているので、除かなくても数えられない。"""
         self.groups_running(1)
-        self.render_prs((51, "in_progress"))
+        self.render_prs((51, "queued"))
         r = self.turn("yield", RENDER_TURN_SLOTS=2, GITHUB_RUN_ID=51)
         self.assertEqual(self.go(), "true", r.stdout)
         self.assertEqual(self.calls_of("/actions/runs/51/jobs"), [])
 
-    def test_group_で埋まっていれば_render_pr_は引かない(self):
+    def test_group_で埋まっていれば枠は引かない(self):
         self.merge_group_queue(2)
         self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
-        self.assertEqual(self.calls_of("event=pull_request"), [])
+        self.assertEqual(self.calls_of("runs?status="), [])
         self.output.unlink()
         self.groups_running(1)
         self.turn("yield")
-        self.assertEqual(self.calls_of("event=pull_request"), [])
+        self.assertEqual(self.calls_of("runs?status="), [])
 
-    def test_group_が無ければ_yield_は_render_pr_を引かない(self):
+    def test_group_が無ければ_yield_は枠を引かない(self):
         self.render_prs((51, "in_progress"))
         r = self.turn("yield", RENDER_TURN_SLOTS=2)
         self.assertEqual(self.go(), "true", r.stdout)
-        self.assertEqual(self.calls_of("event=pull_request"), [])
+        self.assertEqual(self.calls_of("runs?status="), [])
 
-    def test_render_pr_の_job_を続けて読めなければ通す(self):
-        """読めない回の扱いは run の一覧と同じ: 引き直し、続けて読めなければ通す。"""
+    def test_yield_は枠を読めなければ引き直さずに見送る(self):
+        """必須でない render-pr を通す理由は無い。group があるときの以前の結論 (見送り) に倒す。"""
         self.groups_running(1)
         self.render_prs((51, "in_progress"))
         r = self.turn("yield", RENDER_TURN_SLOTS=2, GH_FAIL_JOBS=1)
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.go(), "false", r.stdout)
+        self.assertNotIn("引き直す", r.stdout)
+        self.assertEqual(len(self.calls_of("/actions/runs/51/jobs")), 1, r.stdout)
+        self.assertIn("読めなかった", self.summary.read_text(encoding="utf-8"))
+
+    def test_merge_group_は枠を続けて読めなければ通す(self):
+        """必須の render の門番は、今までどおり引き直してから通す。"""
+        self.merge_group_queue(1)
+        self.render_prs((51, "in_progress"))
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, GH_FAIL_JOBS=1)
         self.assertEqual(self.go(), "true", r.stdout)
         self.assertIn("::warning::", r.stdout)
         self.assertEqual(len(self.calls_of("/actions/runs/51/jobs")), 3, r.stdout)
 
-    def test_wait_は_render_pr_を数えない(self):
+    def test_wait_は枠を数えない(self):
         self.render_prs((51, "in_progress"))
         r = self.turn("wait", RENDER_TURN_SLOTS=2)
         self.assertEqual(self.go(), "true", r.stdout)
-        self.assertEqual(self.calls_of("event=pull_request"), [])
 
     # --- 使い方 --------------------------------------------------------------
 
