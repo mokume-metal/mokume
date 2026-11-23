@@ -52,7 +52,7 @@ ADR-0041 決定 3 の改訂の基準を、行に当てる形にしたもの。�
 | Processing の本体 | 4.5.7 (2026-09-24) |
 | Processing Sound | 2.4.0 |
 | Processing Video | 2.2.2 (Release 12) |
-| oscP5 | 連携の領域の表を作るときに確かめる |
+| oscP5 | 0.9.8 (2011-12-19)。oscP5 の公式ページ (sojamo.de) が現行として載せる版と Javadoc の版で、Contribution Manager で入る版との異同は未確認 |
 
 照合したのは processing-website の commit `f4acef8` (2026-10-29) の `content/references/translations/en/`。その下の `processing` の最終変更は 2025-03-26 (`8018e7e`) で、4.5.x で足された API があればリファレンスのクローンには無い (未確認)。リファレンスに載らず Javadoc にだけある API は数えない。mokume にあってリファレンスに無い API (`JSONObject.hasKey(_:)` など) も数えない。
 
@@ -147,6 +147,14 @@ jq -r 'select(((.category // "") | ascii_downcase | test("^(data|string|(int|flo
   | input_filename' "$ref"/processing/*.json | wc -l   # 162
 ```
 
+連携 (net・serial・OSC) と io の 165 件は、`net` (22)・`serial` (17)・`io` (36) の項目すべて (ディレクトリの下がこの領域だけなので数えるだけでよい) と、oscP5 の 90 件である。`net` はクラスのページ 2・メソッド 17・イベントの関数 3、`serial` はクラスのページ 1 とメソッド 16、`io` はクラスのページ 6 (`GPIO`・`I2C`・`LED`・`PWM`・`SPI`・`SoftwareServo`) とメソッド 30 に分かれる:
+
+```bash
+for d in net serial io; do ls "$ref/$d"/*.json | wc -l; done   # 22・17・36
+```
+
+oscP5 はリファレンスのクローンに無く、第三者のライブラリ (Andreas Schlegel) の Javadoc (`https://sojamo.de/libraries/oscP5/reference/`・版は上の「バージョン」) を人が数えた。**スケッチが直に呼ぶ 7 つのクラス**のクラスのページと、そのクラスの公開メソッドの名前 (引数の違う多重定義は 1 つ、非推奨だけの名前は除く) を 1 件とする: `OscP5` 23 (クラス 1・メソッド 22)・`OscMessage` 24 (1・23)・`OscBundle` 10 (1・9)・`NetAddress` 6 (1・5)・`NetAddressList` 8 (1・7)・`OscProperties` 16 (1・15)・`OscEventListener` 3 (1・2)。コンストラクタはクラスのページに含め、定数 (`OscP5.UDP` ほか) と `Object` から継承したメソッドは数えない。内部の通信のクラス (`AbstractTcpClient`・`UdpServer`・`OscPacket`・`OscPlug` ほか 28) と、非推奨だけの `OscP5.newBundle()`・`newMsg()`・`disconnectFromTEMP()` は数えない。数え方が機械で再現できないので、oscP5 の版が変わったら Javadoc から数え直す。
+
 書き出しのライブラリ (`processing.pdf`・`processing.svg`・`processing.dxf`) のページは、項目に数えない ([#3688 の決定](https://github.com/mokume-metal/mokume/issues/3688#issuecomment-6586703173)・2026-11-03)。リファレンスのクローンに項目が無く、そのページが挙げる API のうち本体のリファレンスに載るもの (`beginRecord()`・`endRecord()`・`beginRaw()`・`endRaw()`・`size()` ほか) は、本体の領域の行が扱う。種類 (PDF・SVG・DXF) との関係は、その行の理由に書く。`createGraphics(w, h, PDF)` の描画先の指定は、色・変換・光とカメラ・描画の表 ([color-transform-rendering.md](color-transform-rendering.md)) の `createGraphics()` の行に書いた。
 
 ## 領域の一覧
@@ -166,7 +174,7 @@ jq -r 'select(((.category // "") | ascii_downcase | test("^(data|string|(int|flo
 | 3 | 文字 | 13 | `typography.md` | 順 2 の後 |
 | 3 | データ: 文字列・配列・リスト・辞書・変換 (JSON・Table・XML のクラスのページ 5 件は上のデータの表が数える) | 162 | `data-strings-collections.md` | [#4179] |
 | 3 | 構造・制御 | 76 | `structure.md` | 順 2 の後 |
-| 3 | 連携 (net・serial・OSC) と io | 39 + io 36 + oscP5 (未計数) | `network-serial-io.md` | 順 2 の後 |
+| 3 | 連携 (net・serial・OSC) と io | 39 + io 36 + oscP5 90 = 165 | `network-serial-io.md` | [#4181] |
 
 ## 領域の表を作るとき
 
@@ -193,4 +201,5 @@ jq -r 'select(((.category // "") | ascii_downcase | test("^(data|string|(int|flo
 [#4176]: https://github.com/mokume-metal/mokume/issues/4176
 [#4177]: https://github.com/mokume-metal/mokume/issues/4177
 [#4179]: https://github.com/mokume-metal/mokume/issues/4179
+[#4181]: https://github.com/mokume-metal/mokume/issues/4181
 [#4180]: https://github.com/mokume-metal/mokume/issues/4180
