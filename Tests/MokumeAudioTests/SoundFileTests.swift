@@ -717,6 +717,77 @@ struct SoundFileTests {
         #expect(sound?.level == 0)
     }
 
+    /// スケッチが終わった後に、`isPlaying` を `true` にしうる操作 (#4175)。
+    enum StartAfterEnd: String, CaseIterable, Sendable {
+        case play, loop, envelope
+    }
+
+    @Test(
+        "スケッチが終わった後の play()・loop()・Env.play は、鳴らないので isPlaying を変えず、解析の値も 0 のまま (外してから終わった音も同じ)",
+        arguments: StartAfterEnd.allCases, [false, true])
+    func startingAfterTheSketchEndedKeepsItSilent(start: StartAfterEnd, detachedFirst: Bool) throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var sound: SoundFile?
+        var env: Env?
+        let runtime = try run(
+            frames: 3,
+            setup: { sketch in
+                sound = try sketch.loadSound(url.path)
+                env = sketch.createEnv()
+                sound?.loop()
+            },
+            draw: { sketch in
+                if detachedFirst, sketch.frameCount == 2, let sound { sketch.detach(sound) }
+            })
+        let song = try #require(sound)
+        let shaper = try #require(env)
+        if !detachedFirst { #expect(song.level > 0) }
+        runtime.closePlugins()
+        #expect(song.isPlaying == false)
+        switch start {
+        case .play: song.play()
+        case .loop: song.loop()
+        case .envelope: shaper.play(song, 0.1, 0.5, 0.8, 0.2)
+        }
+        #expect(song.isPlaying == false, "\(start.rawValue) の後 (外してから: \(detachedFirst))")
+        #expect(song.level == 0, "\(start.rawValue) の後 (外してから: \(detachedFirst))")
+    }
+
+    @Test("外している間に呼んだ play() は isPlaying を true にし、足し直したフレームから鳴る")
+    func playWhileDetachedIsHeardAfterReattaching() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        var sound: SoundFile?
+        var playingWhileDetached: Bool?
+        var heard: [[Float]] = []
+        let runtime = try run(
+            frames: 12,
+            setup: { sketch in
+                sound = try sketch.loadSound(url.path, flow: flow)
+                sound?.loop()
+            },
+            draw: { sketch in
+                guard let sound else { return }
+                switch sketch.frameCount {
+                case 4: sketch.detach(sound)
+                case 5:
+                    sound.play()
+                    playingWhileDetached = sound.isPlaying
+                case 8: sketch.attach(sound)
+                default: break
+                }
+            },
+            between: { _ in heard.append(try render(flow, Self.perFrame)) })
+        runtime.closePlugins()
+        #expect(playingWhileDetached == true)
+        #expect(heard.count == 12)
+        #expect(peak(heard[0..<3]) > 0.1, "最初は鳴る")
+        #expect(peak(heard[4..<7]) == 0, "外している間は鳴らない")
+        #expect(peak(heard[7..<12]) > 0.1, "足し直したフレームから鳴る")
+    }
+
     // MARK: - 位置・長さ・飛ぶ (#2464)
 
     /// 10 秒・48 kHz の音 (拍で揺れる和音を繰り返す)。
