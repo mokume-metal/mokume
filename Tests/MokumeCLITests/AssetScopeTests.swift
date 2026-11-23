@@ -9,13 +9,14 @@ import mokume
 
 @testable import MokumeCLI
 
-/// 走らせる子に探させない資材の包み (#4038)。
+/// 走らせる子に探させてよい資材の包み (#4038)。
 ///
 /// `run`・`watch`・`render`・`replay` のビルドの置き場は共有なので、実行ファイルの隣にはいまの宣言に無い包みも
-/// 並ぶ。どれを外すかは `bundle` が写さない包みと同じ規則で決め、子へ環境変数で渡し、起動で 1 行名乗る。
-@Suite("子に探させない包み")
+/// 並ぶ。子へは許す一覧 (閉包の target の包みの名前 + 依存の名前の頭) を渡し、依存の木の答えと名乗りは置き場に
+/// 控える。**検査は実物の `swift package` を起こさない** (問いは差し替える)。
+@Suite("子に探させてよい包み")
 struct AssetScopeTests {
-    /// いまの宣言: パッケージ `demo`、実行 product `demo` は target `demo` だけ。
+    /// いまの宣言: パッケージ `demo`、実行 product `demo` は target `demo` だけ。直接の依存は identity `mokume`。
     private static let dump = """
         {"name":"demo",
          "products":[{"name":"demo","type":{"executable":null},"targets":["demo"]}],
@@ -23,162 +24,305 @@ struct AssetScopeTests {
            {"name":"demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
             "dependencies":[{"product":["mokume","mokume",null,null]}]},
            {"name":"demoTests","type":"test","resources":[{"rule":{"copy":{}},"path":"fixtures"}],
-            "dependencies":[{"byName":["demo",null]}]}]}
+            "dependencies":[{"byName":["demo",null]}]}],
+         "dependencies":[{"sourceControl":[{"identity":"mokume","productFilter":null}]}]}
         """
 
-    /// 依存の木の答え: 依存は `mokume` だけ。
-    nonisolated private static let tree = """
-        {"identity":"demo","name":"demo","dependencies":[
-          {"identity":"mokume","name":"mokume","dependencies":[]}]}
-        """
+    /// 置き場 (控えの置き場) と、パッケージの根と、実行ファイル。
+    private struct Build {
+        let root: URL
+        let package: URL
+        let store: URL
+        let executable: URL
 
-    /// 実行ファイルと、その隣に並んだ包みを作る。
-    private func makeBuild(beside names: [String]) throws -> (root: URL, executable: URL) {
-        let root = try TestScratch.directory("mokume-asset-scope")
-        let bin = root.appendingPathComponent("bin", isDirectory: true)
-        for name in names {
-            try FileManager.default.createDirectory(
-                at: bin.appendingPathComponent(name, isDirectory: true), withIntermediateDirectories: true)
+        var bin: URL { executable.deletingLastPathComponent() }
+
+        func place(_ names: String...) throws {
+            for name in names {
+                try FileManager.default.createDirectory(
+                    at: bin.appendingPathComponent(name, isDirectory: true), withIntermediateDirectories: true)
+            }
         }
+    }
+
+    /// 実行ファイルと、その隣に並んだ包みを作る。パッケージの根には宣言のファイルを置く (控えの鍵になる)。
+    private func makeBuild(beside names: [String]) throws -> Build {
+        let root = try TestScratch.directory("mokume-asset-scope")
+        let package = root.appendingPathComponent("demo", isDirectory: true)
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        try "// demo".write(to: package.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let store = root.appendingPathComponent("store", isDirectory: true)
+        let bin = store.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let executable = bin.appendingPathComponent("demo")
         try "#!/bin/sh\n".write(to: executable, atomically: true, encoding: .utf8)
-        return (root, executable)
+        let build = Build(root: root, package: package, store: store, executable: executable)
+        for name in names { try build.place(name) }
+        return build
     }
 
-    private func context(declared: SwiftPM.Package?, product: String? = "demo") -> BuildContext {
+    /// 依存の木の答え: 依存は `mokume` (在処は `mokume`)。
+    private func tree(_ build: Build, dependency: String = "mokume") -> String {
+        """
+        {"identity":"demo","name":"demo","path":"\(build.package.path)","dependencies":[
+          {"identity":"\(dependency)","name":"\(dependency)","path":"\(dependencyPath(build).path)","dependencies":[]}]}
+        """
+    }
+
+    private func dependencyPath(_ build: Build) -> URL {
+        build.root.appendingPathComponent("checkouts/mokume", isDirectory: true)
+    }
+
+    private func context(
+        _ build: Build, declared: SwiftPM.Package?, product: String? = "demo", toolchain: String? = "swiftlang-6.4"
+    ) -> BuildContext {
         BuildContext(
-            configuration: nil, place: .outside(URL(fileURLWithPath: "/store"), given: false), product: product,
-            declared: declared)
+            configuration: nil, place: .outside(build.store, given: false), product: product, declared: declared,
+            toolchain: toolchain)
     }
 
-    /// **共有の置き場に並ぶ、いまの宣言に無い包みは外す** — 改名する前のパッケージ名 (`Aaa_demo`)・テストの
-    /// target (`demo_demoTests`)・別のスケッチ (`other_other`)。いまの target と依存 (`mokume`) の包みは外さない。
-    /// 依存の木は、走らせる置き場 (`--scratch-path`) について問う。
-    @Test("いまの宣言に無い包みを外し、依存の木は走らせる置き場について問う")
-    func undeclaredBundlesAreLeftOut() throws {
-        let (root, executable) = try makeBuild(beside: [
+    /// 偽の問い。数えて、決まった答えを返す。
+    nonisolated private final class Asker: @unchecked Sendable {
+        private let lock = NSLock()
+        private var answers: [(Int32, String)]
+        private(set) var arguments: [[String]] = []
+
+        init(_ answers: [(Int32, String)]) { self.answers = answers }
+
+        var count: Int { lock.withLock { arguments.count } }
+
+        var asking: AssetScope.Asking {
+            { arguments, _ in
+                self.lock.withLock {
+                    self.arguments.append(arguments)
+                    return self.answers.count > 1 ? self.answers.removeFirst() : self.answers[0]
+                }
+            }
+        }
+    }
+
+    private func settle(
+        _ build: Build, declared: SwiftPM.Package?, product: String? = "demo", asker: Asker,
+        tool: String = "tool-1", toolchain: String? = "swiftlang-6.4", said: inout [String]
+    ) -> AssetBundles.Allowance? {
+        var lines: [String] = []
+        let allowance = AssetScope.settle(
+            context: context(build, declared: declared, product: product, toolchain: toolchain),
+            executable: build.executable, package: build.package, say: { lines.append($0) }, asking: asker.asking,
+            tool: tool)
+        said += lines
+        return allowance
+    }
+
+    /// **許す一覧は宣言から決まり、並びから決まらない** — 閉包の target の包み (`demo_demo`) と依存の名前の頭
+    /// (`mokume_`) だけを許す。改名する前のパッケージ名 (`Aaa_demo`)・テストの target (`demo_demoTests`)・別の
+    /// スケッチ (`other_other`) は許さず、外したことを 1 行名乗る。依存の木は、走らせる置き場について問う。
+    @Test("許す一覧は閉包の target の包みと依存の名前の頭だけで、外した包みを 1 行名乗る")
+    func theAllowanceComesFromTheDeclaration() throws {
+        let build = try makeBuild(beside: [
             "Aaa_demo.bundle", "demo_demo.bundle", "demo_demoTests.bundle", "mokume_MokumeCore.bundle",
             "other_other.bundle",
         ])
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { try? FileManager.default.removeItem(at: build.root) }
         let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
-        let asked = Mutex<[[String]]>([])
-        let names = AssetScope.undeclaredBundles(
-            context: context(declared: declared), executable: executable, package: root
-        ) { arguments, _ in
-            asked.withLock { $0.append(arguments) }
-            return (0, Self.tree)
-        }
-        #expect(names == ["Aaa_demo.bundle", "demo_demoTests.bundle", "other_other.bundle"])
+        let asker = Asker([(0, tree(build))])
+        var said: [String] = []
+        let allowance = try #require(settle(build, declared: declared, asker: asker, said: &said))
+        #expect(allowance == AssetBundles.Allowance(bundles: ["demo_demo.bundle"], packages: ["mokume"]))
         #expect(
-            asked.withLock { $0 }
-                == [["package", "--scratch-path", "/store", "show-dependencies", "--format", "json"]])
+            asker.arguments
+                == [["package", "--scratch-path", build.store.path, "show-dependencies", "--format", "json"]])
+        #expect(
+            said == [
+                AssetScope.askingLine,
+                AssetScope.notice(["Aaa_demo.bundle", "demo_demoTests.bundle", "other_other.bundle"]),
+            ].compactMap { $0 })
     }
 
-    /// **求められなければ何も外さない** (子は隣の包みを全部探す) — 宣言が読めない・product が無い・依存の木が
-    /// 読めない。宣言が読めなければ道具立てに問わない。依存の木が読めない回は、宣言だけで決まるテストの target の
-    /// 包み (`demo_demoTests`) も外さない (完了条件 3 の「いままでどおり全部探す」)。
-    @Test("宣言・product・依存の木のどれかが読めなければ、何も外さない")
-    func nothingIsLeftOutWhenUndecidable() throws {
-        let (root, executable) = try makeBuild(beside: [
-            "Aaa_demo.bundle", "demo_demo.bundle", "demo_demoTests.bundle",
-        ])
-        defer { try? FileManager.default.removeItem(at: root) }
+    /// **控えが在れば問わず、名乗りも変わったときだけ** (決定 1)。共有の置き場で `run` を続けて起こした形:
+    /// 1 回目だけ問い、1 行出す。2 回目は黙る。外す包みが増えたら 1 行だけ出し、問いは増えない。
+    @Test("控えの鍵が合えば問い直さず、外す包みが変わったときだけ名乗る")
+    func theRecordSavesTheQuestionAndTheNotice() throws {
+        let build = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle", "mokume_MokumeCore.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        try FileManager.default.createDirectory(at: dependencyPath(build), withIntermediateDirectories: true)
         let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
-        let asked = Mutex(0)
-        let counting: AssetScope.Asking = { _, _ in
-            asked.withLock { $0 += 1 }
-            return (1, "")
-        }
-        #expect(
-            AssetScope.undeclaredBundles(
-                context: context(declared: nil), executable: executable, package: root, asking: counting
-            ).isEmpty)
-        #expect(
-            AssetScope.undeclaredBundles(
-                context: context(declared: declared, product: nil), executable: executable, package: root,
-                asking: counting
-            ).isEmpty)
-        #expect(asked.withLock { $0 } == 0)
-        // 依存の木が読めない
-        #expect(
-            AssetScope.undeclaredBundles(
-                context: context(declared: declared), executable: executable, package: root, asking: counting
-            ).isEmpty)
-        #expect(asked.withLock { $0 } == 1)
-        // 依存の木が要らない並び (いまの target とテストの target の包みだけ) なら、テストの target の包みは外す
-        try FileManager.default.removeItem(
-            at: executable.deletingLastPathComponent().appendingPathComponent("Aaa_demo.bundle"))
-        #expect(
-            AssetScope.decided(
-                context: context(declared: declared), executable: executable, package: root, asking: counting)
-                == ["demo_demoTests.bundle"])
-        #expect(asked.withLock { $0 } == 1)
+        let asker = Asker([(0, tree(build))])
+        var said: [String] = []
+        _ = settle(build, declared: declared, asker: asker, said: &said)
+        #expect(asker.count == 1)
+        #expect(said.count == 2)
+
+        said = []
+        _ = settle(build, declared: declared, asker: asker, said: &said)
+        #expect(asker.count == 1, "鍵の合う控えがあるのに問い直した")
+        #expect(said.isEmpty, "同じ外す包みを 2 度名乗った")
+
+        try build.place("other_other.bundle")
+        _ = settle(build, declared: declared, asker: asker, said: &said)
+        #expect(asker.count == 1)
+        #expect(said == [AssetScope.notice(["Aaa_demo.bundle", "other_other.bundle"])].compactMap { $0 })
+        // 控えは置き場の下の、パッケージの根ごとのファイル
+        let url = AssetScope.recordURL(context: context(build, declared: declared), package: build.package)
+        #expect(url.path.hasPrefix(build.store.appendingPathComponent(AssetScope.recordSegment).path))
+        #expect(FileManager.default.fileExists(atPath: url.path))
     }
 
-    /// **見張りは、たまたま失敗した問いの答えを持ち回らない** — 並びが変わらなくても、次の建ちで問い直す。
-    /// 問いが通った後は、同じ並びで問い直さない。
-    @Test("見張りは失敗した問いの答えを持ち回らず、次の建ちで問い直す")
-    func theWatcherDoesNotCarryAFailedAnswer() throws {
-        let (root, executable) = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
-        defer { try? FileManager.default.removeItem(at: root) }
+    /// **鍵が合わなければ必ず問い直す** — 根の `Package.swift`・`Package.resolved` の現れ・依存の在処の宣言の
+    /// ファイル (パスの依存の改名・`--local` の行き先)・道具・道具立てのどれが変わっても。壊れた控えも問い直す。
+    @Test("宣言のファイル・道具・道具立てが変わるか、控えが壊れていれば問い直す")
+    func aStaleRecordIsAskedAgain() throws {
+        let build = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let dependency = dependencyPath(build)
+        try FileManager.default.createDirectory(at: dependency, withIntermediateDirectories: true)
+        try "// mokume".write(to: dependency.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
         let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
-        let answers = Mutex<[(Int32, String)]>([(1, ""), (0, Self.tree)])
-        let asked = Mutex(0)
-        let carried = AssetScope.Carried { _, _ in
-            asked.withLock { $0 += 1 }
-            return answers.withLock { $0.isEmpty ? (0, Self.tree) : $0.removeFirst() }
+        let asker = Asker([(0, tree(build))])
+        var said: [String] = []
+        func settled(tool: String = "tool-1", toolchain: String? = "swiftlang-6.4") {
+            _ = settle(build, declared: declared, asker: asker, tool: tool, toolchain: toolchain, said: &said)
         }
-        let context = context(declared: declared)
-        #expect(carried.refresh(context: context, executable: executable, package: root) == nil)
-        #expect(carried.current.isEmpty, "問えなかった回に包みを外した")
-        let second = carried.refresh(context: context, executable: executable, package: root)
-        #expect(asked.withLock { $0 } == 2, "失敗した答えを持ち回って問い直さなかった")
-        #expect(second == AssetScope.notice(["Aaa_demo.bundle"]))
-        #expect(carried.current == ["Aaa_demo.bundle"])
-        #expect(carried.refresh(context: context, executable: executable, package: root) == nil)
-        #expect(asked.withLock { $0 } == 2)
+        settled()
+        #expect(asker.count == 1)
+
+        let changes: [(String, () throws -> Void)] = [
+            ("根の Package.swift", {
+                try "// demo 2".write(
+                    to: build.package.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+            }),
+            ("根の Package.resolved", {
+                try "{}".write(
+                    to: build.package.appendingPathComponent("Package.resolved"), atomically: true, encoding: .utf8)
+            }),
+            ("根の Package@swift-6.0.swift", {
+                try "// 6".write(
+                    to: build.package.appendingPathComponent("Package@swift-6.0.swift"), atomically: true,
+                    encoding: .utf8)
+            }),
+            ("依存の Package.swift", {
+                try "// renamed".write(
+                    to: dependency.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+            }),
+            ("控えの中身", {
+                let url = AssetScope.recordURL(context: context(build, declared: declared), package: build.package)
+                try "not json".write(to: url, atomically: true, encoding: .utf8)
+            }),
+        ]
+        var expected = 1
+        for (name, change) in changes {
+            try change()
+            settled()
+            expected += 1
+            #expect(asker.count == expected, "\(name) が変わったのに問い直さなかった")
+            settled()
+            #expect(asker.count == expected, "\(name) の後、鍵の合う控えで問い直した")
+        }
+        settled(tool: "tool-2")
+        #expect(asker.count == expected + 1, "道具が変わったのに問い直さなかった")
+        settled(tool: "tool-2", toolchain: "swiftlang-6.3")
+        #expect(asker.count == expected + 2, "道具立てが変わったのに問い直さなかった")
+    }
+
+    /// **控えはパッケージの根ごと** — 共有の置き場で別のスケッチが書いた控えを使わない。
+    @Test("控えはパッケージの根ごとに分かれ、別のスケッチの控えを使わない")
+    func recordsAreKeptPerPackage() throws {
+        let build = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        let other = build.root.appendingPathComponent("other", isDirectory: true)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        let one = AssetScope.recordURL(context: context(build, declared: declared), package: build.package)
+        let two = AssetScope.recordURL(context: context(build, declared: declared), package: other)
+        #expect(one != two)
+        #expect(one.deletingLastPathComponent() == two.deletingLastPathComponent())
+
+        // 根の違う控えをこのファイルに写しても読まない
+        var record = AssetScope.Record(package: BuildDirectory.ownerPath(of: other))
+        record.dependencyNames = ["Aaa"]
+        try FileManager.default.createDirectory(at: one.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(record).write(to: one)
+        #expect(AssetScope.Record.read(at: one, package: BuildDirectory.ownerPath(of: build.package)) == nil)
+    }
+
+    /// **求められなければ渡さない** (子は隣の包みを全部探す)。宣言・product が読めなければ問わず黙る。依存の木を
+    /// 問えなかった回は、外せなかったことを 1 行名乗る (決定 3)。依存の木が要らない並び (いまの target とテストの
+    /// target の包みだけ) なら、問わずにテストの target の包みを外す。
+    @Test("宣言・product が読めなければ黙って渡さず、依存の木を問えなかった回は 1 行名乗って渡さない")
+    func nothingIsPassedWhenUndecidable() throws {
+        let build = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle", "demo_demoTests.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        let asker = Asker([(1, "")])
+        var said: [String] = []
+        #expect(settle(build, declared: nil, asker: asker, said: &said) == nil)
+        #expect(settle(build, declared: declared, product: nil, asker: asker, said: &said) == nil)
+        #expect(asker.count == 0)
+        #expect(said.isEmpty)
+
+        #expect(settle(build, declared: declared, asker: asker, said: &said) == nil)
+        #expect(asker.count == 1)
+        #expect(said == [AssetScope.askingLine, AssetScope.unscopedNotice])
+        // 問えなかった答えは控えない: 次の回も問う
+        said = []
+        #expect(settle(build, declared: declared, asker: asker, said: &said) == nil)
+        #expect(asker.count == 2, "問えなかった答えを控えた")
+        #expect(said == [AssetScope.askingLine, AssetScope.unscopedNotice])
+
+        try FileManager.default.removeItem(at: build.bin.appendingPathComponent("Aaa_demo.bundle"))
+        said = []
+        let allowance = settle(build, declared: declared, asker: asker, said: &said)
+        #expect(allowance == AssetBundles.Allowance(bundles: ["demo_demo.bundle"], packages: ["mokume"]))
+        #expect(asker.count == 2)
+        #expect(said == [AssetScope.notice(["demo_demoTests.bundle"])].compactMap { $0 })
     }
 
     /// **普通のスケッチでは依存の木を問わない** (#4038 の反証・指摘 3)。依存は mokume だけで、隣には実物と同じく
-    /// `mokume_MokumeCore.bundle` が並ぶ。直接の依存の identity (`mokume`) で説明できるので、`show-dependencies` を
-    /// 起こさずに「外すものは無い」と決まる。説明できない包み (共有の置き場の別のスケッチ) が並べば問う。
+    /// `mokume_MokumeCore.bundle` が並ぶ。直接の依存の identity で説明できるので、問わずに決まり、何も名乗らない。
     @Test("依存が mokume だけのスケッチは、隣に mokume の包みが在っても依存の木を問わない")
     func anOrdinarySketchAsksNothing() throws {
-        let dump = """
-            {"name":"demo",
-             "products":[{"name":"demo","type":{"executable":null},"targets":["demo"]}],
-             "targets":[{"name":"demo","type":"executable","resources":[{"rule":{"copy":{}},"path":"assets"}],
-               "dependencies":[{"product":["mokume","mokume",null,null]}]}],
-             "dependencies":[{"sourceControl":[{"identity":"mokume","productFilter":null}]}]}
-            """
-        let (root, executable) = try makeBuild(beside: ["demo_demo.bundle", "mokume_MokumeCore.bundle"])
-        defer { try? FileManager.default.removeItem(at: root) }
-        let declared = try #require(SwiftPM.package(inDumpOf: dump))
-        let asked = Mutex(0)
-        let counting: AssetScope.Asking = { _, _ in
-            asked.withLock { $0 += 1 }
-            return (0, Self.tree)
-        }
-        #expect(
-            AssetScope.decided(
-                context: context(declared: declared), executable: executable, package: root, asking: counting)
-                == [])
-        #expect(asked.withLock { $0 } == 0)
-
-        try FileManager.default.createDirectory(
-            at: executable.deletingLastPathComponent().appendingPathComponent("other_other.bundle"),
-            withIntermediateDirectories: true)
-        #expect(
-            AssetScope.decided(
-                context: context(declared: declared), executable: executable, package: root, asking: counting)
-                == ["other_other.bundle"])
-        #expect(asked.withLock { $0 } == 1)
+        let build = try makeBuild(beside: ["demo_demo.bundle", "mokume_MokumeCore.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        let asker = Asker([(0, tree(build))])
+        var said: [String] = []
+        #expect(settle(build, declared: declared, asker: asker, said: &said) != nil)
+        #expect(asker.count == 0)
+        #expect(said.isEmpty)
     }
 
-    /// **問いは待つ側が期限を持つ** — 答えない子は殺して「求められない」(0 以外) にする。答えた子の出力は掴む。
-    /// 止めると決めた後 (見張りが終わるとき) は起こさない。
-    @Test("依存の木の問いは期限を越えたら子を殺し、止めた後は起こさない")
+    /// **許す一覧と `bundle` の除外は同じ規則** — 同じ宣言・同じ依存の名前・同じ並びで、`bundle` が写さない包みと、
+    /// 子が探さない包みが一致する。
+    @Test("許す一覧が外す包みは、bundle が写さない包みと同じ")
+    func theAllowanceMatchesWhatBundleLeavesOut() throws {
+        let build = try makeBuild(beside: [
+            "Aaa_demo.bundle", "demo_demo.bundle", "demo_demoTests.bundle", "mokume_MokumeCore.bundle",
+            "Extra_ExtraLib.bundle", "other_other.bundle",
+        ])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        let answer = """
+            {"identity":"demo","name":"demo","dependencies":[
+              {"identity":"mokume","name":"mokume","dependencies":[]},
+              {"identity":"extra-pkg","name":"Extra","dependencies":[]}]}
+            """
+        let scope = BundleCommand.resourceScope(
+            of: declared, product: "demo", executable: build.executable, package: build.package,
+            place: .outside(build.store, given: false), asking: { _, _ in (0, answer) })
+        var said: [String] = []
+        let allowance = try #require(
+            settle(build, declared: declared, asker: Asker([(0, answer)]), said: &said))
+        let built = try FileManager.default.contentsOfDirectory(atPath: build.bin.path).filter {
+            $0.hasSuffix(".bundle")
+        }
+        #expect(Set(built.filter { !allowance.allows($0) }) == scope.excluded)
+        #expect(scope.excluded == ["Aaa_demo.bundle", "demo_demoTests.bundle", "other_other.bundle"])
+    }
+
+    /// **問いは待つ側が期限を持つ** — 全体で 1 つの期限で、答えない子は殺して「求められない」(0 以外) にする。
+    /// 子が終わっても管の書き口を継いだ孫が残れば、同じ期限で読むのをやめる。答えた子の出力は掴む。止めると決めた
+    /// 後 (見張りが終わるとき) は起こさない。
+    @Test("依存の木の問いは全体の期限を越えたら子を殺し、止めた後は起こさない")
     func theQuestionHasADeadline() throws {
         let silent = Process()
         silent.executableURL = URL(fileURLWithPath: "/bin/sleep")
@@ -186,6 +330,13 @@ struct AssetScopeTests {
         let late = BundleCommand.ask(silent, timeout: 0.2)
         #expect(late.status != 0)
         #expect(!silent.isRunning, "期限を越えた子が残っている")
+
+        // 子はすぐ終わるが、管を継いだ孫が残る
+        let orphaning = Process()
+        orphaning.executableURL = URL(fileURLWithPath: "/bin/sh")
+        orphaning.arguments = ["-c", "/bin/sleep 600 & echo started"]
+        let held = BundleCommand.ask(orphaning, timeout: 0.5)
+        #expect(held.status != 0, "孫が管を握ったままなのに答えたことにした")
 
         let echo = Process()
         echo.executableURL = URL(fileURLWithPath: "/bin/echo")
@@ -221,97 +372,98 @@ struct AssetScopeTests {
         #expect(!line.contains(" old") && !line.contains(" now") && !line.contains("stale") && !line.contains("builds"))
     }
 
-    /// **`run` の経路が組む子の環境に、外す包みが載る** (#4038 の反証・指摘 8)。外す包みを決める口と、
-    /// 子の環境へ渡す引数のどちらを外しても赤になる。名乗りも同じ口から 1 行出る。
-    @Test("run が組む子の環境に、外す包みが載り、1 行名乗る")
-    func theRunEnvironmentCarriesTheList() throws {
-        let (root, executable) = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
-        defer { try? FileManager.default.removeItem(at: root) }
+    /// **`run`・`render`・`replay` が実行ファイルを受け取る口は、探してよい包みも決める** (2 回目の反証・指摘 2)。
+    /// 建てる手だけを差し替えた本物の口 (``RunCommand/prepare(in:context:say:asking:building:)``) が、許す一覧を返し、
+    /// 名乗る。
+    @Test("実行ファイルを受け取る口は、探してよい包みを決めて名乗る")
+    func preparingDecidesTheAllowance() throws {
+        let build = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
         let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
         var said: [String] = []
-        let environment = RunCommand.runEnvironment(
-            for: executable, context: context(declared: declared), in: root, recording: nil,
-            say: { said.append($0) }, asking: { _, _ in (0, Self.tree) })
-        #expect(environment[StartupReads.undeclaredBundles.key] == "Aaa_demo.bundle")
-        #expect(said == [AssetScope.notice(["Aaa_demo.bundle"])].compactMap { $0 })
+        let prepared = try RunCommand.prepare(
+            in: build.package, context: context(build, declared: declared), say: { said.append($0) },
+            asking: Asker([(0, tree(build))]).asking,
+            building: { _, _ throws(CommandFailure) in build.executable })
+        #expect(prepared.executable == build.executable)
+        #expect(prepared.assetBundles == AssetBundles.Allowance(bundles: ["demo_demo.bundle"], packages: ["mokume"]))
+        #expect(said.contains(AssetScope.notice(["Aaa_demo.bundle"]) ?? ""))
     }
 
-    /// **見張りは、作り直しの後に子へ渡す値を更新する** (#4038 の反証・指摘 8)。本物の起こす口
-    /// (``WatchSession/Hooks/live(resolver:running:stamps:keepTime:recording:progress:undeclared:)``) が、作り直しの後の
-    /// 段取り (``AssetScope/Carried/afterRebuild(_:context:package:)``) で決めた包みを子の環境へ載せる。建たなかった
-    /// 回は読み直さない。作り直しの口がこの段取りを呼ぶことは、`swift build` を走らせずには通せない (PR 本文に探した式)。
-    @Test("見張りは作り直しの後に、外す包みを子の環境へ渡す")
-    func theWatcherPassesTheListAfterARebuild() throws {
-        let (root, executable) = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
-        defer { try? FileManager.default.removeItem(at: root) }
-        let bin = executable.deletingLastPathComponent()
-        let seen = root.appendingPathComponent("seen")
+    /// **`render` の子の環境に許す一覧が載る** (2 回目の反証・指摘 2)。子を起こす口に、環境を書き出す実行ファイルを渡す。
+    @Test("render の子の環境に、探してよい包みが載る")
+    func theRenderChildGetsTheAllowance() throws {
+        let build = try makeBuild(beside: [])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let seen = build.root.appendingPathComponent("seen")
         try """
             #!/bin/sh
-            printf '%s' "$\(StartupReads.undeclaredBundles.key)" > '\(seen.path)'
-            """.write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
-        let resolver = BuildResolver(directory: root) { _ in
-            BuildResolution(context: self.context(declared: declared), binPath: bin)
+            printf '%s' "$\(StartupReads.assetBundles.key)" > '\(seen.path)'
+            exit 3
+            """.write(to: build.executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: build.executable.path)
+        let allowance = try #require(AssetBundles.Allowance(bundles: ["demo_demo.bundle"], packages: ["mokume"]))
+        let request = try #require(
+            RenderRequest(frameRate: 30, frameCount: 1, destination: build.root.appendingPathComponent("out.mov").path))
+        #expect(throws: CommandFailure.self) {
+            try RenderCommand.launch(
+                build.executable, in: build.package, request: request, assetBundles: allowance)
         }
-        let undeclared = AssetScope.Carried { _, _ in (0, Self.tree) }
-        let hooks = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild(), undeclared: undeclared)
+        #expect(try String(contentsOf: seen, encoding: .utf8) == allowance.value)
+    }
+
+    /// **見張りは、作り直しの後に子へ渡す値を更新する** (2 回目の反証・指摘 2)。作り直す手だけを差し替えた本物の
+    /// 口 (``WatchSession/Hooks/live(resolver:running:stamps:keepTime:recording:progress:assetBundles:rebuilding:)``)
+    /// で、作り直し → 起こす口と通す。建たなかった回は決め直さない。
+    @Test("見張りは作り直しの後に、探してよい包みを子の環境へ渡す")
+    func theWatcherPassesTheAllowanceAfterARebuild() async throws {
+        let build = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let seen = build.root.appendingPathComponent("seen")
+        try """
+            #!/bin/sh
+            printf '%s' "$\(StartupReads.assetBundles.key)" > '\(seen.path)'
+            """.write(to: build.executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: build.executable.path)
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        let context = context(build, declared: declared)
+        let bin = build.bin
+        let resolver = BuildResolver(directory: build.package) { _ in
+            BuildResolution(context: context, binPath: bin)
+        }
+        let status = Mutex<Int32>(1)
+        let executable = build.executable
+        let hooks = WatchSession.Hooks.live(
+            resolver: resolver, running: RunningBuild(),
+            assetBundles: AssetScope.Carried(asking: Asker([(0, tree(build))]).asking),
+            rebuilding: { _, _ in
+                .success(
+                    RunCommand.Rebuilt(
+                        status: status.withLock { $0 }, output: "", executable: executable, binPath: bin,
+                        product: "demo"))
+            })
 
         func launched() throws -> String {
-            let child = try hooks.launch(executable, root, nil, nil)
+            let child = try hooks.launch(build.executable, build.package, nil, nil)
             child.waitUntilExit()
             return try String(contentsOf: seen, encoding: .utf8)
         }
-        func rebuilt(status: Int32) -> RunCommand.Rebuilt {
-            RunCommand.Rebuilt(status: status, output: "", executable: executable, binPath: bin, product: "demo")
-        }
-        let context = context(declared: declared)
-        #expect(try launched() == "", "建つ前に外す包みを渡した")
-        #expect(undeclared.afterRebuild(rebuilt(status: 1), context: context, package: root) == nil)
-        #expect(try launched() == "", "建たなかった回に読み直した")
+        #expect(try launched() == "", "建つ前に許す一覧を渡した")
+        _ = try await hooks.rebuild(build.package)
+        #expect(try launched() == "", "建たなかった回に決め直した")
+        status.withLock { $0 = 0 }
+        _ = try await hooks.rebuild(build.package)
         #expect(
-            undeclared.afterRebuild(rebuilt(status: 0), context: context, package: root)
-                == AssetScope.notice(["Aaa_demo.bundle"]))
-        #expect(try launched() == "Aaa_demo.bundle", "作り直しの後に外す包みを子へ渡していない")
+            try launched() == AssetBundles.Allowance(bundles: ["demo_demo.bundle"], packages: ["mokume"])?.value,
+            "作り直しの後に許す一覧を子へ渡していない")
     }
 
-    /// **見張りは、宣言・置き場・隣の並びが変わらなければ問い直さず、外す包みが変わった回だけ名乗る**
-    /// (起動で 1 度)。並びが変われば問い直す。
-    @Test("見張りは同じ並びで問い直さず、外す包みが変わった回だけ名乗る")
-    func theWatcherAsksAndAnnouncesOnlyOnChange() throws {
-        let (root, executable) = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
-        defer { try? FileManager.default.removeItem(at: root) }
-        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
-        let asked = Mutex(0)
-        let carried = AssetScope.Carried { _, _ in
-            asked.withLock { $0 += 1 }
-            return (0, Self.tree)
-        }
-        let context = context(declared: declared)
-        let first = carried.refresh(context: context, executable: executable, package: root)
-        #expect(first == AssetScope.notice(["Aaa_demo.bundle"]))
-        #expect(carried.current == ["Aaa_demo.bundle"])
-        #expect(carried.refresh(context: context, executable: executable, package: root) == nil)
-        #expect(asked.withLock { $0 } == 1)
-
-        // 別のスケッチの包みが隣に増えた
-        try FileManager.default.createDirectory(
-            at: executable.deletingLastPathComponent().appendingPathComponent("other_other.bundle"),
-            withIntermediateDirectories: true)
-        let second = carried.refresh(context: context, executable: executable, package: root)
-        #expect(second == AssetScope.notice(["Aaa_demo.bundle", "other_other.bundle"]))
-        #expect(carried.current == ["Aaa_demo.bundle", "other_other.bundle"])
-        #expect(asked.withLock { $0 } == 2)
-    }
-
-    /// 探さない包みは起こす道具が自分の置き場から決める値なので、渡さなければ親の環境に在っても落とす。
-    @Test("探さない包みは渡したときだけ子へ載り、親の環境に在っても落とす")
-    func theListGoesOnlyWhenGiven() {
-        let key = StartupReads.undeclaredBundles.key
+    /// 許す一覧は起こす道具が自分の宣言から決める値なので、渡さなければ親の環境に在っても落とす。
+    @Test("探してよい包みは渡したときだけ子へ載り、親の環境に在っても落とす")
+    func theAllowanceGoesOnlyWhenGiven() throws {
+        let key = StartupReads.assetBundles.key
         #expect(RunCommand.childEnvironment([key: "stale_stale.bundle"])[key] == nil, "親の値を継いだ")
-        #expect(
-            RunCommand.childEnvironment([:], undeclaredBundles: ["b_b.bundle", "a_a.bundle"])[key]
-                == "a_a.bundle/b_b.bundle")
+        let allowance = try #require(AssetBundles.Allowance(bundles: ["b_b.bundle"], packages: ["a"]))
+        #expect(RunCommand.childEnvironment([:], assetBundles: allowance)[key] == "b_b.bundle/a_")
     }
 }
