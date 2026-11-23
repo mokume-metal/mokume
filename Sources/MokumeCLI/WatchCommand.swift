@@ -224,7 +224,7 @@ enum WatchCommand {
         // [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
         viewer = openViewer(for: session)
         if RemoteOption.requested(in: values) {
-            remote = openRemote(for: session, viewer: viewer)
+            remote = openRemote(for: session)
         }
         // **窓とスマホで動かしたつまみを、時刻付きの 1 行で端末へ書く** (#4130)。窓を出せなかった回は、
         // 子が自分の窓でつまみを持ち面の要求を通らないので、見張っても書くものが無い
@@ -263,22 +263,16 @@ enum WatchCommand {
         teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile)
     }
 
-    /// スマホのつまみの受け口を開き、端末と道具のウィンドウに QR を出す (#4126)。
+    /// スマホのつまみの受け口を開き、端末に QR を出す (#4126)。窓には出さない — 絵を覆わない (#4154)。
     ///
     /// 区画 `.mokume/params` は ``prepareFacets(under:)`` が置く。人が消していた・置けなかったなら、開かずに理由を言う。
-    /// ウィンドウの QR は、最初のスマホがつながったら下げる (絵を覆い続けない)。
-    static func openRemote(for session: WatchSession, viewer: Viewer?) -> RemoteSession? {
+    static func openRemote(for session: WatchSession) -> RemoteSession? {
         let facet = paramsFacet(for: session)
         guard WorkDirectory.directoryExists(at: facet) else {
             say("Remote knobs are off: the knobs' exchange folder is missing (\(facet.path))")
             return nil
         }
-        guard let remote = RemoteSession.open(facet: facet, say: { say($0) }) else { return nil }
-        if let preview = viewer?.preview, let image = remote.qr?.image(scale: 1) {
-            preview.showRemote(image, line: "Scan for remote knobs")
-            remote.server.onFirstConnection = { Task { @MainActor in preview.hideRemote() } }
-        }
-        return remote
+        return RemoteSession.open(facet: facet, say: { say($0) })
     }
 
     /// 置き場の断片を元から読ませる先を決められなかったときに名乗る 1 行 ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。

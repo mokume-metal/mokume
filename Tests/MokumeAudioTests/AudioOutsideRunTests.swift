@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import MokumeTestSupport
 import Testing
 
@@ -184,6 +185,59 @@ struct AudioOutsideRunTests {
             _ = sketch.createEnv()
             #expect(log.message(for: "createEnv()") == nil)
         }
+    }
+
+    /// 外で作った合成音は鳴らないので、鳴らす 8 経路のどれでも ``SynthSource/isPlaying`` を変えない (#4140)。
+    @Test("外で作った合成音は、どの鳴らす API の後も isPlaying が false で、解析も始めない (#4140)")
+    func soundsMadeOutsideDoNotClaimToPlay() {
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            let sketch = Bare()
+            for call in SynthNodelessPlayTests.plays {
+                let source: SynthSource =
+                    call.label.hasPrefix("Noise") ? sketch.createWhiteNoise() : sketch.createSinOsc()
+                call.play(source)
+                #expect(!source.isPlaying && !source.isActive, "\(call.label)")
+                #expect(source.level == 0, "\(call.label)")
+            }
+            #expect(log.messages.count == 2, "口ごとに 1 行: \(log.messages)")
+        }
+    }
+
+    /// 合成音でもファイルでもない入力。
+    final class Stranger: EffectInput {}
+
+    /// 外で作ったエフェクト (足せずに閉じたステージのもの・#4140) の `process()` は、渡されたものを断る理由を、
+    /// 外で作らなかったときと同じ文面で 1 度ずつ言う。作る口の警告だけでは、`process()` で気付く手がかりが無い。
+    @Test("外で作ったエフェクトの process() は、ファイル・自分自身・合成音でないものを断る理由を 1 度ずつ言う (#4140)")
+    func effectsMadeOutsideStillSayWhyProcessRefuses() throws {
+        let url = try writeWAV([0.1, -0.1, 0.2, -0.2], sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let log = OutsideRun()
+        let digest = WarningDigest()
+        var fileNotices: [String] = []
+        try OutsideRun.$current.withValue(log) {
+            try Diagnostics.$digest.withValue(digest) {
+                let sketch = Bare()
+                let low = sketch.createLowPass()
+                let file = SoundFile(
+                    name: "loose.wav", buffer: try AudioFile.load(url, path: "loose.wav"), owner: sketch,
+                    flow: nil, warn: { fileNotices.append($0) })
+                let stranger = Stranger()
+                for _ in 0..<2 {
+                    low.process(file)
+                    low.process(low)
+                    low.process(stranger)
+                }
+                #expect(!low.isActive)
+            }
+        }
+        #expect(fileNotices.count == 1, "\(fileNotices)")
+        #expect(fileNotices.first?.hasPrefix("process() could not take \"loose.wav\"") == true)
+        let said = digest.takeUnreported()
+        #expect(said.filter { $0.contains("already fed by this LowPass") }.count == 1, "\(said)")
+        #expect(said.filter { $0.contains("neither a synthesized sound nor a SoundFile") }.count == 1, "\(said)")
+        #expect(log.messages.count == 1, "作る口の警告は 1 行: \(log.messages)")
     }
 
     @Test("外で AudioIn の stop() を呼ぶと、呼んでいない detach() ではなく stop() を名乗り、1 度だけ警告する (#2793)")

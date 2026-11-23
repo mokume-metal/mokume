@@ -26,7 +26,7 @@ import Foundation
 ///
 /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public struct Font: Hashable, Sendable, CustomStringConvertible {
+public nonisolated struct Font: Hashable, Sendable, CustomStringConvertible {
     /// ``SketchPart/loadFont(_:)`` へ渡した名前。説明にだけ使い、等しさには入れない。
     let path: String
     /// 読んだファイルの同一性 — 解けた場所と更新時刻。等しさと、焼き場の鍵はこれで決まる。

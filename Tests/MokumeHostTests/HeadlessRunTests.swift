@@ -34,6 +34,21 @@ struct HeadlessRunTests {
         #expect(reading.pngBytes > 0)
     }
 
+    /// 読み出した画素は、外のモジュールが main の外で読める (#4098)。組めることが確かめの半分で
+    /// (`HostOnlyFile.swift` の `readOffMain(_:)`)、ここは読んだ値が main で読んだものと同じことを見る。
+    @Test("読み出した画素は、外のモジュールが main の外で読め、main で読んだ値と同じ")
+    func pixelsReadOffMainMatchMain() async throws {
+        HostProbeSketch.declared = []
+        let pixels = try readAroundSpace(HostProbeSketch()).before
+        let offMain = await readOffMain(pixels)
+        #expect(
+            offMain
+                == OffMainPixelReading(
+                    width: pixels.width, height: pixels.height, componentCount: pixels.components.count,
+                    equalsItself: true))
+        #expect(offMain.width == 32 && offMain.componentCount == 32 * 32 * 4)
+    }
+
     @Test("with を抜けたら、閉じる呼び出しを書かなくても差込口が 1 度だけ閉じる")
     func withClosesOnExit() throws {
         let outlet = CountingOutlet()

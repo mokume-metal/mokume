@@ -5,7 +5,7 @@ import CoreGraphics
 import CoreImage
 import Foundation
 
-/// `--remote` の URL の QR コード。CoreImage の `CIQRCodeGenerator` で作り、端末と窓に描く。
+/// `--remote` の URL の QR コード。CoreImage の `CIQRCodeGenerator` で作り、端末に描く。
 ///
 /// 依存を増やさないために、符号化は OS に任せ、描くのは自前で持つ。
 nonisolated struct QRCode: Equatable, Sendable {
@@ -81,7 +81,7 @@ nonisolated struct QRCode: Equatable, Sendable {
         return lines
     }
 
-    /// 窓に置く絵。1 モジュールを `scale` 画素の正方形で描き、補間でぼかさない。
+    /// 検査が端末の QR を読み戻すための絵。1 モジュールを `scale` 画素の正方形で描き、補間でぼかさない。
     func image(scale: Int) -> CGImage? {
         let rows = padded
         let side = rows.count * scale

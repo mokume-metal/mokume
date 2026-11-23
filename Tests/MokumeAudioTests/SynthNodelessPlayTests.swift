@@ -24,8 +24,9 @@ struct SynthNodelessPlayTests {
         }
     }
 
-    /// 鳴らす API を 1 つずつ。`at:` の形は 0.05 秒 (3 フレーム) 先へ予約する。
-    private static let plays: [(label: String, play: (SynthSource) -> Void)] = [
+    /// 鳴らす API を 1 つずつ。`at:` の形は 0.05 秒 (3 フレーム) 先へ予約する。足せなかったステージの検査
+    /// (`SynthSoundTests`・`AudioOutsideRunTests`) も同じ並びを使う。
+    static let plays: [(label: String, play: (SynthSource) -> Void)] = [
         ("play()", { $0.play() }),
         ("play(at:)", { $0.play(at: 0.05) }),
         ("Oscillator.play(_:_:)", { ($0 as? Oscillator)?.play(440, 0.5) }),
