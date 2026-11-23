@@ -199,7 +199,9 @@ final class WatchSession {
                         // 走らせたまま差し替わらない
                         assetOrigin: resolved?.context.assets.url?.path,
                         keepTime: clock.path, keepTimeReadOnly: clock.readsOnly, keepTimeFollows: clock.follows,
-                        recording: generations?.next(), assetBundles: assetBundles.current)
+                        // 世代の名前は道具が作ったもので、子は記録でないものを置き換えない (#3999)
+                        recording: generations?.next(), recordingGeneration: true,
+                        assetBundles: assetBundles.current)
                     do {
                         try process.run()
                     } catch {

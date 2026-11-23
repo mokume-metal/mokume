@@ -1362,7 +1362,7 @@ package final class SketchRuntime {
         }
         // **先に行き先の錠を取る。** 同じ行き先へ書く実行が 2 つあると互いの書き途中と完成品を壊す。取れなければ
         // 先の実行に触らず、始めない (ReplayClaim)
-        let taken = ReplayClaim.take(destination: request.destination)
+        let taken = ReplayClaim.take(destination: request.destination, generation: request.isGeneration)
         guard let claim = taken.claim else {
             Diagnostics.warn("Not recording: \(taken.failure ?? "the destination could not be claimed"). It keeps running")
             return false

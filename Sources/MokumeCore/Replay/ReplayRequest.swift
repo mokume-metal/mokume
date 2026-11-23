@@ -21,14 +21,18 @@ import MokumeDiagnostics
 package nonisolated struct ReplayRequest: Equatable, Sendable {
     /// 記録の行き先 (ファイル)。**絶対パス。**
     package let destination: URL
+    /// 行き先が `watch` の世代の名前 (道具が作った名前) か (``StartupReads/recordGeneration``・#3999)。真なら、行き先に
+    /// 在る記録でないものを消さず、上書きもしない (``ReplayClaim/take(destination:generation:)``)。
+    package let isGeneration: Bool
 
     /// 行き先を指して頼む。絶対パスでなければ作れない。
     ///
     /// **前後の空白や改行は削らない。** 道具が「Recording to:」と言った綴りと、子が書く場所が食い違う (空白の
     /// 付いた名前のファイルは作れる)。空・`/` だけ・絶対パスでない値だけを断る。
-    package init?(destination path: String) {
+    package init?(destination path: String, generation: Bool) {
         guard path.hasPrefix("/"), path.count > 1 else { return nil }
         self.destination = URL(fileURLWithPath: path)
+        self.isGeneration = generation
     }
 
     /// 環境変数に載せる値。
@@ -109,6 +113,7 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     ) -> ReplayRequest? {
         guard records else {
             unset(StartupReads.record.key)
+            unset(StartupReads.recordGeneration.key)
             return nil
         }
         return startup(environment: environment, unset: unset, say: say)
@@ -118,15 +123,18 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     /// と同じ) — 合図はこのプロセスを起こした道具が渡したもので、このプロセスがさらに起こす子のものではない。
     ///
     /// 在って読めない値 (相対パス・空) は、`nil` を返して理由を 1 度言う。**環境を読むのはここだけ** — 一覧
-    /// (``StartupReads``) が読み場所としてこのファイルを名指している。
+    /// (``StartupReads``) が読み場所としてこのファイルを名指している。世代の印 (``StartupReads/recordGeneration``) も
+    /// ここで読み、行き先が無くても環境から消す。印は値が `1` のときだけ立つ。
     static func startup(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         unset: (String) -> Void = { unsetenv($0) },
         say: (String) -> Void = { Diagnostics.warn($0) }
     ) -> ReplayRequest? {
+        let generation = environment[StartupReads.recordGeneration.key]
+        if generation != nil { unset(StartupReads.recordGeneration.key) }
         guard let given = environment[StartupReads.record.key] else { return nil }
         unset(StartupReads.record.key)
-        guard let request = ReplayRequest(destination: given) else {
+        guard let request = ReplayRequest(destination: given, generation: generation == "1") else {
             say(
                 "Not recording: \(StartupReads.record.key) is not the absolute path of a file (\(given)). "
                     + "Pass the destination with --record <path> to mokume run or mokume watch")
@@ -164,7 +172,7 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
         var removed: [String] = []
         for name in names.sorted() {
             let target = directory.appendingPathComponent(name)
-            guard let claim = ReplayClaim.take(destination: target).claim else { continue }
+            guard let claim = ReplayClaim.take(destination: target, generation: true).claim else { continue }
             defer { claim.release() }
             // 見てから消すまでの間にフォルダへ替わっても消さない (``AtomicFile/remove(_:)``・#3943)
             // リンク・フォルダ・FIFO は記録でないものとして残す (番号を選ぶ側と同じ判定・#3970)

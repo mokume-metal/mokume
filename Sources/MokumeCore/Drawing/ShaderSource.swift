@@ -451,7 +451,7 @@ enum ShaderSource {
 ///
 /// `set(_:_:)` は Swift の値をそのまま受ける (``ShaderValueConvertible``)。この型を直に書くのは、
 /// 作るときの `values:` の宣言か、`.int(n)` のように型を明示したいときだけである。
-public enum ShaderValue: Equatable, Sendable {
+public nonisolated enum ShaderValue: Equatable, Sendable {
     /// 1 つの数。シェーダからは `float` として見える。
     case number(Float)
     /// 2 つ組。シェーダからは `float2` として見える。
@@ -570,10 +570,12 @@ public enum ShaderValue: Equatable, Sendable {
     }
 }
 
-extension ShaderValue: ExpressibleByFloatLiteral {
+// 型に付けた `nonisolated` は別の extension には効かず、書かなければ公開の宣言に既定の main actor が載る。
+// リテラルから作るのは main の外でも使える、を宣言に書く (#4098)
+nonisolated extension ShaderValue: ExpressibleByFloatLiteral {
     public init(floatLiteral value: Double) { self = .number(Float(value)) }
 }
 
-extension ShaderValue: ExpressibleByIntegerLiteral {
+nonisolated extension ShaderValue: ExpressibleByIntegerLiteral {
     public init(integerLiteral value: Int) { self = .number(Float(value)) }
 }

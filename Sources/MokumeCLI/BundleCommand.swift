@@ -733,8 +733,7 @@ enum BundleCommand {
     /// そのボリュームが `renamex_np` の旗 (`RENAME_SWAP`・`RENAME_EXCL`) を持たないと言った失敗か。
     private static func isUnsupported(_ error: any Error) -> Bool {
         let error = error as NSError
-        return error.domain == NSPOSIXErrorDomain
-            && [Int(ENOTSUP), Int(EINVAL), Int(EOPNOTSUPP)].contains(error.code)
+        return error.domain == NSPOSIXErrorDomain && AtomicFile.renameFlagsUnsupported(Int32(clamping: error.code))
     }
 
     /// 一時の置き場で仕上がった `.app` と紙を、`--out` へ出す ([#3981](https://github.com/mokume-metal/mokume/issues/3981))。

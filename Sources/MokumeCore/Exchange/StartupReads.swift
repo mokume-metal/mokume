@@ -321,6 +321,21 @@ nonisolated package enum StartupReads {
         // 一方通行の面で、応答を持たない。仕様が名乗るのは記録そのもの
         schemaName: "replay-record")
 
+    /// ``record`` の行き先が、道具の作った `watch` の世代の名前か (#3999)。
+    ///
+    /// 世代の名前 (`take-3.json`) は利用者が名指していないので、**そこに在る記録でないものは置き換えない**。在ると、子は
+    /// 前の回の記録 (記録の頭で始まる通常ファイル) だけを消し、記録でないものが在ればその回は記録せず理由を言い、
+    /// 書き終えた記録も、行き先に何かが置かれていれば上書きしない。無い子 (`run --record`) は、頼まれた行き先を
+    /// 置き換える。値は `1` で、渡すのは `watch --record` が世代の行き先と一緒にだけ (渡さなければ親の環境に在っても
+    /// 落とす)。**受け取った子は読んだ時点で自分の環境から消す。**
+    public static let recordGeneration = Entry(
+        name: "Record generation", origin: .environment, key: "MOKUME_RECORD_GENERATION", decidedBy: .tool,
+        note: "Says the destination of Record is a name the tool made for a generation of watch, not one the "
+            + "user gave, so nothing there that is not a record is removed or replaced: if something else is "
+            + "there the run is not recorded and says why. The value is 1, and the tool passes it only together "
+            + "with Record for watch --record, and the sketch takes it out of its own environment once read",
+        readSite: "Sources/MokumeCore/Replay/ReplayRequest.swift")
+
     /// 記録を流して照らすか (`mokume replay <記録>`・[#3571])。
     ///
     /// **在るとウィンドウを開かない。** 値は記録のファイルの絶対パスで、道具が `replay` の子にだけ渡す (渡さなければ親の
@@ -342,7 +357,8 @@ nonisolated package enum StartupReads {
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        assetOrigin, assetBundles, keepTime, keepTimeReadOnly, keepTimeFollows, record, replay, observe, input, params,
+        assetOrigin, assetBundles, keepTime, keepTimeReadOnly, keepTimeFollows, record, recordGeneration, replay,
+        observe, input, params,
         viewport,
     ]
 }

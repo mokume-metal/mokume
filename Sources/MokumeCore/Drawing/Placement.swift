@@ -17,7 +17,7 @@ import simd
 /// }
 /// shape(leaf, at: places)
 /// ```
-public struct Placement: Equatable, Sendable {
+public nonisolated struct Placement: Equatable, Sendable {
     /// 置く位置。
     public var x: Float
     public var y: Float

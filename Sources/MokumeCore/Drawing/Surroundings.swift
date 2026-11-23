@@ -28,7 +28,7 @@ import simd
 ///
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-public struct Surroundings: Equatable, Sendable {
+public nonisolated struct Surroundings: Equatable, Sendable {
     /// 真上の色。
     public var top: LinearRGBA
     /// 地平 (真横) の色。

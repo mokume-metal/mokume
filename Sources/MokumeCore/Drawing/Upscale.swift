@@ -7,7 +7,7 @@
 /// ([ADR-0020] 決定 4)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public enum Upscale: Equatable, Sendable {
+public nonisolated enum Upscale: Equatable, Sendable {
     /// そのフレームの画素だけから埋める。**同じ入力からは同じ絵が出る。**
     case spatial
 
