@@ -161,6 +161,70 @@ struct AssetSearchTests {
         #expect(UndeclaredBundles.value(of: []) == nil)
     }
 
+    /// **本番の探索の口が、道具の合図で外す** (#4038 の反証・指摘 8)。合図を環境に置いた状態から、起点だけを
+    /// 差し替えた本番の口 (``ImageFile/search(for:neighbourhood:resources:)``) が、外した包みを探さない。
+    /// main で呼ぶ — 合図を控えて消すのは main だけで、ほかの検査の main の外の探索は読むだけである。
+    @MainActor
+    @Test("本番の探索の口は、道具が環境に置いた合図の包みを探さない")
+    func theProductionSearchReadsTheSignal() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gone = "Aaa-\(UUID().uuidString)_demo.bundle"
+        _ = try makeBundle(named: gone, asset: "assets/logo.txt", in: root)
+        let current = try makeBundle(named: "demo_demo.bundle", asset: "assets/logo.txt", in: root)
+        let key = StartupReads.undeclaredBundles.key
+        UndeclaredBundles.forgetStartup()
+        setenv(key, gone, 1)
+        defer {
+            unsetenv(key)
+            UndeclaredBundles.forgetStartup()
+        }
+
+        let search = ImageFile.search(for: "assets/logo.txt", neighbourhood: root, resources: nil)
+        #expect(!search.places.contains { $0.path.contains(gone) }, "合図の包みを探した")
+        #expect(search.skipped.map(\.bundle) == [gone, gone])
+        let found = try AssetLookup.locate(search, path: "assets/logo.txt")
+        #expect(found.standardizedFileURL == current.standardizedFileURL)
+    }
+
+    /// **外した包みにしか無い資材は、黙って「見つからない」にしない** (#4038 の反証・指摘 2)。外す包みは名前の形から
+    /// 決めるので、依存の包みを取り違えて外しうる。そのとき失敗は変えずに、外した包みの名前を挙げて包みごとに
+    /// 1 度知らせる。外していない包みで見つかれば何も言わない。
+    @Test("外した包みにだけ在る資材は、見つからない失敗のまま、その包みの名前を 1 度知らせる")
+    func anAssetOnlyInASkippedBundleIsNamed() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrongly = "Extra-\(UUID().uuidString)_ExtraLib.bundle"
+        _ = try makeBundle(named: wrongly, asset: "assets/only.txt", in: root)
+        func locate(_ path: String) throws(AssetFailure) -> URL {
+            try AssetLookup.locate(
+                ImageFile.search(
+                    for: path, workingDirectory: root.appendingPathComponent("sketch").path,
+                    neighbourhood: root, resources: nil, skipping: [wrongly]),
+                path: path)
+        }
+
+        #expect(throws: AssetFailure.self) { try locate("assets/only.txt") }
+        let said = UndeclaredBundles.missedSnapshot.message(for: wrongly)
+        #expect(said?.contains(wrongly) == true, "外した包みを名乗っていない")
+        #expect(said?.contains("assets/only.txt") == true)
+        #expect(throws: AssetFailure.self) { try locate("assets/only.txt") }
+        #expect(UndeclaredBundles.missedSnapshot.count { $0 == wrongly } == 1)
+
+        // 外した包みにも無い資材では知らせない
+        let other = "Other-\(UUID().uuidString)_X.bundle"
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(other), withIntermediateDirectories: true)
+        #expect(throws: AssetFailure.self) {
+            try AssetLookup.locate(
+                ImageFile.search(
+                    for: "assets/none.txt", workingDirectory: root.path, neighbourhood: root, resources: nil,
+                    skipping: [other]),
+                path: "assets/none.txt")
+        }
+        #expect(!UndeclaredBundles.missedSnapshot.hasWarned(other))
+    }
+
     @Test("全部の道を指す名前は、そのまま 1 つだけ返る")
     func anAbsolutePathIsUsedAsIs() {
         let searched = ImageFile.candidates(

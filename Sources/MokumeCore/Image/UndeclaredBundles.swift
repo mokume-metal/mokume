@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import Synchronization
 
 /// 資材を探すときに、実行ファイルの隣に並んでいても**探さない包み** (#4038)。
@@ -70,6 +71,34 @@ package nonisolated enum UndeclaredBundles {
         return Set(
             given.split(separator: separator).map(String.init).filter { $0.hasSuffix(".bundle") })
     }
+
+    /// 外した包みにだけ在った資材の知らせの控え。鍵は包みの名前で、数は道具が渡した名前の数を越えない。
+    private static let missed = Mutex(WarningLog<String>())
+
+    /// 探した資材がどこにも無く、外した包み `bundle` の中にだけ在ったことを、**包みごとに 1 度**知らせる。
+    ///
+    /// 外す包みは道具が名前の形 (依存の宣言の名前で始まるか) から決めるので、取り違えて依存の包みを外すと、資材は
+    /// 「見つからない」とだけ言われる。そのとき作者が原因へ辿れるように、外した包みと、その外し方を名乗る。投げる
+    /// 失敗 (``AssetFailure/notFound(path:searched:)`` など) は変えない。
+    static func noteMissed(path: String, in bundle: String) {
+        let first = missed.withLock { log -> Bool in
+            guard !log.hasWarned(bundle) else { return false }
+            log.record(bundle, missedNotice(path: path, bundle: bundle))
+            return true
+        }
+        if first { Diagnostics.warn(missedNotice(path: path, bundle: bundle)) }
+    }
+
+    /// ``noteMissed(path:in:)`` の文面。
+    static func missedNotice(path: String, bundle: String) -> String {
+        "\"\(path)\" is in \(bundle), which the mokume tool left out of the asset search for this run, "
+            + "because no target of this product and no dependency in Package.swift seemed to build it. "
+            + "If it should be read, report it as a bug; running the executable without the tool looks in every bundle "
+            + "(said once per bundle)"
+    }
+
+    /// 知らせた控え。**検査が読む。**
+    static var missedSnapshot: WarningLog<String> { missed.withLock { $0 } }
 
     /// 合図の値を組む (道具の側が使う)。名前の順に並べる — 同じ集合から同じ値が出る。
     package static func value(of names: Set<String>) -> String? {

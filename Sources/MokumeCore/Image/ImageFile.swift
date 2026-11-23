@@ -290,11 +290,15 @@ nonisolated enum ImageFile {
     /// (``AssetLookup/locate(_:unlistable:path:)``)。
     ///
     /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
-    static func search(for path: String) -> AssetLookup.Search {
+    ///
+    /// **探さない包みは、道具が渡した合図から取る** (``UndeclaredBundles/startup(onMain:)``・#4038)。起点は本番では
+    /// 実行ファイルの束で、検査だけが起点を差し替えて、合図がここまで届くことを確かめる。
+    static func search(
+        for path: String, neighbourhood: URL = Bundle.main.bundleURL, resources: URL? = Bundle.main.resourceURL
+    ) -> AssetLookup.Search {
         search(
             for: path, workingDirectory: FileManager.default.currentDirectoryPath,
-            neighbourhood: Bundle.main.bundleURL, resources: Bundle.main.resourceURL,
-            skipping: UndeclaredBundles.startup())
+            neighbourhood: neighbourhood, resources: resources, skipping: UndeclaredBundles.startup())
     }
 
     /// 探す場所を並べる (どこを起点にするかを渡せる形)。
@@ -322,6 +326,7 @@ nonisolated enum ImageFile {
 
         var urls: [URL] = []
         var unlistable: [AssetLookup.Unlistable] = []
+        var skipped: [AssetLookup.Skipped] = []
         urls.append(URL(fileURLWithPath: workingDirectory).appendingPathComponent(path))
         if let resources {
             urls.append(resources.appendingPathComponent(path))
@@ -329,12 +334,13 @@ nonisolated enum ImageFile {
         for root in [neighbourhood, resources].compactMap({ $0 }) {
             let listed = bundled(path, in: root, skipping: skipping)
             urls.append(contentsOf: listed.urls)
+            skipped.append(contentsOf: listed.skipped)
             if let reason = listed.failure {
                 unlistable.append(AssetLookup.Unlistable(root: root, reason: reason))
             }
         }
         urls.append(neighbourhood.appendingPathComponent(path))
-        return AssetLookup.Search(places: urls, unlistable: unlistable)
+        return AssetLookup.Search(places: urls, unlistable: unlistable, skipped: skipped)
     }
 
     /// 置き場に並んだ包みの中を、探す場所として広げる。
@@ -354,8 +360,11 @@ nonisolated enum ImageFile {
     /// 包みが無いだけだが、それ以外 (読む権利が無いなど) は、包みが在るかを確かめられない。
     ///
     /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
+    ///
+    /// 探さない包み (`skipping`) の中の場所は、探す並びに入れず `skipped` に分けて返す。どこにも無かったときに、
+    /// そこに在れば名乗るため (``AssetLookup/locate(_:unlistable:skipped:path:)``・#4038)。
     private static func bundled(_ path: String, in root: URL, skipping: Set<String>) -> (
-        urls: [URL], failure: String?
+        urls: [URL], skipped: [AssetLookup.Skipped], failure: String?
     ) {
         let names: [String]
         do {
@@ -363,16 +372,22 @@ nonisolated enum ImageFile {
         } catch {
             let code = Diagnostics.posixCode(in: error)
             let absent = code == ENOENT || code == ENOTDIR || (error as? CocoaError)?.code == .fileReadNoSuchFile
-            return ([], absent ? nil : Diagnostics.failureText(error))
+            return ([], [], absent ? nil : Diagnostics.failureText(error))
         }
         let listing = names.map { root.appendingPathComponent($0) }
         var urls: [URL] = []
-        for bundle in listing.sorted(by: { $0.path < $1.path })
-        where bundle.pathExtension == "bundle" && !skipping.contains(bundle.lastPathComponent) {
-            urls.append(bundle.appendingPathComponent(path))
-            urls.append(
-                bundle.appendingPathComponent("Contents/Resources").appendingPathComponent(path))
+        var skipped: [AssetLookup.Skipped] = []
+        for bundle in listing.sorted(by: { $0.path < $1.path }) where bundle.pathExtension == "bundle" {
+            let places = [
+                bundle.appendingPathComponent(path),
+                bundle.appendingPathComponent("Contents/Resources").appendingPathComponent(path),
+            ]
+            if skipping.contains(bundle.lastPathComponent) {
+                skipped += places.map { AssetLookup.Skipped(bundle: bundle.lastPathComponent, place: $0) }
+            } else {
+                urls += places
+            }
         }
-        return (urls, nil)
+        return (urls, skipped, nil)
     }
 }

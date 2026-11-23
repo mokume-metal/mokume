@@ -41,7 +41,8 @@ enum ShaderSource {
         let candidates = ShaderOrigin.inserting(origin: origin, for: path, into: search.places)
         let url: URL
         do {
-            url = try AssetLookup.locate(candidates, unlistable: search.unlistable, path: path)
+            url = try AssetLookup.locate(
+                candidates, unlistable: search.unlistable, skipped: search.skipped, path: path)
         } catch {
             switch error {
             case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
