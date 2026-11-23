@@ -76,10 +76,13 @@ struct AssetScopeTests {
     }
 
     /// **求められなければ何も外さない** (子は隣の包みを全部探す) — 宣言が読めない・product が無い・依存の木が
-    /// 読めない。宣言が読めなければ道具立てに問わない。
+    /// 読めない。宣言が読めなければ道具立てに問わない。依存の木が読めない回は、宣言だけで決まるテストの target の
+    /// 包み (`demo_demoTests`) も外さない (完了条件 3 の「いままでどおり全部探す」)。
     @Test("宣言・product・依存の木のどれかが読めなければ、何も外さない")
     func nothingIsLeftOutWhenUndecidable() throws {
-        let (root, executable) = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
+        let (root, executable) = try makeBuild(beside: [
+            "Aaa_demo.bundle", "demo_demo.bundle", "demo_demoTests.bundle",
+        ])
         defer { try? FileManager.default.removeItem(at: root) }
         let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
         let asked = Mutex(0)
@@ -103,6 +106,38 @@ struct AssetScopeTests {
                 context: context(declared: declared), executable: executable, package: root, asking: counting
             ).isEmpty)
         #expect(asked.withLock { $0 } == 1)
+        // 依存の木が要らない並び (いまの target とテストの target の包みだけ) なら、テストの target の包みは外す
+        try FileManager.default.removeItem(
+            at: executable.deletingLastPathComponent().appendingPathComponent("Aaa_demo.bundle"))
+        #expect(
+            AssetScope.decided(
+                context: context(declared: declared), executable: executable, package: root, asking: counting)
+                == ["demo_demoTests.bundle"])
+        #expect(asked.withLock { $0 } == 1)
+    }
+
+    /// **見張りは、たまたま失敗した問いの答えを持ち回らない** — 並びが変わらなくても、次の建ちで問い直す。
+    /// 問いが通った後は、同じ並びで問い直さない。
+    @Test("見張りは失敗した問いの答えを持ち回らず、次の建ちで問い直す")
+    func theWatcherDoesNotCarryAFailedAnswer() throws {
+        let (root, executable) = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        let answers = Mutex<[(Int32, String)]>([(1, ""), (0, Self.tree)])
+        let asked = Mutex(0)
+        let carried = AssetScope.Carried { _, _ in
+            asked.withLock { $0 += 1 }
+            return answers.withLock { $0.isEmpty ? (0, Self.tree) : $0.removeFirst() }
+        }
+        let context = context(declared: declared)
+        #expect(carried.refresh(context: context, executable: executable, package: root) == nil)
+        #expect(carried.current.isEmpty, "問えなかった回に包みを外した")
+        let second = carried.refresh(context: context, executable: executable, package: root)
+        #expect(asked.withLock { $0 } == 2, "失敗した答えを持ち回って問い直さなかった")
+        #expect(second == AssetScope.notice(["Aaa_demo.bundle"]))
+        #expect(carried.current == ["Aaa_demo.bundle"])
+        #expect(carried.refresh(context: context, executable: executable, package: root) == nil)
+        #expect(asked.withLock { $0 } == 2)
     }
 
     /// 名乗りは 1 行。共有の置き場には別のスケッチの包みが多く並びうるので、並べる名前には上限がある。

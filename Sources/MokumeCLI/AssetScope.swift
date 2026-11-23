@@ -15,7 +15,16 @@ import mokume
 /// どれかが読めなければ何も外さない (子は隣の包みを全部探す)。外した包みは起動で 1 行名乗る
 /// (``notice(_:)``)。子へは ``StartupReads/undeclaredBundles`` で渡す。
 nonisolated enum AssetScope {
-    /// 子に探させない包みの名前。宣言か product が読めなければ空。
+    /// 子に探させない包みの名前。**求められなければ空** (``decided(context:executable:package:asking:)``)。
+    static func undeclaredBundles(
+        context: BuildContext, executable: URL, package: URL, asking: Asking = BundleCommand.askSwiftPM
+    ) -> Set<String> {
+        decided(context: context, executable: executable, package: package, asking: asking) ?? []
+    }
+
+    /// 子に探させない包みの名前。**求められなければ `nil`** — 宣言か product が読めない、または依存の木が要るのに
+    /// 読めなかった (道具立てが 0 以外で終わった・期限を越えた・答えが読めない)。そのときは何も外さず、子は隣の包みを
+    /// 全部探す (いままでどおり)。自分のパッケージのテストの target の包み (閉包の外) も、依存の木が読めない回は外さない。
     ///
     /// - Parameters:
     ///   - context: 導いた土台。読んだ宣言 (``BuildContext/declared``) と置き場を使う。
@@ -23,14 +32,16 @@ nonisolated enum AssetScope {
     ///   - package: パッケージの場所。依存の木はここで、`context` の置き場について問う。
     ///   - asking: 道具立てへの問い (``BundleCommand/resourceScope(of:product:executable:package:place:asking:)``
     ///     と同じ)。**検査が偽の答えを渡すために外から渡せる形にしてある。**
-    static func undeclaredBundles(
+    static func decided(
         context: BuildContext, executable: URL, package: URL, asking: Asking = BundleCommand.askSwiftPM
-    ) -> Set<String> {
-        guard let declared = context.declared, let product = context.product else { return [] }
-        return BundleCommand.resourceScope(
+    ) -> Set<String>? {
+        guard let declared = context.declared, let product = context.product else { return nil }
+        let scope = BundleCommand.resourceScope(
             of: declared, product: product, executable: executable, package: package, place: context.place,
-            asking: asking
-        ).excluded
+            asking: asking)
+        // 依存の木を問えなかった回は、`bundle` なら説明できない包みを入れて名乗る (`kept`)。子の探索では何も外さない
+        guard scope.kept.isEmpty else { return nil }
+        return scope.excluded
     }
 
     /// 1 度だけ子を起こす口 (`run`・`render`・`replay`) の段取り: 探させない包みを決め、在れば 1 行名乗る。
@@ -62,7 +73,9 @@ nonisolated enum AssetScope {
     /// 見張りの世代をまたいで、探させない包みを持ち回る。
     ///
     /// **宣言と置き場と隣の並びが変わらなければ、依存の木を問い直さない** — 作り直しのたびに `swift` を 1 本
-    /// 起こすと、保存から絵が変わるまでの待ちに乗る。名乗りは、外す包みが変わった回だけ返す (起動で 1 度)。
+    /// 起こすと、保存から絵が変わるまでの待ちに乗る。**求められなかった答えは持ち回らない** — 問いがたまたま
+    /// 失敗した (期限を越えた・置き場の鍵を待たされた) 回の「何も外さない」を覚えると、並びが変わるまで古い包みを
+    /// 探し続ける。次の建ちで問い直す。名乗りは、外す包みが変わった回だけ返す (起動で 1 度)。
     /// 作り直しの糸から書き、子を起こす口から読むので、鍵で守る。
     final class Carried: @unchecked Sendable {
         private struct Key: Equatable {
@@ -91,13 +104,13 @@ nonisolated enum AssetScope {
             let built = BundleCommand.resourceBundles(besides: executable, excluding: []).map(\.lastPathComponent)
             let key = Key(declared: context.declared, place: context.place, product: context.product, built: built)
             let reuse = lock.withLock { self.key == key }
-            let names =
+            let decided: Set<String>? =
                 reuse
                 ? lock.withLock { self.names }
-                : AssetScope.undeclaredBundles(
-                    context: context, executable: executable, package: package, asking: asking)
+                : AssetScope.decided(context: context, executable: executable, package: package, asking: asking)
+            let names = decided ?? []
             return lock.withLock {
-                self.key = key
+                self.key = decided == nil ? nil : key
                 self.names = names
                 guard names != announced else { return nil }
                 announced = names
