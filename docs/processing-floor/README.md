@@ -131,7 +131,15 @@ jq -r 'select(((.category // "") == "math" and ((.subcategory // "") | test("^(c
   | input_filename' "$ref"/processing/*.json | wc -l   # 64
 ```
 
-書き出しのライブラリ (`processing.pdf`・`processing.svg`・`processing.dxf`) のページは、項目に数えない ([#3688 の決定](https://github.com/mokume-metal/mokume/issues/3688#issuecomment-6586703173)・2026-11-03)。リファレンスのクローンに項目が無く、そのページが挙げる API のうち本体のリファレンスに載るもの (`beginRecord()`・`endRecord()`・`beginRaw()`・`endRaw()`・`size()` ほか) は、本体の領域の行が扱う。種類 (PDF・SVG・DXF) との関係は、その行の理由に書く。`createGraphics(w, h, PDF)` の描画先の指定は、順 3 の「色・変換・光とカメラ・描画」の行で書く。
+色・変換・光とカメラ・描画の 69 件は、category が `color` (17)・`lights_camera` (27)・`transform` (13)・`rendering` (11)・`pgraphics` (2) の項目 70 件から、所属 (`classanchor`) が `PImage` の 1 件を除いたものである。`PImage.blendColor()` は category が `color` だが、画像の表が所属で数えているので、この式は除いて二重に数えない。category の大文字小文字は揃っていない (`hint()` だけが `Rendering`、残りの 10 件は `rendering`) ので、小文字にして比べる。`PShader` (クラスのページとメソッド) と `PGraphics` のクラスのページは category が `rendering`、`PGraphics.beginDraw()`・`endDraw()` は `pgraphics` である:
+
+```bash
+jq -r 'select(((.category // "") | ascii_downcase | test("^(color|lights_camera|transform|rendering|pgraphics)$"))
+  and ((.classanchor // "") != "PImage"))
+  | input_filename' "$ref"/processing/*.json | wc -l   # 69
+```
+
+書き出しのライブラリ (`processing.pdf`・`processing.svg`・`processing.dxf`) のページは、項目に数えない ([#3688 の決定](https://github.com/mokume-metal/mokume/issues/3688#issuecomment-6586703173)・2026-11-03)。リファレンスのクローンに項目が無く、そのページが挙げる API のうち本体のリファレンスに載るもの (`beginRecord()`・`endRecord()`・`beginRaw()`・`endRaw()`・`size()` ほか) は、本体の領域の行が扱う。種類 (PDF・SVG・DXF) との関係は、その行の理由に書く。`createGraphics(w, h, PDF)` の描画先の指定は、色・変換・光とカメラ・描画の表 ([color-transform-rendering.md](color-transform-rendering.md)) の `createGraphics()` の行に書いた。
 
 ## 領域の一覧
 
@@ -146,7 +154,7 @@ jq -r 'select(((.category // "") == "math" and ((.subcategory // "") | test("^(c
 | 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | [#3687] |
 | 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 81 | `input-output-environment.md` | [#3688] |
 | 3 | 数学・PVector・定数 | 64 | `math.md` | [#4176] |
-| 3 | 色・変換・光とカメラ・描画 | 70 | `color-transform-rendering.md` | 順 2 の後 |
+| 3 | 色・変換・光とカメラ・描画 (`PImage.blendColor()` は画像の表が数える) | 69 | `color-transform-rendering.md` | [#4177] |
 | 3 | 文字 | 13 | `typography.md` | 順 2 の後 |
 | 3 | データ: 文字列・配列・リスト・辞書・変換 | 167 | `data-strings-collections.md` | 順 2 の後 |
 | 3 | 構造・制御 | 76 | `structure.md` | 順 2 の後 |
@@ -175,4 +183,5 @@ jq -r 'select(((.category // "") == "math" and ((.subcategory // "") | test("^(c
 [#3687]: https://github.com/mokume-metal/mokume/issues/3687
 [#3688]: https://github.com/mokume-metal/mokume/issues/3688
 [#4176]: https://github.com/mokume-metal/mokume/issues/4176
+[#4177]: https://github.com/mokume-metal/mokume/issues/4177
 [#4180]: https://github.com/mokume-metal/mokume/issues/4180
