@@ -788,6 +788,46 @@ struct SoundAnalysisNoticeTests {
         #expect(window.windowQueries == 1)
     }
 
+    @Test("受け手のある所で作った音は、受け手の無い所 (Task.detached・GCD) で読んでも、作った時点の受け手へ名乗る (#4144)")
+    func aReadWithoutAReceiverReachesTheOneItWasMadeUnder() {
+        let sink = CountingSink(window: true)
+        var levels = LaunchingSketch.$replay.withValue(sink) { DeferredLevels(replayKind: "TriOsc") }
+        var clock = LaunchingSketch.$replay.withValue(sink) { SoundClockNotice(reader: "soundTime") }
+        _ = levels.levels()
+        clock.noteRead()
+        #expect(sink.reasons == [reason, ReplayRecorder.Reason.soundClock("soundTime")], "\(sink.reasons)")
+    }
+
+    @Test("受け手の無い所で作った音は、最初に受け手のある所で読まれた時点の受け手を控え、後から差し替えない (#4144)")
+    func aReceiverIsAdoptedOnceAtTheFirstReadUnderOne() {
+        var clock = SoundClockNotice(reader: "SoundFile.position")
+        // 受け手の無い所で読んでも名乗らない (まだ控えていない)
+        clock.noteRead()
+        let first = CountingSink(window: false)
+        LaunchingSketch.$replay.withValue(first) { clock.noteRead() }
+        let second = CountingSink(window: true)
+        LaunchingSketch.$replay.withValue(second) { clock.noteRead() }
+        // 外の読みは、後の受け手ではなく最初に控えた受け手へ向かう (ウィンドウでないので名乗らない)
+        #expect(first.windowQueries == 1 && second.windowQueries == 1)
+        clock.noteRead()
+        #expect(first.windowQueries == 2 && second.windowQueries == 1, "外の読みは最初に控えた受け手へ")
+        #expect(first.reasons.isEmpty && second.reasons == [ReplayRecorder.Reason.soundClock("SoundFile.position")])
+    }
+
+    @Test("控えた受け手が終わった後の、受け手の無い所の読みは名乗らない (#4144)")
+    func aReadAfterTheReceiverEndedIsSilent() {
+        var clock = SoundClockNotice(reader: "soundTime")
+        do {
+            let ended = CountingSink(window: true)
+            clock = LaunchingSketch.$replay.withValue(ended) { SoundClockNotice(reader: "soundTime") }
+        }
+        clock.noteRead()
+        // 受け手は弱く持つので消えている。落ちずに通り過ぎる
+        let later = CountingSink(window: true)
+        LaunchingSketch.$replay.withValue(later) { clock.noteRead() }
+        #expect(later.reasons == [ReplayRecorder.Reason.soundClock("soundTime")], "実行の中の読みは、いまの受け手へ")
+    }
+
     @Test("名乗る種類を持たない置き場は、受け手が居ても名乗らない")
     func aKindlessHolderIsSilent() {
         var levels = DeferredLevels()

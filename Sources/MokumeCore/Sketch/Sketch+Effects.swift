@@ -444,6 +444,8 @@ extension SketchPart {
     public func loadEffect(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        try resourceCanvas(ShaderFailure.self).loadEffect(path, values: values)
+        try withReplayReceiver { () throws(ShaderFailure) in
+            try resourceCanvas(ShaderFailure.self).loadEffect(path, values: values)
+        }
     }
 }

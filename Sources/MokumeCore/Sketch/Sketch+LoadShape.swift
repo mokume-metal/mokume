@@ -330,12 +330,14 @@ extension SketchPart {
     // shot: 4 snippet=114b62b5
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
         noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")
-        let url = try dataURL(path)
-        let data = try TextFile.readData(url, path: path)
-        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
-        ReplayNotice.readResource(path, data: data)
-        let drawing = try SVGFile.parse(try TextFile.text(of: data, path: path), path: path)
-        return try resourceCanvas(DataFailure.self).shape(of: drawing, readFrom: path)
+        return try withReplayReceiver { () throws(DataFailure) in
+            let url = try dataURL(path)
+            let data = try TextFile.readData(url, path: path)
+            // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+            ReplayNotice.readResource(path, data: data)
+            let drawing = try SVGFile.parse(try TextFile.text(of: data, path: path), path: path)
+            return try resourceCanvas(DataFailure.self).shape(of: drawing, readFrom: path)
+        }
     }
 
     /// SVG のファイルを読み、保持した形にする。**読んでいる間、他の仕事を止めない。**
@@ -375,19 +377,21 @@ extension SketchPart {
     // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
         let surface = try loadingCanvas(DataFailure.self)
-        // 届くフレームは記録に無い (#3575)
-        ReplayNotice.waitingLoad()
-        let url = try dataURL(path)
-        // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
-        let hasher = ReplayNotice.resourceHasher
-        let (drawing, digest) = try await Self.readAway { () throws(DataFailure) in
-            let data = try TextFile.readData(url, path: path)
-            return (
-                try SVGFile.parse(try TextFile.text(of: data, path: path), path: path),
-                hasher?.sha256(of: data, name: path)
-            )
+        return try await withReplayReceiver { () async throws(DataFailure) in
+            // 届くフレームは記録に無い (#3575)
+            ReplayNotice.waitingLoad()
+            let url = try dataURL(path)
+            // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
+            let hasher = ReplayNotice.resourceHasher
+            let (drawing, digest) = try await Self.readAway { () throws(DataFailure) in
+                let data = try TextFile.readData(url, path: path)
+                return (
+                    try SVGFile.parse(try TextFile.text(of: data, path: path), path: path),
+                    hasher?.sha256(of: data, name: path)
+                )
+            }
+            ReplayNotice.readResource(path, sha256: digest)
+            return surface.shape(of: drawing, readFrom: path)
         }
-        ReplayNotice.readResource(path, sha256: digest)
-        return surface.shape(of: drawing, readFrom: path)
     }
 }

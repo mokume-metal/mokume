@@ -1482,7 +1482,7 @@ package final class SketchRuntime {
     }
 
     /// 再現を保証しないものを聞く係。記録していれば記録する係、流していれば流す係 (#3575)。どちらでもなければ `nil`。
-    private var unreproducibleSink: (any UnreproducibleSink)? { replay ?? player }
+    var unreproducibleSink: (any UnreproducibleSink)? { replay ?? player }
 
     /// 入り口を足した。**記録が持たない値の出どころなら、その種類を名乗る** (種類ごとに 1 度)。記録と再生の両方で名乗る。
     ///

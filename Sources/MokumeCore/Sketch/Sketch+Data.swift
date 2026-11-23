@@ -173,22 +173,24 @@ extension SketchPart {
     /// 扱いは ``requestStrings(_:)`` と同じで、**`setup()` の中で `Task` を生成し、そこから呼ぶ。**
     // shot: 撮れない 読んだバイト列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func requestBytes(_ path: String) async throws(DataFailure) -> [UInt8] {
-        // 届くフレームは記録に無い (#3575)
-        ReplayNotice.waitingLoad()
-        if let url = try WebFile.url(path) {
-            // 本文は記録に持たない (#3570)
-            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
-            return [UInt8](try await WebFile.fetch(url, path: path))
+        try await withReplayReceiver { () async throws(DataFailure) in
+            // 届くフレームは記録に無い (#3575)
+            ReplayNotice.waitingLoad()
+            if let url = try WebFile.url(path) {
+                // 本文は記録に持たない (#3570)
+                LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
+                return [UInt8](try await WebFile.fetch(url, path: path))
+            }
+            let url = try dataURL(path)
+            // 写しもハッシュも裏で済ませ、受け手の引けるここでは名乗るだけ (#4092)。記録・再生していなければ取らない
+            let hasher = ReplayNotice.resourceHasher
+            let (bytes, digest) = try await Self.readAway { () throws(DataFailure) in
+                let data = try TextFile.readData(url, path: path)
+                return ([UInt8](data), hasher?.sha256(of: data, name: path))
+            }
+            ReplayNotice.readResource(path, sha256: digest)
+            return bytes
         }
-        let url = try dataURL(path)
-        // 写しもハッシュも裏で済ませ、受け手の引けるここでは名乗るだけ (#4092)。記録・再生していなければ取らない
-        let hasher = ReplayNotice.resourceHasher
-        let (bytes, digest) = try await Self.readAway { () throws(DataFailure) in
-            let data = try TextFile.readData(url, path: path)
-            return ([UInt8](data), hasher?.sha256(of: data, name: path))
-        }
-        ReplayNotice.readResource(path, sha256: digest)
-        return bytes
     }
 
     /// バイト列を、そのままファイルにする。書き終わるまで返らない。
@@ -791,15 +793,17 @@ extension SketchPart {
     /// 名前の中身をそのまま読む。読み終わるまで返らない。URL なら受け取りを待ち、ファイルなら
     /// 探して読む。
     private func readData(_ path: String) throws(DataFailure) -> Data {
-        if let url = try WebFile.url(path) {
-            // 本文は記録に持たない (#3570)
-            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
-            return try WebFile.fetchWaiting(url, path: path)
+        try withReplayReceiver { () throws(DataFailure) in
+            if let url = try WebFile.url(path) {
+                // 本文は記録に持たない (#3570)
+                LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
+                return try WebFile.fetchWaiting(url, path: path)
+            }
+            let data = try TextFile.readData(try dataURL(path), path: path)
+            // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+            ReplayNotice.readResource(path, data: data)
+            return data
         }
-        let data = try TextFile.readData(try dataURL(path), path: path)
-        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
-        ReplayNotice.readResource(path, data: data)
-        return data
     }
 
     /// 名前の中身を読んで解く。**読んでいる間、他の仕事を止めない。**
@@ -809,25 +813,27 @@ extension SketchPart {
     private func requestParsed<Value: Sendable>(
         _ path: String, _ parse: @escaping @Sendable (String) throws(DataFailure) -> Value
     ) async throws(DataFailure) -> Value {
-        // 届くフレームは記録に無い (#3575)。文字・表・JSON・XML の待つ口はここを通る
-        ReplayNotice.waitingLoad()
-        if let url = try WebFile.url(path) {
-            // 本文は記録に持たない (#3570)
-            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
-            let body = try await WebFile.fetch(url, path: path)
-            return try await Self.readAway { () throws(DataFailure) in
-                try parse(try TextFile.text(of: body, path: path))
+        try await withReplayReceiver { () async throws(DataFailure) in
+            // 届くフレームは記録に無い (#3575)。文字・表・JSON・XML の待つ口はここを通る
+            ReplayNotice.waitingLoad()
+            if let url = try WebFile.url(path) {
+                // 本文は記録に持たない (#3570)
+                LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
+                let body = try await WebFile.fetch(url, path: path)
+                return try await Self.readAway { () throws(DataFailure) in
+                    try parse(try TextFile.text(of: body, path: path))
+                }
             }
+            let url = try dataURL(path)
+            // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
+            let hasher = ReplayNotice.resourceHasher
+            let (value, digest) = try await Self.readAway { () throws(DataFailure) in
+                let data = try TextFile.readData(url, path: path)
+                return (try parse(try TextFile.text(of: data, path: path)), hasher?.sha256(of: data, name: path))
+            }
+            ReplayNotice.readResource(path, sha256: digest)
+            return value
         }
-        let url = try dataURL(path)
-        // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
-        let hasher = ReplayNotice.resourceHasher
-        let (value, digest) = try await Self.readAway { () throws(DataFailure) in
-            let data = try TextFile.readData(url, path: path)
-            return (try parse(try TextFile.text(of: data, path: path)), hasher?.sha256(of: data, name: path))
-        }
-        ReplayNotice.readResource(path, sha256: digest)
-        return value
     }
 
     /// 名前を、在るファイルの場所へ解く。探し方は ``assetURL(_:)`` そのもの。SVG を読む口
