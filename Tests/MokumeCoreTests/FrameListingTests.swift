@@ -38,7 +38,12 @@ struct FrameListingTests {
             Bootstrap.releaseSend(port)
             usleep(10_000)
         }
-        #expect(!stillThere, "手放した名前がまだ引ける")
+        if stillThere, let port = Bootstrap.lookUp(name) {
+            Bootstrap.releaseSend(port)
+        } else {
+            stillThere = false
+        }
+        #expect(!stillThere, "名前を手放していない: \(name) が 5 秒後も引ける (受信の権利を手放していないか、launchd が名前を外すのが遅れている)")
     }
 
     @Test("名前は実行ごとに一意で、pid とウィンドウを含む")
