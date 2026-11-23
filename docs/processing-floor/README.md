@@ -123,6 +123,14 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
   | input_filename' "$ref"/processing/*.json | wc -l   # 81
 ```
 
+数学・PVector・定数の 64 件は、category が `math` で subcategory が `calculation` (17)・`trigonometry` (9)・`random` (6) の項目 32 件と、category が `constants` の 5 件と、所属 (`classanchor`) が `PVector` の 27 件 (クラスのページ 1・フィールド 3・メソッド 23) である。category が `math` で subcategory が `Operators` (11)・`Bitwise Operators` (4) の 15 件は言語の演算子で、この式に入れない (構造・制御の表 ([#4180]) が扱う):
+
+```bash
+jq -r 'select(((.category // "") == "math" and ((.subcategory // "") | test("^(calculation|trigonometry|random)$")))
+  or (.category // "") == "constants" or (.classanchor // "") == "PVector")
+  | input_filename' "$ref"/processing/*.json | wc -l   # 64
+```
+
 書き出しのライブラリ (`processing.pdf`・`processing.svg`・`processing.dxf`) のページは、項目に数えない ([#3688 の決定](https://github.com/mokume-metal/mokume/issues/3688#issuecomment-6586703173)・2026-11-03)。リファレンスのクローンに項目が無く、そのページが挙げる API のうち本体のリファレンスに載るもの (`beginRecord()`・`endRecord()`・`beginRaw()`・`endRaw()`・`size()` ほか) は、本体の領域の行が扱う。種類 (PDF・SVG・DXF) との関係は、その行の理由に書く。`createGraphics(w, h, PDF)` の描画先の指定は、順 3 の「色・変換・光とカメラ・描画」の行で書く。
 
 ## 領域の一覧
@@ -137,7 +145,7 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
 | 2 | 画像 | 34 | `image.md` | [#3686] |
 | 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | [#3687] |
 | 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 81 | `input-output-environment.md` | [#3688] |
-| 3 | 数学・PVector・定数 | 64 | `math.md` | 順 2 の後 |
+| 3 | 数学・PVector・定数 | 64 | `math.md` | [#4176] |
 | 3 | 色・変換・光とカメラ・描画 | 70 | `color-transform-rendering.md` | 順 2 の後 |
 | 3 | 文字 | 13 | `typography.md` | 順 2 の後 |
 | 3 | データ: 文字列・配列・リスト・辞書・変換 | 167 | `data-strings-collections.md` | 順 2 の後 |
@@ -166,3 +174,5 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
 [#3686]: https://github.com/mokume-metal/mokume/issues/3686
 [#3687]: https://github.com/mokume-metal/mokume/issues/3687
 [#3688]: https://github.com/mokume-metal/mokume/issues/3688
+[#4176]: https://github.com/mokume-metal/mokume/issues/4176
+[#4180]: https://github.com/mokume-metal/mokume/issues/4180

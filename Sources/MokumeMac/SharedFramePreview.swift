@@ -59,6 +59,10 @@ package final class SharedFramePreview {
     private var knobs: KnobOverlay?
     /// 面を畳んでいるか。**面を作り直しても持ち回る** — 保存のたびに畳んだ面が開き直らないように (#4137)。
     private let knobState = KnobPanelState()
+    /// つまみの手の操作の履歴 (#4124)。**面を作り直しても、子を作り直しても持ち回る** — つまみで値を探りながら
+    /// コードを直すのが主な使い方で、保存のたびに消えると「さっきの値」へ戻れない。段は宣言の名前で引くので、
+    /// 子が替わっても名前が残っていれば戻る。
+    private let knobHistory: KnobHistory?
 
     /// - Parameters:
     ///   - facet: 差し出し元の PID が置かれるディレクトリ (`.mokume/viewport`)。
@@ -67,7 +71,9 @@ package final class SharedFramePreview {
     public init(gpu: RenderDevice, facet: URL, params: URL? = nil, title: String)
         throws(RenderFailure)
     {
-        self.params = params.map { RemoteParams(directory: $0) }
+        let remote = params.map { RemoteParams(directory: $0) }
+        self.params = remote
+        self.knobHistory = remote.map { remote in KnobHistory(boxes: { remote.boxes }) }
         self.baseTitle = title
         self.stage = try SharedFrameStage(
             gpu: gpu, facet: facet,
@@ -252,7 +258,8 @@ package final class SharedFramePreview {
             // **数字は面から読む。** 数えているのは走っている側で、こちらは読み手である
             // ([ADR-0030] 決定 7) — 届いていなければ `nil` が返り、面は「—」と描く
             let overlay = KnobOverlay(
-                boxes: params.boxes, numbers: { [stage] in stage.numbers }, state: knobState)
+                boxes: params.boxes, numbers: { [stage] in stage.numbers }, state: knobState,
+                history: knobHistory)
             // 前の面は列が外す
             stage.placeKnobs(overlay)
             knobs = overlay
