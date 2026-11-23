@@ -68,7 +68,21 @@ struct WatchFrameListingTests {
 
         listing.follow(nil)
         #expect(FrameListing.entries(in: directory).isEmpty, "断った世代なのに目録に残っている")
-        #expect(Bootstrap.lookUp(name).map { Bootstrap.releaseSend($0) } == nil, "名前を手放していない")
+        // launchd が名前を外すのは受信の権利の死を知った後なので、期限つきで待つ (#4101。`FrameListingTests` の
+        // `checkInThenLookUpThenRelease` と同じ待ち)
+        let deadline = Date().addingTimeInterval(5)
+        var stillThere = true
+        while Date() < deadline {
+            guard let port = Bootstrap.lookUp(name) else { stillThere = false; break }
+            Bootstrap.releaseSend(port)
+            usleep(10_000)
+        }
+        if stillThere, let port = Bootstrap.lookUp(name) {
+            Bootstrap.releaseSend(port)
+        } else {
+            stillThere = false
+        }
+        #expect(!stillThere, "名前を手放していない: \(name) が 5 秒後も引ける (受信の権利を手放していないか、launchd が名前を外すのが遅れている)")
 
         listing.follow(share)
         #expect(FrameListing.entries(in: directory).count == 1)
