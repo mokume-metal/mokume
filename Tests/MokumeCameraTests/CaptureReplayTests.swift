@@ -41,7 +41,7 @@ struct CaptureReplayTests {
         let url = directory.appendingPathComponent("take.json")
         let recorder = try SketchRuntime(
             sketch: Live(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
-        try #require(recorder.startRecording(try #require(ReplayRequest(destination: url.path))))
+        try #require(recorder.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
         for _ in 0..<3 { try recorder.advance() }
         recorder.closePlugins()
         let camera = ReplayRecorder.Reason.outsideInput("camera")
