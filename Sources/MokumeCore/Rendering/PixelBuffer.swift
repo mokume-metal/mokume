@@ -10,7 +10,7 @@
 /// 原点は左上、行優先。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-public struct PixelBuffer: Equatable, Sendable {
+public nonisolated struct PixelBuffer: Equatable, Sendable {
     /// 幅 (画素)。
     public let width: Int
     /// 高さ (画素)。
@@ -22,7 +22,7 @@ public struct PixelBuffer: Equatable, Sendable {
     /// `buffer[x: x, y: y]` を ``red(_:)`` ほかで読む (不透明度 0 の画素は 0 を返す)。
     public let components: [Float16]
 
-    nonisolated init(width: Int, height: Int, components: [Float16]) {
+    init(width: Int, height: Int, components: [Float16]) {
         self.width = width
         self.height = height
         self.components = components
@@ -35,7 +35,7 @@ public struct PixelBuffer: Equatable, Sendable {
     /// どの API で読んでも答えは変わらない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public nonisolated subscript(x: Int, y: Int) -> LinearRGBA {
+    public subscript(x: Int, y: Int) -> LinearRGBA {
         // 置き場の位置を求める掛け算より先に見る。大きな位置では掛け算のほうが溢れて落ちる
         guard x >= 0, y >= 0, x < width, y < height else { return .transparent }
         let base = (y * width + x) * 4

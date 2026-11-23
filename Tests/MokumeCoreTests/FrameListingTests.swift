@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import IOSurface
 import MokumeTestSupport
 import Testing
 
@@ -38,7 +39,12 @@ struct FrameListingTests {
             Bootstrap.releaseSend(port)
             usleep(10_000)
         }
-        #expect(!stillThere, "手放した名前がまだ引ける")
+        if stillThere, let port = Bootstrap.lookUp(name) {
+            Bootstrap.releaseSend(port)
+        } else {
+            stillThere = false
+        }
+        #expect(!stillThere, "名前を手放していない: \(name) が 5 秒後も引ける (受信の権利を手放していないか、launchd が名前を外すのが遅れている)")
     }
 
     @Test("名前は実行ごとに一意で、pid とウィンドウを含む")
@@ -193,6 +199,142 @@ struct FrameListingTests {
         #expect(said.count == 1)
         #expect(said.first?.contains("keeps running") == true, "走り続けることを言わない: \(said)")
         #expect(FrameListing.entries(in: directory).isEmpty, "断られたのに目録に置いた")
+    }
+
+    // MARK: - 送り手の待ち行列 (#4060)
+
+    /// 名乗りの受信の port の待ち行列の上限。
+    private func queueLimit(of port: mach_port_t) -> mach_port_msgcount_t? {
+        var limits = mach_port_limits_t()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_port_limits_t>.size / MemoryLayout<natural_t>.size)
+        let code = withUnsafeMutablePointer(to: &limits) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                mach_port_get_attributes(mach_task_self_, port, MACH_PORT_LIMITS_INFO, $0, &count)
+            }
+        }
+        return code == KERN_SUCCESS ? limits.mpl_qlimit : nil
+    }
+
+    /// **受け手が上限まで繋いで面を全部返しても、送り手が読む前に落ちない数を待ち行列に持つ** (#4060)。OS の既定
+    /// (測ると 2) のままだと、送り手が忙しい間に 3 通目の `release` から落ち、返した面が戻らない。
+    @Test("名乗った送り手の port の待ち行列の上限は、受け手の上限 × (面の枚数の上限 + 2) である")
+    func theSketchPortQueuesEveryRelease() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "S", identity: "/s", title: "S", in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        defer { announcement.withdraw() }
+        #expect(FrameLink.sketchQueueLimit == FrameLink.receiverLimit * (FrameLink.surfaceCountRange.upperBound + 2))
+        #expect(FrameLink.sketchQueueLimit <= Int(MACH_PORT_QLIMIT_MAX))
+        #expect(queueLimit(of: announcement.receivePort) == mach_port_msgcount_t(FrameLink.sketchQueueLimit))
+        // 約束の文が同じ数と決め方を言う (2 つの上限が変わったら文も直す)
+        let contract = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Schemas/frame-link.md"), encoding: .utf8)
+        let stated =
+            "The sketch's port queues \(FrameLink.sketchQueueLimit) messages: \(FrameLink.receiverLimit) receivers × "
+            + "(\(FrameLink.surfaceCountRange.upperBound) surfaces + 2)"
+        #expect(contract.contains(stated), "Schemas/frame-link.md が待ち行列の上限を言わない: \(stated)")
+    }
+
+    /// **上限を越える連投はまだ落ちるが、送りは待たずに戻る** (#4060 の代償・ADR-0049 決定 4)。送り手が 1 通も読まない
+    /// 間に、受け手と同じ名前を引いて上限ちょうどまで送れ、次の 1 通は `MACH_SEND_TIMED_OUT` で戻る。
+    @Test("送り手が読まない間、受け手は上限の数までちょうど送れ、次の 1 通は待たずに落ちる")
+    func aBurstPastTheLimitIsDroppedWithoutWaiting() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "S", identity: "/s", title: "S", in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        defer { announcement.withdraw() }
+        let service = try #require(Bootstrap.lookUp(announcement.entry.serviceName))
+        defer { Bootstrap.releaseSend(service) }
+        var payload = FrameLink.Payload()
+        payload.append(UInt32(0))
+        payload.append(UInt32(0))
+        var sent = 0
+        var result = KERN_SUCCESS
+        // 上限を越えるまで送る (送り手は読まない)。数えるのは送れた通数
+        while sent <= FrameLink.sketchQueueLimit {
+            result = FrameLink.send(.release, to: service, payload: payload)
+            guard result == KERN_SUCCESS else { break }
+            sent += 1
+        }
+        #expect(sent == FrameLink.sketchQueueLimit, "送れた通数: \(sent)")
+        #expect(result == MACH_SEND_TIMED_OUT, "上限を越えた 1 通の戻り値: \(result)")
+    }
+
+    /// **待ち行列の上限は送り手の port に入る通数の上限で、受け入れた受け手の数とは別である** (#4060 の反証)。受け入れて
+    /// いない受け手の connect (5 人目・送り直し・作り直した port に残った古い connect) も同じ枠に入り、その分だけ
+    /// release が先に落ちる。約束の文はこの範囲で言い切る (`Schemas/frame-link.md`)。
+    @Test("受け入れていない受け手の connect も送り手の待ち行列の枠を使い、その数だけ release の入る数が減る")
+    func unacceptedConnectsShareTheQueue() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "S", identity: "/s", title: "S", in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        defer { announcement.withdraw() }
+        let service = try #require(Bootstrap.lookUp(announcement.entry.serviceName))
+        defer { Bootstrap.releaseSend(service) }
+        // 送り手が読まない間に、受け入れられていない受け手が 3 通の connect を送る (port を作り直すたびの 1 通など)
+        var reply: mach_port_t = 0
+        mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &reply)
+        defer { mach_port_mod_refs(mach_task_self_, reply, MACH_PORT_RIGHT_RECEIVE, -1) }
+        let connects = 3
+        for _ in 0..<connects {
+            let surfaces = (0..<FrameLink.surfaceCountRange.lowerBound).compactMap { _ in
+                IOSurfaceCreate(
+                    [
+                        kIOSurfaceWidth: 16, kIOSurfaceHeight: 8, kIOSurfacePixelFormat: FrameLink.surfaceFormat,
+                        kIOSurfaceBytesPerElement: 8,
+                    ] as [CFString: Any] as CFDictionary)
+            }
+            try #require(FrameLink.connect(to: service, reply: reply, surfaces: surfaces) == KERN_SUCCESS)
+        }
+        var payload = FrameLink.Payload()
+        payload.append(UInt32(1))
+        payload.append(UInt32(0))
+        var released = 0
+        while released <= FrameLink.sketchQueueLimit,
+            FrameLink.send(.release, to: service, payload: payload) == KERN_SUCCESS
+        {
+            released += 1
+        }
+        #expect(released == FrameLink.sketchQueueLimit - connects, "connect の後に入った release: \(released)")
+    }
+
+    /// **上限を上げられない port でも名乗りは続け、診断に 1 行だけ言う** (#4060 の崩れたときの移り先・ADR-0020 決定 5)。
+    /// 受信の権利を持たない名前 (死んだ名前) を登録の結果に差し替えて、設定を断らせる。
+    @Test("待ち行列の上限を上げられなければ、既定のまま名乗って目録に載せ、診断に 1 行だけ出す")
+    func aQueueLimitThatCannotBeRaisedKeepsTheAnnouncement() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        var said: [String] = []
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "S", identity: "/s", title: "S", in: directory, warn: { said.append($0) },
+                checkIn: { _ in
+                    var port: mach_port_t = 0
+                    mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &port)
+                    mach_port_insert_right(mach_task_self_, port, port, mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND))
+                    // 受信の権利を手放すと、残った送信の権利は死んだ名前になる
+                    mach_port_mod_refs(mach_task_self_, port, MACH_PORT_RIGHT_RECEIVE, -1)
+                    return .success(port)
+                }),
+            "上限を上げられないだけで名乗りをやめた: \(said)")
+        defer {
+            // 下ろしは受信の権利を手放そうとするだけなので、死んだ名前の参照は検査が返す
+            let name = announcement.receivePort
+            announcement.withdraw()
+            FrameLink.releaseName(name)
+        }
+        #expect(said.count == 1, "\(said)")
+        #expect(said.first?.contains("keeps running") == true, "走り続けることを言わない: \(said)")
+        #expect(
+            said.first?.contains("never written to again") == true, "返された面が戻らなくなりうることを言わない: \(said)")
+        #expect(FrameListing.entries(in: directory).map(\.serviceName) == [announcement.entry.serviceName])
     }
 
     @Test("名乗るときに、死んだ送り手の項目を掃除する")

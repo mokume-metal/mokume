@@ -34,6 +34,7 @@ import Foundation
 /// (``TableRow/getFloat(_:)-(String)``)。だから書き戻すと、触っていないセルは読んだときと
 /// 同じ文字のまま出る (`12.50` が `12.5` に変わったりしない)。
 public struct Table: Equatable, Sendable {
+    // 既定の main actor のまま: 読み出しが main actor の警告の口 (`warnOnce` など) を呼ぶ (#4098)
     /// 見出し。見出しの行を読まなかった表は `nil`。
     var titles: [String]?
     /// セル。行ごとに、どの行も ``columnCount`` だけ並ぶ。
@@ -521,6 +522,7 @@ public struct Table: Equatable, Sendable {
 ///
 /// **読むためのコピーである。** 書き換えは表に対して行う (``Table/setFloat(_:_:_:)-(_,String,_)``)。
 public struct TableRow: Sendable {
+    // 既定の main actor のまま: 読み出しが main actor の警告の口 (`warnOnce` など) を呼ぶ (#4098)
     let titles: [String]?
     let cells: [String]
     /// 表の中で何行目か (0 から)。知らせる文面に載せる。

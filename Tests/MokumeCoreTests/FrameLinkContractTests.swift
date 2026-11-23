@@ -603,7 +603,7 @@ struct FrameLinkContractGPUTests {
     private func occupyAllButOne(of announcement: FrameAnnouncement, sender: FrameSender) throws -> [Occupant] {
         let service = try #require(Bootstrap.lookUp(announcement.entry.serviceName))
         defer { Bootstrap.releaseSend(service) }
-        // 1 通ずつ捌く (送り手の待ち行列は短い)
+        // 1 通ずつ捌く
         let occupants = try (0..<(FrameLink.receiverLimit - 1)).map { _ in
             defer { sender.drain() }
             return try Occupant(service: service, width: sender.width, height: sender.height)
@@ -833,7 +833,7 @@ struct FrameLinkContractGPUTests {
 
     /// **番号を知っている受け手の答えが遅れても、遅れた答えは新しい繋がりに混ざらない** ([#3968])。受け手は期限で
     /// port を作り直す (`disconnect` は送らない) ので、送り手が後で古い connect に答えても、その `accepted` (前の番号) は
-    /// 届かない。新しい connect は送り手の短い待ち行列に収まり、時間切れは 1 回で済む。
+    /// 届かない。新しい connect は送り手の待ち行列に収まり、時間切れは 1 回で済む。
     ///
     /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
     @Test("繋ぎ直しの答えが遅れると、受け手は port を作り直し、遅れた accepted を受けずに 1 回の時間切れで新しい番号の絵を受ける")
@@ -870,8 +870,8 @@ struct FrameLinkContractGPUTests {
         #expect(inARow(receiver) == [1], "時間切れが重なった: \(events)")
         let timedOut = receiver.events(named: "answerTimedOut").first
         #expect(timedOut?["known"] as? Bool == true, "\(events)")
-        // 見切った後の connect は、送り手の待ち行列 (上限 2) が古い connect と古い port の dead-name の知らせで埋まって
-        // いれば送れない。送り手が読み始めたら、時間切れを待たずに送り直して入る
+        // 見切った後の connect は、送り手の待ち行列 (上限 ``FrameLink/sketchQueueLimit``) が埋まっていれば送れない。
+        // 送れなければ、送り手が読み始めたら時間切れを待たずに送り直して入る
         let third = receiver.events(named: "connected").first { $0["attempt"] as? Int == 3 }
         if third?["result"] as? Int != Int(KERN_SUCCESS) {
             #expect(!receiver.events(named: "resent").isEmpty, "送れなかった connect を送り直していない: \(events)")
@@ -917,7 +917,7 @@ struct FrameLinkContractGPUTests {
         #expect(said.filter { $0.hasPrefix("Ignored a request") }.count == 1, "\(said)")
     }
 
-    /// **送れなかった connect は、答えを待たずに送り直す** ([#3968])。送り手の名前の待ち行列 (上限 2) を検査が埋めて
+    /// **送れなかった connect は、答えを待たずに送り直す** ([#3968])。送り手の名前の待ち行列 (上限 ``FrameLink/sketchQueueLimit``) を検査が埋めて
     /// から受け手に送らせる。送れなかったことは送った時点で分かるので、時間切れを待たない。
     ///
     /// [#3968]: https://github.com/mokume-metal/mokume/issues/3968
@@ -939,7 +939,7 @@ struct FrameLinkContractGPUTests {
         let name = announcement.receivePort
         mach_port_insert_right(mach_task_self_, name, name, mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND))
         var filled = 0
-        while filled < 16, FrameLink.send(.disconnect, to: name) == KERN_SUCCESS { filled += 1 }
+        while filled <= FrameLink.sketchQueueLimit, FrameLink.send(.disconnect, to: name) == KERN_SUCCESS { filled += 1 }
         mach_port_mod_refs(mach_task_self_, name, MACH_PORT_RIGHT_SEND, -1)
         receiver.resume()
         let failed = receiver.wait(upTo: 20) { !receiver.events(named: "connected").isEmpty }

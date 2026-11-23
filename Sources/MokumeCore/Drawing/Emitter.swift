@@ -9,7 +9,7 @@ import simd
 ///
 /// **出る場所だけを決める。** どちらへ飛ぶかは ``Heading`` が決めるので、形を差し替えても
 /// 飛ぶ向きは変わらない — 2 つを 1 つの指定へ混ぜると、形を変えた瞬間に向きまで変わる。
-public enum Emitter: Equatable, Sendable {
+public nonisolated enum Emitter: Equatable, Sendable {
     /// 1 点から。
     case point(_ x: Float, _ y: Float, _ z: Float = 0)
     /// 2 点を結ぶ線分の上から (どこも同じ確からしさで)。
