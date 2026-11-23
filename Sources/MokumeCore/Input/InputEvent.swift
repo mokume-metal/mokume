@@ -6,7 +6,7 @@ import Foundation
 /// 入ってくるイベント。
 ///
 /// ウィンドウからの実操作も、外から送られたものも、同じ形でここへ集まる。
-public enum InputEvent: Equatable, Sendable {
+public nonisolated enum InputEvent: Equatable, Sendable {
     /// `clickCount` は、この押下が何回目の連続した押下か (1 で単発、2 でダブルクリック)。
     /// ウィンドウは `NSEvent.clickCount` をそのまま運び、外から送る入力チャネルは省くと 1 と読む。
     case mouseDown(x: Float, y: Float, button: MouseButton, clickCount: Int = 1)

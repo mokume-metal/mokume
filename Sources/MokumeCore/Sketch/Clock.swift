@@ -8,7 +8,7 @@ import QuartzCore
 ///
 /// フレームを進める仕組みと、時刻をどこから取るかは別の話である。同じ進め方でも
 /// 時刻の出どころを変えれば、絵が再現するかどうかが変わる。
-public enum Clock: Equatable, Sendable {
+public nonisolated enum Clock: Equatable, Sendable {
     /// 実際に流れた時間。画面に出しながら動かすときの既定。
     ///
     /// ウィンドウでは、その枚が表示される予定の時刻で進む (``SketchPart/time``)。

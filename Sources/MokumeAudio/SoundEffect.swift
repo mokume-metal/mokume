@@ -86,7 +86,8 @@ public class SoundEffect: SynthSound {
     /// (``SoundFile/route(into:)``)。
     @discardableResult
     func connect(_ input: any EffectInput) -> Bool {
-        guard let node, !stage.isClosed else { return false }
+        // 足せずに閉じたステージ (外で作ったエフェクト) でも、断る理由は下で知らせる。繋ぐ前にもう 1 度見る
+        guard let node, !stage.isClosed || stage.wasRefused else { return false }
         let source: RackNode
         // ファイルの節は、**入力に選んでから**鳴らし始める (``SoundFile/nodeIsConnected()``)
         var routed: SoundFile?
@@ -113,6 +114,7 @@ public class SoundEffect: SynthSound {
                     + "connection would loop. This \(name) keeps its other inputs")
             return false
         }
+        guard !stage.isClosed else { return false }
         // 操作が溢れて受け付けられなければ、繋がず (入力の写しも変えず)、ステージが 1 度だけ知らせる (#3944)
         guard stage.rack.setInputs(node.id, stage.rack.inputs(of: node.id) | (1 << UInt64(source.id)))
         else {
