@@ -129,9 +129,9 @@ nonisolated enum AudioFile {
     /// 中身の無い誤りの domain (``isEndOfFile(_:)``)。
     static let emptyErrorDomain = "Foundation._GenericObjCError"
 
-    /// 解析とエフェクトへ渡す、チャンネルを平均したモノラルの標本列。平均するのは直に鳴らす経路が読むチャンネルで、
-    /// 配置がスピーカーを名乗らない 3 チャンネル以上の器 (``FilePlayer/isUnplaced(_:)``) は先頭の 2 チャンネル
-    /// (3 チャンネル目から先は鳴らないので入れない)、ほかは全チャンネル。
+    /// 解析とエフェクトへ渡す、チャンネルを平均したモノラルのサンプル列。平均するのは直接再生で鳴るチャンネルで、
+    /// チャンネルレイアウトがスピーカー位置を持たない 3 チャンネル以上のバッファ (``FilePlayer/isUnplaced(_:)``) は
+    /// 先頭の 2 チャンネル (3 チャンネル目から先は再生されないので入れない)、ほかは全チャンネル。
     static func mono(_ buffer: AVAudioPCMBuffer) -> [Float] {
         let count = Int(buffer.frameLength)
         let formatChannels = Int(buffer.format.channelCount)

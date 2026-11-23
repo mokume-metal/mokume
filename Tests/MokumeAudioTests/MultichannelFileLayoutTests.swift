@@ -350,8 +350,8 @@ struct MultichannelFileLayoutTests {
         !samples.isEmpty && samples.allSatisfy { abs($0 - expected) < tolerance }
     }
 
-    /// 配置を名乗らない `channels` チャンネルの器で、元のチャンネル `active` だけを 0.5 にしたときに、解析と
-    /// エフェクトへ入るはずの音 (直に鳴る先頭の 2 チャンネルの平均)。
+    /// スピーカー位置を持たない 3 チャンネル以上のバッファで、元のチャンネル `active` だけを 0.5 にしたときに、解析と
+    /// エフェクトへ入るはずの値 (直接再生で鳴る先頭の 2 チャンネルの平均)。
     static func expectedUnplacedMono(active: Int) -> Float { active < 2 ? 0.25 : 0 }
 
     @Test(
