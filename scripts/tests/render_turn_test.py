@@ -21,6 +21,9 @@
 8. **merge_group は RENDER_TURN_SLOTS (N) 本まで並走する** (#3319)。前の group を base sha の
    親を辿って N 段まで遡り、終わっていない run を持つ group が N 本未満なら通す。base ref の
    先端に着いたら遡らない。未設定なら 1 で、親を引かない (今までと同じ呼び出し)
+9. **走っている render-pr も枠に数える** (#4018)。merge_group は group と render-pr の合計が
+   N 本未満なら通す (先頭も render-pr は数える)。yield は merge_group の run が無ければ通し、
+   あれば合計が N 本未満のときだけ通す。N=1 の yield は今までと同じ結論になる
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は絞り込みそのものを踏む (queue_sweep_test.py と同じ理由)。応答は呼ばれた回数で
@@ -63,10 +66,17 @@ case "$all" in
   *"/commits/"*) sha=${all#*/commits/}; sha=${sha%% *}; kind=commit-$sha ;;
   *"/actions/workflows/render.yml/runs?event=merge_group&status="*)
     kind=${all#*status=}; kind=${kind%%&*} ;;
+  *"/actions/workflows/render.yml/runs?event=pull_request&status="*)
+    kind=${all#*status=}; kind=pr-${kind%%&*} ;;
+  *"/actions/runs/"*"/jobs"*) id=${all#*/actions/runs/}; id=${id%%/*}; kind=jobs-$id ;;
   *"/git/matching-refs/heads/main"*) kind=tip ;;
   *"/git/matching-refs/heads/"*) kind=head ;;
   *) echo "偽 gh が知らない呼び出し: $*" >&2; exit 1 ;;
 esac
+
+if [ -n "${GH_FAIL_JOBS:-}" ] && [ "${kind#jobs-}" != "$kind" ]; then
+  echo "gh: Server Error (HTTP 502)" >&2; exit 1
+fi
 
 counter="$DATA/count-$kind"
 n=$(( $(cat "$counter" 2>/dev/null || echo 0) + 1 ))
@@ -78,6 +88,7 @@ for ((i = n; i >= 1; i--)); do
 done
 if [ -n "$file" ]; then jq -r "${filter:-.}" < "$file"
 elif [ "$kind" = tip ] || [ "$kind" = head ]; then echo '[]' | jq -r "${filter:-.}"
+elif [ "${kind#jobs-}" != "$kind" ]; then echo '{"jobs":[]}' | jq -r "$filter"
 else echo '{"workflow_runs":[]}' | jq -r "$filter"; fi
 """
 
@@ -154,6 +165,7 @@ class RenderTurnTest(unittest.TestCase):
         env.pop("RENDER_TURN_SLOTS", None)
         env.pop("RENDER_TURN_HEAD_SHA", None)
         env.pop("RENDER_TURN_HEAD_REF", None)
+        env.pop("GITHUB_RUN_ID", None)
         env.update({k: str(v) for k, v in extra.items()})
         return subprocess.run(
             ["/bin/bash", str(TURN), *args],
@@ -462,6 +474,150 @@ class RenderTurnTest(unittest.TestCase):
         r = self.turn("wait", RENDER_TURN_LIMIT=0)
         self.assertEqual(self.go(), "true")
         self.assertIn("::warning::", r.stdout)
+
+    # --- render-pr を数える (#4018) --------------------------------------------
+
+    def render_prs(self, *jobs, round_no=1):
+        """走っている render.yml の pull_request の run と、その render-pr の job の status を置く。
+
+        jobs は (run id, render-pr の job の status) の並び。status が None なら render-pr の job が
+        まだ無い (門番の中) run。run の status は queued と in_progress に分けて置く。
+        """
+        by_status = {"queued": [], "in_progress": []}
+        for run_id, job in jobs:
+            run_status = "queued" if job == "queued" else "in_progress"
+            by_status[run_status].append(run_of(run_id, f"fix/pr-{run_id}", run_status))
+            listed = [{"name": "render-turn", "status": "completed"}]
+            if job is not None:
+                listed.append({"name": "render-pr", "status": job})
+            (self.data / f"jobs-{run_id}-{round_no}.json").write_text(
+                json.dumps({"jobs": listed}), encoding="utf-8"
+            )
+        for status, runs in by_status.items():
+            self.answer(f"pr-{status}", round_no, runs)
+
+    def groups_running(self, count):
+        """merge_group の run が count 本終わっていない (yield / wait が引く一覧)。"""
+        runs = [run_of(30 + i, f"{OTHER}-{i}", "in_progress") for i in range(count)]
+        self.answer("in_progress", 1, runs)
+
+    def test_yield_は_N_と_group_と_render_pr_の組で結論を出す(self):
+        """N=1 は今までと同じ (group が 1 本でもあれば見送る・無ければ通す)。"""
+        expected = {
+            # (N, group, render-pr): go
+            (1, 0, 0): "true", (1, 0, 1): "true",
+            (1, 1, 0): "false", (1, 1, 1): "false",
+            (1, 2, 0): "false", (1, 2, 1): "false",
+            (2, 0, 0): "true", (2, 0, 1): "true",
+            (2, 1, 0): "true", (2, 1, 1): "false",
+            (2, 2, 0): "false", (2, 2, 1): "false",
+        }
+        for (slots, groups, prs), go in expected.items():
+            with self.subTest(N=slots, group=groups, render_pr=prs):
+                self.setUp()
+                self.groups_running(groups)
+                if prs:
+                    self.render_prs((51, "in_progress"))
+                r = self.turn("yield", RENDER_TURN_SLOTS=slots)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(self.go(), go, r.stdout)
+
+    def merge_group_queue(self, groups):
+        """自分の前に group が並ぶ queue。groups 本の前の group の run が終わっていない。"""
+        self.queue_of_two()
+        self.answer_for(BASE, 1, [run_of(12, PREV, "in_progress" if groups >= 1 else "completed")])
+        self.answer_for(G1_HEAD, 1, [run_of(11, G1, "in_progress" if groups >= 2 else "completed")])
+
+    def test_merge_group_は_N_と_group_と_render_pr_の組で待つかを決める(self):
+        """待つ組は上限 0 で通し、警告 (待っていた相手) が出たかで読む。"""
+        expected = {
+            # (N, group, render-pr): 待つか
+            (1, 0, 0): False, (1, 0, 1): True,
+            (1, 1, 0): True, (1, 1, 1): True,
+            (1, 2, 0): True, (1, 2, 1): True,
+            (2, 0, 0): False, (2, 0, 1): False,
+            (2, 1, 0): False, (2, 1, 1): True,
+            (2, 2, 0): True, (2, 2, 1): True,
+        }
+        for (slots, groups, prs), waits in expected.items():
+            with self.subTest(N=slots, group=groups, render_pr=prs):
+                self.setUp()
+                self.merge_group_queue(groups)
+                if prs:
+                    self.render_prs((51, "in_progress"))
+                r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=slots, RENDER_TURN_LIMIT=0)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(self.go(), "true")
+                self.assertEqual("::warning::" in r.stdout, waits, r.stdout)
+                if waits and prs and groups < slots:
+                    self.assertIn("51 fix/pr-51 (render-pr)", self.summary.read_text(encoding="utf-8"))
+
+    def test_render_pr_が終わるまで_group_は門番で待つ(self):
+        """N=2・group 1 本・render-pr 1 本: render-pr が終わった周で通る。"""
+        self.merge_group_queue(1)
+        self.render_prs((51, "in_progress"))
+        self.render_prs((51, "completed"), round_no=3)
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2)
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertNotIn("::warning::", r.stdout)
+        self.assertIn(f"待っている相手: 12 {PREV} 51 fix/pr-51 (render-pr)", r.stdout)
+        self.assertEqual(len(self.calls_of("/actions/runs/51/jobs")), 3, r.stdout)
+
+    def test_先頭の_group_も_render_pr_を数える(self):
+        """group の無い間に N 本通った render-pr の上に、先頭を積まない。"""
+        self.main_tip(BASE)
+        self.render_prs((51, "in_progress"), (52, "queued"))
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
+        self.assertIn("::warning::", r.stdout)
+        self.assertEqual(self.calls_of("head_sha="), [])
+        self.output.unlink()
+        self.render_prs((51, "in_progress"), round_no=2)
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
+        self.assertNotIn("::warning::", r.stdout)
+
+    def test_終わった_render_pr_と門番の中の_run_は数えない(self):
+        self.merge_group_queue(1)
+        self.render_prs((51, "completed"), (52, None))
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
+        self.assertNotIn("::warning::", r.stdout)
+
+    def test_自分の_run_は数えない(self):
+        self.groups_running(1)
+        self.render_prs((51, "in_progress"))
+        r = self.turn("yield", RENDER_TURN_SLOTS=2, GITHUB_RUN_ID=51)
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertEqual(self.calls_of("/actions/runs/51/jobs"), [])
+
+    def test_group_で埋まっていれば_render_pr_は引かない(self):
+        self.merge_group_queue(2)
+        self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
+        self.assertEqual(self.calls_of("event=pull_request"), [])
+        self.output.unlink()
+        self.groups_running(1)
+        self.turn("yield")
+        self.assertEqual(self.calls_of("event=pull_request"), [])
+
+    def test_group_が無ければ_yield_は_render_pr_を引かない(self):
+        self.render_prs((51, "in_progress"))
+        r = self.turn("yield", RENDER_TURN_SLOTS=2)
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertEqual(self.calls_of("event=pull_request"), [])
+
+    def test_render_pr_の_job_を続けて読めなければ通す(self):
+        """読めない回の扱いは run の一覧と同じ: 引き直し、続けて読めなければ通す。"""
+        self.groups_running(1)
+        self.render_prs((51, "in_progress"))
+        r = self.turn("yield", RENDER_TURN_SLOTS=2, GH_FAIL_JOBS=1)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertIn("::warning::", r.stdout)
+        self.assertEqual(len(self.calls_of("/actions/runs/51/jobs")), 3, r.stdout)
+
+    def test_wait_は_render_pr_を数えない(self):
+        self.render_prs((51, "in_progress"))
+        r = self.turn("wait", RENDER_TURN_SLOTS=2)
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertEqual(self.calls_of("event=pull_request"), [])
 
     # --- 使い方 --------------------------------------------------------------
 
