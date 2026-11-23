@@ -289,6 +289,77 @@ struct AssetScopeTests {
         #expect(settle(build, declared: declared, asker: asker, said: &said) != nil)
         #expect(asker.count == 0)
         #expect(said.isEmpty)
+        // 控える中身が無いので、置き場に控えのファイルを作らない (3 回目の反証・指摘 5)
+        let url = AssetScope.recordURL(context: context(build, declared: declared), package: build.package)
+        #expect(!FileManager.default.fileExists(atPath: url.path), "控える中身の無い回に控えを書いた")
+    }
+
+    /// **鍵が組めない回 (依存の在処が読めない) も、名乗った集合は控えて 1 行を繰り返さない** (3 回目の反証・指摘 3)。
+    /// 答えは控えないので毎回問い直す (外しすぎない側)。
+    @Test("控えの鍵が組めない回は毎回問うが、同じ外す包みを 2 度名乗らない")
+    func anUnkeyableAnswerStillAnnouncesOnce() throws {
+        let build = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        // 依存の節に在処が無い
+        let pathless = """
+            {"identity":"demo","name":"demo","path":"\(build.package.path)","dependencies":[
+              {"identity":"mokume","name":"mokume","dependencies":[]}]}
+            """
+        let asker = Asker([(0, pathless)])
+        var said: [String] = []
+        _ = settle(build, declared: declared, asker: asker, said: &said)
+        #expect(said == [AssetScope.askingLine, AssetScope.notice(["Aaa_demo.bundle"])].compactMap { $0 })
+        said = []
+        _ = settle(build, declared: declared, asker: asker, said: &said)
+        #expect(asker.count == 2, "鍵の組めない答えを使った")
+        #expect(said == [AssetScope.askingLine], "同じ外す包みを 2 度名乗った")
+    }
+
+    /// **道具立てが分からない回 (`--scratch-path` を明示した回) は、控えの答えを使わない** (3 回目の反証・指摘 4) —
+    /// 分からない同士を同じと比べると、Swift の版を上げても前の答えを使い続ける。分かる回は使う。
+    @Test("道具立てが分からない回は控えの答えを使わず、毎回問う")
+    func anUnknownToolchainIsNotTrusted() throws {
+        let build = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        try FileManager.default.createDirectory(at: dependencyPath(build), withIntermediateDirectories: true)
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        let asker = Asker([(0, tree(build))])
+        var said: [String] = []
+        _ = settle(build, declared: declared, asker: asker, toolchain: nil, said: &said)
+        _ = settle(build, declared: declared, asker: asker, toolchain: nil, said: &said)
+        #expect(asker.count == 2, "道具立てが分からないのに控えの答えを使った")
+        _ = settle(build, declared: declared, asker: asker, said: &said)
+        _ = settle(build, declared: declared, asker: asker, said: &said)
+        #expect(asker.count == 3)
+    }
+
+    /// **見張りは、問えなかった宣言のあいだ問い直さない** (3 回目の反証・指摘 2)。問いは失敗するたびに最長で期限まで
+    /// 待つので、作り直しのたびに払わない。全部探す側のままで、1 行も 1 度だけ。宣言が変われば問い直す。
+    @Test("見張りは問えなかった宣言が変わるまで問い直さず、変われば問う")
+    func theWatcherDoesNotRetryAnUnansweredDeclaration() throws {
+        let build = try makeBuild(beside: ["Aaa_demo.bundle", "demo_demo.bundle"])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        let asker = Asker([(1, "")])
+        let carried = AssetScope.Carried(asking: asker.asking)
+        let rebuilt = RunCommand.Rebuilt(
+            status: 0, output: "", executable: build.executable, binPath: build.bin, product: "demo")
+        var said: [String] = []
+        for _ in 0..<3 {
+            carried.afterRebuild(
+                rebuilt, context: context(build, declared: declared), package: build.package,
+                say: { said.append($0) })
+            #expect(carried.current == nil)
+        }
+        #expect(asker.count == 1, "同じ宣言で問い直した")
+        #expect(said == [AssetScope.askingLine, AssetScope.unscopedNotice])
+
+        try "// demo 2".write(
+            to: build.package.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        carried.afterRebuild(
+            rebuilt, context: context(build, declared: declared), package: build.package, say: { said.append($0) })
+        #expect(asker.count == 2, "宣言が変わったのに問い直さなかった")
     }
 
     /// **許す一覧と `bundle` の除外は同じ規則** — 同じ宣言・同じ依存の名前・同じ並びで、`bundle` が写さない包みと、
@@ -331,12 +402,14 @@ struct AssetScopeTests {
         #expect(late.status != 0)
         #expect(!silent.isRunning, "期限を越えた子が残っている")
 
-        // 子はすぐ終わるが、管を継いだ孫が残る
+        // 子はすぐ終わるが、管を継いだ孫が残る。孫は数秒で自分で終わる (検査の後に残さない)。子が自分で終わるには
+        // 十分な期限にし、子が殺されずに終わったことで「孫が管を握る」経路を通ったと確かめる
         let orphaning = Process()
         orphaning.executableURL = URL(fileURLWithPath: "/bin/sh")
-        orphaning.arguments = ["-c", "/bin/sleep 600 & echo started"]
-        let held = BundleCommand.ask(orphaning, timeout: 0.5)
+        orphaning.arguments = ["-c", "/bin/sleep 8 & echo started"]
+        let held = BundleCommand.ask(orphaning, timeout: 4)
         #expect(held.status != 0, "孫が管を握ったままなのに答えたことにした")
+        #expect(orphaning.terminationReason == .exit && orphaning.terminationStatus == 0, "子が期限内に終わらなかった")
 
         let echo = Process()
         echo.executableURL = URL(fileURLWithPath: "/bin/echo")

@@ -40,9 +40,12 @@ nonisolated enum AssetScope {
     ///   - say: 名乗りの行き先。
     ///   - asking: 道具立てへの問い。**検査が偽の答えを渡すために外から渡せる形にしてある。**
     ///   - tool: 道具の印 (控えの鍵・``toolStamp()``)。**検査が道具の版の違いを装うために渡せる形にしてある。**
+    ///   - unanswered: 問えなかった回の控え (``Unanswered``)。**見張りだけが渡す** — 同じ見張りの中では、問えなかった
+    ///     宣言の印が変わるまで問い直さず、1 行も繰り返さない (全部探す側のまま)。`run` などは 1 回ごとのプロセスなので
+    ///     渡さず、問えなかった次の回も問う。問えなかったことは置き場には控えない。
     static func settle(
         context: BuildContext, executable: URL, package: URL, say: (String) -> Void,
-        asking: Asking = BundleCommand.askSwiftPM, tool: String = toolStamp()
+        asking: Asking = BundleCommand.askSwiftPM, tool: String = toolStamp(), unanswered: Unanswered? = nil
     ) -> AssetBundles.Allowance? {
         guard let declared = context.declared, let product = context.product,
             let closure = declared.targetClosure(ofProduct: product)
@@ -52,22 +55,27 @@ nonisolated enum AssetScope {
         let owner = BuildDirectory.ownerPath(of: package)
         let stored = Record.read(at: url, package: owner)
         var record = stored ?? Record(package: owner)
-        defer { if record != stored { try? AtomicFile.writeJSON(record, to: url) } }
+        // **控える中身の無い回は書かない** — 依存の木を問わない近道の回の初回に、空の控えを置き場に作らない
+        defer { if record != stored, stored != nil || !record.isEmpty { try? AtomicFile.writeJSON(record, to: url) } }
 
         var dependencyNames: [String] = []
         if !declared.leftoverCandidates(forProduct: product, beside: built).isEmpty {
             if let names = record.answer(tool: tool, toolchain: context.toolchain) {
                 dependencyNames = names
             } else {
+                let stamp = Unanswered.stamp(of: package, tool: tool, toolchain: context.toolchain)
+                if let unanswered, unanswered.failed(at: stamp) { return nil }
                 say(askingLine)
                 guard
                     let tree = BundleCommand.dependencyTree(of: package, place: context.place, asking: asking),
                     let names = tree.dependencyNames
                 else {
                     record.announced = []
+                    unanswered?.remember(stamp)
                     say(unscopedNotice)
                     return nil
                 }
+                unanswered?.remember(nil)
                 dependencyNames = names
                 record.remember(tree, names: names, package: package, tool: tool, toolchain: context.toolchain)
             }
@@ -90,9 +98,8 @@ nonisolated enum AssetScope {
     }
 
     /// 依存の木を問う前の 1 行。依存の解決を始める前の名乗り (`RunCommand.resolvingLine`) と同じく、始まりだけを言う。
-    static let askingLine =
-        "Reading the dependencies of Package.swift to choose the asset bundles the sketch looks in"
-        + " (once, until Package.swift or Package.resolved changes)"
+    /// **「1 度だけ」とは言わない** — 問えなかった回は控えないので、次の `run` も問う。
+    static let askingLine = "Reading the dependencies of Package.swift to choose the asset bundles the sketch looks in"
 
     /// 探してよい包みを決められなかった回の 1 行。**黙って全部探さない** — `bundle` が `Kept:` と名乗るのと同じ向き。
     static let unscopedNotice =
@@ -180,7 +187,12 @@ nonisolated enum AssetScope {
             return record
         }
 
+        /// 控える中身 (依存の木の答えも、名乗った集合も) が無いか。
+        var isEmpty: Bool { key == nil && dependencyNames == nil && announced.isEmpty }
+
         /// 鍵の合う答え。**合わなければ `nil`** — 道具・道具立ての名乗りか、どこかの在処の宣言のファイルが変わった。
+        /// 道具立てが分からない回 (`toolchain` が `nil`) の答えは控えない (``remember(_:names:package:tool:toolchain:)``) ので、
+        /// 控えの鍵の道具立ては必ず在り、分からない回とは一致しない。
         func answer(tool: String, toolchain: String?) -> [String]? {
             guard let key, let dependencyNames, key.tool == tool, key.toolchain == toolchain,
                 let current = Record.manifests(of: Array(key.manifests.keys)), current == key.manifests
@@ -193,7 +205,9 @@ nonisolated enum AssetScope {
             _ tree: SwiftPM.DependencyTree, names: [String], package: URL, tool: String, toolchain: String?
         ) {
             let paths = tree.paths
-            guard paths.count == tree.dependencyCount + 1,
+            // **道具立てが分からない回 (`--scratch-path` を明示した回) は控えない** — 分からない同士を「同じ」と比べると、
+            // Swift の版を上げても前の答えを使い続ける
+            guard toolchain != nil, paths.count == tree.dependencyCount + 1,
                 let manifests = Record.manifests(of: paths + [package.standardizedFileURL.path])
             else {
                 key = nil
@@ -235,6 +249,27 @@ nonisolated enum AssetScope {
         }
     }
 
+    /// 依存の木を問えなかった宣言の印 (見張りの中だけで持つ)。**同じ印のあいだは問い直さない** — 問いは失敗するたびに
+    /// `swift` を起こして最長で期限 (``BundleCommand/askTimeout``) まで待つので、作り直しのたびに払わない。
+    final class Unanswered: @unchecked Sendable {
+        private let lock = NSLock()
+        private var failed: String?
+
+        init() {}
+
+        /// 宣言の印: 根の宣言のファイルの中身と、道具・道具立ての印。読めなければ毎回違う値 (問い直す)。
+        static func stamp(of package: URL, tool: String, toolchain: String?) -> String {
+            let manifests = Record.digest(of: package.standardizedFileURL.path) ?? UUID().uuidString
+            return [manifests, tool, toolchain ?? "-"].joined(separator: "\n")
+        }
+
+        /// `stamp` の宣言で、前に問えなかったか。
+        func failed(at stamp: String) -> Bool { lock.withLock { failed == stamp } }
+
+        /// 問えなかった印を控える (`nil` なら、問えたので忘れる)。
+        func remember(_ stamp: String?) { lock.withLock { failed = stamp } }
+    }
+
     // MARK: - 見張り
 
     /// 見張りの世代をまたいで、子に渡す探してよい包みを持ち回る。作り直しの糸から書き、子を起こす口から読むので、
@@ -244,6 +279,8 @@ nonisolated enum AssetScope {
         private let lock = NSLock()
         private var allowance: AssetBundles.Allowance?
         private let asking: Asking
+        /// 問えなかった宣言の印。作り直しの糸からしか触らない (``Unanswered`` が鍵で守る)。
+        private let unanswered = Unanswered()
 
         /// - Parameter asking: 道具立てへの問い。省けば本物を起こす。
         init(asking: @escaping Asking = BundleCommand.askSwiftPM) {
@@ -255,7 +292,8 @@ nonisolated enum AssetScope {
         func afterRebuild(_ rebuilt: RunCommand.Rebuilt, context: BuildContext, package: URL, say: (String) -> Void) {
             guard rebuilt.status == 0, let executable = rebuilt.executable else { return }
             let decided = AssetScope.settle(
-                context: context, executable: executable, package: package, say: say, asking: asking)
+                context: context, executable: executable, package: package, say: say, asking: asking,
+                unanswered: unanswered)
             lock.withLock { allowance = decided }
         }
 
