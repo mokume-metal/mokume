@@ -104,6 +104,44 @@ struct DeviceUseTests {
                 == ["Sources/mirror/Mirror.swift", "Sources/mirror/Nested/Other.swift"])
     }
 
+    /// **SwiftPM が組むものを読む** (#3993)。`Sources/<target>/` の下に置いたディレクトリへの
+    /// リンクの中の `.swift` も SwiftPM は組むので、そこでカメラを開けば文言が要る。
+    @Test("ディレクトリへのリンクの中で開いても、使っているファイルとして名指しする")
+    func aLinkedDirectoryIsRead() throws {
+        let root = try makeSketch(files: ["Sources/mirror/Plain.swift": "func draw() {}"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = try makeSketch(files: ["Mirror.swift": "camera = try? createCapture()"])
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("Sources/mirror/Lib"), withDestinationURL: outside)
+
+        #expect(DeviceUse.cameraUsers(in: root) == ["Sources/mirror/Lib/Mirror.swift"])
+    }
+
+    /// **包みの中も読む** — SwiftPM は包みの形をしたディレクトリ (`Foo.bundle`) の中の `.swift` も組む
+    /// (`swift build` で確かめた)。見張りは包みの中を数えないが、こちらは束ねる前の検査なので読む。
+    @Test("包みの中で開いても、使っているファイルとして名指しする")
+    func aPackageDirectoryIsRead() throws {
+        let root = try makeSketch(files: [
+            "Sources/mirror/Plain.swift": "func draw() {}",
+            "Sources/mirror/Foo.bundle/Mirror.swift": "camera = try? createCapture()",
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(DeviceUse.cameraUsers(in: root) == ["Sources/mirror/Foo.bundle/Mirror.swift"])
+    }
+
+    /// **資材の置き場の中は読まない** — 置き場の中の `.swift` は束へ写されるだけで組まれない。宣言の
+    /// 無い置き場に中身があれば、bundle は資材の宣言の検査で止まる。
+    @Test("資材の置き場の中で開いても、使っているファイルとして名指ししない")
+    func theAssetsDirectoryIsNotRead() throws {
+        let root = try makeSketch(files: [
+            "Sources/mirror/Plain.swift": "func draw() {}",
+            "Sources/mirror/assets/Mirror.swift": "camera = try? createCapture()",
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(DeviceUse.cameraUsers(in: root).isEmpty)
+    }
+
     @Test("置き場が無ければ、使っていないものとして扱う")
     func noSourcesMeansNoUse() throws {
         let root = try makeSketch(files: ["Package.swift": ""])

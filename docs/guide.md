@@ -58,7 +58,7 @@ curl -fsSL https://github.com/mokume-metal/mokume/releases/latest/download/mokum
 
 `mokume run --remote` / `mokume watch --remote` は、スケッチの `@Param` のつまみを同じネットワークのスマホから動かせるようにします。ターミナルに出る QR コードをスマホのカメラで読むと、ブラウザにつまみが並びます。スケッチには何も書き足しません。ローカルでの簡単なデモやプロトタイプ向けで、`mokume bundle` の `.app` では使えません。
 
-`mokume watch` が監視するのは、`Package.swift`・`Sources/` の下の `.swift`・`Sources/<名前>/assets/` の下の通常のファイルです (隠しファイルとシンボリックリンクは含みません)。`.metal` のシェーダはプロセスを再起動せず、実行したまま差し替わります。**範囲の外を変えても再ビルドしません** — `Package.swift` で `assets/` 以外に宣言したリソース (`.process("Resources")`・`.copy("data.json")`・`path:` で `Sources/` の外へ動かした target)・`Package.resolved`・パスで指定した依存 (`--local` の mokume のチェックアウト) です。変えたときは `mokume watch` を再起動してください。
+`mokume watch` が監視するのは、`Package.swift`・`Sources/` の下の `.swift` (ディレクトリへのシンボリックリンクの中も含みます)・`Sources/<名前>/assets/` の下の通常のファイルです (隠しファイルと、`assets/` の中のシンボリックリンクは含みません)。`.metal` のシェーダはプロセスを再起動せず、実行したまま差し替わります。**範囲の外を変えても再ビルドしません** — `Package.swift` で `assets/` 以外に宣言したリソース (`.process("Resources")`・`.copy("data.json")`・`path:` で `Sources/` の外へ動かした target)・`Package.resolved`・パスで指定した依存 (`--local` の mokume のチェックアウト) です。変えたときは `mokume watch` を再起動してください。
 
 ### 動画に書き出す
 
