@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/queue-sweep.sh と、それを起こす queue-sweep.yml の検査 (#1265 / #1951)。
 
-固定したいのは十一。
+固定したいのは十二。
 
 1. **ref が消えたグループの run は cancel する。** merge queue は捨てたグループの run を
    cancel しないので、放っておくと macOS の枠を使い続ける (#1265)
@@ -29,6 +29,10 @@
 11. **render.yml の今のグループの run が無ければ render-pr に触らない。jobs を読めなければ
     触らず、非 0 で終える。** 待たせる相手が居ないのに退かせても失うだけで (ci.yml だけが
     残る group では門番も render-pr を通す)、判定できないものは生きている側に倒す
+12. **runner の枠 (RENDER_TURN_SLOTS) の内の render-pr は残し、越える分だけ cancel する** (#4018)。
+    門番は group があっても空いた枠で render-pr を通すので、10 をそのまま当てると門番が正しく
+    通した render-pr を退かせる。数え方は門番と同じ (今の group + 走っている render-pr)。
+    jobs を読めなかった run は枠を取っていると数える。N=1 では 10 と同じ結論になる
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は絞り込みそのものを踏む (stall_watch_test.py と同じ理由)。
@@ -81,6 +85,7 @@ case "$all" in
   *"/jobs?"*)
     id=${all%/jobs\?*}; id=${id##*/}
     [ -z "${JOBS_FAIL:-}" ] || { echo "gh: Server Error (HTTP 502)" >&2; exit 1; }
+    [ ! -f "$DATA/jobs-fail-$id" ] || { echo "gh: Server Error (HTTP 502)" >&2; exit 1; }
     file="$DATA/jobs-$id.json"
     if [ -f "$file" ]; then jq -r "$filter" < "$file"; else echo '{"jobs":[]}' | jq -r "$filter"; fi
     exit 0 ;;
@@ -165,6 +170,7 @@ class QueueSweepTest(unittest.TestCase):
         env["GH_CALLS"] = str(self.calls)
         env["DATA"] = str(self.data)
         env.pop("GITHUB_REPOSITORY", None)
+        env.pop("RENDER_TURN_SLOTS", None)
         env.update({k: str(v) for k, v in extra.items()})
         return subprocess.run(
             ["/bin/bash", str(SWEEP), *args],
@@ -334,6 +340,75 @@ class QueueSweepTest(unittest.TestCase):
         result = self.run_sweep()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("309 done feat/queued", result.stdout)
+
+    # --- runner の枠の内の render-pr は残す (#4018) -----------------------------
+
+    def cancelled_ids(self):
+        return sorted(c.split("/")[-2] for c in self.cancels())
+
+    def test_keeps_queued_render_pr_within_the_runner_slots(self):
+        """N=2・group 1 本・queued の render-pr 1 本: 門番 (yield) が正しく通した render-pr。"""
+        self.live_group()
+        self.add_pr_run(401, "feat/within", "queued")
+        result = self.run_sweep(RENDER_TURN_SLOTS=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("401 keep feat/within", result.stdout)
+        self.assertEqual(self.cancels(), [])
+
+    def test_cancels_queued_render_pr_beyond_the_runner_slots(self):
+        """N=2 で枠が埋まっている組: 走っている render-pr 1 本・group 2 本。"""
+        with self.subTest("group 1 + running render-pr 1"):
+            self.live_group()
+            self.add_pr_run(402, "feat/running", "in_progress")
+            self.add_pr_run(403, "feat/queued", "queued")
+            result = self.run_sweep(RENDER_TURN_SLOTS=2)
+            self.assertIn("403 cancel feat/queued", result.stdout)
+            self.assertEqual(self.cancelled_ids(), ["403"])
+        self.setUp()
+        with self.subTest("group 2"):
+            self.live_group()
+            other = "gh-readonly-queue/main/pr-1261-0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
+            self.add_run(120, other, "tip2", workflow="render.yml")
+            self.add_ref(other, "tip2")
+            self.add_pr_run(404, "feat/queued", "queued")
+            result = self.run_sweep(RENDER_TURN_SLOTS=2)
+            self.assertIn("404 cancel feat/queued", result.stdout)
+            self.assertEqual(self.cancelled_ids(), ["404"])
+
+    def test_keeps_the_oldest_queued_render_pr_and_cancels_the_rest(self):
+        """#2064 の形を N=2 で: group の無い間に 2 本積まれ、group ができた。枠は 1 本だけ残る。"""
+        self.live_group()
+        self.add_pr_run(406, "feat/newer", "queued")
+        self.add_pr_run(405, "feat/older", "queued", status="queued")
+        result = self.run_sweep(RENDER_TURN_SLOTS=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("405 keep feat/older", result.stdout)
+        self.assertEqual(self.cancelled_ids(), ["406"])
+
+    def test_unreadable_render_pr_run_takes_a_slot(self):
+        """jobs を読めなかった run は走っているかもしれない。枠を取っていると数え、他を残し過ぎない。"""
+        self.live_group()
+        self.add_pr_run(407, "feat/unreadable", "in_progress")
+        (self.data / "jobs-fail-407").write_text("", encoding="utf-8")
+        self.add_pr_run(409, "feat/queued", "queued")
+        result = self.run_sweep(RENDER_TURN_SLOTS=2)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("407 unknown feat/unreadable", result.stdout)
+        self.assertEqual(self.cancelled_ids(), ["409"])
+
+    def test_does_not_touch_render_pr_when_slots_are_malformed(self):
+        self.live_group()
+        self.add_pr_run(408, "feat/queued", "queued")
+        for bad in ("0", "two", "02"):
+            with self.subTest(bad=bad):
+                result = self.run_sweep(RENDER_TURN_SLOTS=bad)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("RENDER_TURN_SLOTS", result.stdout)
+                self.assertEqual(self.cancels(), [])
+
+    def test_workflow_passes_the_runner_slots(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}", text)
 
     def test_rejects_unknown_argument(self):
         result = self.run_sweep("--apply")

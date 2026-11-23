@@ -48,10 +48,19 @@
 # そこで上の判定で **render.yml の今のグループの run (keep) が 1 本でもあれば**、render.yml の
 # pull_request の run を引き、render-pr の job ごとに:
 #
-#   job がまだ拾われていない (queued ほか)  → cancel (専用機の queue から退かせる)
+#   job がまだ拾われていない (queued ほか)  → 枠を越える分だけ cancel (専用機の queue から退かせる)
 #   job が走っている (in_progress)          → 触らない (走っている 1 本は止めない)
 #   render-pr の job が無い・終わっている   → 触らない (まだ門番の中なら、門番が見送る)
 #   jobs を読めなかった                     → 判定できず → 触らず、非 0 で終える
+#
+# **枠を越える分だけ cancel する** (#4018)。門番は runner が空いていれば group があっても
+# render-pr を通し、merge_group の門番は render-pr を枠に数えて待つ (render-turn.sh「専用機の枠を
+# 数える」)。同じ数え方で、今の group の run の数・走っている render-pr (と jobs を読めなかった run)
+# の数を runner の数 (RENDER_TURN_SLOTS・未設定なら 1) から引き、残った枠の数だけ、まだ拾われて
+# いない render-pr を古い run から残す。N=1 なら今のグループがある限り残る枠は無く、今までどおり
+# 全部 cancel する。group の無い間に積まれた render-pr が group の枠を食う形 (#2064) は、枠を
+# 越えた分として cancel される。RENDER_TURN_SLOTS が 1 以上の整数でなければ render-pr に触らず、
+# 非 0 で終える
 #
 # render.yml の今のグループの run が無いとき (後ろにグループが居ない PR が外れた dequeued・
 # 残った group が ci.yml だけを走らせている) は触らない。待たせる相手が居ないので、退かせても
@@ -132,6 +141,7 @@ done
 
 status=0
 live_group=false
+live_groups=0
 while IFS=$'\t' read -r id branch sha path; do
   [ -n "$id" ] || continue
 
@@ -155,7 +165,10 @@ while IFS=$'\t' read -r id branch sha path; do
   if [ "$tip" = "$sha" ]; then
     printf '%s keep %s 今のグループ\n' "$id" "$branch"
     # 門番が見送りに使うのは render.yml の run だけ。同じ範囲で「待たせる相手が居るか」を見る
-    [ "$path" != ".github/workflows/render.yml" ] || live_group=true
+    if [ "$path" = ".github/workflows/render.yml" ]; then
+      live_group=true
+      live_groups=$((live_groups + 1))
+    fi
     continue
   fi
 
@@ -172,6 +185,16 @@ done < <(printf '%s' "$runs" | sort -u)
 # 待たせる相手が居ない
 $live_group || exit "$status"
 
+# 専用機の runner の数。門番 (render-turn.sh) と同じ変数を同じ既定で読む。1 以上の整数でなければ
+# render-pr には触らない (判定できないものは生きている側に倒す)
+SLOTS="${RENDER_TURN_SLOTS:-1}"
+case "$SLOTS" in
+  "" | *[!0-9]* | 0*)
+    printf -- '- unknown - RENDER_TURN_SLOTS は 1 以上の整数で渡す: %s (render-pr は判定していない)\n' "'${RENDER_TURN_SLOTS}'"
+    exit 1
+    ;;
+esac
+
 pr_runs=""
 for active in $ACTIVE_STATUSES; do
   got=$(gh api --paginate \
@@ -180,6 +203,10 @@ for active in $ACTIVE_STATUSES; do
   pr_runs+="$got"$'\n'
 done
 
+# 走っている render-pr と読めなかった run は枠を取っていると数え、まだ拾われていないものを
+# 古い run から順に並べる (下で、空いた枠の数だけ残す)
+taken=0
+waiting=""
 while IFS=$'\t' read -r id branch; do
   [ -n "$id" ] || continue
 
@@ -187,6 +214,7 @@ while IFS=$'\t' read -r id branch; do
     --jq '[.jobs[] | select(.name == "render-pr") | .status] | first // ""'); then
     printf '%s unknown %s render-pr の job を読めなかった\n' "$id" "$branch"
     status=1
+    taken=$((taken + 1))
     continue
   fi
 
@@ -194,12 +222,28 @@ while IFS=$'\t' read -r id branch; do
     "" | completed) continue ;;
     in_progress)
       printf '%s keep %s render-pr が専用機で走っている\n' "$id" "$branch"
+      taken=$((taken + 1))
       continue
       ;;
   esac
+  waiting+="$id"$'\t'"$branch"$'\t'"$job"$'\n'
+done < <(printf '%s' "$pr_runs" | sed '/^$/d' | sort -n -u)
+
+# 門番 (render-turn.sh の merge_group) と同じ数え方で、group と render-pr の合計が runner の数を
+# 越えない分は残す (#4018)。越える分だけを cancel する
+free=$((SLOTS - live_groups - taken))
+while IFS=$'\t' read -r id branch job; do
+  [ -n "$id" ] || continue
+  if [ "$free" -gt 0 ]; then
+    printf '%s keep %s render-pr は専用機の枠の内で待つ (group %s 本・枠を取る render-pr %s 本・runner %s 本)\n' \
+      "$id" "$branch" "$live_groups" "$taken" "$SLOTS"
+    free=$((free - 1))
+    taken=$((taken + 1))
+    continue
+  fi
   printf '%s cancel %s render-pr が専用機の queue で先頭の render を待たせる (%s)\n' \
     "$id" "$branch" "$job"
   cancel_run "$id" "$branch"
-done < <(printf '%s' "$pr_runs" | sort -u)
+done <<<"$waiting"
 
 exit "$status"
