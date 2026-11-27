@@ -7,12 +7,12 @@ import Testing
 
 @testable import MokumeCore
 
-/// 最終更新時刻で気付いて読む口。
+/// 改訂の印 (``FileStamp``) で気付いて読む口。
 ///
 /// **確定の時機がこの型の全部である。** 読む前に控えると、書きかけを 1 回掴んだだけで
 /// その改訂が永久に読み飛ばされる ([#987](https://github.com/mokume-metal/mokume/issues/987)・
 /// [#1048](https://github.com/mokume-metal/mokume/issues/1048))。
-@Suite("更新時刻で気付いて読む")
+@Suite("改訂の印で気付いて読む")
 @MainActor
 struct WatchedFileTests {
     private struct Payload: Codable, Equatable {
@@ -195,7 +195,8 @@ struct WatchedFileTests {
         try withFile { url in
             var told = 0
             let file = WatchedFile<Payload>(url: url) { _ in told += 1 }
-            let seen = FileStamp(seconds: 3000, nanoseconds: 0, size: 0, device: 0, inode: 0)
+            let seen = FileStamp(
+                seconds: 3000, nanoseconds: 0, changeSeconds: 0, changeNanoseconds: 0, size: 0, device: 0, inode: 0)
             #expect(file.read(revision: seen) == nil)
             #expect(told == 0, "消えていたファイルを名乗っている")
 

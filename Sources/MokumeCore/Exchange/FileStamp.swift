@@ -6,11 +6,15 @@ import Foundation
 
 /// 読む先のファイルの改訂の印。**変わったかを比べるためだけに使う** ([#1786])。
 ///
-/// **別の改訂と見るのは、最終更新時刻・大きさ・ファイル番号 (inode)・ボリューム (device) のどれかが
-/// 変わったとき** (#4148)。時刻だけでは、時刻の同じ別のファイルへ読む先が替わったこと (リンクの付け替え・
-/// 時刻を保った写しを `rename` で置き換える) を表せない。どの欄も同じ `stat` の 1 回から取る。
-/// **代償**: 同じファイルを同じ大きさで書き換えて時刻を手で戻したとき (と、時刻の刻みの粗い置き場で同じ刻みの
-/// 中に同じ大きさで書き換えたとき) は見分けない。
+/// **別の改訂と見るのは、最終更新時刻・状態変更時刻 (ctime)・大きさ・ファイル番号 (inode)・ボリューム (device) の
+/// どれかが変わったとき** (#4148)。更新時刻だけでは、時刻の同じ別のファイルへ読む先が替わったこと (リンクの付け替え・
+/// 時刻を保った写しを `rename` で置き換える) も、同じファイルを書き換えて更新時刻を戻したこと (`touch -r`・`cp -p`・
+/// `rsync -t`) も表せない。状態変更時刻は書き込み・属性の変更・リンク数の変化のたびにカーネルが進め、`utimes` では
+/// 戻せない。新しく作られたファイルの状態変更時刻は作られた時点より前にならないので、空いたファイル番号を次のファイルが
+/// 得ても前の印とは揃わない。どの欄も同じ `stat` の 1 回から取る。
+/// **代償**: 中身に触れない属性の変更 (権限・拡張属性) でも別の改訂に見えて読み直す (古い中身を返す側には倒れない)。
+/// 状態変更時刻を細かく持たない置き場 (HFS+ は秒の刻み、exFAT は更新時刻と同じ値) では、その刻みの中で同じ大きさのまま
+/// 書き換えて更新時刻を戻すと見分けない。
 ///
 /// `FileManager.attributesOfItem(atPath:)` は所有者名などを含む属性の辞書を毎回組むので、
 /// 1 回 40 µs かかる。見張りは毎フレーム (観測・入力・つまみの区画) や毎リフレッシュ
@@ -26,6 +30,9 @@ import Foundation
 package nonisolated struct FileStamp: Equatable, Sendable, CustomStringConvertible {
     let seconds: Int
     let nanoseconds: Int
+    /// 状態変更時刻 (ctime)。
+    let changeSeconds: Int
+    let changeNanoseconds: Int
     let size: Int64
     /// ファイル番号はボリュームの中でしか一意でないので、ボリュームと組で見る。
     let device: Int32
@@ -59,18 +66,24 @@ package nonisolated struct FileStamp: Equatable, Sendable, CustomStringConvertib
 
     /// 全部の欄を並べた文字列。**同一性の鍵を文字列で作る呼び手は、欄を選ばずこれを使う。**
     package var description: String {
-        "\(seconds).\(nanoseconds) \(size)B \(device):\(inode)"
+        "\(seconds).\(nanoseconds) c\(changeSeconds).\(changeNanoseconds) \(size)B \(device):\(inode)"
     }
 
     private init(_ info: stat) {
         self.init(
             seconds: Int(info.st_mtimespec.tv_sec), nanoseconds: Int(info.st_mtimespec.tv_nsec),
+            changeSeconds: Int(info.st_ctimespec.tv_sec), changeNanoseconds: Int(info.st_ctimespec.tv_nsec),
             size: Int64(info.st_size), device: Int32(info.st_dev), inode: UInt64(info.st_ino))
     }
 
-    init(seconds: Int, nanoseconds: Int, size: Int64, device: Int32, inode: UInt64) {
+    init(
+        seconds: Int, nanoseconds: Int, changeSeconds: Int, changeNanoseconds: Int, size: Int64, device: Int32,
+        inode: UInt64
+    ) {
         self.seconds = seconds
         self.nanoseconds = nanoseconds
+        self.changeSeconds = changeSeconds
+        self.changeNanoseconds = changeNanoseconds
         self.size = size
         self.device = device
         self.inode = inode

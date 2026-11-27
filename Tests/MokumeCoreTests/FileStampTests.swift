@@ -7,13 +7,13 @@ import Testing
 
 @testable import MokumeCore
 
-/// 更新時刻の見張り (``FileStamp``) の検査 ([#1786])。GPU を要さない。
+/// 改訂の印 (``FileStamp``) の検査 ([#1786])。GPU を要さない。
 ///
-/// 読めなければ `nil`・書き換えれば変わる・**リンクは辿り、読む先の時刻を取る** (切れたリンクは
+/// 読めなければ `nil`・書き換えれば変わる・**リンクは辿り、読む先の印を取る** (切れたリンクは
 /// `nil`) を見る。
 ///
 /// [#1786]: https://github.com/mokume-metal/mokume/issues/1786
-@Suite("更新時刻の見張り")
+@Suite("改訂の印")
 struct FileStampTests {
     private func makeDirectory() throws -> URL {
         let directory = TestScratch.path("mokume-file-stamp")
@@ -168,9 +168,10 @@ struct FileStampTests {
         #expect(FileStamp.of(file) != before, "大きさが変わったのに、同じ印のまま")
     }
 
-    /// **代償**: 同じファイルを同じ大きさで書き換え、時刻を手で戻すと見分けない (説明文に書いた限界)。
-    @Test("同じファイルを同じ大きさで書き換え、時刻を戻すと同じ印のまま (代償)")
-    func rewritingInPlaceWithTheSameSizeAndTimeIsNotSeen() throws {
+    /// 同じファイル (同じ inode) を同じ大きさで書き換え、更新時刻を手で戻しても、状態変更時刻 (ctime) は
+    /// 戻せないので別の印。
+    @Test("同じファイルを同じ大きさで書き換え、時刻を戻しても変わる")
+    func rewritingInPlaceWithTheSameSizeAndTimeChanges() throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let moment = Date(timeIntervalSince1970: 4_000_000)
@@ -179,7 +180,26 @@ struct FileStampTests {
         let before = try #require(FileStamp.of(file))
 
         try Self.place("bbbb", at: file, moment)
-        #expect(FileStamp.of(file) == before)
+        let after = try #require(FileStamp.of(file))
+        #expect(
+            after.seconds == before.seconds && after.nanoseconds == before.nanoseconds && after.size == before.size
+                && after.inode == before.inode,
+            "前提: 更新時刻・大きさ・inode は揃っている")
+        #expect(after != before, "同じ大きさで書き換えて時刻を戻したのに、同じ印のまま")
+    }
+
+    /// 中身に触れない属性の変更 (権限) も状態変更時刻を進めるので、別の印になる。**読み直すだけで、
+    /// 古い中身を返す側には倒れない** (説明文に書いた代償)。
+    @Test("権限だけを変えても変わる (読み直すだけの代償)")
+    func changingOnlyThePermissionsChanges() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("a.json")
+        try Self.place("aaaa", at: file, Date(timeIntervalSince1970: 4_000_000))
+        let before = try #require(FileStamp.of(file))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        #expect(FileStamp.of(file) != before)
     }
 
     /// 在るのに辿れないリンクの改訂も、同じ欄 (リンク自身の inode など) で見分ける。
