@@ -132,7 +132,9 @@ enum Command {
                     .metal fragments), names a file that changed while it ran, and mokume replay names
                     one whose contents differ from what the record read. Date() and Swift's own
                     random numbers cannot be noticed: use random() and time instead to replay what
-                    they give
+                    they give. The record keeps the names of the files the sketch loads and the paths
+                    of the files dropped or chosen as they are, so an absolute one carries your home
+                    directory and user name: look inside before you hand the record to someone else
                     \(remoteHelp)
                     """
                 )

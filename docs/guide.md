@@ -208,6 +208,8 @@ claude mcp add mokume -- mokume mcp
 
 場所を渡さない MCP サーバは、起動された場所 (Claude Code ならそれを起動した場所) で動き、`MOKUME_WORK_DIR` が無ければその場所の `.mokume/` を見ます。スケッチのディレクトリで起動するか、`mokume mcp <スケッチのディレクトリ>` と場所を渡して登録してください。スケッチでない場所で起動した MCP サーバは、実行中のスケッチと接続しません (スケッチが応答しないときの返答にそう表示されます)。MCP サーバは接続した時点のハンドシェイク (`initialize`) の `instructions` でも、起動した場所とそこがスケッチかどうかを返すので、`instructions` を読むクライアントなら、最初の操作の前にスケッチでない場所で起動していることに気付けます。
 
+`@Param` の値だけを変えた同じ時刻の絵を並べて比べる手順は [同じ時刻で、`@Param` の値を変えたフレームを並べる](compare-param-conditions.md) にあります。
+
 ### うまく動かないとき
 
 スケッチのディレクトリで `mokume doctor` を実行すると、環境 (`What the environment provides`) とスケッチの状態 (`What is here`) が表示されます。何も変更しないので、問題の切り分けに気軽に使えます。
