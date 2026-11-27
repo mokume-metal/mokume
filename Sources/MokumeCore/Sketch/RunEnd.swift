@@ -52,7 +52,10 @@ package final class RunEnd {
 
 /// 自分を開いた実行が終わったことを知る入り口 (package)。実行は入り口を開くたびに ``bind(to:)`` で結び直し、
 /// 後片付けで並びの入り口を閉じ終えた後に ``runEnded(_:)`` を呼ぶ。
-package protocol RunBoundInlet: Inlet {
+///
+/// ``Inlet`` を継がないのは、``Inlet`` への main actor に隔離された適合に重ねると、下限の Swift が適合を拒むため。
+/// 実行は開いた ``Inlet`` をこの型へ動的に絞って結ぶ。
+package protocol RunBoundInlet: AnyObject {
     /// `run` に開かれた。前に結んだ実行より、こちらが新しい。
     func bind(to run: RunEnd)
     /// `run` が終わった。いま結んでいる実行でなければ何もしない。
