@@ -788,6 +788,181 @@ struct SoundFileTests {
         #expect(peak(heard[7..<12]) > 0.1, "足し直したフレームから鳴る")
     }
 
+    @Test("外している間に play() で鳴らし始めた音も、足し直さないままスケッチが終われば isPlaying は false になる")
+    func playWhileDetachedThenEndingLeavesItStopped() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var sound: SoundFile?
+        var playingWhileDetached: Bool?
+        let runtime = try run(
+            frames: 4,
+            setup: { sketch in sound = try sketch.loadSound(url.path) },
+            draw: { sketch in
+                guard let sound else { return }
+                if sketch.frameCount == 2 { sketch.detach(sound) }
+                if sketch.frameCount == 3 {
+                    sound.play()
+                    playingWhileDetached = sound.isPlaying
+                }
+            })
+        let song = try #require(sound)
+        #expect(playingWhileDetached == true)
+        runtime.closePlugins()
+        #expect(song.isPlaying == false, "足し直す道が無くなった")
+        #expect(song.level == 0)
+        song.loop()
+        #expect(song.isPlaying == false, "終わった後の loop() も変えない")
+    }
+
+    /// 閉じるときに、渡された音を鳴らそうとする入り口。
+    private final class PlaysOnClose: Inlet {
+        var sound: SoundFile?
+        var playingAfterPlay: Bool?
+        func open() throws {}
+        func supply() {}
+        func close() {
+            sound?.play()
+            playingAfterPlay = sound?.isPlaying
+        }
+    }
+
+    @Test("スケッチの後片付けの最中 (後ろに並ぶ入り口の close()) に呼んだ play() も、isPlaying を true にしない")
+    func playWhileTheRunIsClosingKeepsItSilent() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let closer = PlaysOnClose()
+        let runtime = try run(
+            frames: 2,
+            setup: { sketch in
+                // 音を先に、鳴らそうとする入り口を後ろに並べる (音が閉じた後に play() が来る)
+                closer.sound = try sketch.loadSound(url.path)
+                sketch.attach(closer)
+            })
+        runtime.closePlugins()
+        let song = try #require(closer.sound)
+        #expect(closer.playingAfterPlay == false)
+        #expect(song.isPlaying == false)
+        #expect(song.level == 0)
+    }
+
+    /// 実行を手放した後に `play()` を呼んだときの `isPlaying`。`closes` なら、手放す前に後片付けを通す。
+    private func playAfterReleasingTheRun(closing closes: Bool) throws -> (released: Bool, playing: Bool) {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var sound: SoundFile?
+        weak var released: SketchRuntime?
+        do {
+            let runtime = try run(frames: 2, setup: { sketch in sound = try sketch.loadSound(url.path) })
+            if closes { runtime.closePlugins() }
+            released = runtime
+        }
+        SoundSketch.onSetup = { _ in }
+        SoundSketch.onDraw = { _ in }
+        let song = try #require(sound)
+        song.play()
+        return (released == nil, song.isPlaying)
+    }
+
+    @Test(
+        "実行とスケッチの実体を手放した後の play() は isPlaying を true にしない (後片付けを通さずに手放した実行も)",
+        arguments: [true, false])
+    func playAfterTheRunIsReleasedKeepsItSilent(closing: Bool) throws {
+        let result = try playAfterReleasingTheRun(closing: closing)
+        try #require(result.released, "実行が手放されていない")
+        #expect(result.playing == false)
+    }
+
+    @Test("同じスケッチの実体を新しい実行で走らせても、前の実行で閉じた音は足し直すまで鳴らさず、足し直せば鳴らせる")
+    func aNewRunOfTheSameSketchDoesNotReviveTheOldSound() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sketch = SoundSketch()
+        var sound: SoundFile?
+        SoundSketch.onSetup = { sound = try $0.loadSound(url.path) }
+        SoundSketch.onDraw = { _ in }
+        let first = try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: nil)
+        try first.advance()
+        first.closePlugins()
+        let song = try #require(sound)
+
+        var beforeAttaching: Bool?
+        var afterAttaching: Bool?
+        SoundSketch.onSetup = { _ in }
+        SoundSketch.onDraw = { sketch in
+            switch sketch.frameCount {
+            case 1:
+                song.play()
+                beforeAttaching = song.isPlaying
+            case 2:
+                sketch.attach(song)
+                song.play()
+                afterAttaching = song.isPlaying
+            default: break
+            }
+        }
+        defer {
+            SoundSketch.onSetup = { _ in }
+            SoundSketch.onDraw = { _ in }
+        }
+        let second = try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: nil)
+        try second.advance()
+        try second.advance()
+        #expect(beforeAttaching == false, "前の実行で閉じた音は、新しい実行に足されていない")
+        #expect(afterAttaching == true, "新しい実行へ足し直した音は鳴らせる")
+        second.closePlugins()
+        #expect(song.isPlaying == false)
+    }
+
+    /// スケッチが終わった後も効かせる (鳴らし始めない) 操作 (#4175)。
+    enum StillAfterEnd: String, CaseIterable, Sendable {
+        case pause, stop, jump, rate
+    }
+
+    @Test(
+        "スケッチが終わった後の pause()・stop()・jump()・rate() は isPlaying を変えず、位置と速さには今までどおり効く",
+        arguments: StillAfterEnd.allCases)
+    func stillOperationsAfterTheSketchEnded(operation: StillAfterEnd) throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var sound: SoundFile?
+        let runtime = try run(
+            frames: 3,
+            setup: { sketch in
+                sound = try sketch.loadSound(url.path)
+                sound?.loop()
+            },
+            draw: { sketch in
+                // 先頭から離れた位置で止めておく (stop() が先頭へ戻すのを見分ける)
+                if sketch.frameCount == 2, let sound {
+                    sound.pause()
+                    sound.jump(2)
+                }
+            })
+        let song = try #require(sound)
+        runtime.closePlugins()
+        try #require(song.isPlaying == false)
+        switch operation {
+        case .pause:
+            song.pause()
+            #expect(song.isPlaying == false)
+        case .stop:
+            song.jump(3)
+            #expect(song.samplePosition == 144_000)
+            song.stop()
+            #expect(song.isPlaying == false)
+            #expect(song.samplePosition == 0, "stop() は先頭へ戻す")
+        case .jump:
+            song.jump(1)
+            #expect(song.isPlaying == false)
+            #expect(song.samplePosition == 48_000, "jump() は止めた位置を動かす")
+        case .rate:
+            let before = song.samplePosition
+            song.rate(2)
+            #expect(song.isPlaying == false)
+            #expect(song.samplePosition == before, "止まった音の位置は、速さを変えても動かない")
+        }
+    }
+
     // MARK: - 位置・長さ・飛ぶ (#2464)
 
     /// 10 秒・48 kHz の音 (拍で揺れる和音を繰り返す)。
