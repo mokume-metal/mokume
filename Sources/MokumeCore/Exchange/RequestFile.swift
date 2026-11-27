@@ -46,16 +46,16 @@ extension PendingRequest: Equatable where Request: Equatable {}
 
 /// 要求のファイルを見張る。
 ///
-/// [ADR-0018] 決定 3 の規約 — 最終更新時刻で気付く / 知らない鍵は無視する /
+/// [ADR-0018] 決定 3 の規約 — 改訂の印 (``FileStamp``) で気付く / 知らない鍵は無視する /
 /// **同じ識別子は二度処理しない** — を、区画によらず 1 か所で守る。区画が増えるたびに
 /// 同じ流儀を書き写すと、写した先から少しずつずれていく。
 ///
-/// **要求が無いときのコストは、最終更新時刻を 1 回見るだけ。** 中身を読むのも
+/// **要求が無いときのコストは、改訂の印を 1 回見るだけ。** 中身を読むのも
 /// 解くのも、更新されていたときだけである。
 ///
-/// ## 最終更新時刻を確定させる時機
+/// ## 改訂の印を確定させる時機
 ///
-/// 最終更新時刻は「この要求はもう見た」という印なので、**確定させた瞬間にその要求は
+/// 控えた改訂の印は「この要求はもう見た」という記録なので、**確定させた瞬間にその要求は
 /// 二度と拾えなくなる**。だから確定は経路ごとに分ける。
 ///
 /// | 経路 | 確定するか | 理由 |
@@ -92,7 +92,7 @@ extension PendingRequest: Equatable where Request: Equatable {}
 /// 見張りは切り替えの瞬間だけ 2 世代を重ねる ([#1150](https://github.com/mokume-metal/mokume/pull/1150))。
 /// **区画に応えるのは、その区画の権利 (``FacetClaim``) を持つプロセスだけである** — 先に
 /// 居る世代が消えるまで持ち、次の世代はそこで引き継ぐ。持っていない間の ``pending()`` は
-/// 何も返さず、最終更新時刻も確定させない (引き継いだ後に拾えるように)。分けていなかった
+/// 何も返さず、改訂の印も確定させない (引き継いだ後に拾えるように)。分けていなかった
 /// 頃は、両方の世代が同じ要求に応え、列の観測が区画の上で並走した
 /// ([#1162](https://github.com/mokume-metal/mokume/issues/1162))。
 ///
@@ -126,9 +126,9 @@ package final class RequestFile<Request: ExchangeRequest> {
     package let url: URL
     /// 応答の置き場。区画の持ち主が書き、ここは作った時点と引き継いだ時点にだけ読む。
     package let reportURL: URL
-    /// もう見たことにした要求の最終更新時刻。
+    /// もう見たことにした要求の改訂の印。
     private var lastModification: FileStamp?
-    /// 拾って返したが、まだ応えていない要求の最終更新時刻。
+    /// 拾って返したが、まだ応えていない要求の改訂の印。
     private var handingOver: FileStamp?
     /// 最後に応えた要求の識別子。**前の起動が応えたものから始まる** (「プロセスをまたぐ」)。
     private(set) var lastHandledID: String?
@@ -139,7 +139,7 @@ package final class RequestFile<Request: ExchangeRequest> {
     /// 権利を持っているか。**持つまでは要求を拾わない。**
     private var holdsClaim: Bool
 
-    /// 最終更新時刻を見た回数。コストを検査が測るために持つ。
+    /// 改訂の印を見た回数。コストを検査が測るために持つ。
     private(set) var pollCount = 0
     /// 中身を実際に読んだ回数。
     private(set) var readCount = 0
@@ -172,7 +172,7 @@ package final class RequestFile<Request: ExchangeRequest> {
     package func pending() -> PendingRequest<Request>? {
         pollCount += 1
         guard takeOverIfFree() else { return nil }
-        guard let modified = modificationDate() else { return nil }
+        guard let modified = revisionStamp() else { return nil }
         guard modified != lastModification else { return nil }
 
         readCount += 1
@@ -237,7 +237,7 @@ package final class RequestFile<Request: ExchangeRequest> {
         return true
     }
 
-    private func modificationDate() -> FileStamp? {
+    private func revisionStamp() -> FileStamp? {
         FileStamp.of(url)
     }
 }
