@@ -135,28 +135,31 @@ struct KnobChangeLogTests {
     }
 
     /// 書き手は応答を `rename` で置き換える。時刻の刻みの粗い置き場では、続けて置いた 2 つの応答の更新時刻が
-    /// 揃いうる。時刻だけで見ると 2 つ目を落とす (#4148)。
-    @Test("見張りは、更新時刻の同じ応答へ rename で置き換わっても読む")
+    /// 揃いうる。時刻だけで見ると 2 つ目を落とす (#4148)。大きさも揃え、置き換わったことは inode
+    /// (と状態変更時刻) でしか分からない形にする。
+    @Test("見張りは、更新時刻と大きさの同じ応答へ rename で置き換わっても読む")
     func watcherReadsAReportReplacedWithTheSameTime() throws {
         let facet = FileManager.default.temporaryDirectory
             .appendingPathComponent("knob-log-\(UUID().uuidString)/.mokume/params", isDirectory: true)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: facet.deletingLastPathComponent().deletingLastPathComponent()) }
         let report = WorkDirectory.reportURL(under: facet)
-        func publish(id: String?, size: Double) throws {
-            let idField = id.map { "\"id\":\"\($0)\"," } ?? ""
+        var sizes: [Int] = []
+        func publish(id: String, size: Double) throws {
             let staged = facet.appendingPathComponent("staged.json")
-            try Data(#"{\#(idField)"params":[{"name":"size","type":"float","value":\#(size)}]}"#.utf8)
-                .write(to: staged)
+            let bytes = Data(#"{"id":"\#(id)","params":[{"name":"size","type":"float","value":\#(size)}]}"#.utf8)
+            sizes.append(bytes.count)
+            try bytes.write(to: staged)
             try FileManager.default.setAttributes(
                 [.modificationDate: Date(timeIntervalSince1970: 7)], ofItemAtPath: staged.path)
             #expect(rename(staged.path, report.path) == 0)
         }
         let lines = Lines()
         let watcher = KnobChangeWatcher(facet: facet, colored: false) { lines.append($0) }
-        try publish(id: nil, size: 10)
+        try publish(id: "remote-0", size: 10)
         watcher.tick(at: Self.at(0))
         try publish(id: "remote-a", size: 20)
+        #expect(sizes.count == 2 && sizes[0] == sizes[1], "前提: 2 つの応答の大きさが揃っている: \(sizes)")
         watcher.tick(at: Self.at(1))
         watcher.tick(at: Self.at(2))
         #expect(lines.all.count == 1, "更新時刻の同じ応答へ置き換わったのに、読まなかった: \(lines.all)")
