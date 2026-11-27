@@ -84,6 +84,7 @@ Auto-fix で起こされても、次の失敗と状態は**コードを直して
 | --- | --- |
 | `pr-gate` の `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main のバージョンのスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2)。直せば新しい run で再評価される (再実行は要らない) |
 | `pr-gate` の `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を付ける (作成と同時なら失敗が出ない)。載せれば (付ければ) 再評価される |
+| `pr-gate` の「PR が Issue に紐づいていない」(本文に `### Closes #N` が正しく在る) | 直すものは無い。PR を作った直後は GitHub が `Closes #N` を紐づけ終える前に `pr-gate` が走ることがある (#4151)。`gh run rerun <run> --failed` で通る |
 | `pr-gate` の `pr-title` | タイトルを直す。`pr-gate` はタイトルを API から読むので、直せば再評価される (新しいコミットは要らない) |
 | `render-pr` が見送られた・cancel された | 必須ではないので直すものは無い。rerun しない — ゲートのジョブを通らずに専用機のキューに入り、merge queue の `render` と競合する (#2062)。要るなら queue が空いてから push し直す |
 | `render` のベースラインの不一致 | 2 回描いても一致しないなら決定性が壊れている。ベースラインを書き換えて消さない ([ADR-0019](decisions/0019-drawing-verification.md) 決定 3) |
