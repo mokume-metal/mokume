@@ -150,9 +150,89 @@ extension Canvas {
     }
 
     /// 回した・剪断した矩形の切り抜きを、型板の 1 段にする (#2431 の完了条件 4)。角は描く順に並べた出す座標。
+    /// `parent` を渡すと、その段の子として積む (交わりになる)。
     static func rectangleClipLayers(
-        _ p0: SIMD2<Float>, _ p1: SIMD2<Float>, _ p2: SIMD2<Float>, _ p3: SIMD2<Float>
+        _ p0: SIMD2<Float>, _ p1: SIMD2<Float>, _ p2: SIMD2<Float>, _ p3: SIMD2<Float>, parent: ClipLayers? = nil
     ) -> ClipLayers {
-        ClipLayers(layer: ClipLayer(positions: [p0, p1, p2, p0, p2, p3]), parent: nil)
+        ClipLayers(layer: ClipLayer(positions: [p0, p1, p2, p0, p2, p3]), parent: parent)
+    }
+
+    // MARK: - 表示枠の切り抜き (#2879)
+
+    /// 形の記録の中で、これから閉じる列の区間が持つ表示枠 (``recordingViewportClips``) を替える。違うなら先に列を
+    /// 閉じる — ここまでに記録した頂点は、替える前の表示枠で切る区間である。
+    func recordViewportClips(_ clips: [Shape.ViewportClip]) {
+        guard clips != recordingViewportClips else { return }
+        closeBatch()
+        recordingViewportClips = clips
+    }
+
+    /// 保持した形の区間を置く前の、表示枠を当てる土台。置き終えたら ``restoreViewportClips(_:)`` で戻す。
+    struct ViewportClipBase {
+        /// 置く前の形の切り抜きの段の積み (``Style/clipShape``)。
+        let layers: ClipLayers?
+        /// 置く前に記録していた表示枠 (形の記録の中だけ)。
+        let recorded: [Shape.ViewportClip]
+    }
+
+    /// いまの表示枠の土台を控える。
+    var viewportClipBase: ViewportClipBase {
+        ViewportClipBase(layers: style.clipShape, recorded: recordingViewportClips)
+    }
+
+    /// 保持した形の区間が持つ表示枠 `clips` を、置く変換 `matrix` で写して当てる (#2879)。区間を替えるたびに呼ぶ
+    /// (`clips` は土台からの全部で、前の区間の分は外して当て直す)。
+    ///
+    /// - 形の記録の中では型板を描かない (**切り抜きはフレームを越えない**・ADR-0021 決定 4)。写した枠を外側の記録の
+    ///   表示枠の内側に足し、外側の形を置くときに当てる
+    /// - フレームでは、置く前の切り抜きの積みの子として 1 枠 1 段で型板に積む。利用者の `clip()`・`clip { }` とも、
+    ///   外側の表示枠とも交わる。段が上限 (``clipDepthLimit``) に達したら 1 度知らせ、越えた枠は切らずに描く
+    ///   (黙って消さない)。写した角が数でない・無限なら、その枠は積まない (形の頂点も同じ変換で数でなくなる)
+    /// - **視点を通る置き** (``placesThroughView(_:)``) では切らずに描き、1 度知らせる。写すのは `matrix` の平面の
+    ///   成分だけ (``Shape/ViewportClip/moved(by:)``) で、視点を通った形とは重ならない — 当てると枠と中身がずれ、
+    ///   中身が丸ごと消えることもある。合成の単位を色ごとに掛けて描く (``placeCompositeRange(_:_:inner:at:)``) のと
+    ///   同じ判定で、余分に描く側へ倒す
+    func applyViewportClips(
+        _ clips: [Shape.ViewportClip], over base: ViewportClipBase, placedBy matrix: simd_float4x4
+    ) {
+        var moved: [Shape.ViewportClip] = []
+        moved.reserveCapacity(clips.count)
+        for clip in clips {
+            if let placed = clip.moved(by: matrix) { moved.append(placed) }
+        }
+        if recordingShape { return recordViewportClips(base.recorded + moved) }
+        if !moved.isEmpty, placesThroughView(matrix) {
+            warnOnce(
+                .viewportClipThroughView,
+                "shape(): a nested <svg> of a loaded SVG was drawn without clipping it to its viewport, because "
+                    + "the shape was placed under a camera or a 3D transform (camera(), perspective(), ortho() or "
+                    + "a transform with depth), where the viewport would not line up with the shape. What lies "
+                    + "outside that viewport was drawn")
+            moved = []
+        }
+        var layers = base.layers
+        for clip in moved {
+            guard (layers?.depth ?? 0) < Self.clipDepthLimit else {
+                warnOnce(
+                    .viewportClipTooDeep,
+                    "shape(): a nested <svg> of a loaded SVG could not be clipped to its viewport, because clips "
+                        + "are already nested \(Self.clipDepthLimit) deep, which is the most a canvas can hold. "
+                        + "What lies outside that viewport was drawn. Undo clips with pop() or noClip() before "
+                        + "placing the shape")
+                break
+            }
+            layers = Self.rectangleClipLayers(clip.p0, clip.p1, clip.p2, clip.p3, parent: layers)
+        }
+        guard layers !== style.clipShape else { return }
+        closeBatch()
+        style.clipShape = layers
+    }
+
+    /// 表示枠を当てる前へ戻す (``applyViewportClips(_:over:placedBy:)``)。
+    func restoreViewportClips(_ base: ViewportClipBase) {
+        if recordingShape { return recordViewportClips(base.recorded) }
+        guard style.clipShape !== base.layers else { return }
+        closeBatch()
+        style.clipShape = base.layers
     }
 }

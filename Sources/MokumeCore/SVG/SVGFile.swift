@@ -56,14 +56,6 @@ nonisolated enum SVGFile {
         var items: [Item]
         /// 描かずに捨てたもの。最初に出た順。
         var skipped: [Skip]
-        /// **描いているが、SVG と見え方が違う**ものの名乗り。最初に出た順。入れ子の `<svg>` の表示枠の外に
-        /// 描くものがあるときに数える (#3563)。SVG は表示枠で切り抜くが、読み込みは切り抜かずに描く。
-        /// ``skipped`` には混ぜない — 捨てたのではなく、近似で描いている。
-        ///
-        /// **つなぎの欄である。** 入れ子の `<svg>` を表示枠で切り抜いて描くようになれば ([#2879]) 、この欄ごと消える。
-        ///
-        /// [#2879]: https://github.com/mokume-metal/mokume/issues/2879
-        var approximated: [Skip] = []
         /// **合成の単位** — 描くもののうち、ひとまとめに描いてから不透明度を 1 度だけ掛ける範囲 ([#3564])。
         /// 書かれた順 (始まりの小さい順。同じ始まりなら外側が先) で、範囲どうしは入れ子になるか離れる
         /// (交差しない)。
@@ -75,6 +67,13 @@ nonisolated enum SVGFile {
         ///
         /// [#3564]: https://github.com/mokume-metal/mokume/issues/3564
         var units: [Unit] = []
+        /// **入れ子の `<svg>` の表示枠の切り抜き** (#2879)。書かれた順 (始まりの小さい順。同じ始まりなら外側が先) で、
+        /// 範囲どうしは入れ子になるか離れる (交差しない)。入れ子の `<svg>` の中の描くものは、その表示枠の外を描かない
+        /// (SVG の `overflow` の既定は `hidden`)。
+        ///
+        /// **中身が表示枠をはみ出しうる入れ子だけ**が持つ。枠に収まる入れ子は切っても絵が変わらないので持たず、置くときに
+        /// 型板の段を積まない。`overflow` が `visible`・`auto` の入れ子と、根の `<svg>` は持たない。
+        var viewportClips: [ViewportClipRange] = []
     }
 
     /// 合成の単位 1 つ (``Drawing/units``)。
@@ -87,8 +86,14 @@ nonisolated enum SVGFile {
         var bounds: Box
     }
 
-    /// 入れ子の `<svg>` の表示枠の外に描くもの (#3563)。行は、はみ出した入れ子の `<svg>` の行。
-    static let nestedViewportNote = "content outside the viewport of a nested <svg>"
+    /// 入れ子の `<svg>` の表示枠の切り抜き 1 つ (``Drawing/viewportClips``・#2879)。
+    struct ViewportClipRange: Sendable, Equatable {
+        /// 表示枠で切る描くもの (``Drawing/items`` の番号)。
+        var items: Range<Int>
+        /// 表示枠の 4 隅 (形の座標)。表示枠の座標の左上・右上・右下・左下の順。回した・剪断した祖先の下では
+        /// 平行四辺形になる。
+        var corners: [SIMD2<Float>]
+    }
 
     /// 描かずに捨てたものの 1 種類。
     struct Skip: Sendable, Equatable {
@@ -172,8 +177,7 @@ nonisolated enum SVGFile {
         walk.collectGradients(in: reader.events)
         for event in reader.events { walk.visit(event) }
         let (items, units) = walk.finish()
-        return Drawing(
-            items: items, skipped: walk.tally.skips, approximated: walk.approximations.skips, units: units)
+        return Drawing(items: items, skipped: walk.tally.skips, units: units, viewportClips: walk.viewportClips())
     }
 
     /// 要素の名前のうち、描かずに捨てて**名乗る**もの。
@@ -255,7 +259,7 @@ nonisolated enum SVGFile {
     // MARK: - 辿る
 
     /// 名乗りの文字を組む 2 つの形。**値は前後の空白を落として出す** (#3022)。値を名乗る口はここを通り、
-    /// 書式と空白の扱いを口ごとに決めない。束ね方 (``Tally/note(_:line:earliest:)``) は文字どおりに比べる。
+    /// 書式と空白の扱いを口ごとに決めない。束ね方 (``Tally/note(_:line:)``) は文字どおりに比べる。
     ///
     /// - `<要素 名前="値">`: 要素の属性の値 (`<rect width="-5">`)
     /// - `名前 "値"`: 性質・属性の名前と値 (`viewBox "1 2"`・`fill "bogus"`)
@@ -272,12 +276,9 @@ nonisolated enum SVGFile {
         private(set) var skips: [Skip] = []
         private var index: [String: Int] = [:]
 
-        /// - Parameter earliest: 立てると、後から数えたものがより前の行なら、最初の行をそちらへ直す
-        ///   (入れ子の群は内側が先に閉じるので、数えた順と行の順が食い違う)。
-        mutating func note(_ what: String, line: Int, earliest: Bool = false) {
+        mutating func note(_ what: String, line: Int) {
             if let at = index[what] {
                 skips[at].count += 1
-                if earliest, line < skips[at].line { skips[at].line = line }
             } else {
                 index[what] = skips.count
                 skips.append(Skip(what: what, count: 1, line: line))
@@ -328,7 +329,7 @@ nonisolated enum SVGFile {
         var opacity: Float = 1
         var isDisplayed = true
         /// `overflow` が表示枠で切る値か (`hidden`・`scroll`・`clip`)。入れ子の `<svg>` の既定は `hidden` (UA の
-        /// 規則)。切り抜かない読み込みが、枠の外に描くものを名乗るかの判断にだけ使う (#3563)。
+        /// 規則)。入れ子の `<svg>` を表示枠で切るかを決める (``ViewportClipRange``・#2879)。
         var clipsOverflow = false
         /// 描けない効果 (`clip-path` など) を持つ性質の名前。`marker` は `marker-start` / `marker-mid` /
         /// `marker-end` に分けて持つ。
@@ -375,20 +376,21 @@ nonisolated enum SVGFile {
         var chose = false
         /// この要素が `opacity` < 1 の容器なら、``Walk/groups`` の中の番号 (#3564)。
         var group: Int?
-        /// この要素が、表示枠で切り抜くはずの入れ子の `<svg>` なら、その枠 (#3563)。
+        /// この要素が、表示枠で切り抜く入れ子の `<svg>` なら、その枠 (#2879)。
         var clip: ViewportClip?
     }
 
-    /// 表示枠で切り抜くはずの入れ子の `<svg>` 1 つ。中で描くものが枠をはみ出したら 1 度だけ名乗る。
+    /// 表示枠で切り抜く入れ子の `<svg>` 1 つ (#2879)。中で描くものが枠をはみ出すかを見張り、閉じるときに
+    /// はみ出すものがあれば切り抜きの範囲 (``ViewportClipRange``) にする。
     struct ViewportClip {
         /// `<svg>` の中の座標から、ファイル全体の座標への変換。
         var base: Affine
         /// 表示枠 (`<svg>` の中の座標)。
         var box: Box
-        /// `<svg>` の行。
-        var line: Int
-        /// 名乗り済みか。
-        var named = false
+        /// 中の最初の描くものの番号。
+        var firstItem: Int
+        /// 中に、枠をはみ出しうる描くものがあるか。
+        var overflows = false
     }
 
     /// 外接矩形 (形の座標)。半透明の群の重なりの判定と、合成の単位の外接 (``Unit/bounds``) に使う。
@@ -514,8 +516,8 @@ nonisolated enum SVGFile {
         /// ``items`` と同じ番号の、不透明度の控え。
         private var pending: [Pending] = []
         var tally = Tally()
-        /// 描いているが SVG と見え方が違うもの (``Drawing/approximated``)。
-        var approximations = Tally()
+        /// 閉じた入れ子の `<svg>` のうち、中身が表示枠をはみ出しうるものの切り抜き (閉じた順。内側が先)。
+        private var closedClips: [ViewportClipRange] = []
         /// `opacity` < 1 の容器 (開いたものの順。外側が先)。
         private var groups: [OpacityGroup] = []
         /// 開いている `opacity` < 1 の容器のうち、いちばん内側のもの。
@@ -595,7 +597,9 @@ nonisolated enum SVGFile {
         mutating func visit(_ event: Event) {
             switch event {
             case .end:
-                if let index = stack.popLast()?.group { close(group: index) }
+                guard let frame = stack.popLast() else { return }
+                if let index = frame.group { close(group: index) }
+                if let clip = frame.clip { close(clip) }
             case .start(let rawName, let attributes, let line):
                 start(rawName, attributes, line)
             }
@@ -665,10 +669,10 @@ nonisolated enum SVGFile {
                 context.viewport = viewport.size
                 context.ownSizes = viewport.texts
                 pushContainer(.render, context)
-                // 入れ子の `<svg>` は SVG なら表示枠で切り抜くが、読み込みは切り抜かない。はみ出すものを見張る (#3563)
+                // 入れ子の `<svg>` は表示枠で切り抜く。はみ出すものを見張り、閉じるときに範囲にする (#2879)
                 if stack.count > 1, context.own.clipsOverflow {
                     stack[stack.count - 1].clip = ViewportClip(
-                        base: context.transform, box: viewport.clip, line: line)
+                        base: context.transform, box: viewport.clip, firstItem: items.count)
                 }
             case "g", "a":
                 context.transform = context.transform * ownTransform(attributes, line: line)
@@ -827,7 +831,7 @@ nonisolated enum SVGFile {
             case "inherit": return .inherit
             case "initial": return Self.initial(of: property)
             case "unset", "revert", "revert-layer":
-                // `overflow` の `revert` は UA の規則に戻る。入れ子の `svg` では `hidden` なので、切る側に倒す (#3563)
+                // `overflow` の `revert` は UA の規則に戻る。入れ子の `svg` では `hidden` なので切る (#2879)
                 if property == "overflow", lowered != "unset" { return .set { _, own in own.clipsOverflow = true } }
                 return SVGFile.inheritedProperties.contains(property) ? .inherit : Self.initial(of: property)
             default: break
@@ -920,7 +924,8 @@ nonisolated enum SVGFile {
                 return .set { _, own in own.isDisplayed = isDisplayed }
             case "overflow":
                 // 切る値は `hidden`・`scroll`・`clip`。`visible`・`auto` は切らない。2 つ書く形 (`hidden visible`) は、
-                // どちらかの軸が切るなら切る側に倒す。値の外は無かったものとして、下の宣言のまま (#3563)
+                // どちらかの軸が切るなら両方の軸で切る (表示枠の切り抜きは 4 隅の四角形で、軸ごとには切らない)。
+                // 値の外は無かったものとして、下の宣言のまま (#2879)
                 let words = lowered.split(whereSeparator: \.isWhitespace)
                 let known: Set<String> = ["visible", "hidden", "clip", "scroll", "auto"]
                 guard (1...2).contains(words.count), words.allSatisfy({ known.contains(String($0)) }) else {
@@ -1284,7 +1289,7 @@ nonisolated enum SVGFile {
             if context.strokeIsReference { tally.note("stroke=\"url(…)\"", line: line) }
             if stroke != nil, context.isDashed { tally.note("stroke-dasharray", line: line) }
             if fill == nil && stroke == nil { return }
-            noteViewportOverflow(outline, context)
+            noteViewportOverflow(outline, context, strokeWidth: stroke == nil ? 0 : context.strokeWidth)
             // 塗りと線を両方持つ要素は、それ自身で重なる (線の内側の半分が塗りに重なる)。要素の `opacity` が
             // 1 未満なら、要素だけで合成の単位にする
             let overlapsItself = fill != nil && stroke != nil
@@ -1338,25 +1343,51 @@ nonisolated enum SVGFile {
             }
         }
 
-    /// 描くもの 1 つが、開いている入れ子の `<svg>` の表示枠をはみ出すなら、その `<svg>` につき 1 度だけ名乗りに数える
-    /// (#3563)。描く絵は変えない — SVG なら切り抜かれるが、読み込みは切り抜かない。
+    /// 描くもの 1 つが、開いている入れ子の `<svg>` の表示枠をはみ出しうるなら、その `<svg>` に印を付ける (#2879)。
     ///
     /// **表示枠の座標で比べる**: 祖先の回転や剪断は、`<svg>` の中の座標へ戻して消す。`preserveAspectRatio` が
-    /// `slice` で viewBox が枠をはみ出すときも、枠のほうで比べるので名乗る。線の太さは数えず、形の外接矩形
-    /// (曲線は制御点を含める) だけで見る。名乗り過ぎる側に倒すので、実際には枠に収まる形でも名乗ることがある。
-    private mutating func noteViewportOverflow(_ outline: Outline, _ context: Context) {
+    /// `slice` で viewBox が枠をはみ出すときも、枠のほうで比べるので切る。形の外接矩形 (曲線は制御点を含める) を
+    /// 線の太さの分 (尖った角まで) 広げて見る。はみ出す側に倒すので、実際には枠に収まる形でも切ることがある
+    /// (絵は同じで、型板の段の分だけ費用がかかる)。
+    private mutating func noteViewportOverflow(_ outline: Outline, _ context: Context, strokeWidth: Float) {
         for index in stack.indices {
-            guard let clip = stack[index].clip, !clip.named, let inverse = clip.base.inverted else { continue }
-            let box = Self.box(of: outline, inverse * context.transform)
-            // 逆の変換を掛けた分の丸めの誤差で、ちょうど枠に収まる形を名乗らない
+            guard let clip = stack[index].clip, !clip.overflows, let inverse = clip.base.inverted else { continue }
+            let local = inverse * context.transform
+            let reach = strokeWidth / 2 * local.largestScale * Float(2).squareRoot()
+            let box = Self.box(of: outline, local).expanded(by: reach)
+            // 逆の変換を掛けた分の丸めの誤差で、ちょうど枠に収まる形を切らない
             let slack = 1e-4 * max(clip.box.high.x - clip.box.low.x, clip.box.high.y - clip.box.low.y)
             guard
                 box.low.x < clip.box.low.x - slack || box.low.y < clip.box.low.y - slack
                     || box.high.x > clip.box.high.x + slack || box.high.y > clip.box.high.y + slack
             else { continue }
-            stack[index].clip?.named = true
-            approximations.note(SVGFile.nestedViewportNote, line: clip.line, earliest: true)
+            stack[index].clip?.overflows = true
         }
+    }
+
+    /// 入れ子の `<svg>` を閉じる。中身が表示枠をはみ出しうるなら、中の描くものの範囲と表示枠の 4 隅を残す (#2879)。
+    private mutating func close(_ clip: ViewportClip) {
+        guard clip.overflows, items.count > clip.firstItem else { return }
+        let box = clip.box
+        let corners = [
+            SIMD2(box.low.x, box.low.y), SIMD2(box.high.x, box.low.y), SIMD2(box.high.x, box.high.y),
+            SIMD2(box.low.x, box.high.y),
+        ].map(clip.base.apply)
+        closedClips.append(ViewportClipRange(items: clip.firstItem..<items.count, corners: corners))
+    }
+
+    /// 切り抜きの範囲を、始まりの小さい順 (同じ始まりなら外側が先) に並べたもの。閉じた順は内側が先なので並べ直す。
+    func viewportClips() -> [ViewportClipRange] {
+        closedClips.enumerated().sorted { a, b in
+            if a.element.items.lowerBound != b.element.items.lowerBound {
+                return a.element.items.lowerBound < b.element.items.lowerBound
+            }
+            if a.element.items.upperBound != b.element.items.upperBound {
+                return a.element.items.upperBound > b.element.items.upperBound
+            }
+            // 同じ範囲なら、後に閉じたほうが外側
+            return a.offset > b.offset
+        }.map(\.element)
     }
 
     /// 輪郭の外接矩形 (形の座標)。曲線は制御点を含めた矩形にする (曲線は制御点の外へ出ない)。
