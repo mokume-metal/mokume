@@ -90,6 +90,9 @@ extension Canvas {
         /// 形の切り抜きの段が上限 (``Canvas/clipDepthLimit``) に達していて、保持した形の表示枠 (読み込んだ SVG の
         /// 入れ子の `<svg>`) を型板に積まずに描いた (#2879)。
         case viewportClipTooDeep
+        /// 保持した形の表示枠 (読み込んだ SVG の入れ子の `<svg>`) を、視点を通る置き (既定と違う視点・奥行きのある
+        /// 変換) で切らずに描いた (#2879)。面の上の範囲で読む表示枠は、視点を通った形と重ならない。
+        case viewportClipThroughView
         /// 置けない置き場所が混ざっていた。
         case badPlacement
         /// 数の並びを置き場所として読む口 (``Canvas/shape(_:at:layout:)``) に、その道に載らない形が渡された。

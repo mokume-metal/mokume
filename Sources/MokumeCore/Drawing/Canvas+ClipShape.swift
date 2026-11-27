@@ -188,8 +188,10 @@ extension Canvas {
     /// - フレームでは、置く前の切り抜きの積みの子として 1 枠 1 段で型板に積む。利用者の `clip()`・`clip { }` とも、
     ///   外側の表示枠とも交わる。段が上限 (``clipDepthLimit``) に達したら 1 度知らせ、越えた枠は切らずに描く
     ///   (黙って消さない)。写した角が数でない・無限なら、その枠は積まない (形の頂点も同じ変換で数でなくなる)
-    ///
-    /// 写すのは `matrix` の平面の成分だけで、視点は通さない (``Shape/ViewportClip/moved(by:)``)。
+    /// - **視点を通る置き** (``placesThroughView(_:)``) では切らずに描き、1 度知らせる。写すのは `matrix` の平面の
+    ///   成分だけ (``Shape/ViewportClip/moved(by:)``) で、視点を通った形とは重ならない — 当てると枠と中身がずれ、
+    ///   中身が丸ごと消えることもある。合成の単位を色ごとに掛けて描く (``placeCompositeRange(_:_:inner:at:)``) のと
+    ///   同じ判定で、余分に描く側へ倒す
     func applyViewportClips(
         _ clips: [Shape.ViewportClip], over base: ViewportClipBase, placedBy matrix: simd_float4x4
     ) {
@@ -199,6 +201,15 @@ extension Canvas {
             if let placed = clip.moved(by: matrix) { moved.append(placed) }
         }
         if recordingShape { return recordViewportClips(base.recorded + moved) }
+        if !moved.isEmpty, placesThroughView(matrix) {
+            warnOnce(
+                .viewportClipThroughView,
+                "shape(): a nested <svg> of a loaded SVG was drawn without clipping it to its viewport, because "
+                    + "the shape was placed under a camera or a 3D transform (camera(), perspective(), ortho() or "
+                    + "a transform with depth), where the viewport would not line up with the shape. What lies "
+                    + "outside that viewport was drawn")
+            moved = []
+        }
         var layers = base.layers
         for clip in moved {
             guard (layers?.depth ?? 0) < Self.clipDepthLimit else {

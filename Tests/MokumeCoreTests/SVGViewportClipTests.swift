@@ -278,4 +278,59 @@ struct SVGViewportClipTests {
         #expect(nestedCanvas.drawCallsInLastFrame == flatCanvas.drawCallsInLastFrame)
         #expect(alpha(nestedImage, 60, 60) == 255 && alpha(flatImage, 60, 60) == 255)
     }
+
+    // MARK: - 視点を通る置き
+
+    /// 最小例を `overflow='visible'` にしたもの (切らない入れ子)。
+    private static let unclipped = minimal.replacingOccurrences(of: "<svg ", with: "<svg overflow='visible' ")
+
+    /// 視点を通る置き方。どれも、表示枠を面の上の範囲で当てると形とずれる。
+    enum ThroughView: String, CaseIterable {
+        /// 奥行きのある変換。
+        case depth
+        /// 既定と違う視点 (x へ 40 ずらして正面から見る)。
+        case camera
+        /// 既定と違う投影 (画角を広げる)。
+        case perspective
+
+        func apply(to canvas: Canvas) {
+            switch self {
+            case .depth:
+                canvas.translate(0, 0, -100)
+            case .camera:
+                let fitting = canvas.defaultCamera
+                let shift = Vector3(40, 0, 0)
+                canvas.camera(eye: fitting.eye + shift, center: fitting.center + shift, up: fitting.up)
+            case .perspective:
+                canvas.perspective(Float.pi / 2, Float(SVGViewportClipTests.width) / Float(SVGViewportClipTests.height), 1, 2000)
+            }
+        }
+    }
+
+    @Test("視点を通る置きでは表示枠で切らず、overflow='visible' の入れ子と同じ絵で描いて 1 度知らせる", arguments: ThroughView.allCases)
+    func throughViewDrawsUnclippedAndWarns(view: ThroughView) throws {
+        let place: (Canvas, Shape) -> Void = { canvas, shape in
+            view.apply(to: canvas)
+            canvas.shape(shape)
+            canvas.shape(shape, 10, 0)
+        }
+        let (clipped, canvas) = try rendered(place: place)
+        let (visible, _) = try rendered(Self.unclipped, place: place)
+        #expect(clipped == visible, "表示枠で切った分が欠けている (枠と形がずれて切れている)")
+        #expect(canvas.warnings.hasWarned(.viewportClipThroughView))
+        #expect(canvas.warnings.message(for: .viewportClipThroughView)?.hasPrefix("shape():") == true)
+        #expect(!canvas.warnings.hasWarned(.viewportClipTooDeep))
+    }
+
+    @Test("視点を既定へ戻して置けば、また表示枠で切る (判定は置き場所ごと)")
+    func plainViewAfterACameraClipsAgain() throws {
+        let (image, canvas) = try rendered { canvas, shape in
+            ThroughView.camera.apply(to: canvas)
+            canvas.camera()
+            canvas.shape(shape)
+        }
+        #expect(!canvas.warnings.hasWarned(.viewportClipThroughView))
+        #expect(alpha(image, 45, 45) == 255)
+        #expect(alpha(image, 30, 30) == 0, "\(image[30, 30])")
+    }
 }

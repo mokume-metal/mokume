@@ -734,7 +734,7 @@ extension Canvas {
                 }
                 return
             }
-        } else if flatView(of: transform.matrix * placing).clip == nil,
+        } else if !placesThroughView(transform.matrix * placing),
             let bounds = Self.placedBox(group.bounds, by: placing)
         {
             // 置き場所が奥行きを持つ (視点を通る) なら、中間面の画素と置く側の画素が重ならないので開かない。

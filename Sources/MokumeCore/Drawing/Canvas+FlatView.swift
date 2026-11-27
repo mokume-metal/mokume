@@ -86,6 +86,15 @@ extension Canvas {
         return FlatView(placing: Transform(matrix: placing), clip: flatViewProjection * world)
     }
 
+    /// 変換 `matrix` で置く平面の図形が視点を通るか (空間の場合)。
+    ///
+    /// 視点を通る図形は、面の上の画素 (中間の描画先・表示枠の切り抜きの型板) と重ならない。保持した形を置く口は、
+    /// 面の上で読むものを当ててよいかを**この 1 つの判定で**決める (合成の単位・表示枠の切り抜き・#2879)。
+    /// 形の組み立ての中は素の置き方なので偽。
+    func placesThroughView(_ matrix: simd_float4x4) -> Bool {
+        flatView(of: matrix).clip != nil
+    }
+
     /// 列の x・y・z が全部有限か。
     private static func isFinite(_ column: SIMD4<Float>) -> Bool {
         column.x.isFinite && column.y.isFinite && column.z.isFinite
