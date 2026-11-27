@@ -326,6 +326,58 @@ struct FlatStrokeStencilTests {
         #expect(redLevels(pixels).count >= 1)
     }
 
+    /// 細い帯の被覆は向きで変わる (#2172): 描く画素で太さ 0.5 の横の帯は 0.5、45° の帯は 0.5 / cos 45°。被覆の
+    /// 違う細い片どうしは積んだ順のままなので、交わる所には先に書いた帯の被覆が残る (#4157・ADR-0046 決定 1)。
+    /// 横の帯 (y = 80.6) と最後の 45° の帯が (80, 80.6) = 描く画素の (40, 40.3) で交わる。どの帯の縁も、読む画素の
+    /// 中心から 0.2 以上離す (縁が画素の中心に乗ると、ラスタライザの丸めで行がずれうる)。
+    @Test("被覆の違う細い帯が交わる所は、先に書いた帯の濃さが残る", arguments: [true, false])
+    func thinCrossingKeepsTheFirstWrittenCoverage(horizontalFirst: Bool) throws {
+        let points: [SIMD2<Float>] = [SIMD2(20, 80.6), SIMD2(140, 80.6), SIMD2(140, 140.6), SIMD2(40, 40.6)]
+        let sections = Box()
+        let pixels = try renderThin(sections: sections) { canvas in
+            canvas.stroke(255, 0, 0)
+            canvas.beginShape()
+            for point in horizontalFirst ? points : points.reversed() { canvas.vertex(point.x, point.y) }
+            canvas.endShape()
+        }
+        #expect(sections.counts == [1], "区間: \(sections.counts)")
+        let horizontal = pixels[20, 40].red
+        let diagonal = pixels[30, 30].red
+        let crossing = pixels[40, 40].red
+        // 2 本の帯の値が違わなければ、順を見ていない
+        #expect(diagonal - horizontal > 0.1, "横の帯 \(horizontal)・45° の帯 \(diagonal)")
+        #expect(abs(crossing - (horizontalFirst ? horizontal : diagonal)) <= 0.004, "交わる所: \(crossing)")
+        // 被覆の式の目安 (横 0.5・45° 0.71 に、線形の赤 0.822 を掛けた値)
+        #expect(abs(horizontal - 0.411) <= 0.02, "横の帯だけの所: \(horizontal)")
+        #expect(abs(diagonal - 0.582) <= 0.02, "45° の帯だけの所: \(diagonal)")
+    }
+
+    /// 開いた細い線の端の列の片は、帯の被覆に列の割合を掛けた被覆で、ほかの細い片より先に積む (#3745)。端の列が
+    /// 同じ図形の後の細い帯に重なると、交わる所には端の列の片の被覆が残り、どちらの帯だけの所より薄くなる (#4157)。
+    /// 縦の帯の始点 (60.6, 80.6) = 描く画素の (30.3, 40.3) が、最後の横の帯 (y = 80.6) の上にある。
+    @Test("細い線の端の列が同じ図形の後の細い帯に重なる所は、端の列の濃さが残る")
+    func thinEndColumnOverABandKeepsTheEndCoverage() throws {
+        let sections = Box()
+        let pixels = try renderThin(sections: sections) { canvas in
+            canvas.stroke(255, 0, 0)
+            canvas.beginShape()
+            for point in [
+                SIMD2<Float>(60.6, 80.6), SIMD2(60.6, 140.6), SIMD2(140.6, 140.6), SIMD2(140.6, 80.6), SIMD2(20.6, 80.6),
+            ] {
+                canvas.vertex(point.x, point.y)
+            }
+            canvas.endShape()
+        }
+        #expect(sections.counts == [1], "区間: \(sections.counts)")
+        let vertical = pixels[30, 55].red
+        let horizontal = pixels[50, 40].red
+        let crossing = pixels[30, 40].red
+        #expect(vertical > 0.3 && horizontal > 0.3, "縦の帯 \(vertical)・横の帯 \(horizontal)")
+        // 端の列の片の被覆は、帯の被覆 0.5 に列の割合を掛けたもの (この置き方で線形の赤 0.266)
+        #expect(crossing < min(vertical, horizontal) - 0.05, "交わる所: \(crossing)")
+        #expect(abs(crossing - 0.266) <= 0.02, "交わる所: \(crossing)")
+    }
+
     // MARK: - 畳んだ雛形の細い輪郭 (#3733)
 
     /// 細い輪郭の矩形を、回さずに 1 つと 45° に回して 1 つ置く。雛形は回さない 1 つ目の向きで組まれ、2 つ目は
