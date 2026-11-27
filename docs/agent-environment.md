@@ -10,7 +10,7 @@ SPDX-License-Identifier: MIT
 
 ## スキル
 
-Claude Code は従来どおり `.claude/skills/` を読む。Codex は `.agents/skills/` の相対リンク
+Claude Code は `.claude/skills/` を読む。Codex は `.agents/skills/` の相対リンク
 から同じ4本を読む。root・サブディレクトリ・worktree のいずれでもリポジトリ内で完結する。
 リンクを含めて checkout する。別のエージェントでは AGENTS.md の「場面別の入口」から本文を
 読む。スキルを個人ディレクトリへコピーしない。
@@ -70,9 +70,8 @@ Claude の desktop アプリは、セッションに結び付いた PR の CI �
 **PR の見届けはこれに任せ、待機を立てない** (#4021)。auto-merge を掛けたらターンを終える。
 `Monitor`・背景や手前の `sleep` と `gh` のループ・`ScheduleWakeup`・`gh pr checks --watch` で
 merge や赤を待たない。赤・衝突・コメントは Auto-fix が同じセッションを起こし、queue から外れて
-auto-merge も外れた PR は `stall-watch` が名乗る (AGENTS.md「マージ」)。かつて外の監視を
-退けた根拠 (#194・#1994: 承認待ちの赤を異常と読む) は、承認ゲートが無くなり
-([ADR-0044](decisions/0044-maintainer-authored-prs-without-approval-gate.md)) 当てはまらない。
+auto-merge も外れた PR は `stall-watch` が名乗る (AGENTS.md「マージ」。承認ゲートが無いことは
+[ADR-0044](decisions/0044-maintainer-authored-prs-without-approval-gate.md))。
 
 待ってよいのは Auto-fix の対象外だけである: 使い捨ての Draft PR の計測の run (下の節) と、
 release など PR に結び付かない run。そこでも待つ側が期限を持つ。
@@ -106,7 +105,7 @@ bash scripts/plan-record.sh register --agent codex --session "$CODEX_THREAD_ID" 
 説明を読み、表示された `scripts/comment.sh` で投稿する。終了コード2は投稿の指示にも
 入力の差し戻しにも使うため、成功と決めつけない。投稿そのものをフックは代行しない。
 有効な Stop フックは同じworktree・Codexセッションで登録された未投稿のプランを確認する。
-未登録のプランは検出しない。Claude の ExitPlanMode と capture/guard は従来どおりである。
+未登録のプランは検出しない。Claude Code では、ExitPlanMode と capture/guard がこの登録と確認を担う。
 
 他のエージェントは `--agent` と `--session` を明示し、作業終了時に `check` を実行する。
 Codex でもフック非対応・未信頼なら同じ確認を手で行う。
