@@ -92,18 +92,28 @@ enum RunCommand {
     /// 受け取らない** — 探してよい包みを決める口 (``AssetScope/settle(context:executable:package:say:asking:tool:)``) を
     /// 通らずに子を起こす形にならない。`watch` は作り直しの後の段取り (``AssetScope/Carried``) で同じ口を通る。
     ///
+    /// **建てる前に、道具と固定の版の食い違いを 1 度読む** (#4074)。起動の行 (`Tool:` の近く) で名乗るためで、
+    /// 組んだ後の読みは作り直し (``rebuild(in:context:dependencies:capturing:running:binPath:progress:compiling:)``) が持つ。
+    ///
     /// - Parameters:
+    ///   - dependencies: 道具と固定の版の食い違いを名乗る手 (#4074)。同じものを作り直しへ渡す (同じ食い違いを 2 度言わない)。
     ///   - say: 名乗りの行き先。
     ///   - asking: 依存の木の問い (``AssetScope/Asking``)。**検査が偽の答えを渡すために渡せる形にしてある。**
     ///   - building: 建てて実行ファイルを返す手。**検査が `swift build` を走らせずに通すために渡せる形にしてある。**
+    ///     省けば ``buildAndResolve(in:context:dependencies:)``。
     static func prepare(
-        in directory: URL, context: BuildContext, say: (String) -> Void = { print($0) },
+        in directory: URL, context: BuildContext, dependencies: DoctorCommand.MismatchNotice,
+        say: (String) -> Void = { print($0) },
         asking: AssetScope.Asking = BundleCommand.askSwiftPM,
-        building: (URL, BuildContext) throws(CommandFailure) -> URL = { directory, context throws(CommandFailure) in
-            try buildAndResolve(in: directory, context: context)
-        }
+        building: ((URL, BuildContext) throws(CommandFailure) -> URL)? = nil
     ) throws(CommandFailure) -> Prepared {
-        let executable = try building(directory, context)
+        dependencies.check(in: directory)
+        let executable: URL
+        if let building {
+            executable = try building(directory, context)
+        } else {
+            executable = try buildAndResolve(in: directory, context: context, dependencies: dependencies)
+        }
         let allowance = AssetScope.settle(
             context: context, executable: executable, package: directory, say: say, asking: asking)
         return Prepared(executable: executable, assetBundles: allowance)
@@ -135,8 +145,10 @@ enum RunCommand {
             afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
 
-        // **いまの宣言に無い包みは、子に探させない** (#4038)
-        let prepared = try prepare(in: directory, context: context)
+        // **いまの宣言に無い包みは、子に探させない** (#4038)。**道具と固定の版の食い違いは、建てる前と
+        // 組んだ後に読んで名乗る** (#4074)
+        let prepared = try prepare(
+            in: directory, context: context, dependencies: dependencyNotice(say: { print($0) }))
         // 走らせるのは人なので、速さを名乗らせる。MCP サーバはここを通らない。
         // **名乗る名前は、いま走らせる構成と同じ値から出す**
         //
@@ -283,13 +295,26 @@ enum RunCommand {
     /// 3.4 秒の実測)、`Tool:` の行の後が無音になる。名乗るのは始まりの 1 行だけで、
     /// 測れない進みは名乗らない。標準エラーを流して名乗りの代わりにしない — 捨てるのは、
     /// 失敗を次のビルドが見せる設計による。
+    ///
+    /// **`Package.resolved` の無いスケッチは `update` で解決する** (#4073)。置き場を共有するので、
+    /// `resolve` は置き場の `workspace-state.json` に残る別のスケッチの版が要件を満たせばそれを採り、
+    /// 作ったばかりのスケッチが最新の 0.x に届かない (``Templates/libraryMinimumVersion``)。
+    /// `update` が `Package.resolved` を書けなかったら (取りに行けない・オフライン)、`resolve` で
+    /// 置き場に在る版を採る。名乗りは 1 行のまま。
     nonisolated private static func resolveDependencies(
         in directory: URL, root: URL, announce: (String) -> Void,
         resolver: (_ arguments: [String], _ directory: URL) -> Void
     ) {
         let store = root.appendingPathComponent(
             BuildDirectory.resolveSegment, isDirectory: true)
+        let resolved = directory.appendingPathComponent("Package.resolved").path
+        let manager = FileManager.default
         announce(resolvingLine)
+        // `update` は在るファイルの他の依存の固定まで動かすので、ファイルの無いスケッチに限る
+        if !manager.fileExists(atPath: resolved) {
+            resolver(["package", "update", "--scratch-path", store.path], directory)
+            if manager.fileExists(atPath: resolved) { return }
+        }
         resolver(["package", "resolve", "--scratch-path", store.path], directory)
     }
 
@@ -392,10 +417,16 @@ enum RunCommand {
     ///   持ち回ってよいかを判断するのは呼び手で、見張りは ``BuildResolver`` がそれを担う。
     /// - Parameter progress: 組み立ての段数が読めるたびに呼ぶ口 (#4121)。掴む形でだけ働き、
     ///   **作り直しの糸から呼ぶ。** 返す出力は変えない。
+    /// - Parameter dependencies: 道具と固定の版の食い違いを名乗る手 (#4074)。**組んだ後に読む** — 固定を確定させるのは
+    ///   組み立てである。
+    /// - Parameter compiling: `swift build` の代わりに組む手。**検査が、組み立ての途中で固定を書き換えるために渡せる形に
+    ///   してある。** 省けば `swift build`。
     nonisolated static func rebuild(
-        in directory: URL, context: BuildContext, capturing: Bool = false,
+        in directory: URL, context: BuildContext, dependencies: DoctorCommand.MismatchNotice,
+        capturing: Bool = false,
         running: RunningBuild? = nil, binPath: URL? = nil,
-        progress: (@Sendable (BuildProgress) -> Void)? = nil
+        progress: (@Sendable (BuildProgress) -> Void)? = nil,
+        compiling: ((URL, [String]) throws(CommandFailure) -> (status: Int32, output: String))? = nil
     )
         throws(CommandFailure) -> Rebuilt
     {
@@ -415,9 +446,16 @@ enum RunCommand {
 
         // **診断は stderr にしか出ない。** 掴む形 (watch) では混ぜないと、記録に
         // 失敗の本文が載らない (#731)
-        let result = try swift(
-            ["build"] + context.arguments, in: directory, capturing: capturing,
-            errors: .merge, running: running, progress: progress)
+        let result: (status: Int32, output: String)
+        if let compiling {
+            result = try compiling(directory, ["build"] + context.arguments)
+        } else {
+            result = try swift(
+                ["build"] + context.arguments, in: directory, capturing: capturing,
+                errors: .merge, running: running, progress: progress)
+        }
+        // **固定を確定させるのは組み立てなので、組んだ後に読む** (#4074)。通らなかった回も解決は済んでいることがある
+        dependencies.check(in: directory)
 
         // **名前が分からなかったときは、建った後に読み直す。** 宣言が直っていることが
         // あるためで、この経路の置き場は必ずパッケージ直下なので取り違えは起きない
@@ -516,10 +554,20 @@ enum RunCommand {
     }
 
     /// 作り直して、走らせるものを返す。**通らなければ投げる** (人へ見せる経路の形)。
-    static func buildAndResolve(in directory: URL, context: BuildContext) throws(CommandFailure)
-        -> URL
-    {
-        try executable(from: rebuild(in: directory, context: context), in: directory)
+    ///
+    /// - Parameter dependencies: 道具と固定の版の食い違いを名乗る手 (#4074)。起動の行で読んだものと同じものを渡す
+    ///   (同じ食い違いを 2 度言わない)。
+    static func buildAndResolve(
+        in directory: URL, context: BuildContext, dependencies: DoctorCommand.MismatchNotice
+    ) throws(CommandFailure) -> URL {
+        try executable(from: rebuild(in: directory, context: context, dependencies: dependencies), in: directory)
+    }
+
+    /// スケッチを組む口 (`run`・`render`・`replay`・`bundle`・`watch`) の名乗りの手。道具の版は配布物から読む。
+    ///
+    /// - Parameter say: 名乗りの行き先。口ごとに、その口のほかの行と同じ行き先を渡す。
+    static func dependencyNotice(say: @escaping @Sendable (String) -> Void) -> DoctorCommand.MismatchNotice {
+        DoctorCommand.MismatchNotice(tool: ToolVersion.release(), say: say)
     }
 
     /// 作り直しの結果を、人へ見せる経路の形に読む。
@@ -700,7 +748,8 @@ enum RunCommand {
     /// `$?` と同じ `128 + 番号` で名乗る** (``CommandFailure/sketchSignalled(signal:)``・#2315)。
     ///
     /// **前提: 渡す実行ファイルは、呼び元が作り直して建ったことを確かめたものだけである**
-    /// (`run`・`render` は ``buildAndResolve(in:context:)``、`watch` は ``rebuild(in:context:capturing:running:binPath:)``
+    /// (`run`・`render` は ``buildAndResolve(in:context:dependencies:)``、`watch` は
+    /// ``rebuild(in:context:dependencies:capturing:running:binPath:progress:compiling:)``
     /// の直後)。だから起こす時点で無ければ、宣言のせいではなく消えたのであり、
     /// ``CommandFailure/executableVanished(path:)`` が「build の直後には在った」と名乗る
     /// ([#2522](https://github.com/mokume-metal/mokume/issues/2522))。**作り直しを通らない呼び元を足す

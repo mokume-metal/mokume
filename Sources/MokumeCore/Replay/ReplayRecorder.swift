@@ -281,6 +281,9 @@ package final class ReplayRecorder: UnreproducibleSink {
     /// ウィンドウに出しながら録っているか (``noteStart(seed:params:frameRate:width:height:window:)`` の `window`)。
     var soundRunsInRealTime: Bool { start?.window ?? false }
 
+    /// 書き終えたか (``isFinished``)。
+    var hasEnded: Bool { isFinished }
+
     /// 再現を保証しないものが使われた。**同じ理由は 1 度だけ書く。**
     func noteUnreproducible(_ reason: String) {
         guard !isFinished, !failed, notedReasons.insert(reason).inserted else { return }

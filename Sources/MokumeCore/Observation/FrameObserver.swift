@@ -15,7 +15,7 @@ import MokumeDiagnostics
 ///
 /// ## 要求が無いフレームのコスト
 ///
-/// ``pendingRequest()`` は要求ファイルの最終更新時刻を 1 回見るだけで返る。中身を読むのも、
+/// ``pendingRequest()`` は要求ファイルの改訂の印を 1 回見るだけで返る。中身を読むのも、
 /// JSON を解くのも、更新されていたときだけである。
 ///
 /// ## 書く順序
@@ -50,7 +50,7 @@ final class FrameObserver {
     private let requests: RequestFile<ObservationRequest>
     private let reportURL: URL
 
-    /// 最終更新時刻を見た回数。要求が無いフレームのコストを検査が測るために持つ。
+    /// 改訂の印を見た回数。要求が無いフレームのコストを検査が測るために持つ。
     var pollCount: Int { requests.pollCount }
     /// 要求ファイルを実際に読んだ回数。
     var readCount: Int { requests.readCount }

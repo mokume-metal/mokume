@@ -751,7 +751,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     /// 区画が変わっていれば読み直す。
     ///
-    /// **更新時刻で見る。** 毎フレーム読み解くのは無駄で、中身が変わるのは子が入れ替わった
+    /// **改訂の印で見る。** 毎フレーム読み解くのは無駄で、中身が変わるのは子が入れ替わった
     /// ときだけである。
     private func reloadSourceIfChanged() {
         guard let manifest = manifest.changed() else { return }

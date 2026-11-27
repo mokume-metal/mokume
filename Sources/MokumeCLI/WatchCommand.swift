@@ -143,11 +143,14 @@ enum WatchCommand {
 
         // 作り直しの糸が読んだ段数を main actor へ運ぶ (#4121)。受け手は見張りができてから据える
         let progress = BuildProgressMailbox()
+        // 道具と固定の版の食い違いを名乗る手 (#4074)。起動の行と作り直しで 1 つを分け持つ
+        let dependencies = RunCommand.dependencyNotice(say: { say($0) })
         let session = WatchSession(
             directory: directory, context: context, facetBase: facetBase,
             reportsRate: true,
             hooks: .live(
-                resolver: resolver, running: running, keepTime: keepTimeFile?.path, recording: recording,
+                resolver: resolver, running: running, dependencies: dependencies,
+                keepTime: keepTimeFile?.path, recording: recording,
                 progress: { progress.post($0) }))
         progress.deliver = { [weak session] in session?.receiveBuildProgress($0) }
         say("Watching: \(directory.path)")
@@ -171,6 +174,9 @@ enum WatchCommand {
         // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元
         // ビルドと配布版の取り違えに気付けない** (#633 が実際にそうなった・#684)
         say("Tool: \(ToolVersion.describe())")
+        // **依存の版と食い違えば、同じ画面で名乗る** (#4074)。固定は上の置き場を決める解決の後に読み、
+        // 作り直しのたびにも読む (同じ手を作り直しに渡してあるので、変わったときだけ言う)
+        dependencies.check(in: directory)
         // **常に名乗る。** 以前は基準がスケッチの場所と違うときだけ出していたが、それだと
         // MCP サーバの側にだけ MOKUME_WORK_DIR が効いている向きで比べる材料が出ない (#380)
         say(

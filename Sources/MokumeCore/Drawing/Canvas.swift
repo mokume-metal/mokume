@@ -233,6 +233,11 @@ public final class Canvas {
     /// 溜め場の列 (``batches``) の番号で、開いた順 (外側が先) に並ぶ。記録を終えると `createShape` が抜く。
     var recordedCompositeGroups: [Shape.CompositeRange] = []
 
+    /// 保持する形を記録している間に、閉じる列の区間が持つ表示枠の切り抜き (``Shape/Run/viewportClips``・#2879)。
+    /// 外側が先。記録の外では空で、列は切り抜きを持たない。替えるときは ``recordViewportClips(_:)`` を通す (先に列を閉じる)。
+    /// 形の組み立ての入口で空にし、出口で外の値へ戻す。
+    var recordingViewportClips: [Shape.ViewportClip] = []
+
     /// 保持した形の線を、組めるものは GPU で組むか。**検査が偽にして、CPU で組む物差しを作る。**
     var placesRetainedStrokesOnGPU = true
 
@@ -3545,7 +3550,8 @@ public final class Canvas {
             Batch(
                 run: Shape.Run(
                     mode: .replace, texture: atlas.held, paint: .builtIn, source: .solid,
-                    start: vertexStart, count: 6, indexStart: 0, indexCount: 0),
+                    start: vertexStart, count: 6, indexStart: 0, indexCount: 0,
+                    viewportClips: recordingViewportClips),
                 clip: style.clip,
                 clipShape: style.clipShape,
                 matrix: viewProjection,

@@ -94,7 +94,7 @@ public class SynthSound: EffectInput {
         self.stage = stage
         self.node = node
         self.name = name
-        deferred = DeferredLevels(replayKind: name)
+        deferred = DeferredLevels(replayKind: name, owner: stage.owner)
         // 鳴らし始める前の出口は無音 (ラックが 0 を書いている)。最初の区間の始まりが出口の標本 0 でなくても、
         // 最初の立ち上がりを拍にする
         deferred.beginsSilent = true

@@ -208,8 +208,19 @@ struct TemplateBuildTests {
         let stale = "\(declared.name)_Gone.bundle"
         try Self.write("消した target", to: bin.appendingPathComponent("\(stale)/gone.txt"))
 
-        var reported: [String] = []
-        try BundleCommand.run([root.path]) { reported.append($0) }
+        // 道具と固定の版の食い違いの名乗りも、報せと同じ書き先へ届く (#4074・2 回目の反証・指摘 3)。雛形はパスで
+        // 依存するので固定を持たない — 読む手を差し替えて、届くことだけを見る
+        let mismatch = DoctorCommand.dependencyLine("0.47.0", tool: "0.46.0")
+        let written = SaidLines()
+        try BundleCommand.run(
+            [root.path], writing: { written.append($0) },
+            noticing: { say in
+                DoctorCommand.MismatchNotice(tool: "0.46.0", say: say, reading: { _, _ in .read(mismatch) })
+            })
+        let reported = written.all
+        #expect(
+            reported.filter { $0 == mismatch }.count == 1,
+            "食い違いの名乗りが報せの書き先へ 1 度だけ届いていない:\n\(reported.joined(separator: "\n"))")
 
         let app = root.appendingPathComponent("bundle/Grain.app", isDirectory: true)
         #expect(FileManager.default.fileExists(atPath: app.path), "包みが出来ていない")

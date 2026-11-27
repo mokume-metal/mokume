@@ -112,7 +112,7 @@ extension Canvas {
                     mode: style.blendMode, texture: currentTexture,
                     paint: .builtIn,
                     source: .form, start: open.instanceStart, count: count,
-                    indexStart: 0, indexCount: 0),
+                    indexStart: 0, indexCount: 0, viewportClips: recordingViewportClips),
                 clip: style.clip,
                 clipShape: style.clipShape,
                 // 列を開いたときの行列 (素の場合は面の座標へ落とす行列・``enterFlatView(_:)``・#3830)

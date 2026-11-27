@@ -7,12 +7,12 @@ import Testing
 
 @testable import MokumeCore
 
-/// 最終更新時刻で気付いて読む口。
+/// 改訂の印 (``FileStamp``) で気付いて読む口。
 ///
 /// **確定の時機がこの型の全部である。** 読む前に控えると、書きかけを 1 回掴んだだけで
 /// その改訂が永久に読み飛ばされる ([#987](https://github.com/mokume-metal/mokume/issues/987)・
 /// [#1048](https://github.com/mokume-metal/mokume/issues/1048))。
-@Suite("更新時刻で気付いて読む")
+@Suite("改訂の印で気付いて読む")
 @MainActor
 struct WatchedFileTests {
     private struct Payload: Codable, Equatable {
@@ -195,7 +195,8 @@ struct WatchedFileTests {
         try withFile { url in
             var told = 0
             let file = WatchedFile<Payload>(url: url) { _ in told += 1 }
-            let seen = FileStamp(seconds: 3000, nanoseconds: 0)
+            let seen = FileStamp(
+                seconds: 3000, nanoseconds: 0, changeSeconds: 0, changeNanoseconds: 0, size: 0, device: 0, inode: 0)
             #expect(file.read(revision: seen) == nil)
             #expect(told == 0, "消えていたファイルを名乗っている")
 
@@ -296,6 +297,28 @@ struct WatchedFileTests {
             try place(#"{"revision":3}"#, at: target, Date(timeIntervalSince1970: 1002))
             #expect(file.changed() == Payload(revision: 3))
             #expect(told == 0)
+        }
+    }
+
+    /// リンクを、時刻の同じ別の中身へ付け替えても次の改訂として読む (#4148)。大きさも揃え、読む先の
+    /// ファイルが替わったことだけで見分けるのを確かめる。
+    @Test("リンクを時刻の同じ別のファイルへ付け替えると、新しい中身を返す")
+    func readsTheNewRevisionWhenTheLinkIsRepointedAtTheSameTime() throws {
+        try withFile { url in
+            let moment = Date(timeIntervalSince1970: 1000)
+            let first = url.deletingLastPathComponent().appendingPathComponent("first.json")
+            let second = url.deletingLastPathComponent().appendingPathComponent("second.json")
+            try place(#"{"revision":1}"#, at: first, moment)
+            try place(#"{"revision":2}"#, at: second, moment)
+            try FileManager.default.createSymbolicLink(at: url, withDestinationURL: first)
+            let file = WatchedFile<Payload>(url: url) { _ in }
+            #expect(file.changed() == Payload(revision: 1))
+            #expect(file.changed() == nil)
+
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.createSymbolicLink(at: url, withDestinationURL: second)
+            #expect(
+                file.changed() == Payload(revision: 2), "時刻の同じ別のファイルへ付け替えたのに、古い改訂のまま")
         }
     }
 }

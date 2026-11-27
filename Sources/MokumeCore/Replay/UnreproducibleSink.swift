@@ -21,11 +21,17 @@ protocol UnreproducibleSink: AnyObject, Sendable {
     func noteResource(_ name: String, sha256: String)
     /// ファイルを読み直して取ったハッシュの控え。**受け手 1 つの寿命の中だけ**持つ (#4092)。
     var resourceDigests: ResourceDigests { get }
+    /// 記録・再生を終えたか。終えた受け手は名乗りを捨てる。終えた実行で起こした `Task` は終えた受け手を継いだまま
+    /// 走り続けるので、音の読みはそれを飛ばして名乗る先を引く (``SoundReceiver``)。
+    var hasEnded: Bool { get }
 }
 
 /// 外のモジュール (音) が、記録している実行・流している実行へ名乗る口 (#3575)。
 ///
 /// 受け手は ``LaunchingSketch/replay`` で、`setup()`・`draw()`・入力のコールバックと、そこで起動した `Task` から届く。
+/// その外 (`Task.detached`・GCD のブロック) でスケッチの実体から呼んだ読みには、スケッチの側の入口が実体に結ばれた実行の
+/// 受け手を差す (``SketchPart/withReplayReceiver(_:)``)。部品や面の API を直に外から呼んだ読みには届かない (#4144)。
+/// 音の読み (解析・時計・手放した器の読み直し) は、音ごとの ``SoundReceiver`` が名乗る先を引く。
 ///
 /// ## 資源のハッシュ (#4092)
 ///
@@ -83,6 +89,45 @@ package enum ReplayNotice {
     }
 }
 
+extension SketchPart {
+    /// 資源を読む口の本体を、**呼んだスケッチの実行の受け手を差して**回す (#4144)。
+    ///
+    /// ``ReplayNotice`` は読んだ所の ``LaunchingSketch/replay`` へ名乗るので、走っている実行のコールバックとそこで起こした
+    /// `Task` の外 (`Task.detached`・GCD のブロック) から読むと、記録の `resources` から黙って落ちる。だがスケッチの実体から
+    /// 呼んだ読みは、その実体に結ばれた実行 (``SketchHomes``) の面で読む (``resourceCanvas(_:_:)``・
+    /// ``loadingCanvas(_:_:)``) ので、名乗る先もその実行である。差しているもの (実行の中・継いだ `Task`) があれば
+    /// 何もしない。
+    ///
+    /// 部品 (スケッチでない ``SketchPart``) と、面の API を直に呼ぶ読みは、結ばれた実行を持たないので差さない。映している
+    /// 実行を探して名乗ると、別の実行の記録に載りうる。
+    func withReplayReceiver<Value, Failure: Error>(
+        _ body: () throws(Failure) -> Value
+    ) throws(Failure) -> Value {
+        guard let sink = outsideReplayReceiver else { return try body() }
+        let outcome = LaunchingSketch.$replay.withValue(sink) { Result { () throws(Failure) in try body() } }
+        return try outcome.get()
+    }
+
+    /// ``withReplayReceiver(_:)`` の待つ形。
+    func withReplayReceiver<Value, Failure: Error>(
+        _ body: () async throws(Failure) -> Value
+    ) async throws(Failure) -> Value {
+        guard let sink = outsideReplayReceiver else { return try await body() }
+        let outcome: Result<Value, Failure> = await LaunchingSketch.$replay.withValue(sink) {
+            do throws(Failure) { return .success(try await body()) } catch { return .failure(error) }
+        }
+        return try outcome.get()
+    }
+
+    /// 差しているものが無いときに差す受け手。実行の中・受け手を継いだ所なら `nil` (差し直さない)。
+    private var outsideReplayReceiver: (any UnreproducibleSink)? {
+        guard LaunchingSketch.replay == nil, activeRun(for: .frame) == nil, let sketch = self as? any Sketch else {
+            return nil
+        }
+        return SketchHomes.runtime(of: sketch)?.unreproducibleSink
+    }
+}
+
 /// 資源のハッシュを取る係 (#4092)。記録か再生をしている実行の中でだけ作られ (``ReplayNotice/resourceHasher``)、
 /// 裏の仕事へ渡せる。
 package nonisolated struct ResourceHasher: Sendable {
@@ -127,9 +172,11 @@ package nonisolated struct ResourceHasher: Sendable {
 
 /// ファイルを読み直して取ったハッシュの控え (#4092)。受け手 (記録する係・流す係) が 1 つずつ持ち、その寿命の中だけ使う。
 ///
-/// **毎フレーム `loadFont` する作品が、毎フレームもう 1 度フォントを読まないため。** 鍵は場所と更新の印で、印が変われば
-/// 取り直す。印は ``FileStamp`` そのもの (更新時刻だけ・#4148) で、更新時刻を保ったまま中身を変える書き方 (`cp -p`・
-/// `rsync -t`) や、時刻の粒度の粗い置き場 (exFAT・SMB) での同じ時刻の内の書き換えは見分けない。
+/// **毎フレーム `loadFont` する作品が、毎フレームもう 1 度フォントを読まないため。** 鍵は場所と改訂の印で、印が変われば
+/// 取り直す。印は ``FileStamp`` そのもの (更新時刻・状態変更時刻・大きさ・ファイル番号・ボリューム) で、リンクの付け替え・
+/// 時刻を保った写しの置き換え・同じファイルを書き換えて更新時刻を戻す書き方 (`cp -p`・`rsync -t --inplace` の上書き) も
+/// 取り直す。状態変更時刻を細かく持たない置き場 (HFS+・exFAT) で、その刻みの内に同じ大きさで書き換えて時刻を戻したときだけ
+/// 見分けない (``FileStamp`` の代償)。
 package nonisolated final class ResourceDigests: Sendable {
     private let entries = Mutex<[URL: (stamp: FileStamp, sha256: String)]>([:])
 
@@ -186,19 +233,79 @@ package nonisolated enum ResourceDigest {
 package struct SoundAnalysisNotice {
     /// 読んだ音の型の名前 (理由に載る)。
     private let kind: String
+    /// 音を作った実行の受け手 (``SoundReceiver``)。
+    private var receiver: SoundReceiver
     /// 既に名乗った (または名乗らないと決めた) 受け手。受け手の寿命は実行が決めるので弱く持つ。
     private weak var settled: (any UnreproducibleSink)?
 
-    package init(kind: String) {
+    /// - Parameter owner: 音を作ったスケッチ (``SoundReceiver/init(owner:)``)。
+    package init(kind: String, owner: (any Sketch)? = nil) {
         self.kind = kind
+        receiver = SoundReceiver(owner: owner)
     }
 
     /// 解析の値を読んだ。
     package mutating func noteRead() {
-        guard let sink = LaunchingSketch.replay, sink !== settled else { return }
+        guard let sink = receiver.sink(), sink !== settled else { return }
         settled = sink
         guard sink.soundRunsInRealTime else { return }
         sink.noteUnreproducible(ReplayRecorder.Reason.soundAnalysis(kind))
+    }
+}
+
+/// 音 1 つの名乗りの先 (#4144)。**音の読みを、読んだ実行か、音を作ったスケッチの実行の記録・再生へ名乗る。**
+///
+/// 読んだ所の ``LaunchingSketch/replay`` だけを引くと、走っている実行のコールバックとそこで起こした `Task` の外
+/// (`Task.detached`・GCD のブロック・OS のコールバック) の読みでは `nil` になり、ウィンドウで録った記録でも黙って通る。
+/// 音 (`SoundFile`・合成音とそのステージ) は走っている実行の中で作られるので、作ったスケッチに結ばれた実行
+/// (``SketchHomes``) と、作られた時点の受け手 (断片の ``ShaderBox`` と同じ形) がその音の実行である。
+///
+/// 名乗る先は次の順に引く:
+///
+/// 1. 読んだ所の受け手 (実行の中・受け手を継いだ `Task`)。終えた受け手 (終えた実行で起こした `Task` が継いだもの) は飛ばす
+/// 2. 走っている実行の中なら、その実行の受け手。記録も再生もしていなければ名乗らない (別の実行が作った音でも、
+///    読んだ実行の読みである)
+/// 3. 外なら、音を作ったスケッチ (``owner``) にいま結ばれた実行の受け手。同じ実体を走らせ直すと、新しい実行へ名乗る
+/// 4. 引けなければ (作ったスケッチが無い・その実行が後片付けを終えた)、控えた受け手。控えるのは作られた時点の受け手で、
+///    無ければ最初に受け手のある所で読まれた時点のもの。**1 度控えたら変えない**
+///
+/// 受け手とスケッチの寿命は実行が決めるので弱く持つ。実行が終わった後の読みは名乗らない。作ったスケッチに辿れない
+/// 共有 (スケッチの外の変数に置いた音を、別の実体の実行の外から読む) は、4 の控えにしか届かない。
+package struct SoundReceiver {
+    private weak var bound: (any UnreproducibleSink)?
+    /// ``bound`` を控えたか (控えた受け手が終わって `nil` になっても、控え直さない)。
+    private var isBound = false
+    /// 音を作ったスケッチ。
+    private weak var owner: (any Sketch)?
+
+    /// - Parameter owner: 音を作ったスケッチ。**検査だけが `nil` で作る** (控えた受け手だけで引く)。
+    package init(owner: (any Sketch)? = nil) {
+        self.owner = owner
+        bind(LaunchingSketch.replay)
+    }
+
+    /// 名乗る先 (型の説明の順)。
+    mutating func sink() -> (any UnreproducibleSink)? {
+        let here = LaunchingSketch.replay.flatMap { $0.hasEnded ? nil : $0 }
+        bind(here)
+        if let here { return here }
+        if let running = activeRun(for: .frame) { return running.unreproducibleSink }
+        if let owner, let runtime = SketchHomes.runtime(of: owner) { return runtime.unreproducibleSink }
+        return bound
+    }
+
+    /// `body` を、名乗る先 (``sink()``) を ``LaunchingSketch/replay`` に差して回す。終えていない受け手が差さっていれば
+    /// 何もしない。音の側で ``ReplayNotice`` の口を通す読み (手放した器の読み直しのハッシュ) が使う。
+    package mutating func withSink<Value>(_ body: () -> Value) -> Value {
+        if let here = LaunchingSketch.replay, !here.hasEnded { return body() }
+        guard let sink = sink() else { return body() }
+        return LaunchingSketch.$replay.withValue(sink, operation: body)
+    }
+
+    private mutating func bind(_ sink: (any UnreproducibleSink)?) {
+        guard !isBound, let sink else { return }
+        bound = sink
+        isBound = true
     }
 }
 
@@ -210,16 +317,20 @@ package struct SoundAnalysisNotice {
 package struct SoundClockNotice {
     /// 読んだ口の名前 (理由に載る)。
     private let reader: String
+    /// 音を作った実行の受け手 (``SoundReceiver``)。
+    private var receiver: SoundReceiver
     /// 既に名乗った (または名乗らないと決めた) 受け手。受け手の寿命は実行が決めるので弱く持つ。
     private weak var settled: (any UnreproducibleSink)?
 
-    package init(reader: String) {
+    /// - Parameter owner: 音を作ったスケッチ (``SoundReceiver/init(owner:)``)。
+    package init(reader: String, owner: (any Sketch)? = nil) {
         self.reader = reader
+        receiver = SoundReceiver(owner: owner)
     }
 
     /// 音の時計に依る値を読んだ。
     package mutating func noteRead() {
-        guard let sink = LaunchingSketch.replay, sink !== settled else { return }
+        guard let sink = receiver.sink(), sink !== settled else { return }
         settled = sink
         guard sink.soundRunsInRealTime else { return }
         sink.noteUnreproducible(ReplayRecorder.Reason.soundClock(reader))

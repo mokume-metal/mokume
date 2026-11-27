@@ -680,6 +680,7 @@ extension CanvasTests {
                 "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
                 "pathRecorder": "道の記録中の控え (#3561)。createPath の入口で立て、形の組み立ての出口 (defer) で外の値へ戻す。閉包なので境目をまたがない",
                 "clipRecorder": "形の切り抜きの記録中の控え (#2431)。clip { } の入口で立て、形の組み立ての出口 (defer) で外の値へ戻す。閉包なので境目をまたがない",
+                "recordingViewportClips": "形の記録の中で閉じる列の区間が持つ表示枠 (#2879)。形の組み立ての入口で空にし、出口 (defer) で外の値へ戻す。記録の外では空のままで、閉包なので境目をまたがない",
                 "frameEndAwaitingShape": "組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を出口まで待たせる印 (#1855)。一番外の出口が閉じて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
                 "shapeMarks": "形の組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす。閉包なので境目をまたがない",
                 "refusedBeginDrawsInsideShape": "形の組み立ての中で断った beginDraw() の数で、対の endDraw() が下ろす (#2834)。一番外の組み立ての出口が 0 に戻すので、境目をまたがない",

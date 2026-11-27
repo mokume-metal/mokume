@@ -57,8 +57,15 @@
 #      キューに入った render-pr や後ろの group の render に抜かれ続け、95 分のタイムアウトで外される。
 #      render.yml のゲートのジョブ (render-turn) がキューに入る順番を絞るので、普段は起きない。起きたら
 #      ゲートのジョブが効いていない (render-turn が失敗) か、ゲートのジョブより前にキューに入った job が残っている。
+#      render-pr は group があっても空いた runner で走り、merge_group のゲートは render-pr が取る枠も
+#      数えて待つ (#4018)。それでも先頭の render が専用機の queued に並びうるのは、merge_group のゲートが
+#      数えない定期の scheduled-* が runner を取っているとき、相手の run が一覧に現れる前の数秒に 2 本の
+#      ゲートが読んだとき、ゲートが上限か API の読めない回で通したときである。下の runner-offline の判定は、
+#      render-pr も専用機の job として数える (job の status の語は queued と in_progress で、ゲートの
+#      scripts/render-turn.sh「専用機の枠を数える」と同じ。ゲートと違い merge_group の render も数え、
+#      job ごとの created_at を読むので、実装は共有しない)。
 #      ゲートのジョブより前にキューに入った render-pr のうち、まだ拾われていないものは、group ができた
-#      瞬間に queue-sweep が cancel する (#2064)。残りうるのは、走っている render-pr と
+#      瞬間に queue-sweep が runner の枠を越える分だけ cancel する (#2064・#4018)。残りうるのは、走っている render-pr と
 #      定期の scheduled-* (1 本まで・キャンセルできない) と、queue-sweep が失敗で掃除できなかった回
 #      対処: 先頭の group と、専用機で走っている job の run の render-turn の要約と、先頭の
 #      group の queue-sweep の出力 (render-pr の cancel 行) を読む。専用機で走っている・

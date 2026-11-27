@@ -151,7 +151,7 @@ struct WatchKeepTimeTests {
 
         for given in ["/tmp/mokume-clock", nil] as [String?] {
             let hooks = WatchSession.Hooks.live(
-                resolver: resolver, running: RunningBuild(), keepTime: given)
+                resolver: resolver, running: RunningBuild(), dependencies: .silent, keepTime: given)
             let child = try hooks.launch(executable, directory, nil, nil)
             child.waitUntilExit()
             #expect(try String(contentsOf: seen, encoding: .utf8) == (given ?? ""), "\(given ?? "渡さない")")

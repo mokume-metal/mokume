@@ -354,7 +354,8 @@ extension Canvas {
                 run: Shape.Run(
                     mode: style.blendMode, texture: currentTexture,
                     paint: effectivePaint,
-                    source: .flat, start: start, count: count, indexStart: 0, indexCount: 0),
+                    source: .flat, start: start, count: count, indexStart: 0, indexCount: 0,
+                    viewportClips: recordingViewportClips),
                 clip: style.clip,
                 clipShape: style.clipShape,
                 // ここへ来るのは平面だけ (上の `switch` が他を返している)。**列を開いたときの行列を持つ** —
@@ -490,7 +491,7 @@ extension Canvas {
                     paint: effectivePaint,
                     source: .solid,
                     start: open.vertexStart, count: open.vertexCount,
-                    indexStart: indexStart, indexCount: indexCount),
+                    indexStart: indexStart, indexCount: indexCount, viewportClips: recordingViewportClips),
                 clip: style.clip,
                 clipShape: style.clipShape,
                 matrix: viewProjection,

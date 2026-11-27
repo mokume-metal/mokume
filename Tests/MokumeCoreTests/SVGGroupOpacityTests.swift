@@ -39,7 +39,6 @@ nonisolated struct SVGGroupOpacityTests {
             """)
         #expect(units(drawing) == ["0..<2 0.5"])
         #expect(fillAlphas(drawing) == [1, 1])
-        #expect(drawing.approximated.isEmpty, "近似ではなくなったので名乗らない")
         let bounds = try #require(drawing.units.first?.bounds)
         #expect(bounds.low == SIMD2(15, 25))
         #expect(bounds.high == SIMD2(85, 75))
@@ -322,7 +321,7 @@ nonisolated struct SVGGroupOpacityTests {
 
     // MARK: - 部分パスの線
 
-    @Test("半透明の線の部分パスどうしが重なっても、単位にも名乗りにもしない (線を 1 つの図形として引く)")
+    @Test("半透明の線の部分パスどうしが重なっても、単位にしない (線を 1 つの図形として引く)")
     func translucentStrokeWithOverlappingSubpaths() throws {
         let cross = ##"d="M10 50 L90 50 M50 10 L50 90""##
         for attributes in [
@@ -332,24 +331,8 @@ nonisolated struct SVGGroupOpacityTests {
         ] {
             let drawing = try document("<path \(cross) fill=\"none\" \(attributes)/>")
             #expect(drawing.units.isEmpty, "\(attributes)")
-            #expect(drawing.approximated.isEmpty, "\(attributes)")
             #expect(drawing.items.first?.stroke?.alpha == 0.5, "\(attributes)")
         }
-    }
-
-    @Test("opacity の名乗りの文面は無くなった (表示枠の名乗りだけが残る)")
-    @MainActor
-    func noOpacityNotice() throws {
-        let drawing = try document(
-            """
-            <g opacity="0.5">
-            <circle cx="40" cy="50" r="25" fill="#f00"/>
-            <circle cx="60" cy="50" r="25" fill="#00f"/>
-            </g>
-            <rect x="0" y="0" width="30" height="30" fill="#0f0" stroke="#000" opacity="0.5"/>
-            """)
-        #expect(Canvas.svgApproximatedNotice(drawing, path: "logo.svg") == nil)
-        #expect(drawing.skipped.isEmpty)
     }
 
     // MARK: - 重ならない多数の子

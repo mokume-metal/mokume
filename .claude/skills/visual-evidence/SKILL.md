@@ -12,8 +12,8 @@ SPDX-License-Identifier: MIT
 # 視覚証跡を残す
 
 何を載せるかの規律は AGENTS.md「絵」が正本で (描画が変わらなくても、見て分かるものは気軽に
-載せる — [#2195](https://github.com/mokume-metal/mokume/issues/2195))、ここは手順だけを持つ。CI は描画を実行できない
-([#180](https://github.com/mokume-metal/mokume/issues/180)) ので、**PR に貼った絵が描画の唯一の検証記録になり、
+載せる — [#2195](https://github.com/mokume-metal/mokume/issues/2195))、ここは手順だけを持つ。専用機の `render` が見るのは
+触っていない絵の退行だけなので、**新しい絵の正しさは PR に貼った絵でしか確かめられず、
 squash merge の後には足せない。** 人なら入力欄へ画像をドロップするだけでよく、この文書はエージェントの手順を扱う。
 
 | 場面 | 読む先 |
@@ -50,8 +50,9 @@ python3 scripts/example-shots.py --snippet repro.swift --size 160x120 --upload \
 
 ```bash
 mkdir -p <スケッチの場所>/.mokume/observe    # 起動より先に作る
-swift run mokume-cli watch <スケッチの場所>  # ウィンドウが出る
-swift run mokume-cli mcp <スケッチの場所>    # エージェント用の MCP サーバーを起動する
+swift build --product mokume-cli && CLI="$(swift build --show-bin-path)/mokume-cli"
+"$CLI" watch <スケッチの場所>                 # ウィンドウが出る
+"$CLI" mcp <スケッチの場所>                   # MCP サーバー。swift run を挟むと組み立ての出力が JSON-RPC に混ざる
 ```
 
 順を逆にすると、MCP サーバーが「ディレクトリはこの呼び出しで作ったので、起動し直してください」と返す。ディレクトリは作り直さず、
@@ -145,9 +146,8 @@ kill "$tool"                                            # 配下のスケッチ�
 | `kill -9` (SIGKILL) | シグナルを渡すハンドラが動かない。スケッチは `ppid=1` の孤児として残り、`observe` に応答し続ける |
 | プロセスグループごと (`kill -TERM -<pgid>`) | スケッチは `Process` が起動した自分のグループにいるので届かない |
 
-控え損ねたら `bash scripts/orphan-processes.sh` が PID を出所つきで出す。`pkill -f` でまとめて止めるときは、`ps` が
-表示する起動時のパス (`/tmp/…`) と `resolve()` したパス (`/private/tmp/…`) で表記が分かれるので、
-`pkill -f '<スケッチ名>/.build'` のように表記の分かれない末尾側で照合する (外すと 1 つもヒットせず全部残る)。
+控え損ねたら `bash scripts/orphan-processes.sh` が PID を出所つきで出す。止めるかは人が決め、`pkill` で名前を指して
+まとめて止めない — 同じ機械で他のセッションが `watch` を走らせている ([verify](../verify/SKILL.md) の「片付ける」)。
 
 ## 動きをエンコードする — 形式は宛先で決まる
 
@@ -307,7 +307,7 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
 
 | 症状 | 対処 |
 | --- | --- |
-| before / after が同じ・撮り直しても変わらない | 前のバージョンが動いている。`bash scripts/orphan-processes.sh` で終了させて撮り直す (「撮り終えたら止める」) |
+| before / after が同じ・撮り直しても変わらない | 前のバージョンが動いている。`bash scripts/orphan-processes.sh` で一覧し、自分が起こしたものだけを止めて撮り直す (「撮り終えたら止める」) |
 | `observe` が「走っているスケッチが応えませんでした」 | 案内が「ディレクトリをこの呼び出しで作った」なら起動し直すだけ。「ディレクトリは前からあった」ならそもそも実行されていない |
 | 貼った絵が出ない / 途中までしか動かない | camo で詰まっている (5MB 超で 404、手前でも途中で切れたものがキャッシュに残る)。小さくしてアップロードし直し、貼り直す (「貼る」の確認) |
 | アニメーションに 16px の段差・淡い階調が消える | `-mixed` / `-lossy` でエンコードしている。可逆でエンコードし直す |

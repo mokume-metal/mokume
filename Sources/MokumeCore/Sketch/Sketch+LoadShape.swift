@@ -279,20 +279,36 @@ extension SketchPart {
     /// SVG より濃く出る)、そのことを 1 度通知する。置く側の混ぜ方 (``BlendMode/replace`` を含む) は読まず、ほかの区間と
     /// 同じく読み込んだときの描き方で描く。
     ///
-    /// **近似で描いたことも通知する。** 入れ子の `<svg>` の表示枠の外に描くものがあるとき、SVG は入れ子の `<svg>` を表示枠で切り抜く
-    /// (`overflow` の既定は `hidden`) が、mokume は切り抜かずに枠の外まで描く。描くものの外接矩形が枠をはみ出したとき、
-    /// 切り抜かないことと、はみ出された入れ子の `<svg>` の行を添えて、ファイルにつき 1 度通知する (描く絵は変わらない)。
-    /// 回した祖先の下でも、`preserveAspectRatio` の `slice` で viewBox が枠をはみ出すときも通知する。`overflow` が
-    /// `visible` か `auto` (属性でも CSS でも) の入れ子や、中身が枠に収まる入れ子、ルートの `<svg>` は通知しない。
+    /// **入れ子の `<svg>` は、SVG のとおり表示枠で切り抜く** (`overflow` の既定は `hidden`)。`overflow` が `hidden`・
+    /// `scroll`・`clip` の入れ子は枠の外を描かず、`visible`・`auto` (属性でも CSS でも) の入れ子は切らない。入れ子の中の
+    /// 入れ子は、両方の枠の交わりの中だけを描く。形は枠を印として持ち、置くたびに、置く変換 (`translate()`・`rotate()`・
+    /// ``shape(_:_:_:)-(Shape,_,_)`` の位置・``shape(_:at:)`` の置き場所) で写した枠で切る。
+    /// ``clip(_:_:_:_:)``・``clip(_:)-(()->Void)`` の下で置けば、その切り抜きとも交わる。切るのは中身が枠を
+    /// はみ出しうる入れ子だけで、枠に収まる入れ子は描く回数も変わらない。
+    ///
+    /// 枠で切るには、``clip(_:)-(()->Void)`` の入れ子と同じ段を 1 枠につき 1 段使う。``clip(_:)-(()->Void)`` の
+    /// 入れ子と合わせて 127 段を越える所に置くと、越えた枠は切らずに描き、そのことを 1 度通知する。
+    ///
+    /// 枠で切る形は、置き場所ごとに描く。``shape(_:at:)`` で並べると、``Shape/drawCallCount`` が 1 の形でも置き場所の
+    /// 数だけ描き、置き場所ごとに枠を切り抜きとして描く回数も増える。
     ///
     /// SVG と見え方が違う所:
     ///
     /// - 中間の描画先を使えない所 (既定と違う視点・奥行きのある変換・``SketchSettings/pixelDensity`` が 1 未満)
     ///   に置くと、群と要素の `opacity` を子の色ひとつずつに掛ける。子どうしが重なった所は SVG より濃く出る (通知する)
-    /// - 入れ子の `<svg>` の表示枠で切り抜かない。枠の外に描くものも、そのまま描く (通知する)
+    /// - `camera()`・`perspective()`・`ortho()` などで既定と違う視点を決めた下や、奥行きのある変換で置くと、入れ子の
+    ///   `<svg>` を表示枠で切らずに描く (通知する)。枠の切り抜きは ``clip(_:_:_:_:)`` と同じく面の上の範囲で、視点を
+    ///   通った形とは重ならない
+    /// - 切り抜きの段が 127 段を越える所に置くと、越えた入れ子の `<svg>` は表示枠で切らずに描く (通知する)
+    /// - 表示枠の縁は画素の中心で切る硬い境で、ブラウザのように縁の画素を半ば塗ることはしない (``clip(_:)-(()->Void)``
+    ///   と同じ。通知しない)
+    /// - `overflow` に 2 つの値を書き、片方の軸だけが切る値 (`hidden visible` など) の入れ子は、両方の軸で切る (通知しない)
     /// - ルートの `<svg>` の表示枠でも切り抜かない。ブラウザは画像の枠で切るが、mokume は形を枠の無い図形として置くので、
     ///   縁にまたがる線もそのまま描く (通知しない)
     /// - 尖った角が切られる長さは ``StrokeJoin/miter`` のもので、`stroke-miterlimit` は読まない
+    /// - 不透明な線の部分パスは、部分パスごとに別の図形として引く。1 画素より細い線の部分パスどうしが重なる所は
+    ///   重ねて混ぜるので、SVG より濃く出る (``createPath(_:)`` のパスは 1 つの図形で、重なる所の濃さは
+    ///   ``strokeWeight(_:)`` のとおり)
     /// - 勾配の色は線形の空間で、乗算済みの値で混ぜる (``fill(_:)-(Gradient)`` と同じ)。SVG の既定
     ///   (`color-interpolation: sRGB`) は符号化した値で混ぜるので、赤と青の真ん中はブラウザより明るく出る (通知しない)
     /// - 勾配で塗る矩形・円・楕円は、距離関数ではなく三角形で描く (``fill(_:)-(Gradient)`` と同じ)。縁の滑らかさは
@@ -330,12 +346,14 @@ extension SketchPart {
     // shot: 4 snippet=114b62b5
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
         noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")
-        let url = try dataURL(path)
-        let data = try TextFile.readData(url, path: path)
-        // 記録・再生しているときだけ中身のハッシュを取る (#4092)
-        ReplayNotice.readResource(path, data: data)
-        let drawing = try SVGFile.parse(try TextFile.text(of: data, path: path), path: path)
-        return try resourceCanvas(DataFailure.self).shape(of: drawing, readFrom: path)
+        return try withReplayReceiver { () throws(DataFailure) in
+            let url = try dataURL(path)
+            let data = try TextFile.readData(url, path: path)
+            // 記録・再生しているときだけ中身のハッシュを取る (#4092)
+            ReplayNotice.readResource(path, data: data)
+            let drawing = try SVGFile.parse(try TextFile.text(of: data, path: path), path: path)
+            return try resourceCanvas(DataFailure.self).shape(of: drawing, readFrom: path)
+        }
     }
 
     /// SVG のファイルを読み、保持した形にする。**読んでいる間、他の仕事を止めない。**
@@ -375,19 +393,21 @@ extension SketchPart {
     // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
         let surface = try loadingCanvas(DataFailure.self)
-        // 届くフレームは記録に無い (#3575)
-        ReplayNotice.waitingLoad()
-        let url = try dataURL(path)
-        // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
-        let hasher = ReplayNotice.resourceHasher
-        let (drawing, digest) = try await Self.readAway { () throws(DataFailure) in
-            let data = try TextFile.readData(url, path: path)
-            return (
-                try SVGFile.parse(try TextFile.text(of: data, path: path), path: path),
-                hasher?.sha256(of: data, name: path)
-            )
+        return try await withReplayReceiver { () async throws(DataFailure) in
+            // 届くフレームは記録に無い (#3575)
+            ReplayNotice.waitingLoad()
+            let url = try dataURL(path)
+            // ハッシュは裏で取り、受け手の引けるここで名乗る (#4092)。記録・再生していなければ取らない
+            let hasher = ReplayNotice.resourceHasher
+            let (drawing, digest) = try await Self.readAway { () throws(DataFailure) in
+                let data = try TextFile.readData(url, path: path)
+                return (
+                    try SVGFile.parse(try TextFile.text(of: data, path: path), path: path),
+                    hasher?.sha256(of: data, name: path)
+                )
+            }
+            ReplayNotice.readResource(path, sha256: digest)
+            return surface.shape(of: drawing, readFrom: path)
         }
-        ReplayNotice.readResource(path, sha256: digest)
-        return surface.shape(of: drawing, readFrom: path)
     }
 }

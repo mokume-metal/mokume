@@ -303,7 +303,7 @@ nonisolated final class SynthRack: @unchecked Sendable {
     /// 置き場が埋まっていれば `nil`。
     ///
     /// - Parameters:
-    ///   - samples: ファイルの標本 (チャンネルを平均したモノラル)。
+    ///   - samples: ファイルのサンプル (``AudioFile/mono(_:)`` が作るモノラル)。
     ///   - fileRate: ファイルの標本化率 (Hz)。ラックの率と違えば、節が変換する。
     ///   - amplitude: 音量 (0〜1)。
     ///   - rate: 最初の速さ (#3473)。

@@ -40,9 +40,9 @@ nonisolated enum ImageFile {
         try decode(at: locate(path), name: path)
     }
 
-    /// 名前から探して復号し、**読んだ場所と更新時刻も返す。**
+    /// 名前から探して復号し、**読んだ場所と改訂の印も返す。**
     ///
-    /// 隔離の外で 1 度に済ませる形にしてあるのは、待たない読み込みが探索・更新時刻の
+    /// 隔離の外で 1 度に済ませる形にしてあるのは、待たない読み込みが探索・改訂の印の
     /// 読み・復号をまとめて別の仕事へ回すためである。
     static func read(_ path: String, kind: String? = nil) throws(ImageFailure) -> Read {
         let url = try locate(path)
@@ -86,7 +86,7 @@ nonisolated enum ImageFile {
     /// 名前を、実際に在るファイルへ解く。
     ///
     /// 復号と分けてあるのは、**控えが「同じファイルか」を確かめるため** — 場所が分かれば
-    /// 復号せずに更新時刻だけを見られる ([#886])。
+    /// 復号せずに改訂の印 (``FileStamp``) だけを見られる ([#886])。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
     static func locate(_ path: String) throws(ImageFailure) -> URL {
@@ -102,7 +102,7 @@ nonisolated enum ImageFile {
         }
     }
 
-    /// ファイルの更新時刻。読めなければ nil。
+    /// ファイルの改訂の印 (``FileStamp``)。読めなければ nil。
     ///
     /// **控えの鮮度はこれで見る。** 名前だけを鍵にすると、走らせたまま絵を差し替える
     /// 書き方が黙って効かなくなる ([#886])。読めなかったときに nil を返すのは、

@@ -131,6 +131,13 @@ jq -r 'select(((.category // "") == "math" and ((.subcategory // "") | test("^(c
   | input_filename' "$ref"/processing/*.json | wc -l   # 64
 ```
 
+文字の 13 件は、category が `typography` の項目 12 件 (`PFont` のクラスのページ 1 と、関数 11) と、category が `pfont` で所属 (`classanchor`) が `PFont` の `PFont.list()` 1 件である (所属が `PFont` の項目は、クラスのページとメンバーで 2 件):
+
+```bash
+jq -r 'select(((.category // "") == "typography") or ((.classanchor // "") == "PFont"))
+  | input_filename' "$ref"/processing/*.json | wc -l   # 13
+```
+
 構造・制御の 76 件は、category が `structure` (42) と `Control` (19) の項目 61 件と、category が `math` で subcategory が `Operators` (11)・`Bitwise Operators` (4) の項目 15 件である。数学・PVector・定数の領域は後者の 15 件を数えない:
 
 ```bash
@@ -155,7 +162,7 @@ jq -r 'select(((.category // "") | test("^(structure|Control)$"))
 | 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 81 | `input-output-environment.md` | [#3688] |
 | 3 | 数学・PVector・定数 | 64 | `math.md` | [#4176] |
 | 3 | 色・変換・光とカメラ・描画 | 70 | `color-transform-rendering.md` | 順 2 の後 |
-| 3 | 文字 | 13 | `typography.md` | 順 2 の後 |
+| 3 | 文字 | 13 | `typography.md` | [#4178] |
 | 3 | データ: 文字列・配列・リスト・辞書・変換 | 167 | `data-strings-collections.md` | 順 2 の後 |
 | 3 | 構造・制御 | 76 | `structure.md` | [#4180] |
 | 3 | 連携 (net・serial・OSC) と io | 39 + io 36 + oscP5 (未計数) | `network-serial-io.md` | 順 2 の後 |
@@ -183,4 +190,5 @@ jq -r 'select(((.category // "") | test("^(structure|Control)$"))
 [#3687]: https://github.com/mokume-metal/mokume/issues/3687
 [#3688]: https://github.com/mokume-metal/mokume/issues/3688
 [#4176]: https://github.com/mokume-metal/mokume/issues/4176
+[#4178]: https://github.com/mokume-metal/mokume/issues/4178
 [#4180]: https://github.com/mokume-metal/mokume/issues/4180

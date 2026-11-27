@@ -492,7 +492,7 @@ struct ResourceDeclarationTests {
         let refused = BuildResolver(directory: directory) { _ throws(CommandFailure) in
             throw CommandFailure.resourcesNotDeclared(directory: "Sources/demo/assets")
         }
-        let hooks = WatchSession.Hooks.live(resolver: refused, running: RunningBuild())
+        let hooks = WatchSession.Hooks.live(resolver: refused, running: RunningBuild(), dependencies: .silent)
         #expect(throws: stops) {
             _ = try hooks.launch(URL(fileURLWithPath: "/usr/bin/true"), directory, nil, nil)
         }
@@ -501,7 +501,7 @@ struct ResourceDeclarationTests {
         let failing = BuildResolver(directory: directory) { _ throws(CommandFailure) in
             throw CommandFailure.toolchainFailed(command: RunCommand.dumpCommand, status: 1)
         }
-        let launched = try WatchSession.Hooks.live(resolver: failing, running: RunningBuild())
+        let launched = try WatchSession.Hooks.live(resolver: failing, running: RunningBuild(), dependencies: .silent)
             .launch(URL(fileURLWithPath: "/usr/bin/true"), directory, nil, nil)
         launched.waitUntilExit()
         #expect(launched.terminationStatus == 0)
