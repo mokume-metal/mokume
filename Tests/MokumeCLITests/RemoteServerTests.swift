@@ -141,6 +141,33 @@ struct RemoteServerTests {
         #expect(stream.received.contains("text/event-stream"))
     }
 
+    /// 子は応答を `rename` で置き換える。時刻の刻みの粗い置き場では、続けて置いた 2 つの応答の更新時刻と
+    /// 大きさが揃いうる。置き換わったことは inode (と状態変更時刻) でしか分からない (#4148)。
+    @Test("面の応答が、更新時刻と大きさの同じ応答へ rename で置き換わっても配信に届く")
+    func streamsAReportReplacedWithTheSameTimeAndSize() throws {
+        let running = try start()
+        defer { stop(running) }
+        let reportURL = WorkDirectory.reportURL(under: running.facet)
+        var sizes: [Int] = []
+        func publish(revision: Int) throws {
+            let staged = running.facet.appendingPathComponent("staged.json")
+            let bytes = Data(report(sizeKnob, revision: revision).utf8)
+            sizes.append(bytes.count)
+            try bytes.write(to: staged)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date(timeIntervalSince1970: 7)], ofItemAtPath: staged.path)
+            #expect(rename(staged.path, reportURL.path) == 0)
+        }
+        let stream = try RawHTTP.Stream(port: running.port, "GET /events?t=\(Self.token) HTTP/1.1\r\nHost: x\r\n\r\n")
+        defer { stream.close() }
+        try stream.waitFor("\"state\":\"waiting\"", within: Self.deadline)
+        try publish(revision: 4)
+        try stream.waitFor("\"revision\":4", within: Self.deadline)
+        try publish(revision: 5)
+        #expect(sizes.count == 2 && sizes[0] == sizes[1], "前提: 2 つの応答の大きさが揃っている: \(sizes)")
+        try stream.waitFor("\"revision\":5", within: Self.deadline)
+    }
+
     @Test("作り直しの間は書き込みを 409 で断り、配信は rebuilding を伝える")
     func refusesWritesWhileRebuilding() throws {
         let running = try start()

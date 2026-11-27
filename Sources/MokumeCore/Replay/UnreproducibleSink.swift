@@ -127,9 +127,11 @@ package nonisolated struct ResourceHasher: Sendable {
 
 /// ファイルを読み直して取ったハッシュの控え (#4092)。受け手 (記録する係・流す係) が 1 つずつ持ち、その寿命の中だけ使う。
 ///
-/// **毎フレーム `loadFont` する作品が、毎フレームもう 1 度フォントを読まないため。** 鍵は場所と更新の印で、印が変われば
-/// 取り直す。印は ``FileStamp`` そのもの (更新時刻だけ・#4148) で、更新時刻を保ったまま中身を変える書き方 (`cp -p`・
-/// `rsync -t`) や、時刻の粒度の粗い置き場 (exFAT・SMB) での同じ時刻の内の書き換えは見分けない。
+/// **毎フレーム `loadFont` する作品が、毎フレームもう 1 度フォントを読まないため。** 鍵は場所と改訂の印で、印が変われば
+/// 取り直す。印は ``FileStamp`` そのもの (更新時刻・状態変更時刻・大きさ・ファイル番号・ボリューム) で、リンクの付け替え・
+/// 時刻を保った写しの置き換え・同じファイルを書き換えて更新時刻を戻す書き方 (`cp -p`・`rsync -t --inplace` の上書き) も
+/// 取り直す。状態変更時刻を細かく持たない置き場 (HFS+・exFAT) で、その刻みの内に同じ大きさで書き換えて時刻を戻したときだけ
+/// 見分けない (``FileStamp`` の代償)。
 package nonisolated final class ResourceDigests: Sendable {
     private let entries = Mutex<[URL: (stamp: FileStamp, sha256: String)]>([:])
 

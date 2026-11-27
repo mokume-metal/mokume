@@ -4,11 +4,11 @@
 import Foundation
 import MokumeDiagnostics
 
-/// 区画のファイルを、最終更新時刻で気付いて読む。
+/// 区画のファイルを、改訂の印 (``FileStamp``) で気付いて読む。
 ///
-/// **確定は取り込めたときだけ。** 最終更新時刻は「この改訂はもう読んだ」という印なので、
+/// **確定は取り込めたときだけ。** 控えた改訂の印は「この改訂はもう読んだ」という記録なので、
 /// 読む前に控えると、書き手が置いている途中を **1 回掴んだだけでその改訂が永久に読み
-/// 飛ばされる** — 次に最終更新時刻が動く (= 次の書き込みが起きる) まで、更新時刻の照合が
+/// 飛ばされる** — 次に印が動く (= 次の書き込みが起きる) まで、印の照合が
 /// 弾き続けるためである。
 ///
 /// 症状はどちらの読み手でも「落ちも警告も出ないまま、古いものが表示され続ける」だけで、
@@ -22,7 +22,7 @@ import MokumeDiagnostics
 /// ので、書きかけは読み手から見えない ([ADR-0018] 決定 3)。確定させない性質は、原子的に置かない書き手 (ほかの道具・
 /// 手で置いたファイル・将来の書き手) と、上の 2 件の過去の実害に備えて残している。
 ///
-/// **要求が無いときのコストは、最終更新時刻を 1 回見るだけ。** 中身を読むのも解くのも、
+/// **要求が無いときのコストは、改訂の印を 1 回見るだけ。** 中身を読むのも解くのも、
 /// 更新されていたときだけである。
 ///
 /// ## ``RequestFile`` とは、この 1 点だけを共有する
@@ -38,7 +38,7 @@ import MokumeDiagnostics
 /// **確定させないことと、黙ることは別である** ([#2889](https://github.com/mokume-metal/mokume/issues/2889))。
 /// 読めない改訂を黙って捨て続けると、つまみが 1 つも並ばない・目録が古いまま、のどちらも理由を言わずに
 /// 続く ([ADR-0018] 決定 6「補ったら名乗る・黙って寛容にならない」)。**同じ改訂は読み直すたびには
-/// 名乗らず**、最後に解けなかった改訂の最終更新時刻を 1 つ控えて、初めて解けなかったときだけ
+/// 名乗らず**、最後に解けなかった改訂の印を 1 つ控えて、初めて解けなかったときだけ
 /// ``onUnreadable`` を呼ぶ。時計は見ない。
 ///
 /// **この名乗りは、書き手が原子的に置くことを前提にしている。** 書きかけが見えないので、同じ改訂が
@@ -62,9 +62,9 @@ import MokumeDiagnostics
 @MainActor
 package final class WatchedFile<Value: Decodable> {
     package let url: URL
-    /// もう読んだことにした改訂の最終更新時刻。
+    /// もう読んだことにした改訂の印。
     private var readAt: FileStamp?
-    /// 読めなかったと知らせた改訂の最終更新時刻。**同じ改訂では繰り返さない** (確定ではない)。
+    /// 読めなかったと知らせた改訂の印。**同じ改訂では繰り返さない** (確定ではない)。
     private var unreadableAt: FileStamp?
     /// 読めない改訂を初めて掴んだときに、その失敗を受け取る。**改訂ごとに 1 度。**
     private let onUnreadable: (UnreadableRevision.Failure) -> Void
@@ -86,13 +86,13 @@ package final class WatchedFile<Value: Decodable> {
     package func changed() -> Value? {
         switch FileStamp.lookUp(url) {
         case .absent:
-            // 無い・切れたリンク。置かれれば時刻が付く
+            // 無い・切れたリンク。置かれれば印が付く
             return nil
         case .stamped(let modified):
             guard modified != readAt else { return nil }
             return read(revision: modified)
         case .unreachable(let link):
-            // 在るのに辿れない。読みに行って理由を名乗る (改訂はリンク自身の時刻で見分ける)
+            // 在るのに辿れない。読みに行って理由を名乗る (改訂はリンク自身の印で見分ける)
             return read(revision: link)
         }
     }

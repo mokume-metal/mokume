@@ -28,7 +28,7 @@ import mokume
 /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
 enum DoctorCommand {
     /// 判定できなかったときの言い方。**綴りを 1 つに保つ** — 読む人はこの語を目印にする。
-    static let unknown = "cannot tell"
+    nonisolated static let unknown = "cannot tell"
 
     /// 走らせるのに要る OS の版。`Package.swift` の宣言と同じ。
     static let requiredSystemVersion = "26.0"
@@ -537,7 +537,7 @@ enum DoctorCommand {
     ///
     /// 揃っているときは行を増やさない。どちらかが読めなければ食い違いを言わない —
     /// 手元ビルドの道具に「版が違う」と言うと、正しい原因から人を遠ざける (規律 3)。
-    static func dependencyLine(
+    nonisolated static func dependencyLine(
         _ dependency: String?, tool: String? = nil, state: DependencyVersion.State? = nil
     ) -> String {
         guard let dependency else {
@@ -574,11 +574,88 @@ enum DoctorCommand {
             + "a sketch and a tool from different versions can leave facets silent"
     }
 
+    /// スケッチを組む口の画面に添える依存の行。**道具の版と固定の版が食い違うときだけ**
+    /// ``dependencyLine(_:tool:state:)`` と同じ文を返し、それ以外は `nil` (#4074)。
+    ///
+    /// 揃うとき・道具が版を持たないとき (手元ビルド)・固定が版で引けないときは言わない (規律 3)。
+    /// 固定は呼んだ時に読む。いつ読むかは ``MismatchNotice`` が決める。版を揃えに行く・止めることはしない
+    /// (ADR-0018 決定 6)。
+    nonisolated static func mismatchLine(forPackageAt directory: URL, tool: String?) -> String? {
+        if case .read(let line) = mismatchReading(forPackageAt: directory, tool: tool) { return line }
+        return nil
+    }
+
+    /// ``mismatchLine(forPackageAt:tool:)`` の読み。**`Package.resolved` が在るのに読めない回を、
+    /// 食い違いが無い回と分ける** — SwiftPM は `Package.resolved` をその場で書き換えるので、書き換えの途中に
+    /// 読むと壊れたファイルに見える。
+    nonisolated static func mismatchReading(forPackageAt directory: URL, tool: String?) -> MismatchNotice.Reading {
+        let state = DependencyVersion.state(forPackageAt: directory)
+        if state == .unreadable { return .unreadable }
+        guard let tool, case .version(let dependency) = state, !sameRelease(dependency, tool) else {
+            return .read(nil)
+        }
+        return .read(dependencyLine(dependency, tool: tool))
+    }
+
+    /// スケッチを組む口 (`run`・`render`・`replay`・`watch`・`bundle`) が、道具と固定の版の食い違いを名乗る手 (#4074)。
+    ///
+    /// **組んだ後に必ず読む。** 固定 (`Package.resolved`) を確定させるのは `swift build` で、置き場を明示した新しい
+    /// スケッチ・要求を上げた `Package.swift` では、組む前の固定は無いか古い。だから作り直し
+    /// (``RunCommand/rebuild(in:context:dependencies:capturing:running:binPath:progress:compiling:)``) が組むたびに
+    /// ここを呼び、起動の行 (`Tool:` の近く) は組む前にも 1 度呼ぶ。**前に読んだ内容と変わったときだけ言う** —
+    /// 同じ食い違いを 2 度言わず、揃った状態に変わったときも言わない (doctor の文に「揃った」の文は無い)。
+    /// **読めなかった回は前の読みを変えない** (変わったとは見ない)。
+    ///
+    /// 見張りは作り直しの糸から呼ぶので、鍵で守る。
+    nonisolated final class MismatchNotice: @unchecked Sendable {
+        /// 1 回の読み。
+        enum Reading: Equatable {
+            /// 読めた。食い違えば名乗る行、そうでなければ `nil`。
+            case read(String?)
+            /// `Package.resolved` が在るのに読めない。前の読みを変えない。
+            case unreadable
+        }
+
+        private let lock = NSLock()
+        private let tool: String?
+        private let say: @Sendable (String) -> Void
+        private let reading: @Sendable (URL, String?) -> Reading
+        /// 前に読めた内容。まだ読めていなければ外側の `nil`。
+        private var last: String??
+
+        /// - Parameters:
+        ///   - tool: 道具の配布版。手元ビルドは `nil` (何も言わない)。
+        ///   - say: 名乗りの行き先。`run` などは標準出力、`bundle` は報せの書き先、見張りは速さの行を消してから
+        ///     書く口 (#685)。
+        ///   - reading: 固定を読む手。**検査が `Package.resolved` を書かずに通すために渡せる形にしてある。**
+        init(
+            tool: String?, say: @escaping @Sendable (String) -> Void,
+            reading: @escaping @Sendable (URL, String?) -> Reading = {
+                mismatchReading(forPackageAt: $0, tool: $1)
+            }
+        ) {
+            self.tool = tool
+            self.say = say
+            self.reading = reading
+        }
+
+        /// いまの固定を読み、前に読めた内容から変わった食い違いだけを名乗る。
+        func check(in directory: URL) {
+            guard case .read(let current) = reading(directory, tool) else { return }
+            let changed: Bool = lock.withLock {
+                defer { last = .some(current) }
+                guard case .some(let previous) = last else { return true }
+                return previous != current
+            }
+            if changed, let current { say(current) }
+        }
+    }
+
     /// 2 つの版が同じ配布版を指すか。
     ///
     /// **Homebrew の revision (`0.7.1_1`) は落としてから比べる。** formula を作り直しただけで
     /// 中身の版は変わらないので、そこで食い違いを言うと誤った断定になる (規律 3)。
-    static func sameRelease(_ left: String, _ right: String) -> Bool {
+    nonisolated static func sameRelease(_ left: String, _ right: String) -> Bool {
         func base(_ version: String) -> Substring {
             guard let mark = version.lastIndex(of: "_"),
                 version[version.index(after: mark)...].allSatisfy(\.isNumber)

@@ -706,6 +706,39 @@ struct ResourceDigestTests {
         #expect(ResourceDigest.sha256(of: url.appendingPathExtension("missing")) == nil)
     }
 
+    /// 控え (``ResourceDigests``) の鍵は場所と ``FileStamp``。リンクを、時刻と大きさの同じ別のファイルへ
+    /// 付け替えたら取り直す (#4148)。
+    @Test("リンクを時刻の同じ別のファイルへ付け替えると、控えを使わずハッシュを取り直す")
+    func aLinkRepointedAtTheSameTimeIsHashedAgain() throws {
+        let directory = TestScratch.path("mokume-resource-link", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let moment = Date(timeIntervalSince1970: 1_700_000_000)
+        let first = directory.appendingPathComponent("first.bin")
+        let second = directory.appendingPathComponent("second.bin")
+        try Data([1, 2, 3]).write(to: first)
+        try Data([4, 5, 6]).write(to: second)
+        for url in [first, second] {
+            try FileManager.default.setAttributes([.modificationDate: moment], ofItemAtPath: url.path)
+        }
+        let link = directory.appendingPathComponent("link.bin")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: first)
+
+        ResourceHasher.startCounting()
+        let hasher = ResourceHasher(digests: ResourceDigests())
+        #expect(hasher.sha256(of: link, name: link.path) == ResourceDigest.sha256(of: Data([1, 2, 3])))
+        // 対照: 付け替えなければ控えを使い、取り直さない
+        #expect(hasher.sha256(of: link, name: link.path) == ResourceDigest.sha256(of: Data([1, 2, 3])))
+        #expect(ResourceHasher.timesTaken(for: link.path) == 1)
+
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: second)
+        #expect(
+            hasher.sha256(of: link, name: link.path) == ResourceDigest.sha256(of: Data([4, 5, 6])),
+            "時刻の同じ別のファイルへ付け替えたのに、控えの古いハッシュを返した")
+        #expect(ResourceHasher.timesTaken(for: link.path) == 2)
+    }
+
     /// 名乗りを聞くだけの受け手。検査の main actor の上でだけ触る。
     final class ListeningSink: UnreproducibleSink, @unchecked Sendable {
         private(set) var reasons: [String] = []

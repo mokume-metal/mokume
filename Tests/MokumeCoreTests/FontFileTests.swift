@@ -121,6 +121,31 @@ struct FontFileTests {
         }
     }
 
+    /// リンクを、**時刻と大きさの同じ別の書体ファイル**へ付け替えると別の値 (#4148)。同一性は
+    /// 更新時刻だけでなく、読む先のファイルの印の全部から作る。
+    @Test("リンクを時刻の同じ別の書体ファイルへ付け替えると、別の値になる")
+    func repointingALinkToAnotherFontFileWithTheSameTimeIsAnotherValue() throws {
+        let directory = TestScratch.path("mokume-font-link", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let moment = Date(timeIntervalSince1970: 1_000_000_000)
+        let first = directory.appendingPathComponent("first.ttc")
+        let second = directory.appendingPathComponent("second.ttc")
+        for copy in [first, second] {
+            try FileManager.default.copyItem(atPath: Self.staticFile, toPath: copy.path)
+            try FileManager.default.setAttributes([.modificationDate: moment], ofItemAtPath: copy.path)
+        }
+        let link = directory.appendingPathComponent("link.ttc")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: first)
+
+        let before = try Font.load(link.path)
+        #expect(try Font.load(link.path) == before, "付け替える前から、読むたびに別の値になる")
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: second)
+        let after = try Font.load(link.path)
+        #expect(before != after, "時刻の同じ別のファイルへ付け替えたのに、同じ値のまま")
+    }
+
     @Test("無いパスは notFound で、探した場所を名乗る")
     func aMissingPathSaysWhereItLooked() {
         let path = "assets/fonts/does-not-exist-\(UUID().uuidString).otf"

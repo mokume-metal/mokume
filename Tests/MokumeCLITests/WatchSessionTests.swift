@@ -4181,13 +4181,13 @@ struct FrameRateHandoffTests {
         }
         let take = directory.appendingPathComponent("take.json").path
 
-        let recording = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild(), recording: take)
+        let recording = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild(), dependencies: .silent, recording: take)
         let child = try recording.launch(executable, directory, nil, nil)
         child.waitUntilExit()
         let expected = ReplayRequest.generation(of: take, number: 1) + "|1"
         #expect(try String(contentsOf: seen, encoding: .utf8) == expected)
 
-        let plain = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild())
+        let plain = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild(), dependencies: .silent)
         let other = try plain.launch(executable, directory, nil, nil)
         other.waitUntilExit()
         #expect(try String(contentsOf: seen, encoding: .utf8) == "|")
@@ -4297,7 +4297,7 @@ struct FrameRateHandoffTests {
                         assets: decided),
                     binPath: directory)
             }
-            let hooks = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild())
+            let hooks = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild(), dependencies: .silent)
             let child = try hooks.launch(executable, directory, nil, nil)
             child.waitUntilExit()
             #expect(try String(contentsOf: seen, encoding: .utf8) == expected, "\(decided)")

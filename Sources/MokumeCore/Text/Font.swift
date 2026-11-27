@@ -17,7 +17,7 @@ import Foundation
 ///
 /// **同じファイルを、更新されないまま何度読んでも、読んだ値は等しい。** 描いた字は値をキーにアトラスへ
 /// 預けるので、毎フレーム読み直しても同じグリフを使い回す (それでも ``SketchPart/loadFont(_:)`` は
-/// `setup()` で 1 度読む)。ファイルを差し替えれば (更新時刻が変わる)、次に読んだ値は別のものになる。
+/// `setup()` で 1 度読む)。ファイルを差し替えれば (書き換える・別のファイルで置き換える・リンクを付け替える)、次に読んだ値は別のものになる。
 ///
 /// ## プロセスへ登録しない
 ///
@@ -29,7 +29,7 @@ import Foundation
 public nonisolated struct Font: Hashable, Sendable, CustomStringConvertible {
     /// ``SketchPart/loadFont(_:)`` へ渡した名前。説明にだけ使い、等しさには入れない。
     let path: String
-    /// 読んだファイルの同一性 — 解けた場所と更新時刻。等しさと、焼き場の鍵はこれで決まる。
+    /// 読んだファイルの同一性 — 解けた場所と改訂の印 (``FileStamp``)。等しさと、焼き場の鍵はこれで決まる。
     let identity: String
     /// ファイルが持つ面。**可変書体は 1 つ** (太さは面を選ばず軸で動かす)。
     let faces: [Face]
@@ -82,8 +82,7 @@ public nonisolated struct Font: Hashable, Sendable, CustomStringConvertible {
         else { throw .unreadable(path: path) }
 
         let stamp = FileStamp.of(url)
-        let identity =
-            "\(url.standardizedFileURL.path)@\(stamp?.seconds ?? 0).\(stamp?.nanoseconds ?? 0)"
+        let identity = "\(url.standardizedFileURL.path)@\(stamp?.description ?? "-")"
 
         // **可変書体は、名前つきのインスタンスの全部が返る** (`SFNS.ttf` は 369 個で、先頭は最も細い
         // 面)。先頭を使うと、何も頼まない書体が細い面になる。可変なら面は 1 つで、既定の面は軸の

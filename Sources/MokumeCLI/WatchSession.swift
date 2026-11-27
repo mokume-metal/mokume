@@ -57,8 +57,8 @@ final class WatchSession {
         /// **待つのは main actor の外である** (``rebuild`` と同じ)。世代は資材の中身から導くので、
         /// 大きな資材を置いた・書き換えている間は 1 回に数百 ms かかる — main actor で取ると、
         /// そのあいだ道具のウィンドウが止まる ([#2518](https://github.com/mokume-metal/mokume/issues/2518))。
-        /// `@Sendable` にしない理由も ``rebuild`` と同じで、外へ出すのは ``live(resolver:running:stamps:)``
-        /// の内側だけに閉じる。
+        /// `@Sendable` にしない理由も ``rebuild`` と同じで、外へ出すのは
+        /// ``live(resolver:running:dependencies:stamps:keepTime:recording:progress:assetBundles:rebuilding:)`` の内側だけに閉じる。
         var stamp: (URL) async -> String?
         /// 走っている作り直しを止めると決め、いま走っている子を返す。**居なければ `nil`。**
         ///
@@ -87,8 +87,8 @@ final class WatchSession {
         /// 呼ばれ方から、導き手ごと組む。
         ///
         /// **見張りの口 (``WatchCommand``) はこれを使わない。** あちらは見張り始める前に
-        /// 1 度導いて置き場を名乗る必要があるので、導き手を自分で組んで ``live(resolver:running:)``
-        /// へ渡す — 組むのを 2 度にすると、初回だけ `swift` が余分に起きる (#1067)。
+        /// 1 度導いて置き場を名乗る必要があるので、導き手を自分で組んで
+        /// ``live(resolver:running:dependencies:stamps:keepTime:recording:progress:assetBundles:rebuilding:)`` へ渡す — 組むのを 2 度にすると、初回だけ `swift` が余分に起きる (#1067)。
         static func live(in directory: URL, invocation: Invocation) -> Hooks {
             // **1 つを作り直しと止める口で分け持つ。** 止めると決めたら二度と起こさない —
             // 止めるのは見張りが終わるときだけなので、それで足りる (#1147)
@@ -99,7 +99,8 @@ final class WatchSession {
                 resolver: .live(
                     in: directory, invocation: invocation, running: running,
                     afterReading: { _ in }),
-                running: running)
+                running: running,
+                dependencies: RunCommand.dependencyNotice(say: { WatchCommand.say($0) }))
         }
 
         /// - Parameter resolver: 宣言から土台と置き場を導く者。**宣言が変わるまで持ち回る** —
@@ -107,6 +108,8 @@ final class WatchSession {
         ///   丸ごと乗る ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
         /// - Parameter running: 走っている `swift` を掴む先。**導き手と同じものを渡す** —
         ///   止めると決めた後に導き直しが `swift` を起こすと、それが新しく置き場の鍵を握る (#1147)。
+        /// - Parameter dependencies: 作り直しのたびに道具と固定の版の食い違いを読み、変わったときだけ名乗る手 (#4074)。
+        ///   **見張りは起動の行で読んだものと同じものを渡す。** 既定値は持たない — 渡し忘れた口を組めなくする。
         /// - Parameter keepTime: 作り直しをまたいで作者の時計を渡すファイルの絶対パス (`watch --keep-time`)。
         ///   起こす子ごとに環境変数で渡す (``StartupReads/keepTime``・#2414)。省けば渡さない。
         /// - Parameter recording: 記録の行き先の絶対パス (`watch --record`)。起こす子ごとに、世代の番号つきの
@@ -123,6 +126,7 @@ final class WatchSession {
         ///   起こす子へ届くまでを通す)。省けば `RunCommand.rebuild`。
         static func live(
             resolver: BuildResolver, running: RunningBuild,
+            dependencies: DoctorCommand.MismatchNotice,
             stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil,
             recording: String? = nil, progress: (@Sendable (BuildProgress) -> Void)? = nil,
             assetBundles given: AssetScope.Carried? = nil,
@@ -157,7 +161,8 @@ final class WatchSession {
                                 rebuilt = try rebuilding(directory, resolved).get()
                             } else {
                                 rebuilt = try RunCommand.rebuild(
-                                    in: directory, context: resolved.context, capturing: true,
+                                    in: directory, context: resolved.context, dependencies: dependencies,
+                                    capturing: true,
                                     running: running, binPath: resolved.binPath, progress: progress)
                             }
                             // **いまの宣言に無い包みは、子に探させない** (#4038)。`run` と同じ口で決め、外す包みが
