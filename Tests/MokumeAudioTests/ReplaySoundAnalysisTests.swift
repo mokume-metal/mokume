@@ -800,6 +800,118 @@ struct ReplaySoundAnalysisTests {
         #expect(second.unreproducible == [reason], "2 度目も、いまの実行の記録へ: \(second.unreproducible)")
     }
 
+    /// 同じ実体を 2 度走らせ、1 度目に作った合成音とファイルの音を 2 度目でも使う (#4144)。
+    ///
+    /// - 1 度目の 2 枚目の `draw()` で `Task` を起こす (1 度目の受け手を継ぐ)。検査が ``release`` を呼ぶまで待ってから
+    ///   `position` を読む
+    /// - 2 度目の `setup()` で音を足し直し、2 枚目の `draw()` から main のキューへ回して、合成音の `level` を読み、
+    ///   ファイルの音を `loop()` で鳴らす (手放した器を読み直す)
+    ///
+    /// 音の作られた時点の受け手は 1 度目のもので、2 度目の外の読みは、作ったスケッチのいまの実行へ名乗る。
+    final class Carried: Sketch {
+        var file: URL?
+        var flow: SoundFlow?
+        var tone: TriOsc?
+        var sound: SoundFile?
+        private var gate: CheckedContinuation<Void, Never>?
+        private(set) var waiting = 0
+        /// 外で読み終えた回数。
+        private(set) var finished = 0
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8, frameRate: 60) }
+        init() {}
+        convenience init(file: URL) {
+            self.init()
+            self.file = file
+        }
+        func setup() throws {
+            if let sound {
+                attach(sound)
+                return
+            }
+            let made = TriOsc(stage: SynthStage.stage(for: self, flow: flow))
+            made.play(440, 0.3)
+            tone = made
+            let loaded = try loadSound(try #require(file).path, flow: flow)
+            loaded.loop()
+            sound = loaded
+        }
+        func draw() {
+            background(0, 0, 0)
+            guard frameCount == 2 else { return }
+            if gate == nil, waiting == 0 {
+                // 1 度目: 受け手を継ぐ Task を、実行が終わるまで待たせる
+                waiting += 1
+                Task { [self] in
+                    await withCheckedContinuation { gate = $0 }
+                    _ = sound?.position
+                    finished += 1
+                }
+                return
+            }
+            DispatchQueue.main.async { [self] in
+                _ = tone?.level
+                sound?.loop()
+                finished += 1
+            }
+        }
+        /// 1 度目に起こした `Task` を進める。
+        func release() {
+            gate?.resume()
+            gate = nil
+        }
+        var isHeld: Bool { gate != nil }
+    }
+
+    @Test("作った実行を終えた後、同じ実体の次の実行の外で読んだ合成音の解析・読み直し・終えた実行から継いだ Task の読みは、次の実行の記録へ名乗る")
+    func readsAfterTheMakingRunEndedNameTheNextRun() async throws {
+        let directory = try TestScratch.directory("mokume-replay-sound")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let sketch = Carried(file: file)
+        sketch.flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        func recording(_ name: String) throws -> (SketchRuntime, URL) {
+            let url = directory.appendingPathComponent("carried-\(name).json")
+            let runtime = try SketchRuntime(
+                sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: true,
+                persistsParams: false)
+            try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
+            return (runtime, url)
+        }
+        func waitUntil(_ what: String, _ done: () -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(30)
+            while !done() {
+                guard ContinuousClock.now < deadline else {
+                    Issue.record("30 秒たっても \(what)")
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
+
+        // 1 度目: 何も外で読まずに終える (Task は 1 度目の受け手を継いで待っている)
+        let (first, firstURL) = try recording("first")
+        for _ in 0..<3 { try first.advance() }
+        try await waitUntil("1 度目の Task が待ちに入らない") { sketch.isHeld }
+        first.closePlugins()
+        let made = try ReplayRecord.read(from: firstURL)
+        #expect(made.unreproducible.isEmpty, "1 度目は外で読んでいない: \(made.unreproducible)")
+
+        // 2 度目: 外で読み、継いだ Task も進める
+        let (second, secondURL) = try recording("second")
+        for _ in 0..<2 { try second.advance() }
+        sketch.release()
+        try await waitUntil("外の読みが終わらない") { sketch.finished == 2 }
+        try second.advance()
+        second.closePlugins()
+        let next = try ReplayRecord.read(from: secondURL)
+        #expect(
+            Set(next.unreproducible) == [
+                ReplayRecorder.Reason.soundAnalysis("TriOsc"), ReplayRecorder.Reason.soundClock("SoundFile.position"),
+            ],
+            "\(next.unreproducible)")
+        #expect(next.resources.keys.sorted() == [file.path], "読み直しのハッシュ: \(next.resources)")
+    }
+
     /// 他のスケッチ (``lender``) が作った音を、自分の `draw()` の中で読むスケッチ。
     final class Borrower: Sketch {
         var lender: ClockReader?
@@ -907,7 +1019,9 @@ struct SoundAnalysisNoticeTests {
         private(set) var windowQueries = 0
         init(window: Bool) { self.window = window }
         func noteUnreproducible(_ reason: String) { reasons.append(reason) }
-        func noteResource(_ name: String, sha256: String) {}
+        private(set) var resources: [String] = []
+        var hasEnded = false
+        func noteResource(_ name: String, sha256: String) { resources.append(name) }
         let resourceDigests = ResourceDigests()
         var soundRunsInRealTime: Bool {
             windowQueries += 1
@@ -1013,6 +1127,22 @@ struct SoundAnalysisNoticeTests {
         let later = CountingSink(window: true)
         LaunchingSketch.$replay.withValue(later) { clock.noteRead() }
         #expect(later.reasons == [ReplayRecorder.Reason.soundClock("soundTime")], "実行の中の読みは、いまの受け手へ")
+    }
+
+    @Test("終えた受け手を継いだ所 (終えた実行で起こした Task) の読みは、それを飛ばして控えた受け手へ名乗る (#4144)")
+    func anEndedReceiverHereIsSkipped() {
+        let made = CountingSink(window: true)
+        var clock = LaunchingSketch.$replay.withValue(made) { SoundClockNotice(reader: "soundTime") }
+        var reload = LaunchingSketch.$replay.withValue(made) { SoundReceiver() }
+        let ended = CountingSink(window: true)
+        ended.hasEnded = true
+        LaunchingSketch.$replay.withValue(ended) {
+            clock.noteRead()
+            reload.withSink { ReplayNotice.readResource("loop.wav", data: Data([1, 2, 3])) }
+        }
+        #expect(made.reasons == [ReplayRecorder.Reason.soundClock("soundTime")], "\(made.reasons)")
+        #expect(made.resources == ["loop.wav"], "\(made.resources)")
+        #expect(ended.reasons.isEmpty && ended.resources.isEmpty, "終えた受け手へは名乗らない")
     }
 
     @Test("名乗る種類を持たない置き場は、受け手が居ても名乗らない")

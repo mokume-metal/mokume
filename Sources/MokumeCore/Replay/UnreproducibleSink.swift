@@ -21,6 +21,9 @@ protocol UnreproducibleSink: AnyObject, Sendable {
     func noteResource(_ name: String, sha256: String)
     /// ファイルを読み直して取ったハッシュの控え。**受け手 1 つの寿命の中だけ**持つ (#4092)。
     var resourceDigests: ResourceDigests { get }
+    /// 記録・再生を終えたか。終えた受け手は名乗りを捨てる。終えた実行で起こした `Task` は終えた受け手を継いだまま
+    /// 走り続けるので、音の読みはそれを飛ばして名乗る先を引く (``SoundReceiver``)。
+    var hasEnded: Bool { get }
 }
 
 /// 外のモジュール (音) が、記録している実行・流している実行へ名乗る口 (#3575)。
@@ -257,7 +260,7 @@ package struct SoundAnalysisNotice {
 ///
 /// 名乗る先は次の順に引く:
 ///
-/// 1. 読んだ所の受け手 (実行の中・受け手を継いだ `Task`)
+/// 1. 読んだ所の受け手 (実行の中・受け手を継いだ `Task`)。終えた受け手 (終えた実行で起こした `Task` が継いだもの) は飛ばす
 /// 2. 走っている実行の中なら、その実行の受け手。記録も再生もしていなければ名乗らない (別の実行が作った音でも、
 ///    読んだ実行の読みである)
 /// 3. 外なら、音を作ったスケッチ (``owner``) にいま結ばれた実行の受け手。同じ実体を走らせ直すと、新しい実行へ名乗る
@@ -281,7 +284,7 @@ package struct SoundReceiver {
 
     /// 名乗る先 (型の説明の順)。
     mutating func sink() -> (any UnreproducibleSink)? {
-        let here = LaunchingSketch.replay
+        let here = LaunchingSketch.replay.flatMap { $0.hasEnded ? nil : $0 }
         bind(here)
         if let here { return here }
         if let running = activeRun(for: .frame) { return running.unreproducibleSink }
@@ -289,10 +292,11 @@ package struct SoundReceiver {
         return bound
     }
 
-    /// `body` を、名乗る先 (``sink()``) を ``LaunchingSketch/replay`` に差して回す。差しているものがあれば何もしない。
-    /// 音の側で ``ReplayNotice`` の口を通す読み (手放した器の読み直しのハッシュ) が使う。
+    /// `body` を、名乗る先 (``sink()``) を ``LaunchingSketch/replay`` に差して回す。終えていない受け手が差さっていれば
+    /// 何もしない。音の側で ``ReplayNotice`` の口を通す読み (手放した器の読み直しのハッシュ) が使う。
     package mutating func withSink<Value>(_ body: () -> Value) -> Value {
-        guard LaunchingSketch.replay == nil, let sink = sink() else { return body() }
+        if let here = LaunchingSketch.replay, !here.hasEnded { return body() }
+        guard let sink = sink() else { return body() }
         return LaunchingSketch.$replay.withValue(sink, operation: body)
     }
 

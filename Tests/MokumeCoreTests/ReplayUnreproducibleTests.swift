@@ -883,6 +883,7 @@ struct ResourceDigestTests {
         private(set) var resources: [String: String] = [:]
         let resourceDigests = ResourceDigests()
         var soundRunsInRealTime: Bool { false }
+        var hasEnded: Bool { false }
         func noteUnreproducible(_ reason: String) { reasons.append(reason) }
         func noteResource(_ name: String, sha256: String) { resources[name] = sha256 }
     }
