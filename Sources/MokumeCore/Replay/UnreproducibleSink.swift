@@ -28,6 +28,7 @@ protocol UnreproducibleSink: AnyObject, Sendable {
 /// 受け手は ``LaunchingSketch/replay`` で、`setup()`・`draw()`・入力のコールバックと、そこで起動した `Task` から届く。
 /// その外 (`Task.detached`・GCD のブロック) でスケッチの実体から呼んだ読みには、スケッチの側の入口が実体に結ばれた実行の
 /// 受け手を差す (``SketchPart/withReplayReceiver(_:)``)。部品や面の API を直に外から呼んだ読みには届かない (#4144)。
+/// 音の読み (解析・時計・手放した器の読み直し) は、音ごとの ``SoundReceiver`` が名乗る先を引く。
 ///
 /// ## 資源のハッシュ (#4092)
 ///
@@ -228,12 +229,14 @@ package struct SoundAnalysisNotice {
     /// 読んだ音の型の名前 (理由に載る)。
     private let kind: String
     /// 音を作った実行の受け手 (``SoundReceiver``)。
-    private var receiver = SoundReceiver()
+    private var receiver: SoundReceiver
     /// 既に名乗った (または名乗らないと決めた) 受け手。受け手の寿命は実行が決めるので弱く持つ。
     private weak var settled: (any UnreproducibleSink)?
 
-    package init(kind: String) {
+    /// - Parameter owner: 音を作ったスケッチ (``SoundReceiver/init(owner:)``)。
+    package init(kind: String, owner: (any Sketch)? = nil) {
         self.kind = kind
+        receiver = SoundReceiver(owner: owner)
     }
 
     /// 解析の値を読んだ。
@@ -245,30 +248,52 @@ package struct SoundAnalysisNotice {
     }
 }
 
-/// 音 1 つの名乗りの先 (#4144)。**音を作った実行の受け手を控え、どこから読まれてもそこへ名乗る。**
+/// 音 1 つの名乗りの先 (#4144)。**音の読みを、読んだ実行か、音を作ったスケッチの実行の記録・再生へ名乗る。**
 ///
 /// 読んだ所の ``LaunchingSketch/replay`` だけを引くと、走っている実行のコールバックとそこで起こした `Task` の外
 /// (`Task.detached`・GCD のブロック・OS のコールバック) の読みでは `nil` になり、ウィンドウで録った記録でも黙って通る。
-/// 音 (`SoundFile`・合成音とそのステージ) は走っている実行の中で作られるので、作られた時点の受け手がその音の実行である
-/// (断片の ``ShaderBox`` と同じ形)。
+/// 音 (`SoundFile`・合成音とそのステージ) は走っている実行の中で作られるので、作ったスケッチに結ばれた実行
+/// (``SketchHomes``) と、作られた時点の受け手 (断片の ``ShaderBox`` と同じ形) がその音の実行である。
 ///
-/// - 控えるのは作られた時点の受け手で、無ければ最初に受け手のある所で読まれた時点のもの。**1 度控えたら変えない**
-/// - 読んだ所に受け手があれば、そちらへ名乗る (実行の中の読みは、いまの実行の記録・再生に載る)。無ければ控えへ
-/// - 受け手の寿命は実行が決めるので弱く持つ。実行が終わった後の読みは名乗らない
-struct SoundReceiver {
+/// 名乗る先は次の順に引く:
+///
+/// 1. 読んだ所の受け手 (実行の中・受け手を継いだ `Task`)
+/// 2. 走っている実行の中なら、その実行の受け手。記録も再生もしていなければ名乗らない (別の実行が作った音でも、
+///    読んだ実行の読みである)
+/// 3. 外なら、音を作ったスケッチ (``owner``) にいま結ばれた実行の受け手。同じ実体を走らせ直すと、新しい実行へ名乗る
+/// 4. 引けなければ (作ったスケッチが無い・その実行が後片付けを終えた)、控えた受け手。控えるのは作られた時点の受け手で、
+///    無ければ最初に受け手のある所で読まれた時点のもの。**1 度控えたら変えない**
+///
+/// 受け手とスケッチの寿命は実行が決めるので弱く持つ。実行が終わった後の読みは名乗らない。作ったスケッチに辿れない
+/// 共有 (スケッチの外の変数に置いた音を、別の実体の実行の外から読む) は、4 の控えにしか届かない。
+package struct SoundReceiver {
     private weak var bound: (any UnreproducibleSink)?
     /// ``bound`` を控えたか (控えた受け手が終わって `nil` になっても、控え直さない)。
     private var isBound = false
+    /// 音を作ったスケッチ。
+    private weak var owner: (any Sketch)?
 
-    init() {
+    /// - Parameter owner: 音を作ったスケッチ。**検査だけが `nil` で作る** (控えた受け手だけで引く)。
+    package init(owner: (any Sketch)? = nil) {
+        self.owner = owner
         bind(LaunchingSketch.replay)
     }
 
-    /// 名乗る先。読んだ所の受け手、無ければ控えた受け手。
+    /// 名乗る先 (型の説明の順)。
     mutating func sink() -> (any UnreproducibleSink)? {
         let here = LaunchingSketch.replay
         bind(here)
-        return here ?? bound
+        if let here { return here }
+        if let running = activeRun(for: .frame) { return running.unreproducibleSink }
+        if let owner, let runtime = SketchHomes.runtime(of: owner) { return runtime.unreproducibleSink }
+        return bound
+    }
+
+    /// `body` を、名乗る先 (``sink()``) を ``LaunchingSketch/replay`` に差して回す。差しているものがあれば何もしない。
+    /// 音の側で ``ReplayNotice`` の口を通す読み (手放した器の読み直しのハッシュ) が使う。
+    package mutating func withSink<Value>(_ body: () -> Value) -> Value {
+        guard LaunchingSketch.replay == nil, let sink = sink() else { return body() }
+        return LaunchingSketch.$replay.withValue(sink, operation: body)
     }
 
     private mutating func bind(_ sink: (any UnreproducibleSink)?) {
@@ -287,12 +312,14 @@ package struct SoundClockNotice {
     /// 読んだ口の名前 (理由に載る)。
     private let reader: String
     /// 音を作った実行の受け手 (``SoundReceiver``)。
-    private var receiver = SoundReceiver()
+    private var receiver: SoundReceiver
     /// 既に名乗った (または名乗らないと決めた) 受け手。受け手の寿命は実行が決めるので弱く持つ。
     private weak var settled: (any UnreproducibleSink)?
 
-    package init(reader: String) {
+    /// - Parameter owner: 音を作ったスケッチ (``SoundReceiver/init(owner:)``)。
+    package init(reader: String, owner: (any Sketch)? = nil) {
         self.reader = reader
+        receiver = SoundReceiver(owner: owner)
     }
 
     /// 音の時計に依る値を読んだ。

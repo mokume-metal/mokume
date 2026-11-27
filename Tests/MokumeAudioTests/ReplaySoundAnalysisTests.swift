@@ -654,6 +654,193 @@ struct ReplaySoundAnalysisTests {
         #expect(ResourceHasher.timesTaken(for: changing.path) == 2, "最初の読みと、書き換えた後の読み直し")
     }
 
+    /// ``Reattaching`` と同じく外して足し直し、足し直した音を鳴らす `loop()` (器を読み直す) を `away` へ回すスケッチ (#4144)。
+    final class ReattachingAway: Sketch {
+        var path = ""
+        var flow: SoundFlow?
+        var away = Away.mainQueue
+        var sound: SoundFile?
+        /// 回した先で鳴らし終えた回数。検査はこれが揃うまで待つ。
+        private(set) var finished = 0
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8, frameRate: 60) }
+        init() {}
+        convenience init(path: String, flow: SoundFlow, away: Away) {
+            self.init()
+            self.path = path
+            self.flow = flow
+            self.away = away
+        }
+        func setup() throws {
+            sound = try loadSound(path, flow: flow)
+            sound?.loop()
+        }
+        func draw() {
+            background(0, 0, 0)
+            guard let sound else { return }
+            if frameCount == 4 { detach(sound) }
+            guard frameCount == 8 else { return }
+            attach(sound)
+            switch away {
+            case .mainQueue: DispatchQueue.main.async { [self] in replay(sound) }
+            case .detached: Task.detached { [self] in await MainActor.run { replay(sound) } }
+            }
+        }
+        private func replay(_ sound: SoundFile) {
+            sound.loop()
+            finished += 1
+        }
+    }
+
+    @Test(
+        "足し直した音を main のキューや Task.detached から鳴らしても、器の読み直しが作った実行の記録のハッシュの口を通る",
+        arguments: Away.allCases)
+    func aReloadAwayFromTheRunIsHashed(away: Away) async throws {
+        ResourceHasher.startCounting()
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("reload-away-\(away).json")
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        let sketch = ReattachingAway(path: file.path, flow: flow, away: away)
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: false,
+            persistsParams: false)
+        try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
+        for frame in 1...10 {
+            try runtime.advance()
+            if frame == 6 {
+                // 外している間に、同じ長さ・同じ形式の別の音へ書き換える
+                let other = try writeWAV(chord.map { $0 * 0.5 }, sampleRate: 48_000)
+                _ = try FileManager.default.replaceItemAt(file, withItemAt: other)
+            }
+            if frame == 8 {
+                let deadline = ContinuousClock.now + .seconds(30)
+                while sketch.finished == 0 {
+                    guard ContinuousClock.now < deadline else {
+                        Issue.record("30 秒たっても回した loop() が終わらない (\(away))")
+                        break
+                    }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+            }
+        }
+        runtime.closePlugins()
+        let taken = try ReplayRecord.read(from: url)
+        #expect(taken.unreproducible == [ReplayRecorder.Reason.resourceChanged(file.path)], "\(away): \(taken.unreproducible)")
+        #expect(ResourceHasher.timesTaken(for: file.path) == 2, "最初の読みと、回した先の読み直し")
+    }
+
+    /// 同じ実体を 2 度走らせ、1 度目に作った音を 2 度目でも使い回すスケッチ。2 枚目の `draw()` で `position` を `away` へ回して読む。
+    final class Rerun: Sketch {
+        var file: URL?
+        var flow: SoundFlow?
+        var away = Away.mainQueue
+        var sound: SoundFile?
+        private(set) var finished = 0
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8, frameRate: 60) }
+        init() {}
+        convenience init(file: URL, away: Away) {
+            self.init()
+            self.file = file
+            self.away = away
+        }
+        func setup() throws {
+            // 1 度目に作った音は作り直さない
+            guard sound == nil else { return }
+            let loaded = try loadSound(try #require(file).path, flow: flow)
+            loaded.loop()
+            sound = loaded
+        }
+        func draw() {
+            background(0, 0, 0)
+            guard frameCount == 2 else { return }
+            switch away {
+            case .mainQueue: DispatchQueue.main.async { [self] in take() }
+            case .detached: Task.detached { [self] in await MainActor.run { take() } }
+            }
+        }
+        private func take() {
+            _ = sound?.position
+            finished += 1
+        }
+    }
+
+    @Test(
+        "同じ実体を 2 度走らせて音を使い回すと、外の読みは作った 1 度目でなく、いまの実体の実行の記録へ名乗る",
+        arguments: Away.allCases)
+    func aSoundReusedByARerunNamesTheCurrentRun(away: Away) async throws {
+        let directory = try TestScratch.directory("mokume-replay-sound")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let sketch = Rerun(file: file, away: away)
+        func take(_ name: String) async throws -> ReplayRecord {
+            let url = directory.appendingPathComponent("rerun-\(away)-\(name).json")
+            sketch.flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+            let before = sketch.finished
+            let runtime = try SketchRuntime(
+                sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: true,
+                persistsParams: false)
+            try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
+            for _ in 0..<2 { try runtime.advance() }
+            let deadline = ContinuousClock.now + .seconds(30)
+            while sketch.finished == before {
+                guard ContinuousClock.now < deadline else {
+                    Issue.record("30 秒たっても回した読みが終わらない (\(away)・\(name))")
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            try runtime.advance()
+            runtime.closePlugins()
+            return try ReplayRecord.read(from: url)
+        }
+        let reason = ReplayRecorder.Reason.soundClock("SoundFile.position")
+        let first = try await take("first")
+        #expect(first.unreproducible == [reason], "1 度目: \(first.unreproducible)")
+        let second = try await take("second")
+        #expect(second.unreproducible == [reason], "2 度目も、いまの実行の記録へ: \(second.unreproducible)")
+    }
+
+    /// 他のスケッチ (``lender``) が作った音を、自分の `draw()` の中で読むスケッチ。
+    final class Borrower: Sketch {
+        var lender: ClockReader?
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8, frameRate: 60) }
+        init() {}
+        convenience init(_ lender: ClockReader) {
+            self.init()
+            self.lender = lender
+        }
+        func draw() {
+            background(0, 0, 0)
+            _ = lender?.sound?.position
+        }
+    }
+
+    @Test("別の実行のフレームの中で読んだ音は、その実行の読みで、音を作った実行の記録へ名乗らない")
+    func aReadInsideAnotherRunIsThatRuns() throws {
+        let directory = try TestScratch.directory("mokume-replay-sound")
+        let file = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        let lender = ClockReader(read: nil, flow: flow, file: file)
+        let url = directory.appendingPathComponent("lender.json")
+        let owner = try SketchRuntime(
+            sketch: lender, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 }, onScreen: true,
+            persistsParams: false)
+        try #require(owner.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
+        // 読む側は記録も再生もしていない
+        let other = try SketchRuntime(
+            sketch: Borrower(lender), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
+            onScreen: true, persistsParams: false)
+        for _ in 0..<3 {
+            try owner.advance()
+            try other.advance()
+        }
+        other.closePlugins()
+        owner.closePlugins()
+        let taken = try ReplayRecord.read(from: url)
+        #expect(taken.unreproducible.isEmpty, "\(taken.unreproducible)")
+    }
+
     @Test("音を鳴らし続けるだけで時計を読まない作品は、ウィンドウで録っても名乗らない")
     func playingWithoutAClockReadIsNotNamed() throws {
         let url = try TestScratch.directory("mokume-replay-sound").appendingPathComponent("clock-quiet.json")

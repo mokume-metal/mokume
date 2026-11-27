@@ -191,11 +191,13 @@ public final class SoundFile: Inlet, EffectInput {
     private var kernels: [UInt64: RateKernel] = [:]
     /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
     /// 読まれたら、ウィンドウで録る記録へ名乗る (#3575)。
-    private var deferred = DeferredLevels(replayKind: "SoundFile")
+    private var deferred: DeferredLevels
     private var levels: AudioLevels { deferred.levels() }
     /// 音の時計に依る公開の値 (``position``・``isPlaying``) を読んだら、ウィンドウで録る記録へ名乗る (#4096)。
-    private var positionNotice = SoundClockNotice(reader: "SoundFile.position")
-    private var playingNotice = SoundClockNotice(reader: "SoundFile.isPlaying")
+    private var positionNotice: SoundClockNotice
+    private var playingNotice: SoundClockNotice
+    /// 手放した器の読み直し (``reloadBuffer()``) のハッシュを名乗る先 (#4144)。
+    private var reloadReceiver: SoundReceiver
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
     /// 位置を進める時計。開くまで `nil`。
@@ -375,6 +377,11 @@ public final class SoundFile: Inlet, EffectInput {
         self.sampleRate = Float(buffer.format.sampleRate)
         self.channels = Int(buffer.format.channelCount)
         self.owner = owner
+        // 名乗りは、作った実行と作ったスケッチの実行へ向ける (#4144)
+        deferred = DeferredLevels(replayKind: "SoundFile", owner: owner)
+        positionNotice = SoundClockNotice(reader: "SoundFile.position", owner: owner)
+        playingNotice = SoundClockNotice(reader: "SoundFile.isPlaying", owner: owner)
+        reloadReceiver = SoundReceiver(owner: owner)
         self.injectedFlow = flow
         self.source = source
         self.now = now
@@ -1305,8 +1312,8 @@ public final class SoundFile: Inlet, EffectInput {
             return .failure(.load(error))
         }
         // 記録・再生しているときは、読み直した中身もハッシュの口を通す (#4092)。変わっていれば、記録は「実行中に
-        // 変わった」、流す側は「記録と違う」を名乗る
-        ReplayNotice.readResource(name, at: source)
+        // 変わった」、流す側は「記録と違う」を名乗る。実行の外 (GCD・`Task.detached`) の `play()` からも、音の実行へ名乗る
+        reloadReceiver.withSink { ReplayNotice.readResource(name, at: source) }
         guard reloaded.frameLength == frameLength, reloaded.format == format else {
             return .failure(.changed)
         }
