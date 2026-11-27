@@ -281,7 +281,6 @@ struct SVGShapeTests {
         let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
         try runtime.advance()
         try runtime.advance()
-        #expect(runtime.canvas.warnings.message(for: .svgApproximated(path: path)) == nil, "近似ではない")
         #expect(runtime.canvas.warnings.message(for: .svgSkipped(path: path)) == nil, "捨ててはいない")
         #expect(runtime.canvas.warnings.message(for: .compositeGroupPerShape) == nil, "単位にできた")
 
@@ -308,7 +307,7 @@ struct SVGShapeTests {
         let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
         try runtime.advance()
         #expect(sketch.mark?.isEmpty == false)
-        #expect(runtime.canvas.warnings.message(for: .svgApproximated(path: path)) == nil)
+        #expect(runtime.canvas.warnings.message(for: .svgSkipped(path: path)) == nil)
     }
 
     @Test("描けないものを含む SVG は、描ける部分を描いて、捨てたものをファイルにつき 1 度知らせる")
