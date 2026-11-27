@@ -210,6 +210,9 @@ package final class ReplayPlayer: UnreproducibleSink {
     /// 流しているのがウィンドウで録った記録か。
     var soundRunsInRealTime: Bool { record?.window ?? false }
 
+    /// 結果を書いたか (``report``)。書いた後の名乗りは捨てる。
+    var hasEnded: Bool { report != nil }
+
     /// 流している間に、再現を保証しないものが使われた。**記録が既に名乗った理由と、同じ理由の 2 度目は名乗らない。**
     func noteUnreproducible(_ reason: String) {
         guard report == nil, named.insert(reason).inserted else { return }

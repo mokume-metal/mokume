@@ -42,7 +42,7 @@ bash scripts/ready-queue.sh
 git fetch origin main && git log --oneline origin/main -5
 ```
 
-見るのは 5 つ:
+見るのは 6 つ:
 
 | 見るもの | 実行するもの | なぜ |
 | --- | --- | --- |
@@ -50,13 +50,14 @@ git fetch origin main && git log --oneline origin/main -5
 | 本文が指す行番号・文字列がいまも同じか | 実際にそのファイルを開く | 行番号は動く。動いていたら本文を直す |
 | 前提が変わっていないか | 関連する PR / ADR を読む | 起票時に正しかった観察結果が、いまは別の姿になっていることがある |
 | 重複が無いか | `gh issue list --search '<言葉>' --state all` | 同じことが 2 本立っていたら、片方を not planned で閉じる |
+| 閉じる前に、open の子が残っていないか | `gh api repos/mokume-metal/mokume/issues/<N>/sub_issues --jq '.[] \| select(.state=="open") \| .number'` | 本文に挙がった子だけを見て閉じると、open の子を見落とす。`parent-guard` が開き直し、訂正のコメントが要った (#180 の子 #1767・#1768) |
 | 別の所で満たされていないか | ready のまま 7 日以上動いていない Issue は、その後に merge された PR (`gh pr list --state merged --search '<言葉> merged:>=<Issue の最終更新>'`) と、関係する run・Issue を検索する | 完了条件は別の PR・run・子の Issue で満たされても、元の Issue へ戻って閉じるきっかけが無い。[#2303](https://github.com/mokume-metal/mokume/issues/2303) は別の計測 run で、[#1527](https://github.com/mokume-metal/mokume/issues/1527) は修正の PR とその後の 250 回の run で満たされていたのに、ready に残ってバッチから外され続けた。親の PR で満たされた疑いは `ready-queue.sh` が子の行に表示する (#3559) が、run や別の Issue で満たされる形は機械的には拾えない |
 
 ### 題に「(実害待ち)」を持つ機構の提案
 
 実害の出ていない機構の提案は、題に「(実害待ち)」を付けて待たせてある
 (理由: [ADR-0008](../../../docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 2)。
-この提案は上の 5 つを調べ直さない。見るのは 1 つ — **前回の棚卸し以降に起票された Issue・
+この提案は上の 6 つを調べ直さない。見るのは 1 つ — **前回の棚卸し以降に起票された Issue・
 merge された PR に、その実害や同じ根本原因に当たるものがあるか**。
 
 ```bash
@@ -118,7 +119,7 @@ gh issue edit <番号> -R mokume-metal/mokume --type <型>
 | 任せる設計の性質と禁じ手 | 「形は着手時に決める」でも、満たすべき性質と「こうはしない」を 1 行ずつ書く。案を並べるなら推奨と、他の案が症状止めになる条件を添える | 名前の一致の経験則で決めた (#2517)。対等に並べた A/B から症状止めの側を選んだ (#2910) |
 | 仮説と実測の区別 | 確かめていない原因には「仮説 (未確認)」と書く。数は識別子と、数え直す式で書く | 未確認の原因と「70 本」(実際は `connectionLimit` の 64) が事実の形で残った (#2910) |
 
-揃っていた例は #2374・#2376・#2372・#2379 で、Sonnet のレーンでも逸脱なく閉じた。#2379 は
+揃っていた例は #2374・#2376・#2372・#2379 で、書いた本人より性能の低いモデルでも逸脱なく閉じた。#2379 は
 「遅らせた分の新しいサンプルを拾わない」と安直な遅延評価を名指しで禁じていた。
 
 ### 既存の採択で進められるかを確かめる

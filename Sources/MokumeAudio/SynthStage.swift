@@ -49,7 +49,7 @@ final class SynthStage: Inlet {
     }
 
     let rack: SynthRack
-    private weak var owner: (any Sketch)?
+    private(set) weak var owner: (any Sketch)?
     private let injectedFlow: SoundFlow?
     private let now: () -> TimeInterval
     private let warn: (String) -> Void
@@ -102,6 +102,7 @@ final class SynthStage: Inlet {
         warn: @escaping (String) -> Void
     ) {
         self.owner = owner
+        clockNotice = SoundClockNotice(reader: "soundTime", owner: owner)
         injectedFlow = flow
         self.now = now
         self.warn = warn
@@ -172,7 +173,7 @@ final class SynthStage: Inlet {
         Double(rack.rendered) / rack.sampleRate
     }
     /// 公開の音の時計 (`soundTime`) を読んだことの名乗り。ウィンドウで録った記録へ 1 度だけ名乗る (#4096)。
-    var clockNotice = SoundClockNotice(reader: "soundTime")
+    var clockNotice: SoundClockNotice
 
     /// 予約の秒 `seconds` (音の時計) を、ラックの標本の位置にする。数でない値・無限の値は `nil`。
     /// 負の値と今より前の値は、そのまま過去の位置になり、次に作る標本の頭で適用される。

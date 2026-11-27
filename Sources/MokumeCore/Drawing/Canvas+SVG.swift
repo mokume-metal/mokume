@@ -19,23 +19,66 @@ extension Canvas {
     /// 口 (``SketchPart/requestShape(_:)``) は、届いた時点の面の状態 (前のフレームが残した混ぜ方や
     /// 断片) で記録することになるので、引き継ぐと同じファイルが読むたびに違う形になる。
     /// 切り抜き・材質・影はフレームのもので形に焼き付かないので触らない。
+    ///
+    /// 入れ子の `<svg>` の表示枠 (``SVGFile/Drawing/viewportClips``) は、型板を描かずに印として形に残す
+    /// (``Shape/Run/viewportClips``)。形を置くときに、そのフレームの切り抜きとして当てる (#2879)。
     func shape(of drawing: SVGFile.Drawing, readFrom path: String) -> Shape {
         noteSkipped(drawing, path: path)
-        noteApproximated(drawing, path: path)
+        let clips = Self.viewportClipsByItem(drawing)
         return createShape {
             currentStyle = Style().keepingFrameFields(of: currentStyle)
             resetShader()
             var nextUnit = 0
-            record(drawing, 0..<drawing.items.count, nextUnit: &nextUnit)
+            record(drawing, 0..<drawing.items.count, nextUnit: &nextUnit, clips: clips)
         }
+    }
+
+    /// 描くものごとの、それを切る表示枠 (外側が先)。表示枠が 1 つも無ければ `nil`。
+    ///
+    /// 範囲は入れ子になるか離れる (``SVGFile/Drawing/viewportClips``) ので、開いている範囲を積みで辿る。表示枠が
+    /// 変わらない間は同じ並びを渡す (写さない)。
+    static func viewportClipsByItem(_ drawing: SVGFile.Drawing) -> [[Shape.ViewportClip]]? {
+        let ranges = drawing.viewportClips
+        guard !ranges.isEmpty else { return nil }
+        var byItem: [[Shape.ViewportClip]] = []
+        byItem.reserveCapacity(drawing.items.count)
+        var open: [(end: Int, clip: Shape.ViewportClip)] = []
+        var current: [Shape.ViewportClip] = []
+        var next = 0
+        for index in drawing.items.indices {
+            var changed = false
+            while let last = open.last, last.end <= index {
+                open.removeLast()
+                changed = true
+            }
+            while next < ranges.count, ranges[next].items.lowerBound <= index {
+                let range = ranges[next]
+                next += 1
+                guard range.items.upperBound > index, range.corners.count == 4 else { continue }
+                let corners = range.corners
+                open.append(
+                    (range.items.upperBound, Shape.ViewportClip(p0: corners[0], p1: corners[1], p2: corners[2], p3: corners[3])))
+                changed = true
+            }
+            if changed {
+                current = []
+                for entry in open { current.append(entry.clip) }
+            }
+            byItem.append(current)
+        }
+        return byItem
     }
 
     /// 描くもののうち `range` を記録する。合成の単位 (``SVGFile/Drawing/units``) は、範囲の印を付けて記録する
     /// (``recordCompositeGroup(opacity:covering:_:)``・#3564)。単位は置くときに 1 枚にまとめて描かれ、不透明度が
     /// 1 度だけ掛かる。
     ///
-    /// - Parameter nextUnit: まだ記録していない単位のうち最初のもの (単位は始まりの小さい順・外側が先)。
-    private func record(_ drawing: SVGFile.Drawing, _ range: Range<Int>, nextUnit: inout Int) {
+    /// - Parameters:
+    ///   - nextUnit: まだ記録していない単位のうち最初のもの (単位は始まりの小さい順・外側が先)。
+    ///   - clips: 描くものごとの表示枠 (``viewportClipsByItem(_:)``)。描くものを記録する前に、記録する表示枠を替える。
+    private func record(
+        _ drawing: SVGFile.Drawing, _ range: Range<Int>, nextUnit: inout Int, clips: [[Shape.ViewportClip]]?
+    ) {
         var index = range.lowerBound
         while index < range.upperBound {
             guard nextUnit < drawing.units.count, drawing.units[nextUnit].items.lowerBound == index else {
@@ -43,7 +86,10 @@ extension Canvas {
                     nextUnit < drawing.units.count
                     ? min(max(drawing.units[nextUnit].items.lowerBound, index + 1), range.upperBound)
                     : range.upperBound
-                for item in drawing.items[index..<end] { record(item) }
+                for item in index..<end {
+                    if let clips { recordViewportClips(clips[item]) }
+                    record(drawing.items[item])
+                }
                 index = end
                 continue
             }
@@ -53,7 +99,7 @@ extension Canvas {
             var bounds = PlaneBox(unit.bounds.low)
             bounds.add(unit.bounds.high)
             recordCompositeGroup(opacity: unit.opacity, covering: bounds) {
-                record(drawing, inside, nextUnit: &nextUnit)
+                record(drawing, inside, nextUnit: &nextUnit, clips: clips)
             }
             index = max(inside.upperBound, index + 1)
         }
@@ -217,28 +263,6 @@ extension Canvas {
     private func noteSkipped(_ drawing: SVGFile.Drawing, path: String) {
         guard !drawing.skipped.isEmpty || drawing.items.isEmpty else { return }
         warnOnce(.svgSkipped(path: path), Self.svgSkippedNotice(drawing, path: path))
-    }
-
-    /// 近似で描いたものがあれば、そのファイルにつき 1 度知らせる (#3563)。
-    private func noteApproximated(_ drawing: SVGFile.Drawing, path: String) {
-        guard let notice = Self.svgApproximatedNotice(drawing, path: path) else { return }
-        warnOnce(.svgApproximated(path: path), notice)
-    }
-
-    /// 近似で描いたものの知らせ。**何を・何回・最初はどの行か**を並べる。近似が無ければ `nil`。
-    ///
-    /// 描く絵は変えない。入れ子の `<svg>` の表示枠: SVG は枠の外を切り抜くが、mokume は切り抜かず枠の外まで
-    /// 描く (#3563)。
-    static func svgApproximatedNotice(_ drawing: SVGFile.Drawing, path: String) -> String? {
-        guard !drawing.approximated.isEmpty else { return nil }
-        let listing = drawing.approximated.prefix(20).map { note in
-            note.count == 1
-                ? "\(note.what) (line \(note.line))"
-                : "\(note.what) (\(note.count) times, first at line \(note.line))"
-        }.joined(separator: ", ")
-        return "\"\(path)\": drew a nested <svg> without clipping it to its viewport. SVG clips what lies "
-            + "outside the viewport (overflow is hidden by default), but mokume draws all of it, so the "
-            + "shapes that cross the viewport show beyond it. Affected: \(listing)"
     }
 
     /// 捨てたものの知らせ。**何を・何回・最初はどの行か**を並べる (20 種類まで)。

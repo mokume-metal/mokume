@@ -77,12 +77,6 @@ extension Canvas {
         /// 読んだ SVG に描けないものがあって捨てた、または描くものが 1 つも無かった。**ファイルの
         /// 名前ごとに 1 度** — 名前はスケッチの文字に書かれたものなので、鍵の数はフレームで増えない。
         case svgSkipped(path: String)
-        /// 読んだ SVG の入れ子の `<svg>` を、表示枠で切り抜かずに描いた (#3563)。**ファイルの名前ごとに 1 度**。
-        /// 捨てたもの (``svgSkipped(path:)``) とは別の知らせ — 描いてはいる。表示枠で切り抜くようになれば
-        /// ([#2879]) 消える。
-        ///
-        /// [#2879]: https://github.com/mokume-metal/mokume/issues/2879
-        case svgApproximated(path: String)
         /// 道の記録 (``Canvas/createPath(_:)``) の中で、道に入れられないものを断った。**断った種類ごとに 1 度**。
         case insidePath(PathRefusal)
         /// 形の切り抜き (``Canvas/clip(_:)``) の閉包の中で、型板に描けないものを断った。**断った種類ごとに 1 度** ([#2431])。
@@ -93,6 +87,12 @@ extension Canvas {
         ///
         /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
         case clipTooDeep
+        /// 形の切り抜きの段が上限 (``Canvas/clipDepthLimit``) に達していて、保持した形の表示枠 (読み込んだ SVG の
+        /// 入れ子の `<svg>`) を型板に積まずに描いた (#2879)。
+        case viewportClipTooDeep
+        /// 保持した形の表示枠 (読み込んだ SVG の入れ子の `<svg>`) を、視点を通る置き (既定と違う視点・奥行きのある
+        /// 変換) で切らずに描いた (#2879)。面の上の範囲で読む表示枠は、視点を通った形と重ならない。
+        case viewportClipThroughView
         /// 置けない置き場所が混ざっていた。
         case badPlacement
         /// 数の並びを置き場所として読む口 (``Canvas/shape(_:at:layout:)``) に、その道に載らない形が渡された。

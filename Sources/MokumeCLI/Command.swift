@@ -127,12 +127,20 @@ enum Command {
                     a request… load (the frame its result arrives at), a .metal fragment swapped in while
                     it runs, and in a window, reading a sound's analysis (level, spectrum, waveform,
                     isBeat) or a value that follows the sound's clock (soundTime, a sound file's
-                    position or isPlaying; a sound that only plays is fine). The record also keeps a
+                    position or isPlaying; a sound that only plays is fine). Read outside setup(),
+                    draw() and the input callbacks (in Task.detached or a GCD block), a sound is
+                    named in the run of the sketch that made it, and not at all once that run has
+                    ended: after the sketch stops, or for a sound kept outside the sketch and read
+                    after the run that made it. A file or URL loaded outside the callbacks is hashed
+                    and named only when loaded through the sketch itself, not through a SketchPart
+                    value or the canvas. The record also keeps a
                     hash of each local file the sketch loads (images, data, SVG, models, fonts, sounds,
                     .metal fragments), names a file that changed while it ran, and mokume replay names
                     one whose contents differ from what the record read. Date() and Swift's own
                     random numbers cannot be noticed: use random() and time instead to replay what
-                    they give
+                    they give. The record keeps the names of the files the sketch loads and the paths
+                    of the files dropped or chosen as they are, so an absolute one carries your home
+                    directory and user name: look inside before you hand the record to someone else
                     \(remoteHelp)
                     """
                 )

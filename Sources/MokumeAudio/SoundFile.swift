@@ -52,7 +52,7 @@ import MokumeDiagnostics
 ///
 /// 各フレームでは、**前のフレームの再生位置から、このフレームの再生位置までに再生した全サンプル**(区間)に
 /// 音量を掛け、``AudioIn`` と同じ解析に通す。停止中の値は無音 (``level`` が 0) になる。
-/// ステレオのファイルはステレオのまま再生し、解析はチャンネルを平均して行う。
+/// ステレオのファイルはステレオのまま再生し、解析はチャンネルを平均して行う (3 チャンネル以上のファイルで平均するチャンネルは ``channels``)。
 ///
 /// - ``rms``・``decibels``・``level``・``peak`` は区間全体の値。``spectrum`` は、**ファイルの位置 0 から
 ///   512 サンプルごと**に置いた 1024 サンプルのウィンドウのうち、終わりが区間に入るものの平均 (再生を始めた位置が途中でも、
@@ -155,11 +155,11 @@ import MokumeDiagnostics
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
-public final class SoundFile: Inlet, EffectInput {
+public final class SoundFile: Inlet, EffectInput, RunBoundInlet {
     /// ファイルのサンプルレート (Hz)。帯域 `k` の中心は `k × sampleRate ÷ 1024` Hz。
     public let sampleRate: Float
 
-    /// 解析に使う標本列 (チャンネルを平均したモノラル)。
+    /// 解析に使うモノラルのサンプル列 (``AudioFile/mono(_:)``。平均するのは直接再生で鳴るチャンネル)。
     let samples: [Float]
     /// 読み込んだ器 (左右などチャンネルごとの標本)。鳴らすときに player へ渡し、鳴らさないと決まったら
     /// 手放す。手放した後に足し直して鳴らすときは、``source`` から読み直す。外している間に持ち続けるのは、
@@ -174,6 +174,8 @@ public final class SoundFile: Inlet, EffectInput {
     /// 渡された名前。知らせに載せる。
     private let name: String
     private weak var owner: (any Sketch)?
+    /// 最後にこのファイルを開いた実行の終わり (``RunBoundInlet``)。まだ開かれていなければ `nil`。
+    private var run: RunEnd?
     /// 差し替えた流れ (検査)。`nil` なら時計で決める。
     private let injectedFlow: SoundFlow?
     private let now: () -> TimeInterval
@@ -191,11 +193,13 @@ public final class SoundFile: Inlet, EffectInput {
     private var kernels: [UInt64: RateKernel] = [:]
     /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
     /// 読まれたら、ウィンドウで録る記録へ名乗る (#3575)。
-    private var deferred = DeferredLevels(replayKind: "SoundFile")
+    private var deferred: DeferredLevels
     private var levels: AudioLevels { deferred.levels() }
     /// 音の時計に依る公開の値 (``position``・``isPlaying``) を読んだら、ウィンドウで録る記録へ名乗る (#4096)。
-    private var positionNotice = SoundClockNotice(reader: "SoundFile.position")
-    private var playingNotice = SoundClockNotice(reader: "SoundFile.isPlaying")
+    private var positionNotice: SoundClockNotice
+    private var playingNotice: SoundClockNotice
+    /// 手放した器の読み直し (``reloadBuffer()``) のハッシュを名乗る先 (#4144)。
+    private var reloadReceiver: SoundReceiver
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
     /// 位置を進める時計。開くまで `nil`。
@@ -375,6 +379,11 @@ public final class SoundFile: Inlet, EffectInput {
         self.sampleRate = Float(buffer.format.sampleRate)
         self.channels = Int(buffer.format.channelCount)
         self.owner = owner
+        // 名乗りは、作った実行と作ったスケッチの実行へ向ける (#4144)
+        deferred = DeferredLevels(replayKind: "SoundFile", owner: owner)
+        positionNotice = SoundClockNotice(reader: "SoundFile.position", owner: owner)
+        playingNotice = SoundClockNotice(reader: "SoundFile.isPlaying", owner: owner)
+        reloadReceiver = SoundReceiver(owner: owner)
         self.injectedFlow = flow
         self.source = source
         self.now = now
@@ -527,7 +536,7 @@ public final class SoundFile: Inlet, EffectInput {
     /// ```
     ///
     /// **読み込んだファイルの数をそのまま返し、3 チャンネル以上でも 2 にまとめない** (Processing Sound の
-    /// `SoundFile.channels()` と同じ)。解析の値 (``level`` など) はチャンネルを平均したものだが、この数は平均する前のもの。
+    /// `SoundFile.channels()` と同じ)。解析の値 (``level`` など) はチャンネルを平均したもの (下の段落) だが、この数は平均する前のもの。
     /// 外した (`detach(_:)`) 後も、追加し直した後も同じ値を返す。
     ///
     /// 3 チャンネル以上のファイルの鳴り方は、チャンネルの配置をファイルが持つかで違う:
@@ -539,10 +548,11 @@ public final class SoundFile: Inlet, EffectInput {
     /// - **配置を持つファイル** (左・右・中央など) は、OS のミキサーがその配置で左右へ配る。左・右・中央なら、中央は
     ///   左右へ配られて鳴る (macOS 27 で左右とも約 0.7071 倍。``pan(_:)``)
     ///
-    /// どちらでも、解析の値と、エフェクトに通したときの音 (中央のモノラル) は、鳴らないチャンネルも含めた全チャンネルの平均から作る。
-    /// たとえば配置を持たない 6 チャンネルのファイルで 1 チャンネル目だけに 0.5 の音があると、直に再生すれば左に 0.5 で
-    /// 鳴るが、エフェクトに通すとエフェクトへ入る音は約 0.083 (0.5 ÷ 6) のモノラルになる。3 チャンネル目から先だけに音があるファイルは、直に再生すると
-    /// 無音で、エフェクトに通すと鳴り、解析の値も 0 にならない。
+    /// 解析の値と、エフェクトに通したときの音 (中央のモノラル) は、配置を持たないファイルでは直に再生して鳴る先頭の
+    /// 2 チャンネルの平均から作り、3 チャンネル目から先は入らない。たとえば配置を持たない 6 チャンネルのファイルで
+    /// 1 チャンネル目だけに 0.5 の音があると、直に再生すれば左に 0.5 で鳴り、エフェクトへ入る音は 0.25 (0.5 ÷ 2) のモノラルになる。
+    /// 3 チャンネル目から先だけに音があるファイルは、直に再生しても、エフェクトに通しても無音で、解析の値も 0 になる。
+    /// 配置を持つファイルは、OS のミキサーの配り方を真似ず、全チャンネルの平均から作る (左・右・中央なら 3 つのチャンネルを等しく平均する)。
     public let channels: Int
 
     /// ファイルのサンプル (フレーム) の数。1 チャンネルあたりの数で、チャンネルの数は掛けない。
@@ -765,6 +775,12 @@ public final class SoundFile: Inlet, EffectInput {
     ///
     /// ``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)`` で再生を始めたときも `true` になり、エンベロープが終わって無音になっても
     /// `true` のまま (再生は止まらない)。
+    ///
+    /// スケッチが終わった時点で `false` になる (終わる前から再生していても)。スケッチが終わった後の ``play()``・``loop()``・
+    /// ``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)`` も、鳴らないのでこの値を変えない。合成した音源の
+    /// ``SynthSource/isPlaying`` は、終わる前から鳴らしていた音なら終わった後も `true` のままで、ここが違う。
+    /// ``SketchPart/detach(_:)-(Inlet)`` で外している間は鳴らないが、外している間の ``play()`` は `true` にし、
+    /// 足し直したフレームから鳴らす。足し直さないままスケッチが終われば、終わった時点で `false` になる。
     public var isPlaying: Bool {
         playingNotice.noteRead()
         return playhead.isPlaying
@@ -1041,6 +1057,26 @@ public final class SoundFile: Inlet, EffectInput {
         deferred.forget()
     }
 
+    // MARK: - 実行の終わり
+
+    /// 開いた実行に結ぶ。足し直した実行が、前の実行に替わる。
+    package func bind(to run: RunEnd) {
+        self.run = run
+    }
+
+    /// 開いた実行が終わった。並びに居たなら終わりの ``close()`` で止まっている。外している間に鳴らし始めていれば、
+    /// もう足し直せないのでここで止める (``close()`` と同じく先頭へ戻す)。
+    package func runEnded(_ run: RunEnd) {
+        guard run === self.run, playhead.isPlaying else { return }
+        pendingJump = nil
+        waiting.removeAll()
+        waitingTarget = nil
+        foldEnvelope(after: lastPlayed)
+        playhead.stop()
+        stoppedTail = nil
+        deferred.forget()
+    }
+
     // MARK: - エフェクトへ通す
 
     /// エフェクト (``SoundEffect``) の入力に足す節を返す。**最初に通されたときだけ**、実際に鳴らす
@@ -1305,8 +1341,8 @@ public final class SoundFile: Inlet, EffectInput {
             return .failure(.load(error))
         }
         // 記録・再生しているときは、読み直した中身もハッシュの口を通す (#4092)。変わっていれば、記録は「実行中に
-        // 変わった」、流す側は「記録と違う」を名乗る
-        ReplayNotice.readResource(name, at: source)
+        // 変わった」、流す側は「記録と違う」を名乗る。実行の外 (GCD・`Task.detached`) の `play()` からも、音の実行へ名乗る
+        reloadReceiver.withSink { ReplayNotice.readResource(name, at: source) }
         guard reloaded.frameLength == frameLength, reloaded.format == format else {
             return .failure(.changed)
         }
@@ -1375,6 +1411,14 @@ public final class SoundFile: Inlet, EffectInput {
     }
 
     private func perform(_ operation: Operation) {
+        // 開いた実行が終わった後は足し直せず、鳴らす道が無い。鳴らし始める操作で ``isPlaying`` を true にしない (#4175)。
+        // 外しただけ (同じ ``close()`` を通る) なら、足し直したとき ``open()`` が鳴らし始めるので捨てない
+        if run?.hasEnded == true {
+            switch operation {
+            case .play, .envelope: return
+            case .pause, .stop, .jump: break
+            }
+        }
         switch operation {
         case .play(let looping):
             // 飛び先を待つのは鳴っている間だけで、鳴っている最中の play() / loop() は頭から鳴らし直す

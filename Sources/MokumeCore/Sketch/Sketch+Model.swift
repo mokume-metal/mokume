@@ -202,7 +202,9 @@ extension SketchPart {
     // shot: 2 snippet=8e989fd9 image=a0443fbf8215c644
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
         noticeBlockingLoad("loadModel(_:normalize:)", instead: "requestModel(_:normalize:)")
-        return try resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
+        return try withReplayReceiver { () throws(ModelFailure) in
+            try resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
+        }
     }
 
     /// 外で作ったモデルを読む。**読んでいる間、他の仕事を止めない。**
@@ -247,8 +249,10 @@ extension SketchPart {
     public func requestModel(_ path: String, normalize: Bool = true) async throws(ModelFailure)
         -> Model
     {
-        try await loadingCanvas(ModelFailure.self)
-            .requestModel(path, normalize: normalize)
+        let canvas = try loadingCanvas(ModelFailure.self)
+        return try await withReplayReceiver { () async throws(ModelFailure) in
+            try await canvas.requestModel(path, normalize: normalize)
+        }
     }
 
     /// 読み込んだモデルを置く。

@@ -35,6 +35,11 @@ extension Canvas {
         clipRecorder = nil
         defer { clipRecorder = savedClipRecorder }
         closeBatch()
+        // 記録する表示枠 (``recordingViewportClips``・#2879) も、入口で閉じた列の後で空にし、出口で外の値へ戻す。
+        // 戻すのは出口で記録の最後の列を閉じた後 (`defer` は最後に走る) — 最後の列は中の表示枠で閉じる
+        let savedViewportClips = recordingViewportClips
+        recordingViewportClips = []
+        defer { recordingViewportClips = savedViewportClips }
         // 目印を描く視点 (``firstSolidCamera``・#3857) は、記録した立体では決めない — 記録した立体は
         // フレームに置いたものではない。入口で閉じた列までを控え、出口で記録の最後の列を閉じた後に戻す
         let savedFirstSolidCamera = firstSolidCamera
@@ -555,7 +560,8 @@ extension Canvas {
     /// 立体も同じである — 立体の奥行きの検めは `lessEqual` で半透明でも奥行きを書くので、半透明の所と
     /// 同じ奥行きの所は描いた順が絵に出る。**代償は描く回数で**、置き場所ごとに区間の数だけ描く (1 つずつ
     /// 置いたときと同じ回数)。平面と距離関数は列の種類が違い、区間が替わるたびに列が閉じる。区間が 1 つの
-    /// 形は、順の入れ替わる相手が無いので、置き場所の並び全体を 1 度で積み、描く回数は 1 回である。
+    /// 形は、順の入れ替わる相手が無いので、置き場所の並び全体を 1 度で積み、描く回数は 1 回である。ただし合成の
+    /// 単位と表示枠の切り抜きを持つ形は、区間が 1 つでも置き場所ごとに置く (置き場所ごとに中間面・型板の段を作る)。
     ///
     /// 立体の区間を置き場所を外に回して置くと、立体の区間も置き場所ごとに
     /// ``openRetainedSolid(_:of:mirrored:external:isParticles:)`` を通る — 頂点と添字を置き場所の数だけ溜め場へ写す
@@ -600,8 +606,9 @@ extension Canvas {
             }
         }
 
-        // 合成の単位の範囲を持つ形は、置き場所ごとに範囲の単位を開いて置く (#3564)
-        if !shape.compositeGroups.isEmpty {
+        // 合成の単位の範囲を持つ形は、置き場所ごとに範囲の単位を開いて置く (#3564)。表示枠の切り抜きを持つ形も、
+        // 置き場所ごとに枠を写して当てるので、置き場所ごとに置く (#2879)
+        if !shape.compositeGroups.isEmpty || shape.hasViewportClips {
             for placement in usable {
                 placeComposed(shape, in: 0..<shape.runs.count, groups: shape.compositeGroups[...], at: placement)
             }
@@ -677,11 +684,22 @@ extension Canvas {
     }
 
     /// 範囲の外の区間を、記録した区間の設定で置く (``place(_:at:)`` が置き場所 1 つで置くのと同じ)。
+    ///
+    /// 区間が表示枠 (``Shape/Run/viewportClips``) を持てば、置き場所の変換で写して当ててから置き、置き終えたら戻す
+    /// (#2879)。続く区間が同じ表示枠なら当て直さない。
     private func placePlainRuns(_ shape: Shape, _ range: Range<Int>, at placement: Placement) {
         guard !range.isEmpty else { return }
         let translucent = (placement.fill?.alpha ?? 1) < 1
         let targets = [placement]
+        let clipBase = viewportClipBase
+        var clipped: [Shape.ViewportClip] = []
+        defer { if !clipped.isEmpty { restoreViewportClips(clipBase) } }
         replaying(shape.runs[range]) { run in
+            if run.viewportClips != clipped {
+                applyViewportClips(
+                    run.viewportClips, over: clipBase, placedBy: transform.matrix * placement.transform.matrix)
+                clipped = run.viewportClips
+            }
             switch run.source {
             case .flat:
                 let carved = translucent ? shape.carvedStrokes(within: run.start..<(run.start + run.count)) : []
@@ -717,7 +735,7 @@ extension Canvas {
                 }
                 return
             }
-        } else if flatView(of: transform.matrix * placing).clip == nil,
+        } else if !placesThroughView(transform.matrix * placing),
             let bounds = Self.placedBox(group.bounds, by: placing)
         {
             // 置き場所が奥行きを持つ (視点を通る) なら、中間面の画素と置く側の画素が重ならないので開かない。

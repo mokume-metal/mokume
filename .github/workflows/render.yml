@@ -90,16 +90,19 @@ name: Render
 # 1 台で、runner は queued の job を先着順に拾わない — queue の先頭の render が、後から
 # 積まれた render-pr や後ろの group の render に抜かれ続け、期限 (当時の 60 分・2026-10-04 の実測。いまは 95 分) で弾かれた。
 # 拾う順は変えられないので、積む job を絞る。判断は scripts/render-turn.sh が持つ:
-#   - render (merge_group) — 前の group のうち終わっていないものが runner の数 (リポジトリの
-#     変数 RENDER_TURN_SLOTS・既定 1) 未満になるまで積まない。既定では 1 つ前の group の run が
-#     終わるまで待ち、group は queue の順に 1 本ずつ専用機に載る (#3319・ADR-0019 決定 7 の改訂 (2026-10-27))
-#   - render-pr — merge_group の run が 1 本でも残っていれば見送る (必須ではない)。通す直前に、
+#   - render (merge_group) — 前の group のうち終わっていないものと render-pr が取る枠の合計が
+#     runner の数 (リポジトリの変数 RENDER_TURN_SLOTS・既定 1) 未満になるまで積まない。既定では
+#     1 つ前の group の run が終わるまで待ち、group は queue の順に 1 本ずつ専用機に載る
+#     (#3319・#4018・ADR-0019 決定 7)
+#   - render-pr — merge_group の run があり、それと render-pr・定期の job が取る枠の合計が runner の
+#     数に達していれば見送る (必須ではない。空いた runner では走る・#4018)。通す直前に、
 #     この run の head が PR の branch の今の先端と違えば、同じく見送る (旧い head の job が
 #     走っている新しい head の job を取り消さないため・#3551)
 #   - scheduled-* — merge_group の run が残っている間は待つ
 # 門番の判断は積む前の 1 回だけで、queue が空いている間に積まれた job は後から group が
 # できても引き下がらない。そのうち**まだ拾われていない render-pr は、group ができた瞬間に
-# queue-sweep.yml が cancel する** (#2064)。scheduled-* は needs の鎖で 1 本ずつしか積まれ
+# queue-sweep.yml が runner の枠を越える分だけ cancel する** (#2064・#4018。枠は門番と同じ実装
+# `render-turn.sh slots` で数える)。scheduled-* は needs の鎖で 1 本ずつしか積まれ
 # ないので退かせない (ADR-0019 決定 7)
 # 門番は GitHub ホストにだけ置き、actions: read だけを持つ。専用機の job は引き続き権限も
 # 秘密も持たない。**門番が赤でも専用機の job は走らせる (`!cancelled()`)。** needs が

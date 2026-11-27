@@ -139,12 +139,27 @@ jq -r 'select(((.category // "") | ascii_downcase | test("^(color|lights_camera|
   | input_filename' "$ref"/processing/*.json | wc -l   # 69
 ```
 
+文字の 13 件は、category が `typography` の項目 12 件 (`PFont` のクラスのページ 1 と、関数 11) と、category が `pfont` で所属 (`classanchor`) が `PFont` の `PFont.list()` 1 件である (所属が `PFont` の項目は、クラスのページとメンバーで 2 件):
+
+```bash
+jq -r 'select(((.category // "") == "typography") or ((.classanchor // "") == "PFont"))
+  | input_filename' "$ref"/processing/*.json | wc -l   # 13
+```
+
 データ: 文字列・配列・リスト・辞書・変換の 162 件は、category が `data`・`string`・`intlist`・`floatlist`・`stringlist`・`intdict`・`floatdict`・`stringdict` (大文字小文字は揃っていないので小文字にして比べる) の項目 167 件から、上のデータ: JSON・Table・XML の式が拾うもの (所属が 5 つのクラスのクラスのページ 5 件。`load`・`parse`・`save` の 11 件は category が `input`・`output` なので、この式にはもともと入らない) を除いたものである。基本の型 (`Data` の `Primitive`) 8・複合の型 5・型の変換 10 (`Data` の `Conversion` 6 と `data` の `conversion` 4)・配列の関数 9・文字列の関数 10・`String` のメソッド 7・リストと辞書 113 (クラスのページ 6 とメソッド 107) に分かれる。`FloatDict.maxIndex()`・`minIndex()` は category が `floatlist` だが所属は `FloatDict` である:
 
 ```bash
 jq -r 'select(((.category // "") | ascii_downcase | test("^(data|string|(int|float|string)(list|dict))$")))
   | select(((.classanchor // "") | test("^(JSONArray|JSONObject|Table|TableRow|XML)$")) | not)
   | input_filename' "$ref"/processing/*.json | wc -l   # 162
+```
+
+構造・制御の 76 件は、category が `structure` (42) と `Control` (19) の項目 61 件と、category が `math` で subcategory が `Operators` (11)・`Bitwise Operators` (4) の項目 15 件である。数学・PVector・定数の領域は後者の 15 件を数えない:
+
+```bash
+jq -r 'select(((.category // "") | test("^(structure|Control)$"))
+  or ((.category // "") == "math" and ((.subcategory // "") | test("^(Operators|Bitwise Operators)$"))))
+  | input_filename' "$ref"/processing/*.json | wc -l   # 76
 ```
 
 連携 (net・serial・OSC) と io の 165 件は、`net` (22)・`serial` (17)・`io` (36) の項目すべて (ディレクトリの下がこの領域だけなので数えるだけでよい) と、oscP5 の 90 件である。`net` はクラスのページ 2・メソッド 17・イベントの関数 3、`serial` はクラスのページ 1 とメソッド 16、`io` はクラスのページ 6 (`GPIO`・`I2C`・`LED`・`PWM`・`SPI`・`SoftwareServo`) とメソッド 30 に分かれる:
@@ -171,9 +186,9 @@ oscP5 はリファレンスのクローンに無く、第三者のライブラ�
 | 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 81 | `input-output-environment.md` | [#3688] |
 | 3 | 数学・PVector・定数 | 64 | `math.md` | [#4176] |
 | 3 | 色・変換・光とカメラ・描画 (`PImage.blendColor()` は画像の表が数える) | 69 | `color-transform-rendering.md` | [#4177] |
-| 3 | 文字 | 13 | `typography.md` | 順 2 の後 |
+| 3 | 文字 | 13 | `typography.md` | [#4178] |
 | 3 | データ: 文字列・配列・リスト・辞書・変換 (JSON・Table・XML のクラスのページ 5 件は上のデータの表が数える) | 162 | `data-strings-collections.md` | [#4179] |
-| 3 | 構造・制御 | 76 | `structure.md` | 順 2 の後 |
+| 3 | 構造・制御 | 76 | `structure.md` | [#4180] |
 | 3 | 連携 (net・serial・OSC) と io | 39 + io 36 + oscP5 90 = 165 | `network-serial-io.md` | [#4181] |
 
 ## 領域の表を作るとき
@@ -200,6 +215,7 @@ oscP5 はリファレンスのクローンに無く、第三者のライブラ�
 [#3688]: https://github.com/mokume-metal/mokume/issues/3688
 [#4176]: https://github.com/mokume-metal/mokume/issues/4176
 [#4177]: https://github.com/mokume-metal/mokume/issues/4177
+[#4178]: https://github.com/mokume-metal/mokume/issues/4178
 [#4179]: https://github.com/mokume-metal/mokume/issues/4179
-[#4181]: https://github.com/mokume-metal/mokume/issues/4181
 [#4180]: https://github.com/mokume-metal/mokume/issues/4180
+[#4181]: https://github.com/mokume-metal/mokume/issues/4181

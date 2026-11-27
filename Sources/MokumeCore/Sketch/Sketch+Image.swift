@@ -189,7 +189,9 @@ extension SketchPart {
     // shot: 3 snippet=1417ff4a
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
         noticeBlockingLoad("loadImage(_:)", instead: "requestImage(_:)")
-        return try resourceCanvas(ImageFailure.self).loadImage(path)
+        return try withReplayReceiver { () throws(ImageFailure) in
+            try resourceCanvas(ImageFailure.self).loadImage(path)
+        }
     }
 
     /// 種類 (拡張子) を添えて画像を読む。読み終わるまで返らない。
@@ -215,7 +217,9 @@ extension SketchPart {
     // shot: 参照 loadImage(_:)
     public func loadImage(_ path: String, extension: String) throws(ImageFailure) -> Image {
         noticeBlockingLoad("loadImage(_:extension:)", instead: "requestImage(_:extension:)")
-        return try resourceCanvas(ImageFailure.self).loadImage(path, extension: `extension`)
+        return try withReplayReceiver { () throws(ImageFailure) in
+            try resourceCanvas(ImageFailure.self).loadImage(path, extension: `extension`)
+        }
     }
 
     /// 画像を読む。**読んでいる間、他の仕事を止めない。**
@@ -331,7 +335,7 @@ extension SketchPart {
     // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
         let canvas = try loadingCanvas(ImageFailure.self)
-        return try await canvas.requestImage(path)
+        return try await withReplayReceiver { () async throws(ImageFailure) in try await canvas.requestImage(path) }
     }
 
     /// 種類 (拡張子) を添えて画像を読む。**読んでいる間、他の仕事を止めない。**
@@ -355,7 +359,9 @@ extension SketchPart {
     // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String, extension: String) async throws(ImageFailure) -> Image {
         let canvas = try loadingCanvas(ImageFailure.self)
-        return try await canvas.requestImage(path, extension: `extension`)
+        return try await withReplayReceiver { () async throws(ImageFailure) in
+            try await canvas.requestImage(path, extension: `extension`)
+        }
     }
 
     /// 空の画像を作る。中身は透明。

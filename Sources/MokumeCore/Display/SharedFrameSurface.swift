@@ -936,7 +936,7 @@ package final class SharedFrameSurface {
     /// ここが `JSONSerialization` で鍵を手打ちしており、その危うさを doc で注意していた。
     ///
     /// **見張る側はここを通らない。** 続けて読む読み手 (``SharedFrameStage``) は
-    /// ``WatchedFile`` を持つ — 最終更新時刻をいつ控えるかという規律が要り、それを口ごとに
+    /// ``WatchedFile`` を持つ — 改訂の印をいつ控えるかという規律が要り、それを口ごとに
     /// 書き写すと落ちる ([#1048](https://github.com/mokume-metal/mokume/issues/1048))。
     /// ここに残るのは、**置いた中身がそのまま読めることを見る**ための口である。
     ///

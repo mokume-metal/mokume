@@ -366,8 +366,7 @@ nonisolated struct LoaderProbeTests {
                 do throws(DataFailure) {
                     let drawing = try SVGFile.parse(text, path: "probe.svg")
                     let skipped = drawing.skipped.map { "\($0.what) ×\($0.count)" }
-                    let approximated = drawing.approximated.map { "\($0.what) ×\($0.count)" }
-                    return "描くもの \(drawing.items)・捨てた \(skipped)・近似 \(approximated)"
+                    return "描くもの \(drawing.items)・捨てた \(skipped)・表示枠 \(drawing.viewportClips)"
                 } catch { return "投げた \(error as Any)" }
             }
             let (left, right) = (read(plain), read(spaced))

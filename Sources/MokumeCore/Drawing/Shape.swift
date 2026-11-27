@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Metal
+import simd
 import Synchronization
 
 /// 構築し終えた形。
@@ -135,6 +136,33 @@ public struct Shape {
     ///
     /// [#3564]: https://github.com/mokume-metal/mokume/issues/3564
     let compositeGroups: [CompositeRange]
+    /// 表示枠の切り抜き (``Run/viewportClips``) を持つ区間があるか。置くたびに区間を走査しないための印。
+    let hasViewportClips: Bool
+
+    /// 区間を切る表示枠 1 つ (``Run/viewportClips``・#2879)。描く順に並べた 4 隅の四角形 (回した・剪断した表示枠は
+    /// 平行四辺形)。読み込んだ SVG の入れ子の `<svg>` が持ち、置くときに型板の 1 段 (``Canvas/ClipLayers``) になる。
+    struct ViewportClip: Equatable {
+        var p0: SIMD2<Float>
+        var p1: SIMD2<Float>
+        var p2: SIMD2<Float>
+        var p3: SIMD2<Float>
+
+        /// `matrix` の平面の成分 (x・y と平行移動) で写した 4 隅。数でない・無限になる角があれば `nil`。
+        ///
+        /// 奥行きと視点は通さない — 切り抜きは面の上の範囲である (矩形の `clip()` が変換を読むのと同じ読み方)。
+        func moved(by matrix: simd_float4x4) -> ViewportClip? {
+            func move(_ point: SIMD2<Float>) -> SIMD2<Float> {
+                let x = matrix.columns.0.x * point.x + matrix.columns.1.x * point.y + matrix.columns.3.x
+                let y = matrix.columns.0.y * point.x + matrix.columns.1.y * point.y + matrix.columns.3.y
+                return SIMD2(x, y)
+            }
+            let moved = ViewportClip(p0: move(p0), p1: move(p1), p2: move(p2), p3: move(p3))
+            for corner in [moved.p0, moved.p1, moved.p2, moved.p3] {
+                guard corner.x.isFinite, corner.y.isFinite else { return nil }
+            }
+            return moved
+        }
+    }
 
     /// 合成の単位の範囲 1 つ (``Shape/compositeGroups``)。
     struct CompositeRange: Equatable {
@@ -227,6 +255,12 @@ public struct Shape {
         /// である (``sameSettings(as:)`` が合成された `==` に委ねているのと同じ向き)。
         var indexStart: Int
         var indexCount: Int
+        /// この区間を切る表示枠 (外側が先・#2879)。置くときに 1 枠 1 段で型板に積み、全部の交わりの中だけを描く。
+        /// 空なら切らない。**既定の値を持たない** (``indexCount`` と同じ理由) — 列を閉じる口は、記録している表示枠
+        /// (``Canvas/recordingViewportClips``) を写す。
+        ///
+        /// 区間の設定なので、違う表示枠の区間は畳まない (``sameSettings(as:)``)。
+        var viewportClips: [ViewportClip]
 
         /// 添字で読む区間か。
         var isIndexed: Bool { indexCount > 0 }
@@ -279,6 +313,13 @@ public struct Shape {
         compositeGroups: [CompositeRange] = [], planeBox knownBox: PlaneBox?? = nil
     ) {
         self.compositeGroups = compositeGroups
+        // 閉包を標準ライブラリの高階関数へ渡さずにループで見る (隔離の実行時検査を避ける・#1779)
+        var clipped = false
+        for run in runs where !run.viewportClips.isEmpty {
+            clipped = true
+            break
+        }
+        hasViewportClips = clipped
         // 繋ぐだけの組 (`group`) は子の外接の和を渡す。渡さなければ焼いた並びから求める
         planeBox =
             knownBox
@@ -424,10 +465,15 @@ public struct Shape {
     /// 組にするたびにここが増えるので、「保持にしたのに速くならない」を絵ではなく
     /// 数で見つけられる。2 以上になるのは、混ぜ方・貼るテクスチャ (`texture()`)・シェーダ (`shader()`) が形の中で
     /// 変わるときと、三角形で構成する図形 (`triangle`・`beginShape()` など)・距離関数で描く図形 (`rect`・
-    /// `circle`・`line` など)・立体が形の中で入れ替わるときである。
+    /// `circle`・`line` など)・立体が形の中で入れ替わるときと、読み込んだ SVG の入れ子の `<svg>` の表示枠
+    /// (``SketchPart/loadShape(_:)``) が形の中で替わるときである。
     ///
     /// インスタンスを並べてまとめて置く (``SketchPart/shape(_:at:)``) と、2 以上の形は、インスタンスごとに
     /// この回数ずつ描く ([#2305]・立体だけの形も同じ・[#2495])。
+    ///
+    /// 入れ子の `<svg>` を表示枠で切り抜く形 (``SketchPart/loadShape(_:)``) は、1 の形でもインスタンスごとに
+    /// この回数ずつ描く。表示枠を切り抜きとして描く回数 (インスタンスごとに、表示枠 1 つにつき最大 2 回) は、
+    /// ここに数えない。
     ///
     /// [#2305]: https://github.com/mokume-metal/mokume/issues/2305
     /// [#2495]: https://github.com/mokume-metal/mokume/issues/2495
