@@ -549,14 +549,14 @@ struct BuildPlacementTests {
         return root
     }
 
-    /// 解決の偽の手。`swift` の引数を記録し、`writesOn` の副コマンドで起こされたら、本物の解決と同じく
-    /// スケッチ直下へ mokume の固定を書く。
+    /// 解決の偽の手。`swift` の引数を記録し、`writesOn` の副コマンドで起こされたら (`nil` ならどの副コマンドでも)、
+    /// 本物の解決と同じくスケッチ直下へ mokume の固定を書く。
     private static func resolver(
         recording recorder: ResolveRecorder, writesOn subcommand: String?
     ) -> (_ arguments: [String], _ directory: URL) -> Void {
         { arguments, directory in
             recorder.record("swift \(arguments.joined(separator: " "))")
-            guard arguments.dropFirst().first == subcommand else { return }
+            if let subcommand, arguments.dropFirst().first != subcommand { return }
             try? """
                 {"originHash":"x","pins":[{"identity":"mokume","kind":"remoteSourceControl",
                  "location":"https://github.com/mokume-metal/mokume.git",
@@ -576,14 +576,16 @@ struct BuildPlacementTests {
             in: sketch, invocation: Invocation(place: sketch.path),
             environment: [BuildDirectory.environmentKey: store.path],
             announce: { recorder.record("say: \($0)") },
-            resolver: Self.resolver(recording: recorder, writesOn: "update"),
+            resolver: Self.resolver(recording: recorder, writesOn: nil),
             afterReading: { _ in })
 
         // 名乗りが 1 度、解決より先。綴りはこのとおり (#3427)。行は足さない (#4073)
         //
         // **`Package.resolved` の無いスケッチは `update` で解決する** (#4073)。`resolve` は共有の置き場に残る
         // 別のスケッチの版を採るので、作ったばかりのスケッチが最新の 0.x に届かない (`Templates.libraryMinimumVersion`)。
-        // `update` が固定を書けば、`resolve` を重ねない
+        // `update` が固定を書けば、`resolve` を重ねない。偽の手はどの副コマンドでも固定を書くので、副コマンドを
+        // 確かめるのは下の引数の並びの比較だけである (置き場に古い版が残っていても最新を採ることは、SwiftPM の
+        // 振る舞いなのでこの検査では見ない)
         let resolving = store.appendingPathComponent(BuildDirectory.resolveSegment, isDirectory: true)
         #expect(
             recorder.events == [
@@ -625,6 +627,7 @@ struct BuildPlacementTests {
         arguments: [
             #"{"pins":[{"identity":"swift-syntax","state":{"version":"603.0.2"}}],"version":3}"#,
             "{ not json",
+            "",
         ])
     func keepsResolveWhenAResolvedFileIsThere(resolved: String) throws {
         let store = try BuildDirectoryTests.directory()
