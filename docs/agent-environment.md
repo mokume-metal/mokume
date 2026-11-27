@@ -84,6 +84,7 @@ Auto-fix で起こされても、次の失敗と状態は**コードを直して
 | --- | --- |
 | `pr-gate` の `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main のバージョンのスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2)。直せば新しい run で再評価される (再実行は要らない) |
 | `pr-gate` の `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を付ける (作成と同時なら失敗が出ない)。載せれば (付ければ) 再評価される |
+| `pr-gate` の「PR が Issue に紐づいていない」(本文に `### Closes #N` が正しく在る) | 直すものは無い。PR を作った直後は GitHub が `Closes #N` を紐づけ終える前に `pr-gate` が走ることがある (#4151)。`gh run rerun <run> --failed` で通る |
 | `pr-gate` の `pr-title` | タイトルを直す。`pr-gate` はタイトルを API から読むので、直せば再評価される (新しいコミットは要らない) |
 | `render-pr` が見送られた・cancel された | 必須ではないので直すものは無い。rerun しない — ゲートのジョブを通らずに専用機のキューに入り、merge queue の `render` と競合する (#2062)。要るなら queue が空いてから push し直す |
 | `render` のベースラインの不一致 | 2 回描いても一致しないなら決定性が壊れている。ベースラインを書き換えて消さない ([ADR-0019](decisions/0019-drawing-verification.md) 決定 3) |
@@ -177,7 +178,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    `needs` で繋ぐ**。そうすれば、計測の途中で queue に入った PR の `render` は、走っている 1 job
    (30 分以内) の後に専用機に割り当てられ、タイムアウトまでに終わる。形は render.yml の `scheduled-release-turn` →
    `scheduled-release` と同じで、新しいゲートのジョブは作らない。ゲートのジョブが待つのは merge_group の run だけなので、
-   `render-pr`・`scheduled-*` との競合は、上の確認と「1 本ずつ」で避ける。
+   `render-pr`・`scheduled-*` との競合は、上の確認と「1 本ずつ」で避ける。render.yml の門番 (`render-turn.sh` の `yield`・`merge_group`) も計測の job を専用機の枠に数えないので、計測が runner を 1 本取っている間は、空いたと読んだ枠へ `render-pr` を通し、後ろの group の `render` をその分待たせうる。
 
    ```yaml
    name: measure-<N>

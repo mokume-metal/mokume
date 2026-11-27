@@ -50,6 +50,7 @@ git fetch origin main && git log --oneline origin/main -5
 | 本文が指す行番号・文字列がいまも同じか | 実際にそのファイルを開く | 行番号は動く。動いていたら本文を直す |
 | 前提が変わっていないか | 関連する PR / ADR を読む | 起票時に正しかった観察結果が、いまは別の姿になっていることがある |
 | 重複が無いか | `gh issue list --search '<言葉>' --state all` | 同じことが 2 本立っていたら、片方を not planned で閉じる |
+| 閉じる前に、open の子が残っていないか | `gh api repos/mokume-metal/mokume/issues/<N>/sub_issues --jq '.[] \| select(.state=="open") \| .number'` | 本文に挙がった子だけを見て閉じると、open の子を見落とす。`parent-guard` が開き直し、訂正のコメントが要った (#180 の子 #1767・#1768) |
 | 別の所で満たされていないか | ready のまま 7 日以上動いていない Issue は、その後に merge された PR (`gh pr list --state merged --search '<言葉> merged:>=<Issue の最終更新>'`) と、関係する run・Issue を検索する | 完了条件は別の PR・run・子の Issue で満たされても、元の Issue へ戻って閉じるきっかけが無い。[#2303](https://github.com/mokume-metal/mokume/issues/2303) は別の計測 run で、[#1527](https://github.com/mokume-metal/mokume/issues/1527) は修正の PR とその後の 250 回の run で満たされていたのに、ready に残ってバッチから外され続けた。親の PR で満たされた疑いは `ready-queue.sh` が子の行に表示する (#3559) が、run や別の Issue で満たされる形は機械的には拾えない |
 
 ### 題に「(実害待ち)」を持つ機構の提案
