@@ -42,7 +42,7 @@
     },
     "window": {
       "type": "boolean",
-      "description": "Whether the run was shown in a window. A window plays sound in real time (a replay without a window counts frames), so a record taken in a window names a sound whose analysis the sketch read (its level, spectrum, waveform or beat) and a read of a value that follows the clock of a sound (`soundTime`, or a sound file's `position` or `isPlaying`) under `unreproducible`, and a sound that only plays is not named; the draw of a recorded run is the same either way, because the window's deferral of enlarged-glyph bakes to the next frame is turned off while recording."
+      "description": "Whether the run was shown in a window. A window plays sound in real time (a replay without a window counts frames), so a record taken in a window names a sound whose analysis the sketch read (its level, spectrum, waveform or beat) and a read of a value that follows the clock of a sound (`soundTime`, or a sound file's `position` or `isPlaying`) under `unreproducible`, and a sound that only plays is not named. A read made outside `setup()`, `draw()` and the input callbacks (in `Task.detached` or a GCD block) is named in the record of the run whose sketch made the sound, and is not named once that run has ended: after the sketch stops, or for a sound kept outside the sketch and read after the run that made it. The draw of a recorded run is the same either way, because the window's deferral of enlarged-glyph bakes to the next frame is turned off while recording."
     },
     "start": {
       "type": "object",
