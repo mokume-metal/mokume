@@ -399,7 +399,7 @@ extension ShapeExit {
             "madePresence": control,
             "presenceReceivers": "絵を渡している相手の名前 (#3921)。メニューバーの名乗りが読む実行の制御で、形に焼き付く値を生まない",
             "outlets": seam, "inlets": seam, "seamVisitDepth": seam, "deferredSeamChanges": seam,
-            "seamsClosed": seam, "outletJoinedAt": seam,
+            "seamsClosed": seam, "outletJoinedAt": seam, "runEnd": seam,
             "recorder": recording, "closingRecorder": recording, "recordingFailed": recording,
             // 実行の記録 (#3570)。入力・つまみ・観測を写して残す係で、形に焼き付く値を生まない
             "replay": recording, "player": recording,

@@ -125,6 +125,8 @@ package final class SketchRuntime {
     /// 差込口を閉じたか (``closePlugins(_:)``)。**閉じた後に足したものは誰にも閉じられない**
     /// ので、足す頼みを断る。
     private var seamsClosed = false
+    /// この実行の終わり。開いた入り口のうち、終わりを知りたいもの (``RunBoundInlet``) に結ぶ (#4175)。
+    private lazy var runEnd = RunEnd(self)
     /// 中で起こした `Task` の続きから、入り口を足すことを頼む受付 (``SketchPart/requestSound(_:)`` など)。
     /// フレームの頭で当てる (``serveAttachRequests()``)。
     let attachRequests = AttachRequests()
@@ -880,7 +882,10 @@ package final class SketchRuntime {
             }
             outlets += registry.outlets.map { ($0, SeamHealth()) }
             inlets += registry.inlets.map { ($0, SeamHealth()) }
-            for inlet in registry.inlets { noteReplaySource(inlet) }
+            for inlet in registry.inlets {
+                bindToThisRun(inlet)
+                noteReplaySource(inlet)
+            }
         }
     }
 
@@ -936,10 +941,15 @@ package final class SketchRuntime {
         if let observer, !settleObservation(patience, through: observer) { return false }
         // **撮る係はここでは閉じない。** 並びに居れば同じ `close()` が塞いで待つので、
         // 下で選んだ待ち方で閉じる
+        // **差込口を閉じ始める前に、終わった印を立てる。** 閉じている最中 (後ろに並ぶ差込口の `close()`) に
+        // 呼ばれた操作も、終わった実行へのものとして扱う (#4175)
+        runEnd.mark()
         for entry in outlets where entry.seam !== recorder { entry.seam.close() }
         // 音声トラックを始めた音源へ、録りが終わると伝えてから閉じる
         endSoundTrack()
         for entry in inlets { entry.seam.close() }
+        // 並びから外れていて上の `close()` を受けなかった入り口にも、終わったことを伝える
+        runEnd.notify()
         // **まとめている途中の保存を落とさない。** 引いたつまみの最後の 1 手だけが
         // 消えると、直したはずの値が次の起動で戻っていない形で出る
         paramStore?.flushIfPending()
@@ -1981,6 +1991,9 @@ package final class SketchRuntime {
     @discardableResult
     public func attach(_ inlet: any Inlet) -> Bool {
         guard seamVisitDepth == 0 else {
+            // 足すのは巡回の後でも、受け付けた時点でこの実行に結ぶ。足されるまでの間の操作も、この実行の
+            // 終わりで扱う (#4175)
+            bindToThisRun(inlet)
             deferredSeamChanges.append { [unowned self] in self.attachNow(inlet) }
             return true
         }
@@ -2055,6 +2068,7 @@ package final class SketchRuntime {
         }
         guard Self.open(inlet, opening: inlet.open) else { return false }
         inlets.append((inlet, SeamHealth()))
+        bindToThisRun(inlet)
         SeamHomes.record(inlet, in: self)
         noteReplaySource(inlet)
         return true
@@ -2121,6 +2135,11 @@ package final class SketchRuntime {
                 outlet.receive(OutputFrame(image: pending.image, frame: pending.frame, time: pending.time))
             }
         }
+    }
+
+    /// 開いた入り口が終わりを知りたいなら、この実行に結ぶ (``RunEnd``)。
+    private func bindToThisRun(_ inlet: any Inlet) {
+        if let bound = inlet as? any RunBoundInlet { runEnd.bind(bound) }
     }
 
     /// 足してよいか。**閉じた後は断る** — 足したものを閉じる者がもう居ない。
