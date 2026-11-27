@@ -13,7 +13,6 @@
 package final class RunEnd {
     private weak var runtime: SketchRuntime?
     private var marked = false
-    private var notified = false
     /// この実行が開いた入り口。弱く持つ (入り口を生かし続けない)。
     private var bound: [WeakInlet] = []
 
@@ -40,12 +39,10 @@ package final class RunEnd {
         marked = true
     }
 
-    /// 並びの入り口を閉じ終えた後に、結んだ入り口へ終わったことを伝える (1 度だけ)。並びから外れていて終わりの
-    /// `close()` を受けなかった入り口も、ここで知る。
+    /// 並びの入り口を閉じ終えた後に、結んだ入り口へ終わったことを伝える。並びから外れていて終わりの `close()` を
+    /// 受けなかった入り口も、ここで知る。伝えた入り口は控えから外すので、呼び直しても同じ入り口へ 2 度は届かない。
     func notify() {
         mark()
-        guard !notified else { return }
-        notified = true
         let inlets = bound.compactMap(\.inlet)
         bound.removeAll()
         for inlet in inlets { inlet.runEnded(self) }
