@@ -333,4 +333,101 @@ struct SVGViewportClipTests {
         #expect(alpha(image, 45, 45) == 255)
         #expect(alpha(image, 30, 30) == 0, "\(image[30, 30])")
     }
+
+    // MARK: - 描く回数
+
+    @Test("はみ出す形を N か所に置くと、置き場所ごとに 1 回描き、型板の段も置き場所ごとに積み替える", arguments: [1, 2, 5])
+    func drawCountGrowsPerPlacement(count: Int) throws {
+        let placements = (0..<count).map { Placement(x: Float($0) * 10, y: 0) }
+        let (_, canvas) = try rendered { canvas, shape in
+            #expect(shape.drawCallCount == 1, "前提: 区間は 1 つ")
+            canvas.shape(shape, at: placements)
+        }
+        // 区間が 1 つの形でも、置き場所ごとに写した表示枠で切るので、置き場所の数だけ描く
+        #expect(canvas.drawCallsInLastFrame == count)
+        // 型板は、最初の置き場所で 1 段積み、続く置き場所では前の段を外して積む (1 + 2 × (N - 1))。最後の段は残る
+        #expect(canvas.drawsEncodedInLastFrame == count + 1 + 2 * (count - 1))
+    }
+
+    // MARK: - 型板を共にするもの
+
+    @Test("表示枠の中の半透明の線は、部分パスどうしの交わりでも 1 度だけ混ぜ、枠の外は描かない")
+    func translucentStrokeInsideTheViewport() throws {
+        // 2 本の部分パスは入れ子の座標 (40, 30)、ファイルの (80, 70) で交わる
+        let body =
+            "<svg x='40' y='40' width='80' height='60'>"
+            + "<path d='M-20 -20 L100 80 M100 -20 L-20 80' stroke='white' stroke-opacity='0.5' stroke-width='6'"
+            + " fill='none'/></svg>"
+        #expect(try drawing(body).viewportClips.count == 1)
+        let (image, _) = try rendered(body)
+        #expect(abs(alpha(image, 80, 70) - 128) <= 1, "交わり: \(image[80, 70])")
+        #expect(abs(alpha(image, 50, 45) - 128) <= 1, "1 本だけの所: \(image[50, 45])")
+        #expect(alpha(image, 30, 28) == 0, "枠の外の線: \(image[30, 28])")
+    }
+
+    @Test("入れ子 2 枠で、2 枠目だけが段の上限を越えるなら、1 枠目では切り、2 枠目では切らずに知らせる")
+    func onlyTheInnerViewportExceedsTheLimit() throws {
+        // 外側の枠はファイルの (40…120, 40…100)、内側の枠は (80…160, 30…110)
+        let body =
+            "<svg x='40' y='40' width='80' height='60'><svg x='40' y='-10' width='80' height='80'>"
+            + "<rect x='-100' y='-100' width='400' height='400' fill='white'/></svg></svg>"
+        let (image, canvas) = try rendered(body) { canvas, shape in
+            canvas.noStroke()
+            canvas.fill(255)
+            for _ in 0..<(Canvas.clipDepthLimit - 1) { canvas.clip { canvas.rect(0, 0, 240, 160) } }
+            canvas.shape(shape)
+        }
+        #expect(canvas.warnings.hasWarned(.viewportClipTooDeep))
+        #expect(alpha(image, 100, 70) == 255)
+        #expect(alpha(image, 60, 70) == 255, "外側の中で内側の外 (内側は切らない): \(image[60, 70])")
+        #expect(alpha(image, 140, 70) == 0, "外側の外 (外側は切る): \(image[140, 70])")
+        #expect(alpha(image, 100, 35) == 0, "外側の外: \(image[100, 35])")
+    }
+
+    @Test("入れ子の svg を囲む <g opacity> も、表示枠で切った中身を 1 枚にまとめて 1 度だけ薄くする")
+    func groupOpacityAroundTheNestedSVG() throws {
+        let body =
+            "<g opacity='0.5'><svg x='40' y='40' width='80' height='60'>"
+            + "<rect x='-20' y='-20' width='120' height='100' fill='white'/>"
+            + "<rect x='0' y='0' width='40' height='40' fill='white'/></svg></g>"
+        let read = try drawing(body)
+        #expect(read.units.count == 1 && read.viewportClips.count == 1, "前提: 群が単位で、入れ子が表示枠を持つ")
+        let (image, canvas) = try rendered(body)
+        #expect(alpha(image, 30, 30) == 0, "\(image[30, 30])")
+        #expect(alpha(image, 130, 110) == 0, "\(image[130, 110])")
+        #expect(abs(alpha(image, 45, 45) - 128) <= 1, "重なり: \(image[45, 45])")
+        #expect(abs(alpha(image, 100, 80) - 128) <= 1, "\(image[100, 80])")
+        #expect(canvas.warnings.message(for: .compositeGroupPerShape) == nil, "単位にできた")
+    }
+
+    // MARK: - 画素の細かさ
+
+    /// 座標の大きさ 240×160 の面を、細かさ `density`・出力の倍率 `scale` で作り、最小例を置いた絵。
+    private func renderedScaled(density: Float = 1, scale: Int = 1) throws -> PixelBuffer {
+        let gpu = try RenderDevice()
+        let output = try RenderTarget(gpu: gpu, width: Self.width * scale, height: Self.height * scale)
+        let canvas = try Canvas(output: output, gpu: gpu, pixelDensity: density, upscale: .spatial, outputScale: scale)
+        let read = try drawing(Self.minimal)
+        try canvas.draw { canvas.shape(canvas.shape(of: read, readFrom: "panel.svg")) }
+        return try canvas.output.readPixels()
+    }
+
+    @Test("出力の倍率 2 では、表示枠は座標で読まれ、倍率を掛けた画素 (80…239・80…199) を通す")
+    func outputScaleTwoClipsAtTheScaledPixels() throws {
+        let pixels = try renderedScaled(scale: 2)
+        func drawn(_ x: Int, _ y: Int) -> Bool { pixels[x, y].alpha > 0.99 }
+        func empty(_ x: Int, _ y: Int) -> Bool { pixels[x, y].alpha < 0.01 }
+        #expect(drawn(80, 80) && drawn(239, 199), "枠の内側の縁: \(pixels[80, 80]) \(pixels[239, 199])")
+        #expect(empty(79, 120) && empty(120, 79), "枠の左・上の外: \(pixels[79, 120]) \(pixels[120, 79])")
+        #expect(empty(240, 120) && empty(120, 200), "枠の右・下の外: \(pixels[240, 120]) \(pixels[120, 200])")
+        #expect(empty(60, 60), "矩形の中で枠の外: \(pixels[60, 60])")
+    }
+
+    @Test("細かさ 0.5 でも、枠の中は描き、枠の外は描かない")
+    func halfDensityClips() throws {
+        let pixels = try renderedScaled(density: 0.5)
+        #expect(pixels[80, 70].alpha > 0.99, "枠の中: \(pixels[80, 70])")
+        #expect(pixels[25, 25].alpha < 0.01, "矩形の中で枠の外: \(pixels[25, 25])")
+        #expect(pixels[130, 110].alpha < 0.01, "矩形の中で枠の外: \(pixels[130, 110])")
+    }
 }
