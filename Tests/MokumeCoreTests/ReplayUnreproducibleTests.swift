@@ -749,6 +749,61 @@ extension ReplayUnreproducibleTests {
         #expect(recorded.unreproducible == expected, "\(recorded.unreproducible)")
     }
 
+    /// 他のスケッチの実体 (``lender``) の資源の口を、自分の `draw()` の中から 1 枚目で 1 度呼ぶスケッチ。
+    final class Borrower: Sketch {
+        var lender: Loader?
+        var path = ""
+        private(set) var failure: String?
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        init() {}
+        convenience init(_ lender: Loader, path: String) {
+            self.init()
+            self.lender = lender
+            self.path = path
+        }
+        func draw() {
+            background(0.1)
+            guard frameCount == 1, let lender else { return }
+            do { _ = try lender.loadBytes(path) } catch { failure = "\(error)" }
+        }
+    }
+
+    @Test(
+        "走っている実行のフレームの中で別の実体の資源の口を呼んでも、差し直さず、読んだ実行の記録にだけ載る",
+        arguments: [true, false])
+    func aReadInsideAnotherRunStaysWithThatRun(recordsBorrower: Bool) throws {
+        let directory = try scratch()
+        let file = directory.appendingPathComponent("blob.bin")
+        try Data([1, 2, 3]).write(to: file, options: .atomic)
+        func runtime(_ sketch: any Sketch, recordingTo url: URL?) throws -> SketchRuntime {
+            let runtime = try SketchRuntime(
+                sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
+            if let url {
+                try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
+            }
+            return runtime
+        }
+        let lenderURL = directory.appendingPathComponent("lender.json")
+        let borrowerURL = directory.appendingPathComponent("borrower.json")
+        let lender = Loader(nil)
+        let owner = try runtime(lender, recordingTo: lenderURL)
+        let borrower = Borrower(lender, path: file.path)
+        let other = try runtime(borrower, recordingTo: recordsBorrower ? borrowerURL : nil)
+        for _ in 0..<2 {
+            try owner.advance()
+            try other.advance()
+        }
+        other.closePlugins()
+        owner.closePlugins()
+        #expect(borrower.failure == nil, "\(borrower.failure ?? "")")
+        let lent = try ReplayRecord.read(from: lenderURL)
+        #expect(lent.resources.isEmpty, "実体に結ばれた実行へ差し直さない: \(lent.resources)")
+        if recordsBorrower {
+            let read = try ReplayRecord.read(from: borrowerURL)
+            #expect(read.resources.keys.sorted() == [file.path], "\(read.resources)")
+        }
+    }
+
     /// 同じ断片を、断片の口とバイト列の口の両方で読むスケッチ。
     final class TwoWayReader: Sketch {
         var path = ""
