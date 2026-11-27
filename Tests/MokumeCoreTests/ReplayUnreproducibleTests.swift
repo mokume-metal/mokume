@@ -58,6 +58,16 @@ struct ReplayUnreproducibleTests {
         runtime.closePlugins()
     }
 
+    /// 実行を組む。`url` があれば、そこへ記録を始める。回すのと閉じるのは呼ぶ側 (2 つの実行を交互に回す検査)。
+    private func started(_ sketch: any Sketch, recordingTo url: URL?) throws -> SketchRuntime {
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
+        if let url {
+            try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
+        }
+        return runtime
+    }
+
     /// 流す。`SketchApplication` が流す子を組むのと同じ引数で組み、記録の終わりまで回す (期限は回数で持つ)。
     private func replay(
         _ sketch: any Sketch, _ url: URL,
@@ -775,20 +785,12 @@ extension ReplayUnreproducibleTests {
         let directory = try scratch()
         let file = directory.appendingPathComponent("blob.bin")
         try Data([1, 2, 3]).write(to: file, options: .atomic)
-        func runtime(_ sketch: any Sketch, recordingTo url: URL?) throws -> SketchRuntime {
-            let runtime = try SketchRuntime(
-                sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
-            if let url {
-                try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
-            }
-            return runtime
-        }
         let lenderURL = directory.appendingPathComponent("lender.json")
         let borrowerURL = directory.appendingPathComponent("borrower.json")
         let lender = Loader(nil)
-        let owner = try runtime(lender, recordingTo: lenderURL)
+        let owner = try started(lender, recordingTo: lenderURL)
         let borrower = Borrower(lender, path: file.path)
-        let other = try runtime(borrower, recordingTo: recordsBorrower ? borrowerURL : nil)
+        let other = try started(borrower, recordingTo: recordsBorrower ? borrowerURL : nil)
         for _ in 0..<2 {
             try owner.advance()
             try other.advance()
