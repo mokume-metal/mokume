@@ -1991,6 +1991,9 @@ package final class SketchRuntime {
     @discardableResult
     public func attach(_ inlet: any Inlet) -> Bool {
         guard seamVisitDepth == 0 else {
+            // 足すのは巡回の後でも、受け付けた時点でこの実行に結ぶ。足されるまでの間の操作も、この実行の
+            // 終わりで扱う (#4175)
+            bindToThisRun(inlet)
             deferredSeamChanges.append { [unowned self] in self.attachNow(inlet) }
             return true
         }
