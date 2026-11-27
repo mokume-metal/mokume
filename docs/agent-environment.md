@@ -178,7 +178,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    `needs` で繋ぐ**。そうすれば、計測の途中で queue に入った PR の `render` は、走っている 1 job
    (30 分以内) の後に専用機に割り当てられ、タイムアウトまでに終わる。形は render.yml の `scheduled-release-turn` →
    `scheduled-release` と同じで、新しいゲートのジョブは作らない。ゲートのジョブが待つのは merge_group の run だけなので、
-   `render-pr`・`scheduled-*` との競合は、上の確認と「1 本ずつ」で避ける。
+   `render-pr`・`scheduled-*` との競合は、上の確認と「1 本ずつ」で避ける。render.yml の門番 (`render-turn.sh` の `yield`・`merge_group`) も計測の job を専用機の枠に数えないので、計測が runner を 1 本取っている間は、空いたと読んだ枠へ `render-pr` を通し、後ろの group の `render` をその分待たせうる。
 
    ```yaml
    name: measure-<N>

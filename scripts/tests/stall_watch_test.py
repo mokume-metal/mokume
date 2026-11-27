@@ -230,21 +230,23 @@ class StallWatchTest(unittest.TestCase):
             {"data": {"repository": {"pullRequest": {"timelineItems": {"nodes": list(events)}}}}},
         )
 
-    def write_runs(self, status, *created, job_status=None, gate="completed"):
+    def write_runs(self, status, *created, job_status=None, gate="completed", job="render"):
         """render.yml の run のうち、status のものを created の時刻で並べる。
 
-        run ごとに、専用機の job 1 本 (status は job_status・既定は run と同じ) と、GitHub
-        ホストの門番の job 1 本 (status は gate) を置く。
+        run ごとに、専用機の job 1 本 (名前は job・status は job_status・既定は run と同じ) と、
+        GitHub ホストの門番の job 1 本 (status は gate) を置く。job に名前の並びを渡せば、
+        created の順に run ごとの名前になる。
         """
+        names = list(job) if isinstance(job, (list, tuple)) else [job] * len(created)
         runs = []
-        for at in created:
+        for at, name in zip(created, names, strict=True):
             self.next_run_id = getattr(self, "next_run_id", 100) + 1
             run_id = self.next_run_id
             runs.append({"id": run_id, "status": status, "created_at": at})
             jobs = [
                 {"name": "render-turn", "status": gate, "created_at": at, "labels": ["ubuntu-latest"]},
                 {
-                    "name": "render",
+                    "name": name,
                     "status": job_status or status,
                     "created_at": at,
                     "labels": ["self-hosted", "mokume-render"],
@@ -595,6 +597,30 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch(RENDER_TURN_SLOTS=2)
         self.assertIsNone(self.runner_line(proc), proc.stdout)
         self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_render_pr_が_runner_を埋めている間の_queued_は順番待ちとして黙る(self):
+        """render-pr は空いた runner で走る (#4018)。render と render-pr で 2 本埋まっていれば、
+        門番の上限で放された render が queued で猶予を超えても止まりとは読まない。"""
+        self.write_runs("in_progress", ago(25), ago(24), job=("render", "render-pr"))
+        self.write_runs("queued", ago(20))
+        proc = self.watch(RENDER_TURN_SLOTS=2)
+        self.assertIsNone(self.runner_line(proc), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_render_pr_が_2_本で_runner_を埋めている間も黙る(self):
+        self.write_runs("in_progress", ago(25), ago(24), job="render-pr")
+        self.write_runs("queued", ago(20))
+        proc = self.watch(RENDER_TURN_SLOTS=2)
+        self.assertIsNone(self.runner_line(proc), proc.stdout)
+
+    def test_render_pr_が_1_本だけ走り_queued_が猶予を超えたら名乗る(self):
+        """空いた runner が 1 本あるのに拾われない。render-pr を数えても止まりは見落とさない。"""
+        self.write_runs("in_progress", ago(25), job="render-pr")
+        self.write_runs("queued", ago(20))
+        proc = self.watch(RENDER_TURN_SLOTS=2)
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertEqual(line[1:4], ["runner-offline", "name", "20"], proc.stdout)
 
     def test_runner_が_2_本で_queued_が猶予の内なら黙る(self):
         self.write_runs("in_progress", ago(25))
