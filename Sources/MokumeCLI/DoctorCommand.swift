@@ -581,45 +581,67 @@ enum DoctorCommand {
     /// 固定は呼んだ時に読む。いつ読むかは ``MismatchNotice`` が決める。版を揃えに行く・止めることはしない
     /// (ADR-0018 決定 6)。
     nonisolated static func mismatchLine(forPackageAt directory: URL, tool: String?) -> String? {
-        guard let tool, let dependency = DependencyVersion.resolved(forPackageAt: directory),
-            !sameRelease(dependency, tool)
-        else { return nil }
-        return dependencyLine(dependency, tool: tool)
+        if case .read(let line) = mismatchReading(forPackageAt: directory, tool: tool) { return line }
+        return nil
+    }
+
+    /// ``mismatchLine(forPackageAt:tool:)`` の読み。**`Package.resolved` が在るのに読めない回を、
+    /// 食い違いが無い回と分ける** — SwiftPM は `Package.resolved` をその場で書き換えるので、書き換えの途中に
+    /// 読むと壊れたファイルに見える。
+    nonisolated static func mismatchReading(forPackageAt directory: URL, tool: String?) -> MismatchNotice.Reading {
+        let state = DependencyVersion.state(forPackageAt: directory)
+        if state == .unreadable { return .unreadable }
+        guard let tool, case .version(let dependency) = state, !sameRelease(dependency, tool) else {
+            return .read(nil)
+        }
+        return .read(dependencyLine(dependency, tool: tool))
     }
 
     /// スケッチを組む口 (`run`・`render`・`replay`・`watch`・`bundle`) が、道具と固定の版の食い違いを名乗る手 (#4074)。
     ///
     /// **組んだ後に必ず読む。** 固定 (`Package.resolved`) を確定させるのは `swift build` で、置き場を明示した新しい
     /// スケッチ・要求を上げた `Package.swift` では、組む前の固定は無いか古い。だから作り直し
-    /// (``RunCommand/rebuild(in:context:dependencies:capturing:running:binPath:progress:)``) が組むたびにここを呼び、
-    /// 起動の行 (`Tool:` の近く) は組む前にも 1 度呼ぶ。**前に読んだ内容と変わったときだけ言う** — 同じ食い違いを
-    /// 2 度言わず、揃った状態に変わったときも言わない (doctor の文に「揃った」の文は無い)。
+    /// (``RunCommand/rebuild(in:context:dependencies:capturing:running:binPath:progress:compiling:)``) が組むたびに
+    /// ここを呼び、起動の行 (`Tool:` の近く) は組む前にも 1 度呼ぶ。**前に読んだ内容と変わったときだけ言う** —
+    /// 同じ食い違いを 2 度言わず、揃った状態に変わったときも言わない (doctor の文に「揃った」の文は無い)。
+    /// **読めなかった回は前の読みを変えない** (変わったとは見ない)。
     ///
     /// 見張りは作り直しの糸から呼ぶので、鍵で守る。
     nonisolated final class MismatchNotice: @unchecked Sendable {
+        /// 1 回の読み。
+        enum Reading: Equatable {
+            /// 読めた。食い違えば名乗る行、そうでなければ `nil`。
+            case read(String?)
+            /// `Package.resolved` が在るのに読めない。前の読みを変えない。
+            case unreadable
+        }
+
         private let lock = NSLock()
         private let tool: String?
         private let say: @Sendable (String) -> Void
-        private let line: @Sendable (URL, String?) -> String?
-        /// 前に読んだ内容。まだ読んでいなければ外側の `nil`。
+        private let reading: @Sendable (URL, String?) -> Reading
+        /// 前に読めた内容。まだ読めていなければ外側の `nil`。
         private var last: String??
 
         /// - Parameters:
         ///   - tool: 道具の配布版。手元ビルドは `nil` (何も言わない)。
-        ///   - say: 名乗りの行き先。`run` などは標準出力、見張りは速さの行を消してから書く口 (#685)。
-        ///   - line: 固定を読んで行を作る手。**検査が `Package.resolved` を書かずに通すために渡せる形にしてある。**
+        ///   - say: 名乗りの行き先。`run` などは標準出力、`bundle` は報せの書き先、見張りは速さの行を消してから
+        ///     書く口 (#685)。
+        ///   - reading: 固定を読む手。**検査が `Package.resolved` を書かずに通すために渡せる形にしてある。**
         init(
             tool: String?, say: @escaping @Sendable (String) -> Void,
-            line: @escaping @Sendable (URL, String?) -> String? = { mismatchLine(forPackageAt: $0, tool: $1) }
+            reading: @escaping @Sendable (URL, String?) -> Reading = {
+                mismatchReading(forPackageAt: $0, tool: $1)
+            }
         ) {
             self.tool = tool
             self.say = say
-            self.line = line
+            self.reading = reading
         }
 
-        /// いまの固定を読み、前に読んだ内容から変わった食い違いだけを名乗る。
+        /// いまの固定を読み、前に読めた内容から変わった食い違いだけを名乗る。
         func check(in directory: URL) {
-            let current = line(directory, tool)
+            guard case .read(let current) = reading(directory, tool) else { return }
             let changed: Bool = lock.withLock {
                 defer { last = .some(current) }
                 guard case .some(let previous) = last else { return true }

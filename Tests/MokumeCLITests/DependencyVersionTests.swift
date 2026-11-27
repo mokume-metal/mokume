@@ -404,20 +404,12 @@ struct DependencyVersionTests {
 
     // MARK: - 名乗りの手 (#4074)
 
-    /// 名乗りを数える。
-    private nonisolated final class Said: @unchecked Sendable {
-        private let lock = NSLock()
-        private var lines: [String] = []
-        var all: [String] { lock.withLock { lines } }
-        func append(_ line: String) { lock.withLock { lines.append(line) } }
-    }
-
     /// **固定は呼んだ時に読み、変わったときだけ言う** (完了条件 4)。置き場を明示した新しいスケッチは、組む前には
     /// `Package.resolved` が無く、組んだ後に固定が書かれる。同じ食い違いを 2 度言わない。
     @Test("名乗りの手は固定を呼んだ時に読み、食い違いが変わったときだけ 1 度言う")
     func theNoticeSaysEachChangeOnce() throws {
         let sketch = try makeSketch(resolved: nil)
-        let said = Said()
+        let said = SaidLines()
         let notice = DoctorCommand.MismatchNotice(tool: "0.46.0", say: { said.append($0) })
         let resolved = sketch.appendingPathComponent("Package.resolved")
 
@@ -442,7 +434,7 @@ struct DependencyVersionTests {
     @Test("起動の行で言った食い違いを、組んだ後にもう 1 度は言わない")
     func theStartupLineIsNotRepeatedAfterTheBuild() throws {
         let sketch = try makeSketch(resolved: Self.pinned("0.47.0"))
-        let said = Said()
+        let said = SaidLines()
         let notice = DoctorCommand.MismatchNotice(tool: "0.46.0", say: { said.append($0) })
         notice.check(in: sketch)
         notice.check(in: sketch)
@@ -453,9 +445,70 @@ struct DependencyVersionTests {
     @Test("道具が版を持たなければ、名乗りの手は何も言わない")
     func theNoticeStaysSilentForALocalBuild() throws {
         let sketch = try makeSketch(resolved: Self.pinned("0.47.0"))
-        let said = Said()
+        let said = SaidLines()
         let notice = DoctorCommand.MismatchNotice(tool: nil, say: { said.append($0) })
         notice.check(in: sketch)
         #expect(said.all.isEmpty)
+    }
+
+    /// **読めなかった回は、前の読みを変えない** (2 回目の反証・指摘 5)。SwiftPM は `Package.resolved` をその場で
+    /// 書き換えるので、見張りの作り直しが書き換えの途中を読むと壊れたファイルに見える。そこで「食い違いが消えた」と
+    /// 読むと、次の回に同じ食い違いを変わったものとしてもう 1 度言う。
+    @Test("固定が読めない回を挟んでも、同じ食い違いは 1 度しか言わない")
+    func anUnreadablePinDoesNotRepeatTheLine() throws {
+        let sketch = try makeSketch(resolved: Self.pinned("0.47.0"))
+        let resolved = sketch.appendingPathComponent("Package.resolved")
+        let said = SaidLines()
+        let notice = DoctorCommand.MismatchNotice(tool: "0.46.0", say: { said.append($0) })
+
+        notice.check(in: sketch)
+        try Data("{ not json".utf8).write(to: resolved)  // 書き換えの途中
+        #expect(DoctorCommand.mismatchReading(forPackageAt: sketch, tool: "0.46.0") == .unreadable)
+        notice.check(in: sketch)
+        try Data(Self.pinned("0.47.0").utf8).write(to: resolved)  // 書き終えた: 同じ固定
+        notice.check(in: sketch)
+        #expect(said.all == [DoctorCommand.dependencyLine("0.47.0", tool: "0.46.0")])
+
+        // 読めない回の後に固定が変わっていれば、それは言う
+        try Data().write(to: resolved)
+        notice.check(in: sketch)
+        try Data(Self.pinned("0.48.0").utf8).write(to: resolved)
+        notice.check(in: sketch)
+        #expect(said.all.last == DoctorCommand.dependencyLine("0.48.0", tool: "0.46.0"))
+        #expect(said.all.count == 2, "\(said.all)")
+    }
+
+    /// 読めない回は、食い違いが無い回 (揃う・固定が無い) と分けて返す。
+    @Test("固定の読みは、在るのに読めない回だけを読めないと返す")
+    func theReadingSeparatesAnUnreadablePin() throws {
+        #expect(
+            DoctorCommand.mismatchReading(forPackageAt: try makeSketch(resolved: "{ not json"), tool: "0.46.0")
+                == .unreadable)
+        #expect(
+            DoctorCommand.mismatchReading(forPackageAt: try makeSketch(resolved: nil), tool: "0.46.0")
+                == .read(nil))
+        #expect(
+            DoctorCommand.mismatchReading(forPackageAt: try makeSketch(resolved: Self.pinned("0.46.0")), tool: "0.46.0")
+                == .read(nil))
+    }
+}
+
+/// 名乗りを数える。作り直しの糸からも呼ばれる形なので鍵で守る。
+nonisolated final class SaidLines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+    var all: [String] { lock.withLock { lines } }
+    func append(_ line: String) { lock.withLock { lines.append(line) } }
+}
+
+extension DoctorCommand.MismatchNotice {
+    /// 何も言わない名乗りの手 (道具の版を持たない)。版の食い違いを見ない検査が渡す。
+    static var silent: DoctorCommand.MismatchNotice { .init(tool: nil, say: { _ in }) }
+
+    /// いつ読んでも `line` を返す名乗りの手。**固定のファイルを書かずに、口が名乗りを届けるかだけを見る検査**が渡す。
+    static func alwaysSaying(
+        _ line: String, to said: SaidLines
+    ) -> DoctorCommand.MismatchNotice {
+        .init(tool: "0.46.0", say: { said.append($0) }, reading: { _, _ in .read(line) })
     }
 }

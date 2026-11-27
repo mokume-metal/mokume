@@ -144,7 +144,7 @@ enum WatchCommand {
         // 作り直しの糸が読んだ段数を main actor へ運ぶ (#4121)。受け手は見張りができてから据える
         let progress = BuildProgressMailbox()
         // 道具と固定の版の食い違いを名乗る手 (#4074)。起動の行と作り直しで 1 つを分け持つ
-        let dependencies = DoctorCommand.MismatchNotice(tool: ToolVersion.release(), say: { say($0) })
+        let dependencies = RunCommand.dependencyNotice(say: { say($0) })
         let session = WatchSession(
             directory: directory, context: context, facetBase: facetBase,
             reportsRate: true,

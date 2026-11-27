@@ -364,7 +364,7 @@ struct WatchOffMainTests {
         let hooks = WatchSession.Hooks.live(
             resolver: .live(
                 in: sketch, invocation: Invocation(), running: running, afterReading: { _ in }),
-            running: running, stamps: reader)
+            running: running, dependencies: .silent, stamps: reader)
 
         let stamp = await hooks.stamp(sketch)
         #expect(!onMain.isRaised, "要約を main actor で取っている")

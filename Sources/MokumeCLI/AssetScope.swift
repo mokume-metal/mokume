@@ -24,7 +24,7 @@ nonisolated enum AssetScope {
     /// 道具立てへの問い (引数と場所を受けて終了コードと標準出力を返す)。
     typealias Asking = @Sendable (_ arguments: [String], _ directory: URL) -> (status: Int32, output: String)
 
-    /// 子に渡す探してよい包みを決め、要れば 1 行名乗る。**`run`・`render`・`replay` (``RunCommand/prepare(in:context:say:asking:building:)``)
+    /// 子に渡す探してよい包みを決め、要れば 1 行名乗る。**`run`・`render`・`replay` (``RunCommand/prepare(in:context:dependencies:say:asking:building:)``)
     /// と `watch` (``Carried``) の 4 つの口が、ここだけを通る。**
     ///
     /// - 宣言・product・閉包が読めない: 渡さない (`nil`・全部探す)。名乗らない (宣言の読めなさは別の段が名乗る)

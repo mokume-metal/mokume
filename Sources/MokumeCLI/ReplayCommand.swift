@@ -48,11 +48,9 @@ enum ReplayCommand {
             in: directory, invocation: options.invocation,
             afterReading: ResourceDeclaration.checking(in: directory))
         if let notice = context.place.notice { print(notice) }
-        // 道具と固定の版の食い違いを名乗る (`run` と同じ・#4074)
-        let dependencies = RunCommand.dependencyNotice()
-        dependencies.check(in: directory)
-        // いまの宣言に無い包みは、子に探させない (`run` と同じ口・#4038)
-        let prepared = try RunCommand.prepare(in: directory, context: context, dependencies: dependencies)
+        // いまの宣言に無い包みは、子に探させない。道具と固定の版の食い違いを名乗る (`run` と同じ口・#4038・#4074)
+        let prepared = try RunCommand.prepare(
+            in: directory, context: context, dependencies: RunCommand.dependencyNotice(say: { print($0) }))
         try replay(
             prepared.executable, in: directory, record: options.record, report: report,
             assetBundles: prepared.assetBundles)

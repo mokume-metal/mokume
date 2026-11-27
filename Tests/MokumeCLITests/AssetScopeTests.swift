@@ -456,12 +456,34 @@ struct AssetScopeTests {
         var said: [String] = []
         let prepared = try RunCommand.prepare(
             in: build.package, context: context(build, declared: declared),
-            dependencies: DoctorCommand.MismatchNotice(tool: nil, say: { _ in }), say: { said.append($0) },
+            dependencies: .silent, say: { said.append($0) },
             asking: Asker([(0, tree(build))]).asking,
             building: { _, _ throws(CommandFailure) in build.executable })
         #expect(prepared.executable == build.executable)
         #expect(prepared.assetBundles == AssetBundles.Allowance(bundles: ["demo_demo.bundle"], packages: ["mokume"]))
         #expect(said.contains(AssetScope.notice(["Aaa_demo.bundle"]) ?? ""))
+    }
+
+    /// **`run`・`render`・`replay` の起動の行は、建てる前に食い違いを名乗る** (#4074・2 回目の反証・指摘 2)。3 つの口は
+    /// 実行ファイルをこの口からしか受け取らないので、ここで読めば読み忘れる口が無い。
+    @Test("実行ファイルを受け取る口は、建てる前に道具と固定の版の食い違いを名乗る")
+    func preparingNamesTheDependencyMismatchBeforeBuilding() throws {
+        let build = try makeBuild(beside: [])
+        defer { try? FileManager.default.removeItem(at: build.root) }
+        let declared = try #require(SwiftPM.package(inDumpOf: Self.dump))
+        let line = DoctorCommand.dependencyLine("0.47.0", tool: "0.46.0")
+        let said = SaidLines()
+        var beforeBuilding: [String]?
+        _ = try RunCommand.prepare(
+            in: build.package, context: context(build, declared: declared),
+            dependencies: .alwaysSaying(line, to: said), say: { _ in },
+            asking: Asker([(0, tree(build))]).asking,
+            building: { _, _ throws(CommandFailure) in
+                beforeBuilding = said.all
+                return build.executable
+            })
+        #expect(beforeBuilding == [line], "建てる前に名乗っていない")
+        #expect(said.all == [line])
     }
 
     /// **`render` の子の環境に許す一覧が載る** (2 回目の反証・指摘 2)。子を起こす口に、環境を書き出す実行ファイルを渡す。
@@ -487,7 +509,7 @@ struct AssetScopeTests {
     }
 
     /// **見張りは、作り直しの後に子へ渡す値を更新する** (2 回目の反証・指摘 2)。作り直す手だけを差し替えた本物の
-    /// 口 (``WatchSession/Hooks/live(resolver:running:stamps:keepTime:recording:progress:assetBundles:rebuilding:)``)
+    /// 口 (``WatchSession/Hooks/live(resolver:running:dependencies:stamps:keepTime:recording:progress:assetBundles:rebuilding:)``)
     /// で、作り直し → 起こす口と通す。建たなかった回は決め直さない。
     @Test("見張りは作り直しの後に、探してよい包みを子の環境へ渡す")
     func theWatcherPassesTheAllowanceAfterARebuild() async throws {
@@ -508,7 +530,7 @@ struct AssetScopeTests {
         let status = Mutex<Int32>(1)
         let executable = build.executable
         let hooks = WatchSession.Hooks.live(
-            resolver: resolver, running: RunningBuild(),
+            resolver: resolver, running: RunningBuild(), dependencies: .silent,
             assetBundles: AssetScope.Carried(asking: Asker([(0, tree(build))]).asking),
             rebuilding: { _, _ in
                 .success(
