@@ -963,6 +963,126 @@ struct SoundFileTests {
         }
     }
 
+    @Test("新しい実行へ足し直して鳴らしている音は、前の実行が後から終わっても止まらない")
+    func anOlderRunEndingDoesNotStopTheSoundMovedToANewerRun() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        defer {
+            SoundSketch.onSetup = { _ in }
+            SoundSketch.onDraw = { _ in }
+        }
+        let sketch = SoundSketch()
+        var sound: SoundFile?
+        SoundSketch.onSetup = { sound = try $0.loadSound(url.path) }
+        SoundSketch.onDraw = { sketch in
+            // 前の実行からは外しておく (外した音は、前の実行の終わりの close() を受けない)
+            if sketch.frameCount == 2, let sound { sketch.detach(sound) }
+        }
+        let first = try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: nil)
+        try first.advance()
+        try first.advance()
+        let song = try #require(sound)
+
+        SoundSketch.onSetup = { _ in }
+        SoundSketch.onDraw = { sketch in
+            if sketch.frameCount == 1 {
+                sketch.attach(song)
+                song.loop()
+            }
+        }
+        let second = try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: nil)
+        try second.advance()
+        try #require(song.isPlaying)
+        first.closePlugins()
+        #expect(song.isPlaying, "鳴らしているのは、まだ走っている新しい実行")
+        try second.advance()
+        #expect(song.level > 0)
+        second.closePlugins()
+        #expect(song.isPlaying == false)
+    }
+
+    /// 最初の `supply()` で、実行へ音を足して鳴らす入り口 (巡回の最中なので、足すのは巡回の後へ回る)。
+    private final class AttachesWhileSupplying: Inlet {
+        weak var runtime: SketchRuntime?
+        var sound: SoundFile?
+        var playingAfterPlay: Bool?
+        func supply() {
+            guard playingAfterPlay == nil, let runtime, let sound else { return }
+            runtime.attach(sound)
+            sound.play()
+            playingAfterPlay = sound.isPlaying
+        }
+    }
+
+    @Test("巡回の最中に足すと頼んだ音は、その時点で新しい実行に結ばれ、前の実行が終わっていても play() で鳴らせる")
+    func attachingWhileVisitingBindsTheSoundAtOnce() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        defer {
+            SoundSketch.onSetup = { _ in }
+            SoundSketch.onDraw = { _ in }
+        }
+        let sketch = SoundSketch()
+        var sound: SoundFile?
+        SoundSketch.onSetup = { sound = try $0.loadSound(url.path) }
+        SoundSketch.onDraw = { _ in }
+        let first = try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: nil)
+        try first.advance()
+        first.closePlugins()
+
+        let attacher = AttachesWhileSupplying()
+        attacher.sound = try #require(sound)
+        SoundSketch.onSetup = { $0.attach(attacher) }
+        let second = try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: nil)
+        attacher.runtime = second
+        try second.advance()
+        try second.advance()
+        let song = try #require(sound)
+        #expect(attacher.playingAfterPlay == true, "足すのを受け付けた実行は走っている")
+        #expect(second.isAttached(song))
+        #expect(song.level > 0)
+        second.closePlugins()
+        #expect(song.isPlaying == false)
+    }
+
+    /// 終わりを知らされた回数を数える入り口。
+    private final class CountsRunEnds: Inlet, RunBoundInlet {
+        var ends = 0
+        func supply() {}
+        func bind(to run: RunEnd) {}
+        func runEnded(_ run: RunEnd) { ends += 1 }
+    }
+
+    @Test("実行の終わりは、結んだ入り口へ 1 度だけ届く (2 度知らせても・同じ入り口を 2 度結んでも)")
+    func aRunEndReachesEachBoundInletOnce() throws {
+        let runtime = try SketchRuntime(sketch: SoundSketch(), gpu: try RenderDevice(), clock: nil)
+        let end = RunEnd(runtime)
+        let once = CountsRunEnds()
+        let twice = CountsRunEnds()
+        end.bind(once)
+        end.bind(twice)
+        end.bind(twice)
+        end.notify()
+        end.notify()
+        #expect(once.ends == 1)
+        #expect(twice.ends == 1)
+        #expect(end.hasEnded)
+    }
+
+    @Test("実行の終わりは結んだ入り口を弱く持ち、手放された入り口を生かし続けない")
+    func aRunEndDoesNotKeepBoundInletsAlive() throws {
+        let runtime = try SketchRuntime(sketch: SoundSketch(), gpu: try RenderDevice(), clock: nil)
+        let end = RunEnd(runtime)
+        weak var released: CountsRunEnds?
+        do {
+            let inlet = CountsRunEnds()
+            end.bind(inlet)
+            released = inlet
+        }
+        #expect(released == nil)
+        end.notify()
+    }
+
     // MARK: - 位置・長さ・飛ぶ (#2464)
 
     /// 10 秒・48 kHz の音 (拍で揺れる和音を繰り返す)。
