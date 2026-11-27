@@ -329,7 +329,7 @@ nonisolated enum SVGFile {
         var opacity: Float = 1
         var isDisplayed = true
         /// `overflow` が表示枠で切る値か (`hidden`・`scroll`・`clip`)。入れ子の `<svg>` の既定は `hidden` (UA の
-        /// 規則)。切り抜かない読み込みが、枠の外に描くものを名乗るかの判断にだけ使う (#3563)。
+        /// 規則)。入れ子の `<svg>` を表示枠で切るかを決める (``ViewportClipRange``・#2879)。
         var clipsOverflow = false
         /// 描けない効果 (`clip-path` など) を持つ性質の名前。`marker` は `marker-start` / `marker-mid` /
         /// `marker-end` に分けて持つ。
@@ -831,7 +831,7 @@ nonisolated enum SVGFile {
             case "inherit": return .inherit
             case "initial": return Self.initial(of: property)
             case "unset", "revert", "revert-layer":
-                // `overflow` の `revert` は UA の規則に戻る。入れ子の `svg` では `hidden` なので、切る側に倒す (#3563)
+                // `overflow` の `revert` は UA の規則に戻る。入れ子の `svg` では `hidden` なので切る (#2879)
                 if property == "overflow", lowered != "unset" { return .set { _, own in own.clipsOverflow = true } }
                 return SVGFile.inheritedProperties.contains(property) ? .inherit : Self.initial(of: property)
             default: break
@@ -924,7 +924,8 @@ nonisolated enum SVGFile {
                 return .set { _, own in own.isDisplayed = isDisplayed }
             case "overflow":
                 // 切る値は `hidden`・`scroll`・`clip`。`visible`・`auto` は切らない。2 つ書く形 (`hidden visible`) は、
-                // どちらかの軸が切るなら切る側に倒す。値の外は無かったものとして、下の宣言のまま (#3563)
+                // どちらかの軸が切るなら両方の軸で切る (表示枠の切り抜きは 4 隅の四角形で、軸ごとには切らない)。
+                // 値の外は無かったものとして、下の宣言のまま (#2879)
                 let words = lowered.split(whereSeparator: \.isWhitespace)
                 let known: Set<String> = ["visible", "hidden", "clip", "scroll", "auto"]
                 guard (1...2).contains(words.count), words.allSatisfy({ known.contains(String($0)) }) else {
