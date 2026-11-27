@@ -69,7 +69,8 @@ nonisolated enum BuildDirectory {
     /// 依存を解決するためだけの置き場の名前。
     ///
     /// **まだ固定が読めないスケッチの初回に要る。** 鍵はライブラリの固定から作るが、
-    /// 固定は `swift package resolve` が `Package.resolved` を書くまで存在しない。推測して
+    /// 固定は解決 (`Package.resolved` が無ければ `swift package update`、在れば `resolve`。
+    /// `RunCommand` の `resolveDependencies`) が `Package.resolved` を書くまで存在しない。推測して
     /// 後から直す形は採らない — 推測は道具が最新でないときに必ず外れ、外れた置き場が
     /// 414MB のまま掃除の当てなく残る。
     static let resolveSegment = "resolve"

@@ -295,13 +295,26 @@ enum RunCommand {
     /// 3.4 秒の実測)、`Tool:` の行の後が無音になる。名乗るのは始まりの 1 行だけで、
     /// 測れない進みは名乗らない。標準エラーを流して名乗りの代わりにしない — 捨てるのは、
     /// 失敗を次のビルドが見せる設計による。
+    ///
+    /// **`Package.resolved` の無いスケッチは `update` で解決する** (#4073)。置き場を共有するので、
+    /// `resolve` は置き場の `workspace-state.json` に残る別のスケッチの版が要件を満たせばそれを採り、
+    /// 作ったばかりのスケッチが最新の 0.x に届かない (``Templates/libraryMinimumVersion``)。
+    /// `update` が `Package.resolved` を書けなかったら (取りに行けない・オフライン)、`resolve` で
+    /// 置き場に在る版を採る。名乗りは 1 行のまま。
     nonisolated private static func resolveDependencies(
         in directory: URL, root: URL, announce: (String) -> Void,
         resolver: (_ arguments: [String], _ directory: URL) -> Void
     ) {
         let store = root.appendingPathComponent(
             BuildDirectory.resolveSegment, isDirectory: true)
+        let resolved = directory.appendingPathComponent("Package.resolved").path
+        let manager = FileManager.default
         announce(resolvingLine)
+        // `update` は在るファイルの他の依存の固定まで動かすので、ファイルの無いスケッチに限る
+        if !manager.fileExists(atPath: resolved) {
+            resolver(["package", "update", "--scratch-path", store.path], directory)
+            if manager.fileExists(atPath: resolved) { return }
+        }
         resolver(["package", "resolve", "--scratch-path", store.path], directory)
     }
 
