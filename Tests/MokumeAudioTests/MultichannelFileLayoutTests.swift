@@ -28,11 +28,13 @@ struct MultichannelFileLayoutTests {
     }
 
     /// `channels` チャンネル・48 kHz・16 bit の WAV を `url` へ書く。`active` のチャンネルだけが定数 0.5 で、ほかは 0。
+    /// `signal` を渡すと、`active` のチャンネルは定数の代わりにその標本列 (16 bit に丸める) になり、長さもその数になる。
     static func writeWAV(
-        to url: URL, channels: Int, active: Int, layout: Layout, frames: Int = 4800
+        to url: URL, channels: Int, active: Int, layout: Layout, frames: Int = 4800, signal: [Float]? = nil
     ) throws {
         func le16(_ value: Int) -> [UInt8] { [UInt8(value & 0xFF), UInt8((value >> 8) & 0xFF)] }
         func le32(_ value: Int) -> [UInt8] { le16(value & 0xFFFF) + le16((value >> 16) & 0xFFFF) }
+        let frames = signal?.count ?? frames
         let blockAlign = channels * 2
         let dataSize = frames * blockAlign
         var format: [UInt8]
@@ -53,8 +55,9 @@ struct MultichannelFileLayoutTests {
         data.reserveCapacity(dataSize)
         let loud = le16(16_384)
         let silent = le16(0)
-        for _ in 0..<frames {
-            for channel in 0..<channels { data += channel == active ? loud : silent }
+        for frame in 0..<frames {
+            let sound = signal.map { le16(Int(($0[frame] * 32_767).rounded())) } ?? loud
+            for channel in 0..<channels { data += channel == active ? sound : silent }
         }
         var bytes: [UInt8] = Array("RIFF".utf8) + le32(4 + 8 + format.count + 8 + dataSize) + Array("WAVE".utf8)
         bytes += Array("fmt ".utf8) + le32(format.count) + format
@@ -337,6 +340,251 @@ struct MultichannelFileLayoutTests {
                     Self.matches(peaks, expected),
                     "書き出しの流れの \(active + 1) チャンネル目: 左 \(peaks.left) / 右 \(peaks.right)")
             }
+        }
+    }
+
+    // MARK: - 解析とエフェクトへ入る音 (#4167)
+
+    /// `samples` がどれも `expected` と、`tolerance` の内で同じか。
+    static func allNear(_ samples: [Float], _ expected: Float, tolerance: Float = 1e-6) -> Bool {
+        !samples.isEmpty && samples.allSatisfy { abs($0 - expected) < tolerance }
+    }
+
+    /// スピーカー位置を持たない 3 チャンネル以上のバッファで、元のチャンネル `active` だけを 0.5 にしたときに、解析と
+    /// エフェクトへ入るはずの値 (直接再生で鳴る先頭の 2 チャンネルの平均)。
+    static func expectedUnplacedMono(active: Int) -> Float { active < 2 ? 0.25 : 0 }
+
+    @Test(
+        "配置を名乗らない 3・4・6 チャンネルの WAV の、解析とエフェクトへ入る音は先頭の 2 チャンネルの平均で、3 チャンネル目から先は入らない",
+        arguments: [Layout.plain, .extensibleNoMask], [3, 4, 6])
+    func unplacedFileAnalysesTheFirstTwoChannels(layout: Layout, channels: Int) throws {
+        try Self.withDirectory { directory in
+            for active in 0..<channels {
+                let url = directory.appendingPathComponent("mono-\(layout.rawValue)-\(channels)-\(active).wav")
+                try Self.writeWAV(to: url, channels: channels, active: active, layout: layout)
+                let buffer = try AudioFile.load(url, path: url.lastPathComponent)
+                #expect(FilePlayer.isUnplaced(buffer.format), "\(url.lastPathComponent) が配置を名乗らない形で開いていない")
+                let expected = Self.expectedUnplacedMono(active: active)
+                // `loadSound`・`requestSound` が作る解析の標本列
+                let mono = AudioFile.mono(buffer)
+                #expect(
+                    Self.allNear(mono, expected),
+                    "\(layout.rawValue) \(channels) ch の \(active + 1) チャンネル目: \(mono.first ?? .nan)")
+                // `createAudioIn(file:)` が読む標本列
+                let read = try AudioFile.read(url, path: url.lastPathComponent)
+                #expect(read.samples == mono)
+            }
+        }
+    }
+
+    @Test("配置が 左・右・中央 の WAV と、1・2 チャンネルの WAV の、解析とエフェクトへ入る音は全チャンネルの平均のまま")
+    func placedAndNarrowFilesAnalyseEveryChannel() throws {
+        try Self.withDirectory { directory in
+            // (書き方, チャンネル数, 鳴らす元のチャンネル, 期待する平均)
+            var cases: [(Layout, Int, Int, Float)] = [(.plain, 1, 0, 0.5), (.extensibleNoMask, 1, 0, 0.5)]
+            for layout in [Layout.plain, .extensibleNoMask] {
+                cases += [(layout, 2, 0, 0.25), (layout, 2, 1, 0.25)]
+            }
+            cases += (0..<3).map { (.extensibleLRC, 3, $0, 0.5 / 3) }
+            for (layout, channels, active, expected) in cases {
+                let url = directory.appendingPathComponent("every-\(layout.rawValue)-\(channels)-\(active).wav")
+                try Self.writeWAV(to: url, channels: channels, active: active, layout: layout)
+                let buffer = try AudioFile.load(url, path: url.lastPathComponent)
+                #expect(!FilePlayer.isUnplaced(buffer.format))
+                let mono = AudioFile.mono(buffer)
+                #expect(
+                    Self.allNear(mono, expected),
+                    "\(layout.rawValue) \(channels) ch の \(active + 1) チャンネル目: \(mono.first ?? .nan)")
+                #expect(try AudioFile.read(url, path: url.lastPathComponent).samples == mono)
+            }
+        }
+    }
+
+    /// 2 チャンネルの名乗らない形 (`DiscreteInOrder 2`) は、先頭の 2 チャンネル = 全チャンネルなので、どちらの読み方でも同じ。
+    @Test("配置の形ごとの器で、名乗らない 3 チャンネル以上だけが先頭の 2 チャンネルの平均、ほかは全チャンネルの平均になる", arguments: shapes)
+    func monoFollowsTheLayout(shape: Shape) throws {
+        let layout = try shape.layout()
+        let channels = Int(layout.channelCount)
+        for active in 0..<channels {
+            let mono = AudioFile.mono(try Self.buffer(layout, active: active))
+            let expected = shape.unplaced && channels > 2
+                ? Self.expectedUnplacedMono(active: active) : 0.5 / Float(channels)
+            #expect(
+                Self.allNear(mono, expected),
+                "\(shape.name) の \(active + 1) チャンネル目: \(mono.first ?? .nan) (期待 \(expected))")
+        }
+    }
+}
+
+/// ``MultichannelFileLayoutTests`` と同じ形の WAV を、3 つの口 (`loadSound`・`requestSound`・`createAudioIn(file:)`) で
+/// 開いて、解析の値とエフェクトに通した出口を見る (#4167)。走っているスケッチの中で回すので GPU を要する。
+///
+/// 比べる相手は、同じ信号を 1 チャンネル目に持つ 2 チャンネルの WAV (全チャンネルの平均 = 先頭の 2 チャンネルの平均で、
+/// 直しの前後で変わらない)。相手と同じ口・同じ回し方で開くので、OS のミキサーの係数や届くフレームを決め打たない。
+@Suite(
+    "多チャンネルのファイルの解析とエフェクト (3 つの口)",
+    .serialized,
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct MultichannelAnalysisTests {
+    enum Opener: String, CaseIterable, Sendable {
+        case loadSound, requestSound, audioIn
+    }
+
+    /// 1 フレームで読んだ解析の値。
+    struct Reading: Equatable {
+        var level: Float
+        var rms: Float
+        var spectrum: [Float]
+        var waveform: [Float]
+
+        var isSilent: Bool {
+            level == 0 && rms == 0 && spectrum.allSatisfy { $0 == 0 } && waveform.allSatisfy { $0 == 0 }
+        }
+    }
+
+    /// 開いて、鳴らし始めてからのフレームごとの解析の値と、エフェクトの出口 (左右を続けた列)。
+    struct Observed {
+        var readings: [Reading] = []
+        var effect: [Float] = []
+    }
+
+    /// 口 `opener` で `path` を開くスケッチ。`SoundFile` は届いた後の最初の `draw()` で `LowPass` に通して
+    /// ループさせる (届くフレームが口で違っても、鳴らし始めからの値が揃う)。
+    final class Opening: Sketch {
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8) }
+        var opener = Opener.loadSound
+        var path = ""
+        var flow: SoundFlow?
+        var song: SoundFile?
+        var input: AudioIn?
+        var filter: LowPass?
+        var loading: Task<Void, Never>?
+        var arrived = false
+        var failure: AudioFailure?
+        var readings: [Reading] = []
+
+        init() {}
+
+        func setup() throws {
+            switch opener {
+            case .loadSound:
+                song = try loadSound(path, flow: flow)
+                arrived = true
+            case .requestSound:
+                loading = Task {
+                    defer { arrived = true }
+                    do { song = try await requestSound(path, flow: flow) } catch { failure = error as? AudioFailure }
+                }
+            case .audioIn:
+                input = try createAudioIn(file: path)
+                arrived = true
+            }
+        }
+
+        func draw() {
+            background(0)
+            if let song {
+                if filter != nil {
+                    readings.append(
+                        Reading(level: song.level, rms: song.rms, spectrum: song.spectrum, waveform: song.waveform))
+                } else {
+                    let low = LowPass(stage: SynthStage.stage(for: self, flow: flow))
+                    low.process(song)
+                    song.loop()
+                    filter = low
+                }
+            } else if let input {
+                readings.append(
+                    Reading(level: input.level, rms: input.rms, spectrum: input.spectrum, waveform: input.waveform))
+            }
+        }
+    }
+
+    private static let perFrame = 800
+    private static let frames = 8
+    /// 1 チャンネル目に置く信号 (拍で揺れる和音)。
+    private static let signal = Array(chord.prefix(9600))
+
+    /// 開くのを待ってから `frames` フレーム回す。**待つ側が期限を持つ** — 30 秒たっても届かなければ失敗にする。
+    private func observe(_ url: URL, _ opener: Opener) async throws -> Observed {
+        let flow = opener == .audioIn ? nil : try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        let sketch = Opening()
+        sketch.opener = opener
+        sketch.path = url.path
+        sketch.flow = flow
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil,
+            now: { ProcessInfo.processInfo.systemUptime }, presenceClock: { 0 })
+        defer { runtime.closePlugins() }
+        let deadline = ContinuousClock.now + .seconds(30)
+        var observed = Observed()
+        while !sketch.arrived || (opener != .audioIn && sketch.filter == nil) {
+            guard ContinuousClock.now < deadline else {
+                Issue.record("30 秒たっても \(opener.rawValue) の音が届かない")
+                return observed
+            }
+            // 流れは、届いた音を鳴らし始めるまで描かせない (足されるまで流れは動いていない)
+            try runtime.advance()
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(sketch.failure == nil, "失敗: \(String(describing: sketch.failure))")
+        // 鳴らし始めた (`createAudioIn(file:)` は開いた) フレームまでの値は見ない
+        sketch.readings = []
+        for _ in 0..<Self.frames {
+            try runtime.advance()
+            if let flow {
+                let heard = try renderBoth(flow, Self.perFrame)
+                observed.effect += heard.left + heard.right
+            }
+        }
+        observed.readings = sketch.readings
+        return observed
+    }
+
+    @Test(
+        "配置を名乗らない 3・6 チャンネルの WAV を 3 つの口で開くと、3 チャンネル目から先だけの音には解析もエフェクトも反応せず、1 チャンネル目だけの音は先頭の 2 チャンネルの平均として届く",
+        arguments: Opener.allCases, [3, 6])
+    func unplacedFileAnalysesWhatIsHeard(opener: Opener, channels: Int) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-multichannel-analysis-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func write(_ name: String, channels: Int, active: Int) throws -> URL {
+            let url = directory.appendingPathComponent("\(name).wav")
+            try MultichannelFileLayoutTests.writeWAV(
+                to: url, channels: channels, active: active, layout: .plain, signal: Self.signal)
+            return url
+        }
+        let hidden = try write("hidden", channels: channels, active: channels - 1)
+        let first = try write("first", channels: channels, active: 0)
+        let reference = try write("reference", channels: 2, active: 0)
+        #expect(FilePlayer.isUnplaced(try AudioFile.load(hidden, path: "hidden.wav").format))
+
+        // 3 チャンネル目から先だけの音: 解析の値はどれも 0、エフェクトの出口も無音
+        let silent = try await observe(hidden, opener)
+        #expect(silent.readings.count == Self.frames)
+        for (index, reading) in silent.readings.enumerated() {
+            #expect(reading.isSilent, "\(opener.rawValue) \(channels) ch の枚 \(index): level \(reading.level) / rms \(reading.rms)")
+        }
+        if opener != .audioIn {
+            #expect(silent.effect.count == 2 * Self.frames * Self.perFrame)
+            #expect(silent.effect.allSatisfy { $0 == 0 }, "エフェクトの出口の最大 \(silent.effect.map { abs($0) }.max() ?? 0)")
+        }
+
+        // 1 チャンネル目だけの音: 相手 (2 チャンネルの全チャンネルの平均) と同じ値・同じ出口
+        let heard = try await observe(first, opener)
+        let expected = try await observe(reference, opener)
+        #expect(expected.readings.count == Self.frames)
+        #expect(expected.readings.contains { !$0.isSilent }, "相手が鳴っていない")
+        #expect(heard.readings == expected.readings, "\(opener.rawValue) \(channels) ch の解析の値が相手と違う")
+        if opener != .audioIn {
+            #expect(expected.effect.contains { $0 != 0 }, "相手のエフェクトの出口が無音")
+            #expect(heard.effect.count == expected.effect.count)
+            let worst = zip(heard.effect, expected.effect).map { abs($0 - $1) }.max() ?? 1
+            #expect(worst < 1e-6, "\(opener.rawValue) \(channels) ch のエフェクトの出口が相手と最大 \(worst) 違う")
         }
     }
 }
