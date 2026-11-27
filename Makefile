@@ -87,7 +87,7 @@ CI_CHECK_HOST ?=
 
 # **手元で回す段は、触ったものから選ぶ。** AGENTS.md「PR」の「触った範囲のターゲット」は
 # ここを指す (#2133)。段の名前からは「触ったもの → 回す段」が引けず、取り違えた PR が queue で
-# 赤になった。**取り違えて実害が出た 5 つだけをここに置く** — 置いていないものは、下の並びの
+# 赤になった。**取り違えて実害が出た 6 つだけをここに置く** — 置いていないものは、下の並びの
 # 段名と、各段の定義の直前の注釈 (何を見るか) から選ぶ。全段を通すときは make ci-check。
 #
 #   1. public な宣言の doc コメント (`///`) → make reference
@@ -126,7 +126,17 @@ CI_CHECK_HOST ?=
 #      python3 scripts/read-test-record.py --failures <記録>、名前と文面は同じく
 #      --failure-messages <記録> (80 件を超えたぶんは件数だけ) で出る。環境由来の赤
 #      (他のセッションの GPU 負荷など) が約 70 本並ぶ中に本物が 1 本混ざることがあり、
-#      先頭 10 行で「2 本」と読んだ PR #1997 は本物 (StartupReadsTests) を見落とした
+#      先頭 10 行で「2 本」と読んだ PR #1997 は本物 (StartupReadsTests) を見落とした。
+#      環境由来と言うには裏付けを取る: ログに kIOGPUCommandBufferCallbackErrorInnocentVictim
+#      (他のプロセスが起こした GPU のリセット) があるか、同じ時刻の
+#      /Library/Logs/DiagnosticReports/gpuEvent-*.ips を見て、その suite だけを単独で流し直す
+#
+#   6. 積んだ枝へ main を取り込んだ → 衝突が無くても、push の前に swift build --build-tests
+#      git は、同じ宣言を別の位置に持つファイルを衝突なしに両方残す (PR #4027 は宣言が 2 つ
+#      入り、ci-check のコンパイルで落ちた)。他の PR が既定値を外した・引数を足した関数を
+#      枝が呼んでいると、文字の衝突なしに queue の render で落ちる (#4166)。衝突を
+#      git merge -X ours で解くと、両側が同じ位置に足した行の main 側を落とす (#4014) ので、
+#      取り込み後に git diff origin/main HEAD -- <衝突したファイル> の消えた行を読む
 CI_CHECK_ALL := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit runtime-math attach-result reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
 ifeq ($(CI_CHECK_HOST),)
 CI_CHECK_STEPS := $(CI_CHECK_ALL)
@@ -283,6 +293,11 @@ SYMBOL_GRAPH_FLAGS := -Xswiftc -emit-symbol-graph \
 # **手元で lldb を使って変数を見たいときは、指定を空にして組み直す**:
 #   make test DEBUG_INFO_FLAGS=
 # (空の指定で組んだ後に既定の make を打つと、そこでまた組み直しになる)
+#
+# **型を広く書き換えて誤りを集めるときは、release で誤りの後も組み続ける**:
+#   swift build -c release -Xswiftc -continue-building-after-errors
+# debug は 1 ファイル分の誤りしか出さず、直しては組む周回が続く。release は全モジュールを
+# 一度に型検査するので、誤りがまとめて出る (#3811)
 DEBUG_INFO_FLAGS := -Xswiftc -gline-tables-only
 BUILD_FLAGS := $(DEBUG_INFO_FLAGS) $(SYMBOL_GRAPH_FLAGS)
 
