@@ -397,9 +397,11 @@ struct DeferredLevels {
     /// 公開の解析の API はどれもこの 3 つから値を得るので、API を足しても名乗りが漏れない (#3575)。`nil` なら名乗らない。
     private var replayNotice: SoundAnalysisNotice?
 
-    /// - Parameter replayKind: 解析の値を読んだとき、記録と再生へ名乗る音の型の名前。`nil` なら名乗らない。
-    init(replayKind: String? = nil) {
-        replayNotice = replayKind.map(SoundAnalysisNotice.init(kind:))
+    /// - Parameters:
+    ///   - replayKind: 解析の値を読んだとき、記録と再生へ名乗る音の型の名前。`nil` なら名乗らない。
+    ///   - owner: 音を作ったスケッチ (``SoundReceiver``)。
+    init(replayKind: String? = nil, owner: (any Sketch)? = nil) {
+        replayNotice = replayKind.map { SoundAnalysisNotice(kind: $0, owner: owner) }
     }
 
     /// 鳴り始める前が無音と分かっている音源か (``SoundTrace/beginsSilent``)。

@@ -250,7 +250,9 @@ extension SketchPart {
     public func loadComputation(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        try resourceCanvas(ShaderFailure.self).loadComputation(path, values: values)
+        try withReplayReceiver { () throws(ShaderFailure) in
+            try resourceCanvas(ShaderFailure.self).loadComputation(path, values: values)
+        }
     }
 
     /// 描く前に計算させる (1 次元)。

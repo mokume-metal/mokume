@@ -58,6 +58,16 @@ struct ReplayUnreproducibleTests {
         runtime.closePlugins()
     }
 
+    /// 実行を組む。`url` があれば、そこへ記録を始める。回すのと閉じるのは呼ぶ側 (2 つの実行を交互に回す検査)。
+    private func started(_ sketch: any Sketch, recordingTo url: URL?) throws -> SketchRuntime {
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
+        if let url {
+            try #require(runtime.startRecording(try #require(ReplayRequest(destination: url.path, generation: false))))
+        }
+        return runtime
+    }
+
     /// 流す。`SketchApplication` が流す子を組むのと同じ引数で組み、記録の終わりまで回す (期限は回数で持つ)。
     private func replay(
         _ sketch: any Sketch, _ url: URL,
@@ -635,6 +645,167 @@ extension ReplayUnreproducibleTests {
         #expect(ResourceHasher.timesTaken(for: file.path) == 3)
     }
 
+    // MARK: - 受け手を継がない所からの読み (#4144)
+
+    /// `setup()` で `Task.detached` を起こし (タスクローカル値を継がない)、その中から資源を 1 度読むスケッチ。
+    /// `url` があれば、ファイルの代わりに URL から読む。読み終えたら ``finished`` を 1 つ進める。
+    final class DetachedReader: Sketch {
+        var kind = ResourceKind.bytes
+        var path = ""
+        /// 読み終えた回数 (投げても数える)。検査はこれが揃うまで待つ。
+        private(set) var finished = 0
+        /// 投げたなら、その誤り。
+        private(set) var failure: String?
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        init() {}
+        convenience init(_ kind: ResourceKind, path: String) {
+            self.init()
+            self.kind = kind
+            self.path = path
+        }
+        func setup() {
+            Task.detached { [self] in await read() }
+        }
+        private func read() async {
+            do {
+                if kind.waits {
+                    try await kind.request(path, in: self)
+                } else {
+                    try kind.loadNow(path, in: self)
+                }
+            } catch {
+                failure = "\(error)"
+            }
+            finished += 1
+        }
+        func draw() { background(0.1) }
+    }
+
+    /// 1 回読み終えるまで回す (期限つき)。
+    private var awaitDetached: (Int, SketchRuntime) async throws -> Void {
+        { frame, runtime in
+            guard frame == 1, let sketch = runtime.sketch as? DetachedReader else { return }
+            let deadline = ContinuousClock.now + .seconds(30)
+            while sketch.finished == 0 {
+                guard ContinuousClock.now < deadline else {
+                    Issue.record("30 秒たっても Task.detached の読みが終わらない (\(sketch.kind))")
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
+    }
+
+    @Test(
+        "Task.detached の中から読んだ資源も、記録が控えて流す側が照らし、待つ読み込みなら名乗る (スケッチの自分の実行へ)",
+        arguments: ResourceKind.allCases)
+    func aResourceReadFromADetachedTaskIsRecorded(kind: ResourceKind) async throws {
+        let directory = try scratch()
+        let file = directory.appendingPathComponent(kind.fileName)
+        try kind.write(0, to: file)
+        let url = directory.appendingPathComponent("take.json")
+        let sketch = DetachedReader(kind, path: file.path)
+        let recorded = try await record(sketch, to: url, between: awaitDetached)
+        #expect(sketch.failure == nil, "\(kind): \(sketch.failure ?? "")")
+        let waiting = kind.waits ? [Reason.waitingLoad] : []
+        #expect(recorded.unreproducible == waiting, "\(kind): \(recorded.unreproducible)")
+        #expect(recorded.resources.keys.sorted() == [file.path], "\(kind): \(recorded.resources)")
+
+        try kind.write(1, to: file)
+        let changed = try await replay(DetachedReader(kind, path: file.path), url, between: awaitDetached)
+        #expect(
+            changed.unreproducible == waiting + [Reason.resourceDiffers(file.path)], "\(kind): \(changed.unreproducible)")
+    }
+
+    /// `Task.detached` の中から URL を読むスケッチ。
+    final class DetachedFetcher: Sketch {
+        var url = ""
+        var waits = false
+        private(set) var finished = 0
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        init() {}
+        convenience init(_ url: String, waits: Bool) {
+            self.init()
+            self.url = url
+            self.waits = waits
+        }
+        func setup() {
+            Task.detached { [self] in await fetch() }
+        }
+        private func fetch() async {
+            if waits { _ = try? await requestBytes(url) } else { _ = try? loadBytes(url) }
+            finished += 1
+        }
+        func draw() { background(0.1) }
+    }
+
+    @Test("Task.detached の中から URL を読んでも、記録が URL を名乗る", arguments: [false, true])
+    func aWebFileFromADetachedTaskIsNamed(waits: Bool) async throws {
+        let web = CannedResponses.serve(.answer(status: 200, body: Data([1, 2, 3])))
+        let url = try scratch().appendingPathComponent("take.json")
+        let sketch = DetachedFetcher(web, waits: waits)
+        let recorded = try await record(sketch, to: url) { frame, _ in
+            guard frame == 1 else { return }
+            let deadline = ContinuousClock.now + .seconds(30)
+            while sketch.finished == 0 {
+                guard ContinuousClock.now < deadline else {
+                    Issue.record("30 秒たっても URL の読みが終わらない")
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        let expected = waits ? [Reason.waitingLoad, Reason.webFile] : [Reason.webFile]
+        #expect(recorded.unreproducible == expected, "\(recorded.unreproducible)")
+    }
+
+    /// 他のスケッチの実体 (``lender``) の資源の口を、自分の `draw()` の中から 1 枚目で 1 度呼ぶスケッチ。
+    final class Borrower: Sketch {
+        var lender: Loader?
+        var path = ""
+        private(set) var failure: String?
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        init() {}
+        convenience init(_ lender: Loader, path: String) {
+            self.init()
+            self.lender = lender
+            self.path = path
+        }
+        func draw() {
+            background(0.1)
+            guard frameCount == 1, let lender else { return }
+            do { _ = try lender.loadBytes(path) } catch { failure = "\(error)" }
+        }
+    }
+
+    @Test(
+        "走っている実行のフレームの中で別の実体の資源の口を呼んでも、差し直さず、読んだ実行の記録にだけ載る",
+        arguments: [true, false])
+    func aReadInsideAnotherRunStaysWithThatRun(recordsBorrower: Bool) throws {
+        let directory = try scratch()
+        let file = directory.appendingPathComponent("blob.bin")
+        try Data([1, 2, 3]).write(to: file, options: .atomic)
+        let lenderURL = directory.appendingPathComponent("lender.json")
+        let borrowerURL = directory.appendingPathComponent("borrower.json")
+        let lender = Loader(nil)
+        let owner = try started(lender, recordingTo: lenderURL)
+        let borrower = Borrower(lender, path: file.path)
+        let other = try started(borrower, recordingTo: recordsBorrower ? borrowerURL : nil)
+        for _ in 0..<2 {
+            try owner.advance()
+            try other.advance()
+        }
+        other.closePlugins()
+        owner.closePlugins()
+        #expect(borrower.failure == nil, "\(borrower.failure ?? "")")
+        let lent = try ReplayRecord.read(from: lenderURL)
+        #expect(lent.resources.isEmpty, "実体に結ばれた実行へ差し直さない: \(lent.resources)")
+        if recordsBorrower {
+            let read = try ReplayRecord.read(from: borrowerURL)
+            #expect(read.resources.keys.sorted() == [file.path], "\(read.resources)")
+        }
+    }
+
     /// 同じ断片を、断片の口とバイト列の口の両方で読むスケッチ。
     final class TwoWayReader: Sketch {
         var path = ""
@@ -745,6 +916,7 @@ struct ResourceDigestTests {
         private(set) var resources: [String: String] = [:]
         let resourceDigests = ResourceDigests()
         var soundRunsInRealTime: Bool { false }
+        var hasEnded: Bool { false }
         func noteUnreproducible(_ reason: String) { reasons.append(reason) }
         func noteResource(_ name: String, sha256: String) { resources[name] = sha256 }
     }

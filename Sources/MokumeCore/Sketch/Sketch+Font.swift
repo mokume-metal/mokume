@@ -40,7 +40,7 @@ extension SketchPart {
         noticeBlockingLoad("loadFont(_:)", instead: nil)
         let read = try Font.located(path)
         // 記録・再生しているときだけ中身のハッシュを取る (#4092)
-        ReplayNotice.readResource(path, at: read.url)
+        withReplayReceiver { ReplayNotice.readResource(path, at: read.url) }
         return read.font
     }
 }

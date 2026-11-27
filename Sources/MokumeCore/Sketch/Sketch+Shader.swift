@@ -187,8 +187,10 @@ extension SketchPart {
         _ path: String, values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:], numbers: [String: Numbers] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try resourceCanvas(ShaderFailure.self).loadShader(
-            path, values: values, surfaces: surfaces, numbers: numbers)
+        try withReplayReceiver { () throws(ShaderFailure) in
+            try resourceCanvas(ShaderFailure.self).loadShader(
+                path, values: values, surfaces: surfaces, numbers: numbers)
+        }
     }
 
     /// 文字列からシェーダを作る。保存の拾い直しは効かない (在処が無いため)。
