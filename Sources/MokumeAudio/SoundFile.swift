@@ -155,7 +155,7 @@ import MokumeDiagnostics
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
-public final class SoundFile: Inlet, EffectInput {
+public final class SoundFile: Inlet, EffectInput, RunBoundInlet {
     /// ファイルのサンプルレート (Hz)。帯域 `k` の中心は `k × sampleRate ÷ 1024` Hz。
     public let sampleRate: Float
 
@@ -174,6 +174,8 @@ public final class SoundFile: Inlet, EffectInput {
     /// 渡された名前。知らせに載せる。
     private let name: String
     private weak var owner: (any Sketch)?
+    /// 最後にこのファイルを開いた実行の終わり (``RunBoundInlet``)。まだ開かれていなければ `nil`。
+    private var run: RunEnd?
     /// 差し替えた流れ (検査)。`nil` なら時計で決める。
     private let injectedFlow: SoundFlow?
     private let now: () -> TimeInterval
@@ -770,7 +772,7 @@ public final class SoundFile: Inlet, EffectInput {
     /// ``Env/play(_:_:_:_:_:)-(SoundFile,_,_,_,_)`` も、鳴らないのでこの値を変えない。合成した音源の
     /// ``SynthSource/isPlaying`` は、終わる前から鳴らしていた音なら終わった後も `true` のままで、ここが違う。
     /// ``SketchPart/detach(_:)-(Inlet)`` で外している間は鳴らないが、外している間の ``play()`` は `true` にし、
-    /// 足し直したフレームから鳴らす。
+    /// 足し直したフレームから鳴らす。足し直さないままスケッチが終われば、終わった時点で `false` になる。
     public var isPlaying: Bool {
         playingNotice.noteRead()
         return playhead.isPlaying
@@ -1043,6 +1045,26 @@ public final class SoundFile: Inlet, EffectInput {
         playhead.stop()
         // 鳴らす側が受ける前に手放した速さも、次に鳴らす側を作るときの速さにする
         adoptRate()
+        stoppedTail = nil
+        deferred.forget()
+    }
+
+    // MARK: - 実行の終わり
+
+    /// 開いた実行に結ぶ。足し直した実行が、前の実行に替わる。
+    package func bind(to run: RunEnd) {
+        self.run = run
+    }
+
+    /// 開いた実行が終わった。並びに居たなら終わりの ``close()`` で止まっている。外している間に鳴らし始めていれば、
+    /// もう足し直せないのでここで止める (``close()`` と同じく先頭へ戻す)。
+    package func runEnded(_ run: RunEnd) {
+        guard run === self.run, playhead.isPlaying else { return }
+        pendingJump = nil
+        waiting.removeAll()
+        waitingTarget = nil
+        foldEnvelope(after: lastPlayed)
+        playhead.stop()
         stoppedTail = nil
         deferred.forget()
     }
@@ -1381,9 +1403,9 @@ public final class SoundFile: Inlet, EffectInput {
     }
 
     private func perform(_ operation: Operation) {
-        // スケッチが終わった後は足し直せず、鳴らす道が無い。鳴らし始める操作で ``isPlaying`` を true にしない (#4175)。
+        // 開いた実行が終わった後は足し直せず、鳴らす道が無い。鳴らし始める操作で ``isPlaying`` を true にしない (#4175)。
         // 外しただけ (同じ ``close()`` を通る) なら、足し直したとき ``open()`` が鳴らし始めるので捨てない
-        if owner?.hasEndedItsRun == true {
+        if run?.hasEnded == true {
             switch operation {
             case .play, .envelope: return
             case .pause, .stop, .jump: break
