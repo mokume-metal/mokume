@@ -549,7 +549,24 @@ struct BuildPlacementTests {
         return root
     }
 
-    @Test("固定が無くて解決を起こす回は、swift を起こす前に 1 行名乗る")
+    /// 解決の偽の手。`swift` の引数を記録し、`writesOn` の副コマンドで起こされたら、本物の解決と同じく
+    /// スケッチ直下へ mokume の固定を書く。
+    private static func resolver(
+        recording recorder: ResolveRecorder, writesOn subcommand: String?
+    ) -> (_ arguments: [String], _ directory: URL) -> Void {
+        { arguments, directory in
+            recorder.record("swift \(arguments.joined(separator: " "))")
+            guard arguments.dropFirst().first == subcommand else { return }
+            try? """
+                {"originHash":"x","pins":[{"identity":"mokume","kind":"remoteSourceControl",
+                 "location":"https://github.com/mokume-metal/mokume.git",
+                 "state":{"revision":"abc123","version":"0.50.0"}}],"version":3}
+                """.write(
+                to: directory.appendingPathComponent("Package.resolved"), atomically: true, encoding: .utf8)
+        }
+    }
+
+    @Test("固定が無くて解決を起こす回は、swift を起こす前に 1 行名乗り、Package.resolved が無ければ update で解決する")
     func announcesBeforeResolving() throws {
         let store = try BuildDirectoryTests.directory()
         let sketch = try Self.unresolvedSketch()
@@ -559,19 +576,46 @@ struct BuildPlacementTests {
             in: sketch, invocation: Invocation(place: sketch.path),
             environment: [BuildDirectory.environmentKey: store.path],
             announce: { recorder.record("say: \($0)") },
-            resolver: { arguments, _ in recorder.record("swift \(arguments.joined(separator: " "))") },
+            resolver: Self.resolver(recording: recorder, writesOn: "update"),
             afterReading: { _ in })
 
         // 名乗りが 1 度、解決より先。綴りはこのとおり (#3427)。行は足さない (#4073)
         //
         // **`Package.resolved` の無いスケッチは `update` で解決する** (#4073)。`resolve` は共有の置き場に残る
-        // 別のスケッチの版を採るので、作ったばかりのスケッチが最新の 0.x に届かない (`Templates.libraryMinimumVersion`)
+        // 別のスケッチの版を採るので、作ったばかりのスケッチが最新の 0.x に届かない (`Templates.libraryMinimumVersion`)。
+        // `update` が固定を書けば、`resolve` を重ねない
         let resolving = store.appendingPathComponent(BuildDirectory.resolveSegment, isDirectory: true)
         #expect(
             recorder.events == [
                 "say: Resolving the sketch's dependencies… (the first one takes a while)",
                 "swift package update --scratch-path \(resolving.path)",
             ])
+        #expect(DependencyVersion.pin(forPackageAt: sketch) == .version("0.50.0"))
+    }
+
+    /// **`update` が固定を書けなかったら、`resolve` で置き場に在る版を採る** (#4073)。取りに行けない回
+    /// (オフライン) に、置き場に在る版で組めていたものを組めなくしない。名乗りは足さない。
+    @Test("update が Package.resolved を書けなければ、名乗りを足さずに resolve で解決し直す")
+    func fallsBackToResolveWhenUpdateWritesNothing() throws {
+        let store = try BuildDirectoryTests.directory()
+        let sketch = try Self.unresolvedSketch()
+        let recorder = ResolveRecorder()
+
+        _ = try RunCommand.context(
+            in: sketch, invocation: Invocation(place: sketch.path),
+            environment: [BuildDirectory.environmentKey: store.path],
+            announce: { recorder.record("say: \($0)") },
+            resolver: Self.resolver(recording: recorder, writesOn: "resolve"),
+            afterReading: { _ in })
+
+        let resolving = store.appendingPathComponent(BuildDirectory.resolveSegment, isDirectory: true)
+        #expect(
+            recorder.events == [
+                "say: Resolving the sketch's dependencies… (the first one takes a while)",
+                "swift package update --scratch-path \(resolving.path)",
+                "swift package resolve --scratch-path \(resolving.path)",
+            ])
+        #expect(DependencyVersion.pin(forPackageAt: sketch) == .version("0.50.0"))
     }
 
     /// **`Package.resolved` が在るのに mokume の固定が引けない回は、`resolve` のまま** (#4073)。`update` は
