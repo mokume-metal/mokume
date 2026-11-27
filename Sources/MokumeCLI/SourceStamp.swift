@@ -13,7 +13,7 @@ import Synchronization
 ///
 /// **main actor に置かない。** 世代を取る仕事は資材の中身まで読むので、大きな資材では
 /// 数百 ms かかる (512 MiB で約 263 ms)。見張りはこれを main actor の外で走らせる
-/// ([#2518](https://github.com/mokume-metal/mokume/issues/2518)・``WatchSession/Hooks/live(resolver:running:stamps:)``)。
+/// ([#2518](https://github.com/mokume-metal/mokume/issues/2518)・``WatchSession/Hooks/live(resolver:running:dependencies:stamps:keepTime:recording:progress:assetBundles:rebuilding:)``)。
 nonisolated enum SourceStamp {
     /// 数えるファイル。ここに無い変更は作り直しを起こさない (資材の置き場は別に数える ―
     /// ``sources(in:)``)。

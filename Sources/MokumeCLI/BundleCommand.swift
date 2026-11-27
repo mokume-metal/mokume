@@ -71,10 +71,15 @@ enum BundleCommand {
         }
     }
 
-    /// - Parameter write: 束ねた報せ (``report(for:package:note:signedAs:identity:leftOut:kept:)``) の書き先。
-    ///   **検査が、実際の束ねを通った報せを読むために差し替える形にしてある** (#4005)。
+    /// - Parameter write: 束ねた報せ (``report(for:package:note:signedAs:identity:leftOut:kept:)``) と、道具と固定の版の
+    ///   食い違いの名乗り (#4074) の書き先。**検査が、実際の束ねを通った報せを読むために差し替える形にしてある** (#4005)。
+    /// - Parameter noticing: 書き先を受け取って、食い違いを名乗る手を作る。**検査が、道具の版と固定の読みを
+    ///   差し替えるために渡せる形にしてある。** 省けば配布物の版と `Package.resolved` を読む。
     static func run(
-        _ arguments: [String], writing write: (String) -> Void = { print($0) }
+        _ arguments: [String], writing write: @escaping @Sendable (String) -> Void = { print($0) },
+        noticing: (@escaping @Sendable (String) -> Void) -> DoctorCommand.MismatchNotice = {
+            RunCommand.dependencyNotice(say: $0)
+        }
     ) throws(CommandFailure) {
         let options = try parse(arguments)
         let directory = try options.directory()
@@ -120,7 +125,10 @@ enum BundleCommand {
         // 全部入れる下の作りが**他人の資材を配ってしまう**
         let context = BuildContext(
             configuration: configuration, place: place, product: product)
-        let executable = try RunCommand.buildAndResolve(in: directory, context: context)
+        // **道具と固定の版の食い違いを、報せと同じ書き先へ名乗る** (#4074)。束ねる口は解決を先に打たないので、
+        // 組んだ後にだけ読む
+        let executable = try RunCommand.buildAndResolve(
+            in: directory, context: context, dependencies: noticing(write))
 
         // **コピーで除くものと入っているべきものは、同じ閉包から 1 度に求める** (#3982)。いまの宣言にも
         // 依存にも無い古い包みも除く — 置き場は利用者の `swift build` / `swift test` と共有なので残る (#4005・#4038)
