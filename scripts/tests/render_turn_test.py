@@ -5,8 +5,8 @@
 
 固定したいのは九つ。
 
-1. **先頭の group は待たない。** base sha が main の先端なら、前の group の run が (人の
-   rerun で) 走っていても、すぐに通す
+1. **先頭の group は前の group を待たない。** base sha が main の先端なら、前の group の run が
+   (人の rerun で) 走っていても数えない (render-pr が取る枠は 9 のとおり先頭も数える)
 2. **1 つ前の group の run が終わるまで待つ。** 待つ相手は自分の base sha を head に持つ
    render.yml の merge_group の run で、門番で待っている間の run も数える。上限 (期限の
    直前) までは放さない — 早く放すと後ろの group がそろって積まれ、前の group と取り合う
@@ -14,8 +14,8 @@
    group の run がまだ作られていない。先頭と取り違えると、組み直しの場面で順番が崩れる
 4. **API が続けて読めなければ通す (go=true・終了 0)。1 回の失敗では通さない。** 門番の
    失敗で検査が走らないほうが重いが、一過性の 502 で門を開けると元の症状に戻る
-5. **yield は merge_group の run が 1 本でも残っていれば go=false。** status が queued でも
-   in_progress でも見送る (門番で待っている group の run は in_progress)
+5. **yield は merge_group の run を status によらず数える。** queued でも in_progress でも 1 本と
+   数え (門番で待っている group の run は in_progress)、N=1 なら 1 本でも残っていれば go=false
 6. **wait は merge_group の run が無くなるまで待ってから通す**
 7. **使い方の誤りだけ非 0 (2)**
 8. **merge_group は RENDER_TURN_SLOTS (N) 本まで並走する** (#3319)。前の group を base sha の
@@ -24,8 +24,9 @@
 9. **専用機の枠を run ごとに数える** (#4018)。merge_group は group と render-pr が取る枠の合計が
    N 本未満なら通す (先頭も数える・定期の job は数えない)。yield は merge_group の run が無ければ
    通し、あれば render-pr と定期の job も数えて N 本未満のときだけ通す (N=1 は今までと同じ結論)。
-   門番が通してから専用機の job が一覧に出るまでの run と、門番の中の pull_request の run は数える側に
-   倒す。job は queued と in_progress だけを走っていると読み、待っている job が並んでも run 1 本で
+   門番が通してから専用機の job が一覧に出るまでの run と、この門番より前に走り出した門番の中の
+   pull_request の run は数える側に倒す。yield は同じ PR の run を数えない。一覧はページを送って読み、
+   門番は足りない枠が埋まった所で数えるのをやめる。job は queued と in_progress だけを走っていると読み、待っている job が並んでも run 1 本で
    1 枠。yield は枠を読めなければ引き直さずに見送る。slots の mode は同じ数え方を queue-sweep.sh へ
    1 本 1 行で出す (数え方を 1 か所に置く)
 
@@ -93,7 +94,10 @@ file=""
 for ((i = n; i >= 1; i--)); do
   if [ -f "$DATA/$kind-$i.json" ]; then file="$DATA/$kind-$i.json"; break; fi
 done
-if [ -n "$file" ]; then jq -r "${filter:-.}" < "$file"
+if [ -n "$file" ]; then
+  jq -r "${filter:-.}" < "$file"
+  # --paginate のときだけ次のページ (<kind>-<回>.page2.json) も読む
+  case " $all " in *" --paginate "*) [ ! -f "${file%.json}.page2.json" ] || jq -r "${filter:-.}" < "${file%.json}.page2.json" ;; esac
 elif [ "$kind" = tip ] || [ "$kind" = head ]; then echo '[]' | jq -r "${filter:-.}"
 elif [ "${kind#jobs-}" != "$kind" ]; then echo '{"jobs":[]}' | jq -r "$filter"
 else echo '{"workflow_runs":[]}' | jq -r "$filter"; fi
@@ -512,12 +516,17 @@ class RenderTurnTest(unittest.TestCase):
 
     RUNNER = ["self-hosted", "mokume-render"]
     HOSTED = ["ubuntu-latest"]
+    # 門番が走り出した時刻 (jobs API の started_at)。検査の門番の起動より前と後
+    EARLIER = "2000-01-01T00:00:00Z"
+    LATER = "2999-01-01T00:00:00Z"
 
     def runner_runs(self, *runs, round_no=1):
         """終わっていない render.yml の run (merge_group 以外) と、その jobs を置く。
 
         runs は (run id, event, 形) の並び。形は:
-          "gate"  門番 (ホスト) が走っていて、専用機の job はまだ無い
+          "gate"  門番 (ホスト) がこの門番より前から走っていて、専用機の job はまだ走っていない
+          "late-gate" 門番がこの門番より後に走り出した (started_at が未来)
+          "queued-gate" 門番がホストの runner を待って queued
           "gap"   門番は終わったが、専用機の job がまだ一覧に無い (yield が通した直後の数秒)
           "hosted" 専用機の job は終わり、ホストの後続 (起票など) が走っている
           "completed" run ごと終わった (一覧に出ない)
@@ -535,23 +544,37 @@ class RenderTurnTest(unittest.TestCase):
             by_status[run_status].append(run)
             turn = "render-turn" if event == "pull_request" else "scheduled-release-turn"
             job = "render-pr" if event == "pull_request" else "scheduled-debug"
+            # 門番の後の run には、実物と同じく if で外れた専用機の job が skipped (completed) で並ぶ
+            # (どの専用機の job も門番を needs に持つので、門番の中には現れない)
+            skipped = [
+                {"name": n, "status": "completed", "conclusion": "skipped", "labels": self.RUNNER}
+                for n in (("render", "scheduled-debug") if event == "pull_request" else ("render", "render-pr"))
+            ]
             if isinstance(shape, list):
                 listed = [
-                    {"name": n, "status": s, "labels": self.RUNNER if on_runner else self.HOSTED}
+                    {"name": n, "status": s, "labels": self.RUNNER if on_runner else self.HOSTED,
+                     "started_at": self.EARLIER}
                     for n, s, on_runner in shape
                 ]
-            elif shape == "gate":
-                listed = [{"name": turn, "status": "in_progress", "labels": self.HOSTED}]
+            elif shape in ("gate", "late-gate", "queued-gate"):
+                listed = [{
+                    "name": turn,
+                    "status": "queued" if shape == "queued-gate" else "in_progress",
+                    "started_at": self.LATER if shape == "late-gate" else self.EARLIER,
+                    "labels": self.HOSTED,
+                }]
             elif shape == "gap":
-                listed = [{"name": turn, "status": "completed", "labels": self.HOSTED}]
+                listed = [{"name": turn, "status": "completed", "labels": self.HOSTED}, *skipped]
             elif shape == "hosted":
                 listed = [
                     {"name": job, "status": "completed", "labels": self.RUNNER},
+                    *skipped,
                     {"name": "scheduled-report", "status": "in_progress", "labels": self.HOSTED},
                 ]
             else:
                 listed = [
                     {"name": turn, "status": "completed", "labels": self.HOSTED},
+                    *skipped,
                     {"name": job, "status": shape, "labels": self.RUNNER},
                 ]
             (self.data / f"jobs-{run_id}-{round_no}.json").write_text(
@@ -718,6 +741,79 @@ class RenderTurnTest(unittest.TestCase):
         self.output.unlink()
         r = self.turn("yield", RENDER_TURN_SLOTS=2, GITHUB_RUN_ID=52)
         self.assertEqual(self.go(), "true", r.stdout)
+
+    def test_後から走り出した門番は門番の中と数えない(self):
+        """この門番より後に走り出す PR の門番 (ホストの runner を待って queued のものも) は、この門番の
+        run を一覧に見て数える。数えると N=1 の先頭の group が、必ず見送られる yield を毎周待つ
+        (反証 3 回目の #1)。"""
+        for shape in ("late-gate", "queued-gate"):
+            with self.subTest(shape=shape):
+                self.setUp()
+                self.main_tip(BASE)
+                self.render_prs((52, shape))
+                r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=1, RENDER_TURN_LIMIT=0)
+                self.assertNotIn("::warning::", r.stdout)
+                self.output.unlink()
+                self.groups_running(1)
+                r = self.turn("yield", RENDER_TURN_SLOTS=2)
+                self.assertEqual(self.go(), "true", r.stdout)
+
+    def test_yield_は同じ_PR_の_run_を数えない(self):
+        """同じ PR の古い head の render-pr は、通せば concurrency (cancel-in-progress) が取り消す。数えると
+        古い木の結果だけが残る (反証 3 回目の #4)。他の PR の run と、merge_group の門番は今までどおり数える。"""
+        for shape in ("in_progress", "queued", "gate", "gap"):
+            with self.subTest(shape=shape):
+                self.setUp()
+                self.groups_running(1)
+                self.render_prs((51, shape))
+                r = self.turn("yield", RENDER_TURN_SLOTS=2, RENDER_TURN_HEAD_REF="fix/pr-51")
+                self.assertEqual(self.go(), "true", r.stdout)
+                self.assertEqual(self.calls_of("/actions/runs/51/jobs"), [])
+                self.output.unlink()
+                r = self.turn("yield", RENDER_TURN_SLOTS=2, RENDER_TURN_HEAD_REF="fix/pr-5")
+                self.assertEqual(self.go(), "false", r.stdout)
+        self.setUp()
+        self.merge_group_queue(1)
+        self.render_prs((51, "in_progress"))
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0,
+                      RENDER_TURN_HEAD_REF="fix/pr-51")
+        self.assertIn("::warning::", r.stdout)
+
+    def test_run_の一覧はページを送って読む(self):
+        """終わっていない render.yml の run が 100 本を越えると、2 ページ目の render-pr を数え落とす (反証 3 回目の #3)。"""
+        self.merge_group_queue(1)
+        self.render_prs((55, "in_progress"))
+        first = self.data / "all-in_progress-1.json"
+        listing = json.loads(first.read_text(encoding="utf-8"))
+        moved = [run for run in listing["workflow_runs"] if run["id"] == 55]
+        listing["workflow_runs"] = [run for run in listing["workflow_runs"] if run["id"] != 55]
+        first.write_text(json.dumps(listing), encoding="utf-8")
+        (self.data / "all-in_progress-1.page2.json").write_text(
+            json.dumps({"workflow_runs": moved}), encoding="utf-8")
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
+        self.assertIn("::warning::", r.stdout)
+        self.assertIn("55 fix/pr-55 (render-pr)", self.summary.read_text(encoding="utf-8"))
+        r = self.turn("slots", "pull_request")
+        self.assertIn("55 pull_request fix/pr-55 render-pr in_progress", r.stdout)
+
+    def test_門番は足りない枠が埋まった所で数えるのをやめる(self):
+        """専用機の queue に render-pr が積み上がっていても、毎周すべての run の jobs を引かない
+        (API の上限・反証 3 回目の #2)。slots は queue-sweep が退かせる分を選ぶので全部数える。"""
+        self.groups_running(1)
+        self.render_prs((51, "queued"), (52, "queued"), (53, "queued"))
+        r = self.turn("yield", RENDER_TURN_SLOTS=2)
+        self.assertEqual(self.go(), "false", r.stdout)
+        self.assertEqual(len(self.calls_of("/jobs")), 1, r.stdout)
+        self.calls.write_text("", encoding="utf-8")
+        r = self.turn("slots", "pull_request")
+        self.assertEqual(len(r.stdout.splitlines()), 3, r.stdout)
+        self.assertEqual(len(self.calls_of("/jobs")), 3, r.stdout)
+        self.setUp()
+        self.merge_group_queue(0)
+        self.render_prs((51, "queued"), (52, "queued"), (53, "queued"))
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
+        self.assertIn("::warning::", r.stdout)
+        self.assertEqual(len(self.calls_of("/actions/runs/5")), 2, r.stdout)
 
     def test_待っている_job_は枠に数えず_run_は_1_本までと数える(self):
         """job の status は queued と in_progress だけを走っていると読む (stall-watch と同じ語・反証 2 回目の #3)。

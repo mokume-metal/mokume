@@ -135,9 +135,10 @@ class QueueSweepTest(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
 
     def add_jobs(self, run_id, jobs):
-        """jobs は (名前, status, 専用機か) の並び。"""
+        """jobs は (名前, status, 専用機か) の並び。job は掃除より前に走り出している (started_at)。"""
         listed = [
-            {"name": n, "status": s, "labels": RUNNER if on_runner else HOSTED}
+            {"name": n, "status": s, "labels": RUNNER if on_runner else HOSTED,
+             "started_at": "2000-01-01T00:00:00Z"}
             for n, s, on_runner in jobs
         ]
         (self.data / f"jobs-{run_id}.json").write_text(

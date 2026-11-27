@@ -76,15 +76,26 @@
 #     なるまでの数秒 (と、job の間の隙間) で、ここを数えないと yield が通した直後の render-pr を後ろの
 #     group の門番が見落とし、両方が積まれる。go=false の run も render-pr が skipped で現れるまでの
 #     数秒は数えられるが、数え過ぎは次の周で解ける。待つ job が何本並んでいても run 1 本で 1 枠
-#   - pull_request の run で、門番 (ホストの job) が走っていて専用機の job がまだ走っていなければ、
-#     1 本取っていると数える (門番の中)。yield はその場で結論を出すので、通るかもしれない 1 本を
-#     数えておかないと、yield が読んでから通すまでの間に読んだ merge_group の門番が見落とす。
-#     見送られれば次の周で数えなくなる。2 本の PR の yield が同時に走ると互いを数え、空き枠が
-#     1 本でも両方が見送りうる (見送りの側に倒れる)
+#   - pull_request の run で、門番 (ホストの job) が**この門番より前に走り出していて** (job の
+#     status が in_progress で started_at がこの門番の起動の時刻以前) 専用機の job がまだ走って
+#     いなければ、1 本取っていると数える (門番の中)。yield はその場で結論を出すので、通るかもしれない
+#     1 本を数えておかないと、yield が読んでから通すまでの間に読んだ merge_group の門番が見落とす。
+#     後から走り出す門番 (ホストの runner を待って queued の門番も) は、この門番の run を一覧に見て
+#     数えるので、こちらは数えない — 数えると、N=1 では必ず見送られる yield を先頭の group が待ち、
+#     PR の push が続く間は毎周待ちうる。見送られれば次の周で数えなくなる。同じ秒に走り出した
+#     2 本の yield は互いを数え、空き枠が 1 本でも両方が見送りうる (見送りの側に倒れる)
 #   - それ以外 (定期の門番 wait だけが走っている・専用機の job が終わり後続のホストの job だけが
 #     走っている) は取っていない。定期の門番は最大 60 分待つので、数えると group を長く止める
 # 自分の run (GITHUB_RUN_ID) は数えない。自分の門番は走っているので、除かないと yield が自分を
-# 門番の中と数える。
+# 門番の中と数える。yield は、同じ PR の branch (RENDER_TURN_HEAD_REF) の他の pull_request の run も
+# 数えない。render-pr は `render-pr-${{ github.ref }}` の concurrency (cancel-in-progress) で同じ PR の
+# 古い job を取り消すので、通せばその枠は空く — 数えると、古い head の render-pr が走っている間は
+# 新しい head の render-pr を見送り、古い木の結果だけが残る。render-pr が走るのは同じリポジトリの
+# branch の PR だけなので (render.yml の if)、branch の名前で PR を見分ける。
+#
+# 一覧は render.yml の終わっていない run を、ページを送って全部引く。yield と merge_group の門番は、
+# 足りない枠の数だけ見つけた所で数えるのをやめる (専用機の queue に render-pr が積み上がっていても、
+# jobs を引くのは足りない枠の数の run まで)。slots は全部数える。
 #
 # 数える run の種類は mode で違う:
 #   - merge_group は pull_request の run (render-pr) だけを数える。定期の scheduled-* は数えない
@@ -116,6 +127,8 @@
 #     (run の作成から一覧に出るまでの数秒)。現れた後は、門番の中・門番の後・走っている job の
 #     どれかで数える
 #   - API の上限で門番が待たずに通した回・読めずに通した回 (下の「判定できないときは通す」)
+#   - render.yml の外で専用機を使う job (docs/agent-environment.md の計測) は数えない。計測が runner を
+#     1 本取っている間は、空いたと読んだ枠へ render-pr を通しうる (後ろの group の門番はそれを数えて待つ)
 #
 # ## 古い head (yield・#3551)
 #
@@ -170,8 +183,9 @@
 # リポジトリで 1 時間 1,000 件を共有する (review-gate・queue-sweep も同じ枠)。1 周に引くのは
 # merge_group で 2N 件 (先端・前の N 本の run・遡るための親 N-1 件)、yield / wait で 2 件
 # (queued と in_progress) なので、N=1 の門番 1 本で 1 時間 120 件、N=2 で 240 件になる。
-# 前の group が N 本未満のときだけ、枠を数えるのに 2 + k 件 (render.yml の run の一覧 2 件と、
-# 数える種類の終わっていない run k 本の jobs) を足す。
+# 前の group が N 本未満のときだけ、枠を数えるのに 2 + k 件 (render.yml の run の一覧 2 件 (100 本を
+# 越えればページの数) と、数える種類の終わっていない run のうち足りない枠が埋まるまでの k 本の jobs) を
+# 足す。k は、枠を取らない run (後続のホストの job だけが走る run) が古い側に並ぶ分だけ N を越える。
 # 同時に待つ merge_group の門番は、group で待つものは queue が同時に組む group の数
 # (main-protection.json の max_entries_to_build) より N 本少ない。今の 2 なら N=1 で 1 本
 # (120 件)、N=2 では group で待つ門番が無い。render-pr で待つのは render-pr が終わるまで
@@ -269,6 +283,10 @@ esac
 # 持たないので、waiting / pending / requested にはならない — 引くのは 2 つで足りる
 ACTIVE_STATUSES="queued in_progress"
 
+# この門番が走り出した時刻 (jobs API の started_at と同じ形)。これより後に走り出した PR の門番は、
+# この門番の run を一覧に見て数えるので、門番の中とは数えない (上の「専用機の枠を数える」)
+GATE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
 # 空でない行の数 (空なら 0。grep -c は 0 件で非 0 を返すので、終了コードを捨てる)
 count_lines() {
   printf '%s\n' "$1" | grep -c . || true
@@ -321,20 +339,27 @@ unreadable() { # $1=何を読めなかったか
 # 何が取っているかは、専用機の job の名前 (status つき)・「門番の中」・「門番の後」・「読めなかった」。
 # $1 は数える run の event を | で区切った並び。**queue-sweep.sh も slots の mode でこれを呼ぶ** —
 # 門番と掃除が別々に数えると、片方が通した render-pr を片方が枠の外と読む。
+# $2 (省略可) は足りない枠の数で、その数の行を出した所で数えるのをやめる (省略なら全部数える)。
 # run の一覧を読めなければ何も出さずに非 0、jobs を読めない run があれば「読めなかった」の行を出して
 # 残りを数え、非 0 で返す
 runner_slots() {
-  local events=$1 active got runs="" id event branch slots slot failed=0
+  local events=$1 max=${2:-0} active got runs="" id event branch slots slot failed=0 found=0
   for active in $ACTIVE_STATUSES; do
-    got=$(gh api "$RUNS?status=$active&per_page=100" \
+    got=$(gh api --paginate "$RUNS?status=$active&per_page=100" \
       --jq ".workflow_runs[] | select(.event | test(\"^($events)\$\")) | \"\(.id) \(.event) \(.head_branch)\"") ||
       return 1
     runs+="$got"$'\n'
   done
   while read -r id event branch; do
     [ -n "$id" ] && [ "$id" != "${GITHUB_RUN_ID:-}" ] || continue
+    # yield は同じ PR の run を数えない (通せば concurrency がその job を取り消す)
+    if [ "$mode" = yield ] && [ "$event" = pull_request ] &&
+      [ -n "${RENDER_TURN_HEAD_REF:-}" ] && [ "$branch" = "$RENDER_TURN_HEAD_REF" ]; then
+      continue
+    fi
     # job の status は queued と in_progress だけを「走っている」と読む (stall-watch.sh の runner_jobs と
-    # 同じ語)。needs や concurrency で待つ job (waiting・pending) は runner を取っていない
+    # 同じ語)。needs や concurrency で待つ job (waiting・pending) は runner を取っていない。
+    # 門番の中は、ホストの job がこの門番の起動以前から in_progress のときだけ
     if ! slots=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
       --jq '[.jobs[] | select(.status == "queued" or .status == "in_progress")] as $active
         | [.jobs[] | select((.labels // []) | index("mokume-render"))] as $runner
@@ -343,19 +368,25 @@ runner_slots() {
           elif ($active | length) == 0 then
             ([$runner[] | select(.status != "completed")] | first
               | if . then "\(.name) \(.status)" else "門番の後" end)
-          elif ([$runner[] | select(.status == "completed")] | length) == 0 then "門番の中"
+          elif ([$runner[] | select(.status == "completed")] | length) == 0
+            and ([$active[] | select(.status == "in_progress"
+              and (.started_at // "") != "" and .started_at <= "'"$GATE_STARTED_AT"'")] | length) > 0
+          then "門番の中"
           else empty end'); then
       echo "$id $event $branch 読めなかった"
       failed=1
-      continue
+      found=$((found + 1))
+    else
+      while IFS= read -r slot; do
+        [ -n "$slot" ] || continue
+        # 門番の中は pull_request の run だけを数える。yield はすぐ結論を出すので、通るかもしれない 1 本と
+        # 数えても次の周で解ける。定期の門番 (wait) は長く待つので数えない
+        [ "$slot" != 門番の中 ] || [ "$event" = pull_request ] || continue
+        echo "$id $event $branch $slot"
+        found=$((found + 1))
+      done <<<"$slots"
     fi
-    while IFS= read -r slot; do
-      [ -n "$slot" ] || continue
-      # 門番の中は pull_request の run だけを数える。yield はすぐ結論を出すので、通るかもしれない 1 本と
-      # 数えても次の周で解ける。定期の門番 (wait) は長く待つので数えない
-      [ "$slot" != 門番の中 ] || [ "$event" = pull_request ] || continue
-      echo "$id $event $branch $slot"
-    done <<<"$slots"
+    [ "$max" -eq 0 ] || [ "$found" -lt "$max" ] || break
   done < <(printf '%s' "$runs" | sort -u)
   return "$failed"
 }
@@ -403,7 +434,7 @@ blocking_runs() {
       # 終わっていない group と render-pr が取っている枠が合わせて N 本未満なら、自分の分の runner が
       # 空いている。group だけで N 本なら枠は引かない。定期の job は数えない (上の「専用機の枠を数える」)
       if [ "$busy" -lt "$SLOTS" ]; then
-        prs=$(runner_slots pull_request | slot_lines) || return 1
+        prs=$(runner_slots pull_request "$((SLOTS - busy))" | slot_lines) || return 1
         [ -z "$prs" ] || out+="$prs"$'\n'
         busy=$((busy + $(count_lines "$prs")))
         [ "$busy" -ge "$SLOTS" ] || return 0
@@ -422,7 +453,7 @@ blocking_runs() {
       if [ "$mode" = yield ] && [ -n "$out" ]; then
         busy=$(count_lines "$out")
         if [ "$busy" -lt "$SLOTS" ]; then
-          if ! prs=$(runner_slots 'pull_request|schedule' | slot_lines); then
+          if ! prs=$(runner_slots 'pull_request|schedule' "$((SLOTS - busy))" | slot_lines); then
             prs="- (専用機の枠を読めなかったので見送る側に倒した)"
             busy=$SLOTS
           fi
