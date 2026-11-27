@@ -12,7 +12,9 @@ PR 本文・Issue 本文・ADR を行で読む検査が共通で使う「その�
 読み方そのものを見る。
 
 mawk (Ubuntu の既定の awk。pr-gate は既定ブランチ版をこれで走らせる)・BSD awk (macOS)・gawk の
-どれでも同じ結果になることを、手元に在る awk のすべてで確かめる。
+どれでも同じ結果になることを、手元に在る awk のすべてで確かめる。macOS に mawk は無いので、
+awk の読み方を変えるときは `brew install mawk` で入れてから回す。pr-gate は既定ブランチ版の
+スクリプトを走らせるので、awk を変えた PR 自身の pr-gate ではその変更が試されない (#2768)。
 
 実行は make hooks-test (CI もこれを呼ぶ)。
 """

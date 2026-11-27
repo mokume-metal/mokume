@@ -13,7 +13,7 @@
     },
     "record": {
       "type": "string",
-      "description": "The path of the record that was played, as the tool passed it (absolute)."
+      "description": "The path of the record that was played, as the tool passed it (absolute, home directory and user name included). Look at it before handing the report to someone else."
     },
     "id": {
       "type": "string",
@@ -75,7 +75,7 @@
     "unreproducible": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Why the run is not promised to replay frame for frame: the reasons the record gives (under `unreproducible`), followed by those the replay found itself that the record does not give (a record written before a reason was noticed, or a sketch that changed since), each once. The replay names them too, and they do not change `matched`."
+      "description": "Why the run is not promised to replay frame for frame: the reasons the record gives (under `unreproducible`), followed by those the replay found itself that the record does not give (a record written before a reason was noticed, or a sketch that changed since), each once. The replay names them too, and they do not change `matched`. A reason about a local file (`resources` in the record) names it as the sketch passed it, so a file loaded by an absolute path puts that path, home directory and user name included, here: look at the reasons before handing the report to someone else."
     },
     "problem": {
       "type": "string",
