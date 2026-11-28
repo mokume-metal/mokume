@@ -244,6 +244,28 @@ struct KnobOverlayLayoutTests {
         panel.attach(to: host)
         #expect(panel.frame.width == KnobPanel.collapsedSide)
     }
+
+    /// 作品のウィンドウ (`run`) の面は作品の上に重なるので素材のまま。ガラスは `watch` の列が選ぶ (#4221)。
+    @Test("宣言から作る面は素材の背景で、ガラスは選んだときだけ")
+    func glassOnlyWhenChosen() throws {
+        let made = try #require(KnobOverlay.makeIfNeeded(for: ParamRegistry(of: Many())))
+        #expect(made.backdrop == .material)
+        let glass = KnobOverlay(boxes: ParamRegistry(of: Many()).knobs, backdrop: .glass)
+        #expect(glass.backdrop == .glass)
+    }
+
+    /// 背景を替えても、列の幅と畳んだボタンの大きさは変わらない — 変われば絵の面の幅が背景で揺れる。
+    @Test("ガラスの面も、開いた幅と畳んだ大きさは素材の面と同じ")
+    func glassKeepsTheSameFootprint() {
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        let panel = KnobOverlay(boxes: ParamRegistry(of: Many()).knobs, backdrop: .glass)
+        panel.attach(to: host)
+        #expect(panel.frame.width == KnobPanel.width)
+        panel.setCollapsed(true)
+        #expect(panel.frame.width == KnobPanel.collapsedSide)
+        #expect(panel.frame.height == KnobPanel.collapsedSide)
+        #expect(panel.frame.maxY == host.bounds.height - KnobOverlay.inset)
+    }
 }
 
 /// **道具のウィンドウでは、つまみの面と絵の面を重ねない** (#4137)。
