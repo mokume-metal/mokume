@@ -52,7 +52,7 @@ ADR-0041 決定 3 の改訂の基準を、行に当てる形にしたもの。�
 | Processing の本体 | 4.5.7 (2026-09-24) |
 | Processing Sound | 2.4.0 |
 | Processing Video | 2.2.2 (Release 12) |
-| oscP5 | 連携の領域の表を作るときに確かめる |
+| oscP5 | 0.9.8 (2011-12-19)。oscP5 の公式ページ (sojamo.de) が現行として載せる版と Javadoc の版で、Contribution Manager で入る版との異同は未確認 |
 
 照合したのは processing-website の commit `f4acef8` (2026-10-29) の `content/references/translations/en/`。その下の `processing` の最終変更は 2025-03-26 (`8018e7e`) で、4.5.x で足された API があればリファレンスのクローンには無い (未確認)。リファレンスに載らず Javadoc にだけある API は数えない。mokume にあってリファレンスに無い API (`JSONObject.hasKey(_:)` など) も数えない。
 
@@ -131,11 +131,27 @@ jq -r 'select(((.category // "") == "math" and ((.subcategory // "") | test("^(c
   | input_filename' "$ref"/processing/*.json | wc -l   # 64
 ```
 
+色・変換・光とカメラ・描画の 69 件は、category が `color` (17)・`lights_camera` (27)・`transform` (13)・`rendering` (11)・`pgraphics` (2) の項目 70 件から、所属 (`classanchor`) が `PImage` の 1 件を除いたものである。`PImage.blendColor()` は category が `color` だが、画像の表が所属で数えているので、この式は除いて二重に数えない。category の大文字小文字は揃っていない (`hint()` だけが `Rendering`、残りの 10 件は `rendering`) ので、小文字にして比べる。`PShader` (クラスのページとメソッド) と `PGraphics` のクラスのページは category が `rendering`、`PGraphics.beginDraw()`・`endDraw()` は `pgraphics` である:
+
+```bash
+jq -r 'select(((.category // "") | ascii_downcase | test("^(color|lights_camera|transform|rendering|pgraphics)$"))
+  and ((.classanchor // "") != "PImage"))
+  | input_filename' "$ref"/processing/*.json | wc -l   # 69
+```
+
 文字の 13 件は、category が `typography` の項目 12 件 (`PFont` のクラスのページ 1 と、関数 11) と、category が `pfont` で所属 (`classanchor`) が `PFont` の `PFont.list()` 1 件である (所属が `PFont` の項目は、クラスのページとメンバーで 2 件):
 
 ```bash
 jq -r 'select(((.category // "") == "typography") or ((.classanchor // "") == "PFont"))
   | input_filename' "$ref"/processing/*.json | wc -l   # 13
+```
+
+データ: 文字列・配列・リスト・辞書・変換の 162 件は、category が `data`・`string`・`intlist`・`floatlist`・`stringlist`・`intdict`・`floatdict`・`stringdict` (大文字小文字は揃っていないので小文字にして比べる) の項目 167 件から、上のデータ: JSON・Table・XML の式が拾うもの (所属が 5 つのクラスのクラスのページ 5 件。`load`・`parse`・`save` の 11 件は category が `input`・`output` なので、この式にはもともと入らない) を除いたものである。基本の型 (`Data` の `Primitive`) 8・複合の型 5・型の変換 10 (`Data` の `Conversion` 6 と `data` の `conversion` 4)・配列の関数 9・文字列の関数 10・`String` のメソッド 7・リストと辞書 113 (クラスのページ 6 とメソッド 107) に分かれる。`FloatDict.maxIndex()`・`minIndex()` は category が `floatlist` だが所属は `FloatDict` である:
+
+```bash
+jq -r 'select(((.category // "") | ascii_downcase | test("^(data|string|(int|float|string)(list|dict))$")))
+  | select(((.classanchor // "") | test("^(JSONArray|JSONObject|Table|TableRow|XML)$")) | not)
+  | input_filename' "$ref"/processing/*.json | wc -l   # 162
 ```
 
 構造・制御の 76 件は、category が `structure` (42) と `Control` (19) の項目 61 件と、category が `math` で subcategory が `Operators` (11)・`Bitwise Operators` (4) の項目 15 件である。数学・PVector・定数の領域は後者の 15 件を数えない:
@@ -146,7 +162,15 @@ jq -r 'select(((.category // "") | test("^(structure|Control)$"))
   | input_filename' "$ref"/processing/*.json | wc -l   # 76
 ```
 
-書き出しのライブラリ (`processing.pdf`・`processing.svg`・`processing.dxf`) のページは、項目に数えない ([#3688 の決定](https://github.com/mokume-metal/mokume/issues/3688#issuecomment-6586703173)・2026-11-03)。リファレンスのクローンに項目が無く、そのページが挙げる API のうち本体のリファレンスに載るもの (`beginRecord()`・`endRecord()`・`beginRaw()`・`endRaw()`・`size()` ほか) は、本体の領域の行が扱う。種類 (PDF・SVG・DXF) との関係は、その行の理由に書く。`createGraphics(w, h, PDF)` の描画先の指定は、順 3 の「色・変換・光とカメラ・描画」の行で書く。
+連携 (net・serial・OSC) と io の 165 件は、`net` (22)・`serial` (17)・`io` (36) の項目すべて (ディレクトリの下がこの領域だけなので数えるだけでよい) と、oscP5 の 90 件である。`net` はクラスのページ 2・メソッド 17・イベントの関数 3、`serial` はクラスのページ 1 とメソッド 16、`io` はクラスのページ 6 (`GPIO`・`I2C`・`LED`・`PWM`・`SPI`・`SoftwareServo`) とメソッド 30 に分かれる:
+
+```bash
+for d in net serial io; do ls "$ref/$d"/*.json | wc -l; done   # 22・17・36
+```
+
+oscP5 はリファレンスのクローンに無く、第三者のライブラリ (Andreas Schlegel) の Javadoc (`https://sojamo.de/libraries/oscP5/reference/`・版は上の「バージョン」) を人が数えた。**スケッチが直に呼ぶ 7 つのクラス**のクラスのページと、そのクラスの公開メソッドの名前 (引数の違う多重定義は 1 つ、非推奨だけの名前は除く) を 1 件とする: `OscP5` 23 (クラス 1・メソッド 22)・`OscMessage` 24 (1・23)・`OscBundle` 10 (1・9)・`NetAddress` 6 (1・5)・`NetAddressList` 8 (1・7)・`OscProperties` 16 (1・15)・`OscEventListener` 3 (1・2)。コンストラクタはクラスのページに含め、定数 (`OscP5.UDP` ほか) と `Object` から継承したメソッドは数えない。内部の通信のクラス (`AbstractTcpClient`・`UdpServer`・`OscPacket`・`OscPlug` ほか 28) と、非推奨だけの `OscP5.newBundle()`・`newMsg()`・`disconnectFromTEMP()` は数えない。数え方が機械で再現できないので、oscP5 の版が変わったら Javadoc から数え直す。
+
+書き出しのライブラリ (`processing.pdf`・`processing.svg`・`processing.dxf`) のページは、項目に数えない ([#3688 の決定](https://github.com/mokume-metal/mokume/issues/3688#issuecomment-6586703173)・2026-11-03)。リファレンスのクローンに項目が無く、そのページが挙げる API のうち本体のリファレンスに載るもの (`beginRecord()`・`endRecord()`・`beginRaw()`・`endRaw()`・`size()` ほか) は、本体の領域の行が扱う。種類 (PDF・SVG・DXF) との関係は、その行の理由に書く。`createGraphics(w, h, PDF)` の描画先の指定は、色・変換・光とカメラ・描画の表 ([color-transform-rendering.md](color-transform-rendering.md)) の `createGraphics()` の行に書いた。
 
 ## 領域の一覧
 
@@ -161,11 +185,11 @@ jq -r 'select(((.category // "") | test("^(structure|Control)$"))
 | 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | [#3687] |
 | 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 81 | `input-output-environment.md` | [#3688] |
 | 3 | 数学・PVector・定数 | 64 | `math.md` | [#4176] |
-| 3 | 色・変換・光とカメラ・描画 | 70 | `color-transform-rendering.md` | 順 2 の後 |
+| 3 | 色・変換・光とカメラ・描画 (`PImage.blendColor()` は画像の表が数える) | 69 | `color-transform-rendering.md` | [#4177] |
 | 3 | 文字 | 13 | `typography.md` | [#4178] |
-| 3 | データ: 文字列・配列・リスト・辞書・変換 | 167 | `data-strings-collections.md` | 順 2 の後 |
+| 3 | データ: 文字列・配列・リスト・辞書・変換 (JSON・Table・XML のクラスのページ 5 件は上のデータの表が数える) | 162 | `data-strings-collections.md` | [#4179] |
 | 3 | 構造・制御 | 76 | `structure.md` | [#4180] |
-| 3 | 連携 (net・serial・OSC) と io | 39 + io 36 + oscP5 (未計数) | `network-serial-io.md` | 順 2 の後 |
+| 3 | 連携 (net・serial・OSC) と io | 39 + io 36 + oscP5 90 = 165 | `network-serial-io.md` | [#4181] |
 
 ## 領域の表を作るとき
 
@@ -190,5 +214,8 @@ jq -r 'select(((.category // "") | test("^(structure|Control)$"))
 [#3687]: https://github.com/mokume-metal/mokume/issues/3687
 [#3688]: https://github.com/mokume-metal/mokume/issues/3688
 [#4176]: https://github.com/mokume-metal/mokume/issues/4176
+[#4177]: https://github.com/mokume-metal/mokume/issues/4177
 [#4178]: https://github.com/mokume-metal/mokume/issues/4178
+[#4179]: https://github.com/mokume-metal/mokume/issues/4179
 [#4180]: https://github.com/mokume-metal/mokume/issues/4180
+[#4181]: https://github.com/mokume-metal/mokume/issues/4181
