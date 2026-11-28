@@ -138,6 +138,14 @@ jq -r 'select(((.category // "") == "typography") or ((.classanchor // "") == "P
   | input_filename' "$ref"/processing/*.json | wc -l   # 13
 ```
 
+構造・制御の 76 件は、category が `structure` (42) と `Control` (19) の項目 61 件と、category が `math` で subcategory が `Operators` (11)・`Bitwise Operators` (4) の項目 15 件である。数学・PVector・定数の領域は後者の 15 件を数えない:
+
+```bash
+jq -r 'select(((.category // "") | test("^(structure|Control)$"))
+  or ((.category // "") == "math" and ((.subcategory // "") | test("^(Operators|Bitwise Operators)$"))))
+  | input_filename' "$ref"/processing/*.json | wc -l   # 76
+```
+
 書き出しのライブラリ (`processing.pdf`・`processing.svg`・`processing.dxf`) のページは、項目に数えない ([#3688 の決定](https://github.com/mokume-metal/mokume/issues/3688#issuecomment-6586703173)・2026-11-03)。リファレンスのクローンに項目が無く、そのページが挙げる API のうち本体のリファレンスに載るもの (`beginRecord()`・`endRecord()`・`beginRaw()`・`endRaw()`・`size()` ほか) は、本体の領域の行が扱う。種類 (PDF・SVG・DXF) との関係は、その行の理由に書く。`createGraphics(w, h, PDF)` の描画先の指定は、順 3 の「色・変換・光とカメラ・描画」の行で書く。
 
 ## 領域の一覧
@@ -156,7 +164,7 @@ jq -r 'select(((.category // "") == "typography") or ((.classanchor // "") == "P
 | 3 | 色・変換・光とカメラ・描画 | 70 | `color-transform-rendering.md` | 順 2 の後 |
 | 3 | 文字 | 13 | `typography.md` | [#4178] |
 | 3 | データ: 文字列・配列・リスト・辞書・変換 | 167 | `data-strings-collections.md` | 順 2 の後 |
-| 3 | 構造・制御 | 76 | `structure.md` | 順 2 の後 |
+| 3 | 構造・制御 | 76 | `structure.md` | [#4180] |
 | 3 | 連携 (net・serial・OSC) と io | 39 + io 36 + oscP5 (未計数) | `network-serial-io.md` | 順 2 の後 |
 
 ## 領域の表を作るとき
