@@ -43,7 +43,10 @@ final class NoticeOverlay: NSView {
     /// 行の横に添えている段数 (`42 / 44`)。`nil` は添えていない。
     var steps: String? { stepsLabel.isHidden ? nil : stepsLabel.stringValue }
 
-    private let backdrop = NSVisualEffectView()
+    /// 背景のガラス (#4221)。文字と印は ``content`` に置き、ガラスの `contentView` として渡す —
+    /// ガラスの効果 (下の絵に応じた文字の見え方) が及ぶのは `contentView` の中だけである。
+    private let backdrop = NSGlassEffectView()
+    private let content = NSView()
     private let spinner = NSProgressIndicator()
     private let label = NSTextField(labelWithString: "")
     private let stepsLabel = NSTextField(labelWithString: "")
@@ -54,12 +57,8 @@ final class NoticeOverlay: NSView {
         // 印を空にすると AppKit が大きさの変化を伝えてこない (`KnobOverlay` と同じ)
         autoresizingMask = [.maxXMargin, .maxYMargin]
 
-        backdrop.material = .hudWindow
-        backdrop.blendingMode = .withinWindow
-        backdrop.state = .active
-        backdrop.wantsLayer = true
-        backdrop.layer?.cornerRadius = 8
-        backdrop.layer?.masksToBounds = true
+        backdrop.cornerRadius = 8
+        backdrop.contentView = content
         addSubview(backdrop)
 
         spinner.style = .spinning
@@ -68,17 +67,17 @@ final class NoticeOverlay: NSView {
         // **止まっている間は消す。** 止まった輪が残っていると、作り直しが続いているのか
         // 終わったのかが見分けられない
         spinner.isDisplayedWhenStopped = false
-        addSubview(spinner)
+        content.addSubview(spinner)
 
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .labelColor
-        addSubview(label)
+        content.addSubview(label)
 
         // **桁の幅を揃える。** 数字が増えるたびに面の幅が揺れない
         stepsLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         stepsLabel.textColor = .secondaryLabelColor
         stepsLabel.isHidden = true
-        addSubview(stepsLabel)
+        content.addSubview(stepsLabel)
 
         isHidden = true
     }
@@ -180,6 +179,7 @@ final class NoticeOverlay: NSView {
             stepsWidth: stepsSize.width)
         frame = Self.frame(in: superview?.bounds ?? NSRect(origin: .zero, size: wanted), size: wanted)
         backdrop.frame = bounds
+        content.frame = backdrop.bounds
         let mark = spinner.isHidden ? 0 : Self.markSide + Self.gap
         let steps = stepsLabel.isHidden ? 0 : Self.gap + stepsSize.width
         spinner.frame = NSRect(

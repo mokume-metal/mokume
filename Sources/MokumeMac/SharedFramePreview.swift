@@ -259,7 +259,7 @@ package final class SharedFramePreview {
             // ([ADR-0030] 決定 7) — 届いていなければ `nil` が返り、面は「—」と描く
             let overlay = KnobOverlay(
                 boxes: params.boxes, numbers: { [stage] in stage.numbers }, state: knobState,
-                history: knobHistory)
+                history: knobHistory, backdrop: .glass)
             // 前の面は列が外す
             stage.placeKnobs(overlay)
             knobs = overlay

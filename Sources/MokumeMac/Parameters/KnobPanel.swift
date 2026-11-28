@@ -25,6 +25,16 @@ final class KnobPanelState {
     var isCollapsed = false
 }
 
+/// つまみの面の背景 (#4221)。
+///
+/// 面は `watch` のプレビューと `run` の作品のウィンドウで共有するので、どちらを使うかは面を重ねる側が選ぶ。
+enum KnobPanelBackdrop: Equatable, Sendable {
+    /// SwiftUI の `.regularMaterial`。作品の上に重ねる `run` の面。
+    case material
+    /// システムの Liquid Glass (`glassEffect`・`.buttonStyle(.glass)`)。`watch` の列の面。
+    case glass
+}
+
 /// ウィンドウに重ねる、宣言した値のつまみ。
 ///
 /// **入口はここ 1 つで、型ごとの名前に分けない** ([ADR-0030] 決定 8)。宣言側で型は
@@ -65,6 +75,8 @@ struct KnobPanel: View {
     /// 畳む・開くボタンが押されたとき。**値を替えるのは受け取った側** — 替えた後に枠の大きさを測り直す
     /// 必要があり、それは面を重ねる側 (``KnobOverlay``) にしかできない。
     var toggle: (() -> Void)?
+    /// 背景 (#4221)。
+    var backdrop: KnobPanelBackdrop = .material
 
     /// 面の横幅。行の折り返しではなくウィンドウの隅に収まる大きさで決める。
     static let width: CGFloat = 260
@@ -80,11 +92,23 @@ struct KnobPanel: View {
     }
 
     /// 畳んだ面: 開くボタンだけ。**絵を隠す範囲をこの大きさまで減らす**のが畳む目的である。
+    @ViewBuilder
     private var collapsed: some View {
-        toggleButton(systemImage: "slider.horizontal.3", help: "Show the knobs")
-            .frame(width: Self.collapsedSide, height: Self.collapsedSide)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-            .controlSize(.small)
+        switch backdrop {
+        case .material:
+            toggleButton(systemImage: "slider.horizontal.3", help: "Show the knobs")
+                .buttonStyle(.plain)
+                .frame(width: Self.collapsedSide, height: Self.collapsedSide)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .controlSize(.small)
+        case .glass:
+            // ボタンそのものがガラスの面になる。手書きの背景を重ねると、ガラスの下に別の面が透ける
+            toggleButton(systemImage: "slider.horizontal.3", help: "Show the knobs")
+                .buttonStyle(.glass)
+                .buttonBorderShape(.roundedRectangle(radius: 8))
+                .frame(width: Self.collapsedSide, height: Self.collapsedSide)
+                .controlSize(.small)
+        }
     }
 
     private var expanded: some View {
@@ -96,6 +120,7 @@ struct KnobPanel: View {
                     HStack {
                         Spacer(minLength: 0)
                         toggleButton(systemImage: "sidebar.left", help: "Hide the knobs")
+                            .buttonStyle(.plain)
                     }
                 }
                 if let numbers {
@@ -114,7 +139,7 @@ struct KnobPanel: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(width: Self.width)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .modifier(PanelBackdrop(kind: backdrop, shape: RoundedRectangle(cornerRadius: 10)))
         // 作品の描画設定は、この面の見え方を変えない (ADR-0030 決定 1)。SwiftUI の
         // 層は自分の色で描く — 混ぜ方も色の解釈も、絵の側の設定とは無関係である
         .controlSize(.small)
@@ -129,10 +154,22 @@ struct KnobPanel: View {
                 .frame(width: 20, height: 20)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .help(help)
         .accessibilityLabel(help)
+    }
+}
+
+/// 開いた面の背景。ガラスは面全体に 1 枚だけ当てる — 行ごとに当てると、ガラスの上にガラスが重なる。
+private struct PanelBackdrop: ViewModifier {
+    let kind: KnobPanelBackdrop
+    let shape: RoundedRectangle
+
+    func body(content: Content) -> some View {
+        switch kind {
+        case .material: content.background(.regularMaterial, in: shape)
+        case .glass: content.glassEffect(.regular, in: shape)
+        }
     }
 }
 

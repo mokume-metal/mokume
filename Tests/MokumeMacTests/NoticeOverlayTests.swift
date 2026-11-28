@@ -122,3 +122,27 @@ struct NoticeOverlayStepsTests {
         #expect(with.width - plain.width == 40 + NoticeOverlay.gap)
     }
 }
+
+/// 背景のガラス (#4221)。
+@Suite("重ねる 1 行 (背景)")
+@MainActor
+struct NoticeOverlayBackdropTests {
+    /// 文字・印・段数は、ガラスの `contentView` の中に置く。外に兄弟として置くと、ガラスの効果が及ばない。
+    @Test("文字と印はガラスの中に置かれ、ガラスは面いっぱいに広がる")
+    func contentLivesInsideTheGlass() throws {
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        let notice = NoticeOverlay()
+        host.addSubview(notice)
+        notice.show("作っている…", spinning: true)
+        notice.showSteps(done: 3, total: 6)
+
+        let glass = try #require(notice.subviews.compactMap { $0 as? NSGlassEffectView }.first)
+        #expect(notice.subviews.count == 1, "ガラスの外に部品が残っている")
+        #expect(glass.frame == notice.bounds)
+        let content = try #require(glass.contentView)
+        let texts = content.subviews.compactMap { $0 as? NSTextField }.map(\.stringValue)
+        #expect(texts.contains("作っている…"))
+        #expect(texts.contains("3 / 6"))
+        #expect(content.subviews.contains { $0 is NSProgressIndicator })
+    }
+}

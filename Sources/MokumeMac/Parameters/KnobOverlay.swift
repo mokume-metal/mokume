@@ -43,6 +43,9 @@ final class KnobOverlay: NSView {
     /// 作る側が渡せば、面を作り直しても履歴が残る。
     let history: KnobHistory
 
+    /// 面の背景 (#4221)。**検査から見る** — `watch` の列だけがガラスを選び、`run` の面は素材のままである。
+    var backdrop: KnobPanelBackdrop { hosting.rootView.backdrop }
+
     /// 枠の大きさが変わったとき (畳む・開く・警告の欄の出入り)。**置き直しのたびには呼ばない** —
     /// 列の容れ物 (``KnobColumnLayout``) は自分の並べ直しの中から ``reposition()`` を呼ぶので、
     /// そこで呼ぶと並べ直しが自分を呼び返す。
@@ -50,7 +53,8 @@ final class KnobOverlay: NSView {
 
     init(
         boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil,
-        state: KnobPanelState = KnobPanelState(), history: KnobHistory? = nil
+        state: KnobPanelState = KnobPanelState(), history: KnobHistory? = nil,
+        backdrop: KnobPanelBackdrop = .material
     ) {
         knobCount = boxes.count
         self.state = state
@@ -60,7 +64,7 @@ final class KnobOverlay: NSView {
         hosting = NSHostingView(
             rootView: KnobPanel(
                 boxes: boxes, numbers: numbers, warnings: warningFeed, state: state,
-                history: history))
+                history: history, backdrop: backdrop))
         super.init(frame: NSRect(origin: .zero, size: hosting.fittingSize))
         hosting.rootView.toggle = { [weak self] in
             guard let self else { return }
